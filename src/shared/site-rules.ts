@@ -23,7 +23,9 @@ const CHANGE_PASSWORD_URLS = changePasswordUrls as Record<string, string>
 const APPENDS_2FA = appends2fa as string[]
 
 // 호스트 정규화: 소문자, 포트 제거, 선행 www. 제거
-export function normalizeHost(host: string): string {
+// 주의: src/shared/host.ts 의 normalizeHost(eTLD+1 접기 등 포함)와는 다른 함수라
+// 이름 충돌을 피하려고 normalizeRuleHost 로 부른다(이 파일 내부 전용 정규화)
+export function normalizeRuleHost(host: string): string {
   return host
     .toLowerCase()
     .trim()
@@ -35,7 +37,7 @@ export function normalizeHost(host: string): string {
 
 // 호스트와 그 상위 도메인들(예: login.11st.co.kr → [login.11st.co.kr, 11st.co.kr, co.kr, kr])
 function hostChain(host: string): string[] {
-  const parts = normalizeHost(host).split('.')
+  const parts = normalizeRuleHost(host).split('.')
   const chain: string[] = []
   for (let i = 0; i < parts.length - 1; i++) chain.push(parts.slice(i).join('.'))
   return chain
@@ -43,6 +45,7 @@ function hostChain(host: string): string[] {
 
 // 같은 계정을 공유하는 도메인 그룹. 자기 자신을 항상 첫 번째로 포함한다.
 // 키마스터의 listAccounts 매칭을 이 목록으로 넓히면 예: adobelogin.com 계정으로 adobe.com 로그인 가능
+// 참고: 현재 실제 사용처는 없고 tests/site-rules.test.ts 에서만 쓴다. 추후 계정 매칭 확장 시 사용 예정으로 남겨둔다
 export function sharedCredentialDomains(host: string): string[] {
   const chain = hostChain(host)
   if (chain.length === 0) return []
@@ -52,13 +55,13 @@ export function sharedCredentialDomains(host: string): string[] {
     const shared = group.shared ?? []
     const from = group.from ?? []
     const to = group.to ?? []
-    const hit = (list: string[]): boolean => list.some((d) => chain.includes(normalizeHost(d)))
+    const hit = (list: string[]): boolean => list.some((d) => chain.includes(normalizeRuleHost(d)))
     if (shared.length > 0 && hit(shared)) {
-      for (const d of shared) result.add(normalizeHost(d))
+      for (const d of shared) result.add(normalizeRuleHost(d))
     }
     // from 쪽에 걸리면 to 도 같은 계정으로 본다(반대 방향은 성립하지 않는다)
     if (from.length > 0 && hit(from)) {
-      for (const d of to) result.add(normalizeHost(d))
+      for (const d of to) result.add(normalizeRuleHost(d))
     }
   }
   return Array.from(result)
@@ -156,6 +159,7 @@ export function knownLoginUrl(host: string): string | undefined {
 }
 
 // 비밀번호 변경 페이지 URL(Apple change-password-URLs.json)
+// 참고: 현재 실제 사용처는 없고 tests/site-rules.test.ts 에서만 쓴다. 추후 "비밀번호 변경" 기능 추가 시 사용 예정으로 남겨둔다
 export function changePasswordUrl(host: string): string | undefined {
   for (const domain of hostChain(host)) {
     const url = CHANGE_PASSWORD_URLS[domain]
@@ -165,7 +169,8 @@ export function changePasswordUrl(host: string): string | undefined {
 }
 
 // 비밀번호 뒤에 2단계 인증 코드를 붙여 입력해야 하는 사이트인지(Apple 규칙)
+// 참고: 현재 실제 사용처는 없고 tests/site-rules.test.ts 에서만 쓴다. 추후 자동 로그인 2FA 처리 시 사용 예정으로 남겨둔다
 export function appendsTwoFactorToPassword(host: string): boolean {
   const chain = hostChain(host)
-  return APPENDS_2FA.some((d) => chain.includes(normalizeHost(d)))
+  return APPENDS_2FA.some((d) => chain.includes(normalizeRuleHost(d)))
 }
