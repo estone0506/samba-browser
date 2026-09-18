@@ -228,6 +228,27 @@ describe('금고 AI 도구', () => {
     assertNoSecretLeak(b, result)
   })
 
+  it('탭이 naver.com(www. 제거)이고 계정이 nid.naver.com 에 저장돼 있어도 login 이 성공한다(도메인 매칭 실검수 회귀)', async () => {
+    const naverAccount = account({
+      id: 7,
+      host: 'nid.naver.com',
+      label: '네이버',
+      username: 'naveruser',
+      isDefault: true
+    })
+    const b = build({
+      tabUrl: 'https://www.naver.com/',
+      accounts: [naverAccount]
+    })
+    pageBridge.fillValue.mockClear()
+    pageBridge.submitForm.mockClear()
+    const result = await callTool(b, 'login', {})
+
+    expect(result).toBe('submitted: check the page for success or captcha/2FA')
+    expect(b.getSecretForFill).toHaveBeenCalledWith(7, 'login_password', 'job-1')
+    assertNoSecretLeak(b, result)
+  })
+
   it('로그인 필드가 없으면 안내를 돌려준다', async () => {
     pageBridge.findLoginFields.mockResolvedValueOnce({ username: 1 })
     const b = build()

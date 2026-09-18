@@ -440,6 +440,43 @@ describe('VaultService', () => {
       expect(accounts).toHaveLength(1)
       expect(accounts[0].host).toBe('naver.com')
     })
+
+    it('CSV 로 저장된 nid.naver.com 계정은 www.naver.com 탭(도메인 매칭)에서도 조회된다(실검수 회귀)', async () => {
+      await vault.setup('master-pw')
+      vault.upsertAccount({
+        host: 'nid.naver.com',
+        label: '네이버',
+        username: 'alice',
+        isDefault: true
+      })
+
+      // 탭 호스트는 normalizeHost 를 거쳐 'naver.com' 이 된다(www. 제거)
+      const accounts = vault.listAccounts('naver.com')
+      expect(accounts).toHaveLength(1)
+      expect(accounts[0].host).toBe('nid.naver.com')
+      expect(accounts[0].username).toBe('alice')
+    })
+
+    it('정확히 일치하는 host 계정이 같은 도메인의 다른 서브도메인 계정보다 먼저 온다', async () => {
+      await vault.setup('master-pw')
+      vault.upsertAccount({
+        host: 'nid.naver.com',
+        label: '서브도메인 계정',
+        username: 'bob',
+        isDefault: false
+      })
+      vault.upsertAccount({
+        host: 'naver.com',
+        label: '정확 일치 계정',
+        username: 'alice',
+        isDefault: false
+      })
+
+      const accounts = vault.listAccounts('naver.com')
+      expect(accounts).toHaveLength(2)
+      expect(accounts[0].host).toBe('naver.com')
+      expect(accounts[1].host).toBe('nid.naver.com')
+    })
   })
 
   describe('저장된 KDF 파라미터로 unlock', () => {

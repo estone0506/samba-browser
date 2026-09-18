@@ -7,7 +7,7 @@ import { isDangerous } from '../../shared/danger'
 import type { PermissionMode, VaultAccessPolicy } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
 import type { AccountDto, VaultItemType } from '../../shared/vault'
-import { normalizeHost } from '../../shared/host'
+import { normalizeHost, registrableDomain } from '../../shared/host'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -166,11 +166,17 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
   // 현재 탭의 호스트(정규화). 탭이 없거나 정규화에 실패하면 빈 문자열
   const currentHost = (): string => normalizeHost(currentUrl())
 
-  // 현재 호스트가 제외 도메인 목록에 있는지 확인한다(양쪽 다 normalizeHost 를 거쳐 비교)
+  // 현재 호스트가 제외 도메인 목록에 있는지 확인한다. 정확 일치뿐 아니라 같은 등록 도메인
+  // (eTLD+1)이면 제외로 취급한다 — 제외 설정이 "example.com" 이어도 "login.example.com" 은
+  // 새는 서브도메인이 되면 안 된다
   const isHostExcluded = (host: string): boolean => {
     const excluded = ctx.vaultExcludedHosts ?? []
     if (excluded.length === 0 || !host) return false
-    return excluded.some((h) => (normalizeHost(h) || h) === host)
+    const hostDomain = registrableDomain(host)
+    return excluded.some((raw) => {
+      const h = normalizeHost(raw) || raw
+      return h === host || registrableDomain(h) === hostDomain
+    })
   }
 
   // 실행 가능하면 잠금 해제된 금고를, 아니면 사용자에게 보여 줄 안내 문자열을 돌려준다.
@@ -333,10 +339,14 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
         if (!target) {
           return JSON.stringify({ accounts: [], note: 'host unknown' })
         }
-        // host 인자는 현재 탭 호스트로만 제한한다 — 모델이 임의 호스트를 넣어
-        // 저장된 계정 전체를 훑는 것(열거)을 막는다
-        if (host && normalizeHost(host) !== target) {
-          return JSON.stringify({ accounts: [], note: HOST_MISMATCH })
+        // host 인자는 현재 탭 호스트(또는 같은 등록 도메인)로만 제한한다 — 모델이 임의 호스트를
+        // 넣어 저장된 계정 전체를 훑는 것(열거)을 막되, nid.naver.com 처럼 같은 사이트의
+        // 다른 서브도메인에 저장된 계정은 허용한다
+        if (host) {
+          const h = normalizeHost(host) || host
+          if (h !== target && registrableDomain(h) !== registrableDomain(target)) {
+            return JSON.stringify({ accounts: [], note: HOST_MISMATCH })
+          }
         }
         // 접근 정책 never·제외 도메인은 vaultGate 와 같은 기준으로 즉시 거부한다(계정 열거 자체를 막는다)
         const policy = ctx.vaultAccessPolicy ?? 'while_unlocked'

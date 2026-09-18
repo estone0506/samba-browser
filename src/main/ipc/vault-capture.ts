@@ -8,7 +8,7 @@
 // 어떤 경우에도 비밀번호 값 자체는 로그·반환값에 남기지 않는다.
 
 import { z } from 'zod'
-import { normalizeHost } from '../../shared/host'
+import { normalizeHost, registrableDomain } from '../../shared/host'
 import type { VaultState } from '../../shared/vault'
 
 export const captureSchema = z.object({
@@ -93,10 +93,17 @@ export class VaultCaptureGate {
     const { host: rawHost, username, password } = parsed.data
 
     // payload 의 host 는 페이지가 준 값이므로, 발신 프레임의 실제 URL 과 반드시 대조한다.
-    // 프레임 URL 을 알 수 없으면(빈 문자열) 검증할 수 없으므로 받지 않는다
+    // 프레임 URL 을 알 수 없으면(빈 문자열) 검증할 수 없으므로 받지 않는다.
+    // iframe 등으로 같은 사이트의 다른 서브도메인(예: 로그인 서브도메인)에서 캡처가 오는 경우가
+    // 있으므로, 정확 일치가 아니어도 등록 도메인(eTLD+1)이 같으면 허용한다
     const frameHost = normalizeHost(sender.frameUrl)
     const host = normalizeHost(rawHost) || rawHost
-    if (!frameHost || frameHost !== host) return 'host-mismatch'
+    if (
+      !frameHost ||
+      (frameHost !== host && registrableDomain(frameHost) !== registrableDomain(host))
+    ) {
+      return 'host-mismatch'
+    }
 
     // 제외 도메인이면 저장 제안 자체를 띄우지 않는다
     const excluded = this.deps.excludedHosts()

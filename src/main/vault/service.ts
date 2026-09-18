@@ -12,7 +12,7 @@
 
 import { timingSafeEqual } from 'node:crypto'
 import type { Db } from '../db/client'
-import { VaultRepo, type AuditRow } from './repo'
+import { VaultRepo, type AuditRow, type AccountRow } from './repo'
 import {
   randomBytes,
   deriveKey,
@@ -36,7 +36,7 @@ import type {
   VaultState
 } from '../../shared/vault'
 import type { Settings } from '../../shared/settings'
-import { normalizeHost } from '../../shared/host'
+import { normalizeHost, registrableDomain } from '../../shared/host'
 
 // electron safeStorage 중 실제로 쓰는 부분만 좁혀 둔 인터페이스(테스트에서 스텁 주입)
 export interface SafeStorageLike {
@@ -362,9 +362,9 @@ export class VaultService {
   }
 
   listAccounts(host?: string): AccountDto[] {
-    const normalizedHost = host === undefined ? undefined : normalizeHost(host)
+    const normalizedHost = host === undefined ? undefined : normalizeHost(host) || host
     const types = this.repo.itemTypesByAccount()
-    return this.repo.listAccounts(normalizedHost).map((a) => ({
+    return this.matchAccountRows(normalizedHost).map((a) => ({
       id: a.id,
       siteId: a.siteId,
       host: a.host,
@@ -373,6 +373,20 @@ export class VaultService {
       isDefault: a.isDefault,
       itemTypes: types.get(a.id) ?? []
     }))
+  }
+
+  // host 로 정확히 일치하는 계정을 우선 반환하고, 같은 등록 도메인(eTLD+1)의 계정을 이어 붙인다.
+  // 예: CSV 로 가져온 네이버 계정은 host 가 로그인 URL 기준 "nid.naver.com" 으로 저장되는데,
+  // 탭은 "www.naver.com"(→ "naver.com") 인 경우가 흔하다 — 정확 일치만으로는 0건이 나와
+  // "저장된 계정 없음" 으로 오판했다(실검수 버그).
+  private matchAccountRows(host?: string): AccountRow[] {
+    if (host === undefined) return this.repo.listAccounts()
+    const exact = this.repo.listAccounts(host)
+    const domain = registrableDomain(host)
+    const domainMatches = this.repo
+      .listAccounts()
+      .filter((a) => a.host !== host && registrableDomain(a.host) === domain)
+    return [...exact, ...domainMatches]
   }
 
   listItems(accountId: number | null): VaultItemMeta[] {
