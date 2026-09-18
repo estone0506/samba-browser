@@ -85,12 +85,14 @@ export function ItemEditor({
       username: username.trim(),
       isDefault: account?.isDefault
     })
-    if (savedAccount && value.trim()) {
+    // 값은 trim 하지 않는다 — 앞뒤 공백이 비밀값의 일부일 수 있다.
+    // "값을 비워두면 그대로 둔다"는 규칙만 빈 문자열로 판정한다
+    if (savedAccount && value !== '') {
       await putItem({
         accountId: savedAccount.id,
         type: itemType,
         label: t(`vault.itemType.${itemType}`),
-        value: value.trim()
+        value
       })
     }
     setSaving(false)
@@ -103,18 +105,25 @@ export function ItemEditor({
   const submitGlobal = async (): Promise<void> => {
     if (!label.trim()) return
     // 신규 항목은 값이 있어야 만들 수 있다. 편집 중 값을 비워두면 값은 그대로 두고
-    // (현재는 라벨/타입만 바꿀 방법이 없으므로) 아무 것도 하지 않는다
-    if (!value.trim()) return
+    // (현재는 라벨/타입만 바꿀 방법이 없으므로) 아무 것도 하지 않는다.
+    // 값 자체는 trim 하지 않는다 — 앞뒤 공백이 비밀값의 일부일 수 있다
+    if (value === '') return
     setSaving(true)
+    const nextLabel = label.trim()
+    // 편집 중이면 id 를 넘겨 그 항목을 갱신한다. 신규는 (종류, 라벨) 조합이 키라서
+    // 같은 종류('기타' 등)를 여러 개 만들어도 서로 덮어쓰지 않는다
     const ok = await putItem({
+      ...(item ? { id: item.id } : {}),
       accountId: null,
       type: itemType,
-      label: label.trim(),
-      value: value.trim()
+      label: nextLabel,
+      value
     })
     setSaving(false)
     if (ok) {
-      const saved = useVaultStore.getState().itemsByAccount.global?.find((i) => i.type === itemType)
+      const saved = useVaultStore
+        .getState()
+        .itemsByAccount.global?.find((i) => i.type === itemType && i.label === nextLabel)
       if (saved) selectGlobalItem(saved.id)
       onOpenChange(false)
     }

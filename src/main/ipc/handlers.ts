@@ -176,9 +176,13 @@ export function registerIpc(
     if (!accept || !capture) return
     try {
       const host = normalizeHost(capture.host) || capture.host
+      // 기존 계정이면 label/isDefault 를 넘기지 않는다 — 사용자가 붙여 둔 라벨과
+      // 기본 계정 지정을 자동 저장이 덮어쓰지 않게 한다
+      const existing = vault.listAccounts(host).find((a) => a.username === capture.username)
       const account = vault.upsertAccount({
+        id: existing?.id,
         host,
-        label: host,
+        ...(existing ? {} : { label: host }),
         username: capture.username
       })
       vault.putItem({

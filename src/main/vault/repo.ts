@@ -38,8 +38,10 @@ export interface AuditRow {
 export interface UpsertAccountInput {
   id?: number
   host: string
-  label: string
+  // 생략하면 기존 계정의 라벨을 그대로 둔다(신규면 username → host 순으로 대체)
+  label?: string
   username: string
+  // 생략하면 기존 계정의 기본 계정 여부를 그대로 둔다(신규면 false)
   isDefault?: boolean
   siteName?: string
   loginUrl?: string
@@ -160,7 +162,6 @@ export class VaultRepo {
   upsertAccount(input: UpsertAccountInput): AccountRow {
     const now = Date.now()
     const siteId = this.upsertSite(input.host, input.siteName, input.loginUrl)
-    const isDefault = input.isDefault ?? false
 
     // id 가 있으면 수정, 없으면 (siteId, username) 조합으로 기존 계정을 찾는다
     const existing = input.id
@@ -172,13 +173,15 @@ export class VaultRepo {
           .get() ?? null)
 
     if (existing) {
+      // label/isDefault 는 명시적으로 넘어온 경우에만 바꾼다 — 자동 저장(capture)·가져오기가
+      // 사용자가 붙여 둔 라벨과 기본 계정 지정을 지워버리지 않게 한다
       this.d
         .update(accounts)
         .set({
           siteId,
-          label: input.label,
+          label: input.label ?? existing.label,
           username: input.username,
-          isDefault,
+          isDefault: input.isDefault ?? existing.isDefault,
           updatedAt: now
         })
         .where(eq(accounts.id, existing.id))
@@ -193,9 +196,9 @@ export class VaultRepo {
       .insert(accounts)
       .values({
         siteId,
-        label: input.label,
+        label: input.label ?? input.username ?? input.host,
         username: input.username,
-        isDefault,
+        isDefault: input.isDefault ?? false,
         createdAt: now,
         updatedAt: now
       })
@@ -264,6 +267,29 @@ export class VaultRepo {
     }
   }
 
+  // 전역 항목(accountId = null)은 (type, label) 조합으로 찾는다 — 같은 type 이라도
+  // 라벨이 다르면 별개 항목이다(예: '기타' 항목 여러 개)
+  findGlobalItemRow(type: VaultItemType, label: string): VaultItemRow | null {
+    const rows = this.d
+      .select()
+      .from(vaultItems)
+      .where(
+        and(isNull(vaultItems.accountId), eq(vaultItems.type, type), eq(vaultItems.label, label))
+      )
+      .all()
+    const row = rows[0]
+    if (!row) return null
+    return {
+      id: row.id,
+      accountId: row.accountId,
+      type: row.type as VaultItemType,
+      label: row.label,
+      ciphertext: toBuffer(row.ciphertext),
+      iv: toBuffer(row.iv),
+      updatedAt: row.updatedAt
+    }
+  }
+
   findItemRow(accountId: number | null, type: VaultItemType): VaultItemRow | null {
     const rows = this.d
       .select()
@@ -315,11 +341,12 @@ export class VaultRepo {
     ciphertext: Buffer,
     iv: Buffer,
     label: string,
+    type: VaultItemType,
     updatedAt: number
   ): void {
     this.d
       .update(vaultItems)
-      .set({ ciphertext, iv, label, updatedAt })
+      .set({ ciphertext, iv, label, type, updatedAt })
       .where(eq(vaultItems.id, id))
       .run()
     this.db.scheduleSave()

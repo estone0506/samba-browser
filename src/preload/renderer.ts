@@ -21,6 +21,8 @@ import {
 
 // 항목 저장 요청. value(평문)는 렌더러 → 메인 방향으로만 흐른다
 interface PutItemInput {
+  // 편집 대상 항목 id. 주면 그 항목을 그대로 갱신한다
+  id?: number
   accountId: number | null
   type: VaultItemType
   label: string
@@ -30,7 +32,8 @@ interface PutItemInput {
 interface UpsertAccountInput {
   id?: number
   host: string
-  label: string
+  // 생략하면 메인이 기존 계정의 라벨을 유지한다
+  label?: string
   username: string
   isDefault?: boolean
   siteName?: string

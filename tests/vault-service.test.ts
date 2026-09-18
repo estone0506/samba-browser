@@ -542,4 +542,111 @@ describe('VaultService', () => {
       })
     })
   })
+  describe('계정 upsert 보존 규칙', () => {
+    it('label/isDefault 를 생략하면 기존 계정 값을 유지한다(자동 저장 회귀 테스트)', async () => {
+      await vault.setup('master-pw')
+      const created = vault.upsertAccount({
+        host: 'shop.example',
+        label: '내 쇼핑 계정',
+        username: 'alice',
+        isDefault: true
+      })
+
+      // capture 수락 경로와 동일하게 label/isDefault 없이 저장한다
+      const again = vault.upsertAccount({
+        id: created.id,
+        host: 'shop.example',
+        username: 'alice'
+      })
+
+      expect(again.id).toBe(created.id)
+      expect(again.label).toBe('내 쇼핑 계정')
+      expect(again.isDefault).toBe(true)
+    })
+
+    it('신규 계정에서 label 을 생략하면 username 을 라벨로 쓴다', async () => {
+      await vault.setup('master-pw')
+      const created = vault.upsertAccount({ host: 'shop.example', username: 'alice' })
+      expect(created.label).toBe('alice')
+      expect(created.isDefault).toBe(false)
+    })
+
+    it('label 을 명시하면 기존 계정도 갱신된다', async () => {
+      await vault.setup('master-pw')
+      const created = vault.upsertAccount({
+        host: 'shop.example',
+        label: '예전 라벨',
+        username: 'alice'
+      })
+      const renamed = vault.upsertAccount({
+        id: created.id,
+        host: 'shop.example',
+        label: '새 라벨',
+        username: 'alice'
+      })
+      expect(renamed.label).toBe('새 라벨')
+    })
+  })
+
+  describe('전역 항목 키', () => {
+    it("라벨이 다른 전역 'custom' 항목 두 개가 서로를 덮어쓰지 않는다", async () => {
+      await vault.setup('master-pw')
+      const first = vault.putItem({
+        accountId: null,
+        type: 'custom',
+        label: '와이파이 비번',
+        value: 'wifi-1234'
+      })
+      const second = vault.putItem({
+        accountId: null,
+        type: 'custom',
+        label: '금고 번호',
+        value: 'safe-5678'
+      })
+
+      expect(second.id).not.toBe(first.id)
+      expect(vault.listItems(null)).toHaveLength(2)
+      expect(vault.reveal(first.id)).toBe('wifi-1234')
+      expect(vault.reveal(second.id)).toBe('safe-5678')
+    })
+
+    it('같은 (종류, 라벨)이면 기존 전역 항목을 덮어쓴다', async () => {
+      await vault.setup('master-pw')
+      const first = vault.putItem({
+        accountId: null,
+        type: 'custom',
+        label: '와이파이 비번',
+        value: 'wifi-1234'
+      })
+      const updated = vault.putItem({
+        accountId: null,
+        type: 'custom',
+        label: '와이파이 비번',
+        value: 'wifi-9999'
+      })
+      expect(updated.id).toBe(first.id)
+      expect(vault.listItems(null)).toHaveLength(1)
+      expect(vault.reveal(first.id)).toBe('wifi-9999')
+    })
+
+    it('id 를 주면 라벨을 바꿔도 같은 항목을 갱신한다', async () => {
+      await vault.setup('master-pw')
+      const created = vault.putItem({
+        accountId: null,
+        type: 'custom',
+        label: '와이파이 비번',
+        value: 'wifi-1234'
+      })
+      const renamed = vault.putItem({
+        id: created.id,
+        accountId: null,
+        type: 'custom',
+        label: '집 와이파이',
+        value: 'wifi-1234'
+      })
+      expect(renamed.id).toBe(created.id)
+      expect(renamed.label).toBe('집 와이파이')
+      expect(vault.listItems(null)).toHaveLength(1)
+    })
+  })
 })

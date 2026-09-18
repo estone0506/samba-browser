@@ -53,6 +53,8 @@ export interface VaultServiceOptions {
 }
 
 export interface PutItemInput {
+  // 편집 대상 항목 id. 주면 그 항목을 그대로 갱신한다(라벨·종류 변경 포함)
+  id?: number
   accountId: number | null
   type: VaultItemType
   label: string
@@ -62,8 +64,10 @@ export interface PutItemInput {
 export interface UpsertAccountInput {
   id?: number
   host: string
-  label: string
+  // 생략하면 기존 계정의 라벨을 유지한다(repo.upsertAccount 참고)
+  label?: string
   username: string
+  // 생략하면 기존 계정의 기본 계정 여부를 유지한다
   isDefault?: boolean
   siteName?: string
   loginUrl?: string
@@ -398,25 +402,40 @@ export class VaultService {
     }
   }
 
-  // 같은 (accountId, type) 항목이 있으면 덮어쓰고, 없으면 새로 만든다.
+  // 기존 항목이 있으면 덮어쓰고, 없으면 새로 만든다.
+  // - input.id 를 주면 그 항목을 갱신한다(편집)
+  // - 계정 항목은 (accountId, type) 이 키다(계정당 로그인 비밀번호 1개)
+  // - 전역 항목은 (type, label) 이 키다 — 같은 종류라도 라벨이 다르면 별개 항목이다
+  //   (예전에는 type 만으로 upsert 해서 '기타' 항목 두 개가 서로를 덮어썼다)
   // 새로 만들 때는 id 를 AAD 로 쓰기 위해 placeholder insert → 암호문 update 순서를 한 트랜잭션에서 수행한다
   putItem(input: PutItemInput): VaultItemMeta {
     const key = this.requireKey()
     const now = Date.now()
 
     const meta = this.repo.transaction(() => {
-      const existing = this.repo.findItemRow(input.accountId, input.type)
+      const existing = this.findExistingItem(input)
       const id =
         existing?.id ??
         this.repo.insertItemPlaceholder(input.accountId, input.type, input.label, now)
       const blob = encrypt(key, input.value, String(id))
-      this.repo.updateItemSecret(id, blob.ciphertext, blob.iv, input.label, now)
+      this.repo.updateItemSecret(id, blob.ciphertext, blob.iv, input.label, input.type, now)
       this.repo.insertAudit({ itemId: id, action: 'save', source: 'user' })
       return this.repo.itemMeta(id)
     })
     if (!meta) throw new Error('항목을 저장하지 못했습니다')
     this.touch()
     return meta
+  }
+
+  // putItem 이 덮어쓸 기존 항목을 찾는다(없으면 null → 새 항목을 만든다)
+  private findExistingItem(input: PutItemInput): { id: number } | null {
+    if (input.id !== undefined) {
+      const row = this.repo.getItemRow(input.id)
+      if (!row) throw new Error('항목을 찾을 수 없습니다')
+      return row
+    }
+    if (input.accountId === null) return this.repo.findGlobalItemRow(input.type, input.label)
+    return this.repo.findItemRow(input.accountId, input.type)
   }
 
   deleteItem(id: number): void {

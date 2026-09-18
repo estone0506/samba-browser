@@ -14,6 +14,8 @@ import type {
 export type SelectedAccount = number | 'global' | null
 
 interface PutItemInput {
+  // 편집 대상 항목 id. 주면 그 항목을 그대로 갱신한다(라벨·종류 변경 포함)
+  id?: number
   accountId: number | null
   type: VaultItemType
   label: string
@@ -23,7 +25,8 @@ interface PutItemInput {
 interface UpsertAccountInput {
   id?: number
   host: string
-  label: string
+  // 생략하면 메인이 기존 계정의 라벨을 유지한다
+  label?: string
   username: string
   isDefault?: boolean
   siteName?: string
