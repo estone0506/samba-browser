@@ -1,12 +1,13 @@
 // 북마크 저장소 — 폴더/링크 트리를 DB 에 저장하고, 트리 DTO 로 조회한다.
 // 같은 URL 의 링크는 전체 DB 기준으로 이미 있으면 건너뛴다(폴더 위치와 무관하게 중복 제거).
 
-import { eq } from 'drizzle-orm'
+import { eq, or, isNull, type SQL } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { bookmarkFolders, bookmarks } from '../db/schema'
 import type { BookmarkFolderNode, BookmarkTree } from '../import/bookmarks-html'
 import type { BookmarkFolderDto, BookmarkLinkDto, BookmarkTreeDto } from '../../shared/import'
 import { isAllowedExternalUrl } from '../../shared/url'
+import type { WorkspaceScope } from '../../shared/sync'
 
 export interface InsertTreeResult {
   folders: number
@@ -35,13 +36,39 @@ interface BookmarkRow {
 export class BookmarkRepo {
   constructor(private readonly db: Db) {}
 
+  // 현재 작업공간. null 이면 범위 제한 없이 전부 본다(작업공간 기능이 붙기 전 동작).
+  // 폴더에는 작업공간 컬럼이 없어 링크만 걸러진다 — 폴더 구조는 작업공간끼리 공유된다
+  private scope: WorkspaceScope | null = null
+
   private get d(): Db['drizzle'] {
     return this.db.drizzle
   }
 
+  /** 활성 작업공간을 알려 준다. 이후의 조회는 이 범위로 걸러지고, 새 링크는 이 작업공간에 붙는다 */
+  setWorkspaceScope(scope: WorkspaceScope | null): void {
+    this.scope = scope
+  }
+
+  /** 새 링크에 붙일 작업공간 id */
+  private get scopeId(): number | null {
+    return this.scope ? this.scope.id : null
+  }
+
+  /**
+   * 작업공간 범위 조건. 기본 작업공간에서는 작업공간이 없던 시절의 링크(NULL)도 함께 보인다
+   */
+  private scopeWhere(): SQL | undefined {
+    if (!this.scope) return undefined
+    if (this.scope.isDefault)
+      return or(isNull(bookmarks.workspaceId), eq(bookmarks.workspaceId, this.scope.id))
+    return eq(bookmarks.workspaceId, this.scope.id)
+  }
+
   // 이미 저장된 URL 목록(전체 DB 기준) — 트리 삽입 전에 한 번만 읽어 중복 판단에 쓴다
   private existingUrls(): Set<string> {
-    const rows = this.d.select({ url: bookmarks.url }).from(bookmarks).all()
+    const where = this.scopeWhere()
+    const base = this.d.select({ url: bookmarks.url }).from(bookmarks)
+    const rows = (where ? base.where(where) : base).all()
     return new Set(rows.map((r) => r.url))
   }
 
@@ -78,7 +105,8 @@ export class BookmarkRepo {
         title,
         url,
         position,
-        addedAt: addedAt ?? null
+        addedAt: addedAt ?? null,
+        workspaceId: this.scopeId
       })
       .run()
   }
@@ -137,9 +165,9 @@ export class BookmarkRepo {
   }
 
   private bookmarkRows(): BookmarkRow[] {
-    return this.d
-      .select()
-      .from(bookmarks)
+    const where = this.scopeWhere()
+    const base = this.d.select().from(bookmarks)
+    return (where ? base.where(where) : base)
       .all()
       .map((r) => ({
         id: r.id,
@@ -223,7 +251,13 @@ export class BookmarkRepo {
       throw new Error('cannot create bookmark link: URL scheme not allowed')
     const inserted = this.d
       .insert(bookmarks)
-      .values({ folderId, title, url, position: this.nextLinkPosition(folderId) })
+      .values({
+        folderId,
+        title,
+        url,
+        position: this.nextLinkPosition(folderId),
+        workspaceId: this.scopeId
+      })
       .returning({ id: bookmarks.id })
       .all()
     this.db.scheduleSave()
