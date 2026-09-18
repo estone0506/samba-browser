@@ -22,6 +22,11 @@
   "tab": {
     "new": "New Tab"
   },
+  "newtab": {
+    "title": "New Tab",
+    "placeholder": "Search or enter URL",
+    "bookmarks": "Bookmarks"
+  },
   "chat": {
     "title": "AI",
     "placeholder": "Type an instruction…",
