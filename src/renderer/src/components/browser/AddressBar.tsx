@@ -12,6 +12,7 @@ import {
   KeyRound
 } from 'lucide-react'
 import { useBrowserStore } from '@renderer/stores/browserStore'
+import { displayUrl } from '@renderer/lib/display-url'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { cn } from '@renderer/lib/utils'
 
@@ -41,11 +42,11 @@ export function AddressBar(): React.JSX.Element {
   const { activeTab, navigate, back, forward, reload, setMobile } = useBrowserStore()
   const vaultPanelOpen = useUiStore((s) => s.vaultPanelOpen)
   const toggleVaultPanel = useUiStore((s) => s.toggleVaultPanel)
-  const [value, setValue] = useState(activeTab?.url ?? '')
+  const [value, setValue] = useState(displayUrl(activeTab?.url))
   const [syncedUrl, setSyncedUrl] = useState(activeTab?.url)
   if (activeTab?.url !== syncedUrl) {
     setSyncedUrl(activeTab?.url)
-    setValue(activeTab?.url ?? '')
+    setValue(displayUrl(activeTab?.url))
   }
 
   // === 홈 버튼 (신규 추가분) ==================================================
