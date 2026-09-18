@@ -10,3 +10,9 @@ describe('toUrl', () => {
     expect(toUrl('삼바웨이브', 'naver')).toContain('search.naver.com/search.naver?query='))
   // === 신규 추가분 끝 =========================================================
 })
+
+describe('toUrl 내부 페이지', () => {
+  it('samba://newtab 은 검색하지 않고 그대로 연다', () => {
+    expect(toUrl('samba://newtab', 'google')).toBe('samba://newtab')
+  })
+})

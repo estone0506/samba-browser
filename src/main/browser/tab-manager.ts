@@ -2,7 +2,7 @@ import { BrowserWindow, WebContentsView, session, type Session, type WebContents
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type { Layout, TabInfo } from '../../shared/ipc'
-import { BLOCKED_URL_MESSAGE, isAllowedUrl, NEW_TAB_URL } from '../../shared/url'
+import { BLOCKED_URL_MESSAGE, isAllowedUrl, isInternalUrl, NEW_TAB_URL } from '../../shared/url'
 import type { SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
 import { installDialogHandler, isAutomationActive } from './dialogs'
@@ -247,6 +247,10 @@ export class TabManager {
     wc.on('did-stop-loading', () => this.emit())
     wc.on('page-title-updated', () => this.emit())
     wc.on('did-navigate', () => this.emit())
+    // 로드 실패는 원인 파악이 어려우므로 항상 로그로 남긴다(내부 페이지·차단된 주소 진단용)
+    wc.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
+      if (isMainFrame && code !== -3) console.error(`탭 로드 실패 ${code} ${desc}: ${failedUrl}`)
+    })
     wc.on('did-navigate-in-page', () => this.emit())
     guardNavigation(wc)
     // 페이지 JS 대화상자(alert/confirm/prompt)는 작업 실행 중에만 자동으로 닫는다
@@ -349,6 +353,8 @@ export class TabManager {
 export function toUrl(input: string, engine: SearchEngine = 'google'): string {
   const s = input.trim()
   if (/^https?:\/\//i.test(s)) return s
+  // 내부 페이지 주소(samba://newtab)는 검색어가 아니라 그대로 연다
+  if (isInternalUrl(s)) return s
   if (/^[\w-]+(\.[\w-]+)+(\/.*)?$/.test(s)) return `https://${s}`
   // === 검색엔진 설정 (신규 추가분) ==========================================
   if (engine === 'naver')
