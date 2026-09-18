@@ -102,7 +102,17 @@ const STYLE = `
  * 피커를 설치한다. 로그인 입력칸에 포커스가 가면 아이콘을 띄운다.
  * 한 번만 호출한다(page.ts).
  */
-export function installAutofillPicker(deps: AutofillPickerDeps): void {
+export interface InstallPickerOptions {
+  // 테스트 전용: jsdom 의 focus()/dispatchEvent 는 isTrusted=false 이므로 합성 이벤트도 허용한다.
+  // 실제 page.ts 는 이 옵션 없이(옵션 생략 = 신뢰된 이벤트만) 호출해야 한다
+  allowUntrusted?: boolean
+}
+
+export function installAutofillPicker(
+  deps: AutofillPickerDeps,
+  options: InstallPickerOptions = {}
+): void {
+  const allowUntrusted = options.allowUntrusted === true
   let host: HTMLDivElement | null = null
   let root: ShadowRoot | null = null
   let icon: HTMLDivElement | null = null
@@ -241,9 +251,10 @@ export function installAutofillPicker(deps: AutofillPickerDeps): void {
       const el = e.target
       if (!(el instanceof Element) || !isPickerTarget(el)) return
       showIcon(el)
-      // 사용자가 직접 포커스한 경우에만 목록을 자동으로 연다 — 페이지 스크립트가
-      // el.focus() 로 합성 이벤트를 만들어 계정 목록을 훔쳐보게 두지 않는다
-      if (!menu && e.isTrusted) void renderMenu()
+      // 페이지 스크립트가 만들어 쏜 합성 이벤트로는 목록을 열지 않는다.
+      // (el.focus() 가 만드는 이벤트는 브라우저가 신뢰됨으로 표시하므로 완전한 방어는
+      //  아니지만, 목록에는 값이 없고 아이디/라벨만 있어 노출 범위는 여기까지다)
+      if (!menu && (allowUntrusted || e.isTrusted)) void renderMenu()
     },
     true
   )

@@ -36,7 +36,7 @@ export function devTarget(base: string, page: string, pathname: string, search =
 
 // 디렉터리 밖(../ 경유)으로 빠져나가는 요청은 거부한다.
 // 잘못된 퍼센트 인코딩(%ZZ 등)은 decodeURIComponent 가 던지므로 null 로 바꿔 403 을 준다
-function safeJoin(root: string, pathname: string): string | null {
+export function safeJoin(root: string, pathname: string): string | null {
   let decoded: string
   try {
     decoded = decodeURIComponent(pathname)
