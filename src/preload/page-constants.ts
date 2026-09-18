@@ -4,6 +4,7 @@
 //   - MAX_ELEMENTS      ← src/shared/snapshot.ts 의 MAX_ELEMENTS
 //   - PAGE_IPC.vaultCapture ← src/shared/ipc.ts 의 IPC.vaultCapture
 //   - PAGE_IPC.vaultPickerAccounts/vaultPickerFill ← 같은 파일의 IPC 동명 채널
+//   - PAGE_IPC.settingsGet ← 같은 파일의 IPC.settingsGet
 //
 // 왜 복제하는가:
 // page.ts 는 sandbox:true 로 주입되는 preload 라 다른 파일을 require() 할 수 없다.
@@ -21,5 +22,21 @@ export const MAX_ELEMENTS = 150
 export const PAGE_IPC = {
   vaultCapture: 'vault:capture',
   vaultPickerAccounts: 'vault:pickerAccounts',
-  vaultPickerFill: 'vault:pickerFill'
+  vaultPickerFill: 'vault:pickerFill',
+  settingsGet: 'settings:get'
+} as const
+
+// 자동 채움 피커 문구(ko/en). page.ts 는 settings.language 를 IPC 로 물어본 뒤
+// 이 표에서 골라 쓴다(격리 월드에는 i18n 모듈을 쓸 수 없어 여기 복제해 둔다)
+export const PICKER_LABELS = {
+  ko: {
+    locked: '키마스터 잠금 해제 필요',
+    empty: '이 사이트에 저장된 계정이 없어요',
+    title: '키마스터 계정'
+  },
+  en: {
+    locked: 'Unlock KeyMaster to continue',
+    empty: 'No saved accounts for this site',
+    title: 'KeyMaster accounts'
+  }
 } as const

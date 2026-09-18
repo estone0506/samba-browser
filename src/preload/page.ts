@@ -13,7 +13,8 @@
 //       relative import(./page-core 등)는 같은 엔트리에 인라인되므로 안전하다.
 // 회귀 방지 테스트: tests/preload-bundle.test.ts
 import { ipcRenderer } from 'electron'
-import { PAGE_IPC } from './page-constants'
+import { PAGE_IPC, PICKER_LABELS } from './page-constants'
+import type { IpcResult, Settings } from '../shared/ipc'
 import {
   buildSnapshot,
   textOf,
@@ -60,15 +61,18 @@ Object.assign(globalThis, { __samba: api })
 installCaptureListener((payload) => ipcRenderer.send(PAGE_IPC.vaultCapture, payload))
 
 // 페이지 내 자동 채움 피커. 계정 목록에는 값이 없고, 채우기는 메인이 수행한다.
-// 문구는 페이지 언어가 아니라 앱 언어를 따라야 하지만, 격리 월드에서는 i18n 을 쓸 수 없어
-// 한국어 기본 문구를 쓴다(2단계 범위)
-installAutofillPicker({
-  listAccounts: (host) =>
-    ipcRenderer.invoke(PAGE_IPC.vaultPickerAccounts, host) as Promise<PickerAccountsResponse>,
-  fill: (accountId) => ipcRenderer.send(PAGE_IPC.vaultPickerFill, { accountId }),
-  labels: {
-    locked: '키마스터 잠금 해제 필요',
-    empty: '이 사이트에 저장된 계정이 없어요',
-    title: '키마스터 계정'
-  }
-})
+// 문구는 페이지 언어가 아니라 앱 언어를 따라야 하므로, settings:get 으로 현재 언어를
+// 물어본 뒤 page-constants 의 ko/en 표에서 골라 쓴다(격리 월드에는 i18n 모듈을 쓸 수 없다).
+// 응답이 늦거나 실패해도 피커는 즉시 동작해야 하므로 기본은 한국어로 두고 설치한다
+void ipcRenderer
+  .invoke(PAGE_IPC.settingsGet)
+  .then((r: IpcResult<Settings>) => (r.ok && r.data.language === 'en' ? 'en' : 'ko'))
+  .catch(() => 'ko' as const)
+  .then((language: 'ko' | 'en') => {
+    installAutofillPicker({
+      listAccounts: (host) =>
+        ipcRenderer.invoke(PAGE_IPC.vaultPickerAccounts, host) as Promise<PickerAccountsResponse>,
+      fill: (accountId) => ipcRenderer.send(PAGE_IPC.vaultPickerFill, { accountId }),
+      labels: PICKER_LABELS[language]
+    })
+  })

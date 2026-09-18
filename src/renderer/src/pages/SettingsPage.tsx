@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import i18n from '@renderer/i18n'
 import { cn } from '@renderer/lib/utils'
 import { VaultSettingsPanel } from '@renderer/components/vault/VaultSettingsPanel'
+import { Switch } from '@renderer/components/ui/switch'
 import { isHttpUrl } from '@shared/url'
 import type { NewTabUrlMode, PermissionMode, SearchEngine, Settings } from '@shared/settings'
 
@@ -88,6 +89,7 @@ export function SettingsPage(): React.JSX.Element {
   const [language, setLanguage] = useState<'ko' | 'en'>('ko')
   const [model, setModel] = useState<Settings['model']>('sonnet')
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('guard')
+  const [ocrEnabled, setOcrEnabled] = useState(true)
   const [vaultSettingsOpen, setVaultSettingsOpen] = useState(false)
 
   useEffect(() => {
@@ -99,6 +101,7 @@ export function SettingsPage(): React.JSX.Element {
       setLanguage(r.data.language)
       setModel(r.data.model)
       setPermissionMode(r.data.permissionMode)
+      setOcrEnabled(r.data.ocrEnabled)
       setLoaded(true)
     })
   }, [])
@@ -133,6 +136,10 @@ export function SettingsPage(): React.JSX.Element {
   const choosePermissionMode = (v: PermissionMode): void => {
     setPermissionMode(v)
     void window.samba.settings.set({ permissionMode: v })
+  }
+  const toggleOcrEnabled = (v: boolean): void => {
+    setOcrEnabled(v)
+    void window.samba.settings.set({ ocrEnabled: v })
   }
 
   if (!loaded) return <div className="flex min-h-0 flex-1" />
@@ -231,6 +238,18 @@ export function SettingsPage(): React.JSX.Element {
               ]}
             />
           </SettingsRow>
+
+          <div className="flex items-center justify-between">
+            <span>
+              <span className="block text-[12.5px] font-medium text-[var(--text)]">
+                {t('settingsPage.ai.ocrEnabled')}
+              </span>
+              <span className="block text-[11px] text-[var(--text2)]">
+                {t('settingsPage.ai.ocrEnabledDesc')}
+              </span>
+            </span>
+            <Switch checked={ocrEnabled} onCheckedChange={toggleOcrEnabled} />
+          </div>
         </SettingsSection>
 
         {/* 키마스터 */}

@@ -400,7 +400,9 @@
       "permissionMode": "권한 모드 기본값",
       "permissionReadOnly": "읽기 전용",
       "permissionGuard": "위험 행동 확인",
-      "permissionFull": "자동"
+      "permissionFull": "자동",
+      "ocrEnabled": "로컬 OCR(이미지 글자 인식)",
+      "ocrEnabledDesc": "캡차·영수증·문자 인증 등 이미지 속 글자를 로컬 모델로 읽어요(첫 사용 시 약 18MB 다운로드)"
     },
     "vault": {
       "title": "키마스터",
