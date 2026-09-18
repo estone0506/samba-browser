@@ -342,3 +342,7 @@ const fillSecret = tool(
 - 비밀값 경로: 값이 흐르는 곳 = `vault:capture`(preload→main), `getSecretForFill`(main 내부, T11 에서 `field` 인자 추가), `fillValue` code 인자(main→격리 월드), `vault:reveal`(main→renderer, 사용자 클릭, T11 에서 `field` 인자 추가). `vault:autofill`(T11 신규, main 내부에서 findLoginFields+fillValue 만 오가고 값은 IPC 로 나가지 않음)도 동일 규칙. 그 외 채널·이벤트·로그 금지 — T3/T6/T7/T11 테스트로 단언.
 - 타입 일관성: `AccountDto.itemTypes` ↔ `list_accounts.types`; `VaultItemType`(T11 부터 6종) 공용; `VaultItemMeta.sections`(T11) 은 secret 필드 값을 포함하지 않음; IPC 채널명 `src/shared/ipc.ts` 한 곳.
 - 마이그레이션 안전성: T11 Step 2 는 트랜잭션 하나로 묶여 실패 시 v1 스키마로 폴백(크래시 금지), 기존 `ciphertext/iv` 컬럼 보존으로 되돌릴 여지 확보.
+
+#### Task 11 보강 (사용자 요구, 2026-09-18 저녁)
+- **사람이 고르는 드롭리스트**: 로그인 폼의 아이디 칸에 열쇠 아이콘 + 현재 호스트 계정 드롭다운(Shadow DOM, 격리 월드). 선택 → 메인이 채움(값은 렌더러·페이지 JS 에 노출 안 됨).
+- **AI 의 계정 순회**: 계정 a/b/c 를 비교해야 할 때(예: 계정별 구매 가능 가격) AI 가 스스로 ① `new_tab({ profile: <계정 라벨> })` 로 계정별 탭(파티션 분리 = 동시 다중 로그인) 을 열고 ② 각 탭에서 `login({ accountLabel })` → 작업 → 결과 수집, 또는 ③ 같은 탭에서 로그아웃 후 다음 계정. 프롬프트 규칙: "여러 계정 비교가 필요하면 계정별 새 탭 + login 을 사용하라". `login` 은 탭의 profile 이 계정 라벨과 같으면 그 계정을 자동 선택. 완료 기준: "네이버 계정 3개 각각 로그인해서 이름 알려줘" 가 탭 3개로 자동 수행.
