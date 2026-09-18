@@ -73,6 +73,8 @@ interface VaultStoreState {
   sort: VaultSort
   // 최근 사용(감사 로그에서 계산한 계정 id 목록, 최신순)
   recentAccountIds: number[]
+  // 펼쳐 둔 도메인 그룹 키(registrableDomain). 기본은 모두 접힘이라 비어 있다
+  expandedGroups: Set<string>
   loading: boolean
   error: string | null
   // 자동 저장 제안 카드. main 이 push 한 것을 그대로 담아둔다(비밀번호는 담기지 않음)
@@ -109,6 +111,9 @@ interface VaultStoreState {
   toggleTagFilter: (tag: string) => void
   setSort: (s: VaultSort) => void
   loadRecent: () => Promise<void>
+  toggleGroup: (key: string) => void
+  expandAllGroups: (keys: string[]) => void
+  collapseAllGroups: () => void
   // 사용자가 누르는 '자동 채우기'. 결과 문자열만 돌려받는다(값은 메인에 머문다)
   autofill: (accountId: number) => Promise<string | null>
   importPasswords: () => Promise<ImportPasswordsResult | null>
@@ -134,6 +139,7 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
   tagFilter: [],
   sort: 'name',
   recentAccountIds: [],
+  expandedGroups: new Set<string>(),
   loading: false,
   error: null,
   capture: null,
@@ -308,6 +314,19 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
     })),
 
   setSort: (sort) => set({ sort }),
+
+  // 그룹 헤더 접기/펼치기. Set 은 새 인스턴스로 갈아 끼워 리렌더를 일으킨다
+  toggleGroup: (key) =>
+    set((s) => {
+      const next = new Set(s.expandedGroups)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return { expandedGroups: next }
+    }),
+
+  expandAllGroups: (keys) => set({ expandedGroups: new Set(keys) }),
+
+  collapseAllGroups: () => set({ expandedGroups: new Set<string>() }),
 
   // 최근 사용 계정 — 감사 로그의 fill/reveal 기록에서 계정 id 를 최신순으로 뽑는다
   loadRecent: async () => {

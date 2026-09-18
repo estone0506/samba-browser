@@ -160,7 +160,10 @@
       "sortName": "Name",
       "sortRecent": "Recent",
       "sortLabel": "Sort",
-      "noSuggestions": "No account matches the current tab"
+      "noSuggestions": "No account matches the current tab",
+      "collapseAll": "Collapse all",
+      "expandAll": "Expand all",
+      "accountCount": "{{count}} accounts"
     },
     "settings": {
       "title": "KeyMaster settings",

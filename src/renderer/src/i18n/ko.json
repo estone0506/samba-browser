@@ -160,7 +160,10 @@
       "sortName": "이름순",
       "sortRecent": "최근순",
       "sortLabel": "정렬",
-      "noSuggestions": "현재 탭과 일치하는 계정이 없어요"
+      "noSuggestions": "현재 탭과 일치하는 계정이 없어요",
+      "collapseAll": "모두 접기",
+      "expandAll": "모두 펼치기",
+      "accountCount": "계정 {{count}}개"
     },
     "settings": {
       "title": "키마스터 설정",

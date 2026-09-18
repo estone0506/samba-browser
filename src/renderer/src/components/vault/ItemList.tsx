@@ -1,14 +1,23 @@
 import { useEffect, useMemo } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Search, Settings as SettingsIcon, ArrowDownAZ, Clock } from 'lucide-react'
+import {
+  Search,
+  Settings as SettingsIcon,
+  ArrowDownAZ,
+  Clock,
+  ChevronRight,
+  ChevronDown
+} from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import { useVaultStore } from '@renderer/stores/vaultStore'
 import { useBrowserStore } from '@renderer/stores/browserStore'
 import { normalizeHost } from '@shared/host'
 import { VAULT_ITEM_TYPES } from '@shared/vault'
 import type { AccountDto, VaultItemMeta, VaultItemType } from '@shared/ipc'
+import { groupByDomain, type DomainGroup } from '@renderer/lib/vault-groups'
 import { AddItemMenu } from './AddItemMenu'
+import { SiteFavicon } from './SiteFavicon'
 
 // 계정 없이도 존재할 수 있는(전역) 항목 종류
 const GLOBAL_TYPES = new Set<VaultItemType>(['card', 'note', 'identity', 'document'])
@@ -24,11 +33,13 @@ interface Props {
   onSettings: () => void
 }
 
-/** 계정·항목 목록 — 추천(현재 탭) · 최근 사용 · 필터/정렬 · 사이트별 그룹 */
+/**
+ * 계정·항목 목록 — 추천(현재 탭) · 최근 사용 · 도메인별 접이식 그룹.
+ * 기본은 모든 그룹이 접혀 있고, 사이트당 한 줄만 보인다(크롬 비밀번호 관리자와 같은 형태).
+ */
 export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Element {
   const { t } = useTranslation()
   const accounts = useVaultStore((s) => s.accounts)
-  const sites = useVaultStore((s) => s.sites)
   const itemsByAccount = useVaultStore((s) => s.itemsByAccount)
   const query = useVaultStore((s) => s.query)
   const setQuery = useVaultStore((s) => s.setQuery)
@@ -40,6 +51,10 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
   const setSort = useVaultStore((s) => s.setSort)
   const recentAccountIds = useVaultStore((s) => s.recentAccountIds)
   const loadRecent = useVaultStore((s) => s.loadRecent)
+  const expandedGroups = useVaultStore((s) => s.expandedGroups)
+  const toggleGroup = useVaultStore((s) => s.toggleGroup)
+  const expandAllGroups = useVaultStore((s) => s.expandAllGroups)
+  const collapseAllGroups = useVaultStore((s) => s.collapseAllGroups)
   const selectedAccountId = useVaultStore((s) => s.selectedAccountId)
   const selectedGlobalItemId = useVaultStore((s) => s.selectedGlobalItemId)
   const select = useVaultStore((s) => s.select)
@@ -92,72 +107,66 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
     .map((id) => visibleAccounts.find((a) => a.id === id))
     .filter((a): a is AccountDto => a !== undefined && !suggestions.includes(a))
 
-  const grouped = useMemo(() => {
-    const bySite = new Map<number, AccountDto[]>()
-    for (const a of visibleAccounts) {
-      const arr = bySite.get(a.siteId) ?? []
-      arr.push(a)
-      bySite.set(a.siteId, arr)
-    }
-    const groups = sites
-      .map((site) => ({ site, accounts: bySite.get(site.id) ?? [] }))
-      .filter((g) => g.accounts.length > 0)
-    if (sort === 'name') {
-      groups.sort((a, b) => a.site.name.localeCompare(b.site.name))
-      for (const g of groups) g.accounts.sort((x, y) => x.label.localeCompare(y.label))
-    } else {
-      // 최근순: 최근 사용 목록에 있는 계정을 가진 사이트를 앞으로 올린다
-      const rank = (id: number): number => {
-        const idx = recentAccountIds.indexOf(id)
-        return idx === -1 ? Number.MAX_SAFE_INTEGER : idx
+  const groups = useMemo(() => {
+    const list = groupByDomain(visibleAccounts)
+    if (sort === 'recent') {
+      // 최근순: 최근 사용 계정을 가진 도메인을 앞으로 올린다
+      const rank = (g: DomainGroup): number => {
+        const ranks = g.accounts.map((a) => recentAccountIds.indexOf(a.id)).filter((i) => i !== -1)
+        return ranks.length > 0 ? Math.min(...ranks) : Number.MAX_SAFE_INTEGER
       }
-      for (const g of groups) g.accounts.sort((x, y) => rank(x.id) - rank(y.id))
-      groups.sort((a, b) => rank(a.accounts[0].id) - rank(b.accounts[0].id))
+      list.sort((a, b) => rank(a) - rank(b))
     }
-    return groups
-  }, [visibleAccounts, sites, sort, recentAccountIds])
+    for (const g of list) g.accounts.sort((x, y) => x.label.localeCompare(y.label))
+    return list
+  }, [visibleAccounts, sort, recentAccountIds])
+
+  // 검색 중에는 매칭된 그룹을 모두 펼쳐 보여 준다(접혀 있어 결과가 안 보이는 일이 없도록)
+  const isExpanded = (key: string): boolean => q.length > 0 || expandedGroups.has(key)
 
   const filteredGlobalItems = globalItems.filter((i) => GLOBAL_TYPES.has(i.type) && matchItem(i))
 
-  const renderAccount = (a: AccountDto, keyPrefix: string): React.JSX.Element => {
-    const site = sites.find((s) => s.id === a.siteId)
-    return (
-      <button
-        key={`${keyPrefix}-${a.id}`}
-        type="button"
-        onClick={() => select(a.id)}
-        className={cn(
-          'flex w-full items-center gap-2.5 rounded-[10px] px-2 py-2 text-left',
-          selectedAccountId === a.id && 'bg-[rgba(0,0,0,.06)]'
-        )}
-      >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-[var(--text)] text-[13px] font-bold text-white">
-          {(site?.name ?? a.host).slice(0, 1)}
+  const accountRow = (
+    a: AccountDto,
+    keyPrefix: string,
+    options: { indent?: boolean; showHost?: boolean } = {}
+  ): React.JSX.Element => (
+    <button
+      key={`${keyPrefix}-${a.id}`}
+      type="button"
+      onClick={() => select(a.id)}
+      className={cn(
+        'flex w-full items-center gap-2.5 rounded-[10px] py-2 pr-2 text-left',
+        options.indent ? 'pl-8' : 'pl-2',
+        selectedAccountId === a.id && 'bg-[rgba(0,0,0,.06)]'
+      )}
+    >
+      <SiteFavicon host={a.host} size={options.indent ? 22 : 28} />
+      <span className="min-w-0 flex-1">
+        <b className="block truncate text-[13px] font-medium">{a.label}</b>
+        <span className="block truncate text-[11.5px] text-[var(--text3)]">
+          {options.showHost === false
+            ? maskUsername(a.username)
+            : `${a.host} · ${maskUsername(a.username)}`}
         </span>
-        <span className="min-w-0 flex-1">
-          <b className="block truncate text-[13px] font-medium">{a.label}</b>
-          <span className="block truncate text-[11.5px] text-[var(--text3)]">
-            {maskUsername(a.username)}
+      </span>
+      <span className="flex shrink-0 items-center gap-1">
+        {a.tags.slice(0, 2).map((tag) => (
+          <span
+            key={tag}
+            className="rounded-full bg-[var(--bg)] px-1.5 py-0.5 text-[10.5px] text-[var(--text2)]"
+          >
+            {tag}
           </span>
-        </span>
-        <span className="flex shrink-0 items-center gap-1">
-          {a.tags.slice(0, 2).map((tag) => (
-            <span
-              key={tag}
-              className="rounded-full bg-[var(--bg)] px-1.5 py-0.5 text-[10.5px] text-[var(--text2)]"
-            >
-              {tag}
-            </span>
-          ))}
-          {a.isDefault && (
-            <span className="rounded-full bg-[var(--bg)] px-1.5 py-0.5 text-[10.5px] text-[var(--text2)]">
-              {t('vault.list.default')}
-            </span>
-          )}
-        </span>
-      </button>
-    )
-  }
+        ))}
+        {a.isDefault && (
+          <span className="rounded-full bg-[var(--bg)] px-1.5 py-0.5 text-[10.5px] text-[var(--text2)]">
+            {t('vault.list.default')}
+          </span>
+        )}
+      </span>
+    </button>
+  )
 
   return (
     <div className="flex w-[300px] shrink-0 flex-col border-r border-black/[.05]">
@@ -200,6 +209,17 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
           </button>
           <button
             type="button"
+            onClick={() =>
+              expandedGroups.size > 0
+                ? collapseAllGroups()
+                : expandAllGroups(groups.map((g) => g.key))
+            }
+            className="h-[26px] rounded-[8px] border border-[var(--line)] px-1.5 text-[12px] text-[var(--text2)]"
+          >
+            {expandedGroups.size > 0 ? t('vault.list.collapseAll') : t('vault.list.expandAll')}
+          </button>
+          <button
+            type="button"
             onClick={onSettings}
             title={t('vault.list.settingsBtn')}
             className="ml-auto flex h-[26px] w-[26px] items-center justify-center rounded-[8px] border border-[var(--line)] text-[var(--text2)]"
@@ -234,7 +254,7 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
             <div className="px-2 pb-1 pt-2 text-[11px] font-semibold text-[var(--text3)]">
               {t('vault.list.suggestions')} · {currentHost}
             </div>
-            {suggestions.map((a) => renderAccount(a, 'sug'))}
+            {suggestions.map((a) => accountRow(a, 'sug'))}
           </div>
         )}
         {recent.length > 0 && (
@@ -242,18 +262,40 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
             <div className="px-2 pb-1 pt-3 text-[11px] font-semibold text-[var(--text3)]">
               {t('vault.list.recent')}
             </div>
-            {recent.map((a) => renderAccount(a, 'recent'))}
+            {recent.map((a) => accountRow(a, 'recent'))}
           </div>
         )}
-        {grouped.map(({ site, accounts: siteAccounts }) => (
-          <div key={site.id}>
-            <div className="flex justify-between px-2 pb-1 pt-3 text-[11px] font-semibold text-[var(--text3)]">
-              <span>{site.name}</span>
-              <span>{siteAccounts.length}</span>
+        {groups.map((group) => {
+          const expanded = isExpanded(group.key)
+          const only = group.accounts.length === 1 ? group.accounts[0] : null
+          return (
+            <div key={group.key}>
+              <button
+                type="button"
+                onClick={() => toggleGroup(group.key)}
+                aria-expanded={expanded}
+                className="flex w-full items-center gap-2.5 rounded-[10px] px-2 py-2 text-left hover:bg-black/[.03]"
+              >
+                <SiteFavicon host={group.key} />
+                <span className="min-w-0 flex-1">
+                  <b className="block truncate text-[13px] font-medium">{group.key}</b>
+                  <span className="block truncate text-[11.5px] text-[var(--text3)]">
+                    {only
+                      ? maskUsername(only.username)
+                      : t('vault.list.accountCount', { count: group.accounts.length })}
+                  </span>
+                </span>
+                {expanded ? (
+                  <ChevronDown className="h-4 w-4 shrink-0 text-[var(--text3)]" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 shrink-0 text-[var(--text3)]" />
+                )}
+              </button>
+              {expanded &&
+                group.accounts.map((a) => accountRow(a, `g-${group.key}`, { indent: true }))}
             </div>
-            {siteAccounts.map((a) => renderAccount(a, 'site'))}
-          </div>
-        ))}
+          )
+        })}
         {filteredGlobalItems.length > 0 && (
           <div>
             <div className="px-2 pb-1 pt-3 text-[11px] font-semibold text-[var(--text3)]">
@@ -271,7 +313,7 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
                     'bg-[rgba(0,0,0,.06)]'
                 )}
               >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-[var(--bg)] text-[13px] font-bold text-[var(--text2)]">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--bg)] text-[12px] font-bold text-[var(--text2)]">
                   {i.label.slice(0, 1)}
                 </span>
                 <span className="min-w-0">
@@ -284,7 +326,7 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
             ))}
           </div>
         )}
-        {grouped.length === 0 && filteredGlobalItems.length === 0 && (
+        {groups.length === 0 && filteredGlobalItems.length === 0 && (
           <p className="px-2 py-6 text-center text-[12px] text-[var(--text3)]">
             {t('vault.list.empty')}
           </p>
