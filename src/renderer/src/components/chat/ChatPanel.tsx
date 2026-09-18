@@ -6,6 +6,7 @@ import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
 import { ConfirmCard } from './ConfirmCard'
 import { AuthBanner } from './AuthBanner'
+import { CapturePrompt } from '@renderer/components/vault/CapturePrompt'
 
 export function ChatPanel(): React.JSX.Element {
   const { t } = useTranslation()
@@ -21,6 +22,8 @@ export function ChatPanel(): React.JSX.Element {
         </span>
       </div>
       <AuthBanner />
+      {/* 자동 저장 제안 카드는 메시지 목록 맨 위에 고정한다 */}
+      <CapturePrompt />
       <MessageList />
       <ConfirmCard />
       <ChatInput />

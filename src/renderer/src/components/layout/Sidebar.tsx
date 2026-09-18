@@ -4,6 +4,7 @@ import { Globe, ListChecks, Repeat, KeyRound, Smartphone, ScrollText, Settings }
 import { cn } from '@renderer/lib/utils'
 import logo from '@renderer/assets/logo.png'
 import { useUiStore, type MainView } from '@renderer/stores/uiStore'
+import { BookmarkTree } from './BookmarkTree'
 
 // 사이드바 항목 중 아직 뷰가 없는 항목(작업·자동화·폰·로그)은 클릭해도 아무 일도 하지 않는다
 const ITEMS = [
@@ -21,7 +22,7 @@ export function Sidebar({ width }: { width: number }): React.JSX.Element {
   return (
     <aside
       style={{ width }}
-      className="flex shrink-0 flex-col border-r border-[var(--line)] bg-[#f6f6f8]/90 p-2.5 pt-10 backdrop-blur"
+      className="flex min-h-0 shrink-0 flex-col border-r border-[var(--line)] bg-[#f6f6f8]/90 p-2.5 pt-10 backdrop-blur"
     >
       <div className="flex items-center gap-2 px-2 pb-3 text-[14px] font-semibold">
         <img src={logo} alt="" className="h-[22px] w-[22px] rounded-[7px]" />
@@ -46,6 +47,8 @@ export function Sidebar({ width }: { width: number }): React.JSX.Element {
       <div className="px-2 pb-1.5 pt-3 text-[11px] font-semibold text-[var(--text3)]">
         {t('sidebar.chats')}
       </div>
+      {/* 북마크 섹션만 스크롤되어야 아래 설정 푸터가 항상 보인다 */}
+      <BookmarkTree />
       <div className="mt-auto flex items-center gap-2 border-t border-black/5 px-2 pt-2 text-[var(--text2)]">
         <Settings className="h-4 w-4" />
         {t('sidebar.settings')}
