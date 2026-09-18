@@ -4,6 +4,7 @@ import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js'
 import { drizzle, type SQLJsDatabase as DrizzleSqlJsDatabase } from 'drizzle-orm/sql-js'
 import * as schema from './schema'
 import { runMigrations } from './migrate'
+import { migrateVaultV2 } from './migrate-vault-v2'
 
 export interface Db {
   drizzle: DrizzleSqlJsDatabase<typeof schema>
@@ -36,6 +37,9 @@ export async function openDatabase(filePath: string): Promise<Db> {
     : new SQL.Database()
 
   runMigrations(raw)
+  // 금고 v1 → v2 데이터 변환(1회). 실패해도 앱은 계속 뜬다(기능 저하, 크래시 금지)
+  const vaultV2 = migrateVaultV2(raw)
+  if (!vaultV2.ok) console.error('금고 v2 마이그레이션 실패', vaultV2.error)
 
   const db = drizzle(raw, { schema })
 

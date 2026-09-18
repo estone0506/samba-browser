@@ -35,5 +35,17 @@ export const migrations: Migration[] = [
     tag: '0003_bouncy_quasar',
     sql: ['ALTER TABLE `bookmark_folders` ADD `add_date` integer;'],
     aliases: ['0003_add_bookmark_folder_add_date']
+  },
+  {
+    // 금고 v2 — 계정 다중 URL·항목별 AI 접근 정책·태그, 항목의 섹션>필드 JSON.
+    // 컬럼만 추가하고, 기존 데이터 변환은 migrate-vault-v2.ts 가 따로 수행한다
+    tag: '0004_mixed_skin',
+    sql: [
+      'ALTER TABLE `accounts` ADD `urls` text;',
+      "ALTER TABLE `accounts` ADD `agent_access` text DEFAULT 'inherit' NOT NULL;",
+      'ALTER TABLE `accounts` ADD `tags` text;',
+      'ALTER TABLE `vault_items` ADD `fields` text;'
+    ],
+    aliases: ['0004_vault_v2']
   }
 ]

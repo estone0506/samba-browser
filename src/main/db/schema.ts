@@ -18,6 +18,12 @@ export const accounts = sqliteTable('accounts', {
   username: text('username').notNull(),
   isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
   pausedUntil: integer('paused_until'),
+  // 계정당 여러 로그인 URL(JSON string[]). 옛 sites.login_url 이 여기로 이월된다
+  urls: text('urls'),
+  // 항목별 AI 접근 정책. 'inherit' 면 전역 설정을 따른다
+  agentAccess: text('agent_access').notNull().default('inherit'),
+  // 사용자 태그(JSON string[])
+  tags: text('tags'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull()
 })
@@ -27,6 +33,9 @@ export const vaultItems = sqliteTable('vault_items', {
   accountId: integer('account_id').references(() => accounts.id, { onDelete: 'cascade' }),
   type: text('type').notNull(),
   label: text('label').notNull(),
+  // 섹션>필드 구조(JSON). secret 필드는 {ciphertext,iv} 를 base64 로 같은 JSON 안에 담고,
+  // 그 외 필드는 평문 value 를 담는다. 아래 ciphertext/iv 컬럼은 v1 롤백 여유로 남겨 둔 잔재다
+  fields: text('fields'),
   ciphertext: blob('ciphertext', { mode: 'buffer' }).notNull(),
   iv: blob('iv', { mode: 'buffer' }).notNull(),
   updatedAt: integer('updated_at').notNull()

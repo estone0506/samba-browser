@@ -2,16 +2,80 @@
 // 여기 정의된 어떤 타입에도 비밀값(평문) 필드는 존재하지 않는다.
 // 평문은 오직 vault:reveal 응답(string)으로만 렌더러에 전달된다.
 
-export type VaultItemType =
-  | 'login_password'
-  | 'payment_password'
-  | 'card'
-  | 'passport'
-  | 'id_card'
-  | 'birth_date'
-  | 'address'
-  | 'phone'
-  | 'custom'
+// 2단계 Task 11 에서 9종 → 6종으로 재편했다.
+// 옛 종류는 migrate-vault-v2 가 LEGACY_TYPE_MAP 으로 변환한다
+export type VaultItemType = 'login' | 'password' | 'card' | 'note' | 'identity' | 'document'
+
+export const VAULT_ITEM_TYPES: readonly VaultItemType[] = [
+  'login',
+  'password',
+  'card',
+  'note',
+  'identity',
+  'document'
+]
+
+// 옛 9종 → 새 6종 매핑표(마이그레이션·하위 호환 입력 정규화에 함께 쓴다)
+export const LEGACY_TYPE_MAP: Record<string, VaultItemType> = {
+  login_password: 'login',
+  payment_password: 'password',
+  card: 'card',
+  passport: 'identity',
+  id_card: 'identity',
+  birth_date: 'identity',
+  address: 'identity',
+  phone: 'identity',
+  custom: 'note'
+}
+
+/** 옛 종류 문자열이 들어와도 6종 중 하나로 정규화한다. 모르는 값은 'note' */
+export function normalizeItemType(raw: string): VaultItemType {
+  if ((VAULT_ITEM_TYPES as readonly string[]).includes(raw)) return raw as VaultItemType
+  return LEGACY_TYPE_MAP[raw] ?? 'note'
+}
+
+export type FieldKind = 'text' | 'secret' | 'url' | 'date' | 'select'
+
+export interface VaultField {
+  // 'card.number' 처럼 점으로 구분한다 — fill_secret 의 field 인자와 같은 문자열이다
+  key: string
+  label: string
+  kind: FieldKind
+  // kind !== 'secret' 일 때만 평문이 내려간다. secret 필드는 항상 value 가 없다
+  value?: string
+}
+
+export interface VaultSection {
+  key: string
+  label: string
+  fields: VaultField[]
+}
+
+// 목록/상세 메타 — secret 필드는 value 를 절대 포함하지 않는다(reveal 로만 본다)
+export interface VaultItemMeta {
+  id: number
+  accountId: number | null
+  type: VaultItemType
+  label: string
+  sections: VaultSection[]
+  updatedAt: number
+}
+
+// 항목별 AI 접근 정책. 'inherit' 는 전역 설정(vaultAccessPolicy)을 따른다
+export type AgentAccess = 'inherit' | 'always' | 'while_unlocked' | 'never'
+
+export const AGENT_ACCESS_VALUES: readonly AgentAccess[] = [
+  'inherit',
+  'always',
+  'while_unlocked',
+  'never'
+]
+
+/** DB 문자열이 무엇이든 4값 중 하나로 맞춘다(기본 'inherit') */
+export function normalizeAgentAccess(raw: string | null | undefined): AgentAccess {
+  if (raw && (AGENT_ACCESS_VALUES as readonly string[]).includes(raw)) return raw as AgentAccess
+  return 'inherit'
+}
 
 export interface SiteDto {
   id: number
@@ -28,15 +92,18 @@ export interface AccountDto {
   username: string
   isDefault: boolean
   itemTypes: VaultItemType[]
+  // 계정당 여러 URL(옛 sites.loginUrl 이월분 포함)
+  urls: string[]
+  agentAccess: AgentAccess
+  tags: string[]
 }
 
-// 목록·상세에 쓰는 항목 메타. 값(ciphertext/iv/평문)은 포함하지 않는다
-export interface VaultItemMeta {
+// 페이지 내 자동 채움 피커가 쓰는 최소 정보. 값(비밀번호)은 절대 담기지 않는다.
+// username 은 사용자 본인 화면에만 그려지므로 마스킹하지 않는다
+export interface PickerAccountDto {
   id: number
-  accountId: number | null
-  type: VaultItemType
   label: string
-  updatedAt: number
+  username: string
 }
 
 export type VaultState = 'uninitialized' | 'locked' | 'unlocked'
