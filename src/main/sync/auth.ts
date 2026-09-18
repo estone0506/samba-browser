@@ -112,6 +112,15 @@ export class AuthService {
     return this.state()
   }
 
+  /**
+   * 기기 등록이 끝나면 동기화 연결부(sync/connect.ts)가 채운다.
+   * 로그아웃 상태에서는 언제나 null 이다
+   */
+  setDeviceId(deviceId: string | null): void {
+    if (this.current.deviceId === deviceId) return
+    this.next({ ...this.current, deviceId })
+  }
+
   /** 401(토큰 만료·기기 원격 로그아웃) 감지 시 sync 엔진이 부른다 */
   markExpired(): void {
     this.cancelPending()

@@ -76,6 +76,11 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
       if (error) raise(error.message)
       return (data ?? []) as RemoteRow[]
     },
+    async selectAll(table) {
+      const { data, error } = await client.from(table).select('*')
+      if (error) raise(error.message)
+      return (data ?? []) as RemoteRow[]
+    },
     async upsert(table, rows) {
       if (rows.length === 0) return
       const { error } = await client.from(table).upsert(rows)
