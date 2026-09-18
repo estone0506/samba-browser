@@ -261,5 +261,37 @@
         "bookmarksSupports": "Netscape format auto-detected"
       }
     }
+  },
+  "settingsPage": {
+    "title": "Settings",
+    "browser": {
+      "title": "Browser",
+      "homeUrl": "Home address",
+      "homeUrlError": "Only http:// or https:// addresses are allowed",
+      "save": "Save",
+      "newTabUrl": "New tab address",
+      "newTabUrlHome": "Same as home",
+      "newTabUrlBlank": "Blank page",
+      "searchEngine": "Default search engine",
+      "searchEngineGoogle": "Google",
+      "searchEngineNaver": "Naver",
+      "language": "Language",
+      "languageKo": "한국어",
+      "languageEn": "English"
+    },
+    "ai": {
+      "title": "AI",
+      "model": "Model",
+      "permissionMode": "Default permission mode",
+      "permissionReadOnly": "Read only",
+      "permissionGuard": "Confirm risky actions",
+      "permissionFull": "Automatic"
+    },
+    "vault": {
+      "title": "KeyMaster",
+      "description": "KeyMaster save/lock policy",
+      "descriptionDetail": "Configure auto-lock, AI access policy, auto-submit, and more",
+      "open": "Open KeyMaster settings"
+    }
   }
 }

@@ -261,5 +261,37 @@
         "bookmarksSupports": "Netscape 형식 자동 인식"
       }
     }
+  },
+  "settingsPage": {
+    "title": "설정",
+    "browser": {
+      "title": "브라우저",
+      "homeUrl": "홈 주소",
+      "homeUrlError": "http:// 또는 https:// 로 시작하는 주소만 가능해요",
+      "save": "저장",
+      "newTabUrl": "새 탭 주소",
+      "newTabUrlHome": "홈과 동일",
+      "newTabUrlBlank": "빈 페이지",
+      "searchEngine": "기본 검색엔진",
+      "searchEngineGoogle": "구글",
+      "searchEngineNaver": "네이버",
+      "language": "언어",
+      "languageKo": "한국어",
+      "languageEn": "English"
+    },
+    "ai": {
+      "title": "AI",
+      "model": "모델",
+      "permissionMode": "권한 모드 기본값",
+      "permissionReadOnly": "읽기 전용",
+      "permissionGuard": "위험 행동 확인",
+      "permissionFull": "자동"
+    },
+    "vault": {
+      "title": "키마스터",
+      "description": "키마스터 저장/잠금 정책",
+      "descriptionDetail": "자동 잠금·AI 접근 정책·자동 제출 등을 설정해요",
+      "open": "키마스터 설정 열기"
+    }
   }
 }
