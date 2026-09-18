@@ -15,6 +15,7 @@ import { autofillAccount, type AutofillDeps } from '../vault/autofill'
 import { assertFromRenderer, isFromRenderer, settingsForSender } from './sender'
 import { normalizeHost } from '../../shared/host'
 import { isAllowedExternalUrl, isInternalUrl } from '../../shared/url'
+import { SyncEngineHolder } from '../sync/engine'
 import { toolbarBookmarks } from '../bookmarks/newtab'
 import type { NewTabInitDto } from '../../shared/newtab'
 
@@ -33,8 +34,16 @@ export function registerIpc(
   win: BrowserWindow,
   tabs: TabManager,
   db: Db
-): { settings: SettingsStore; agent: AgentRunner; db: Db; vault: VaultService } {
+): {
+  settings: SettingsStore
+  agent: AgentRunner
+  db: Db
+  vault: VaultService
+  sync: SyncEngineHolder
+} {
   const settings = new SettingsStore()
+  // 동기화 엔진이 붙을 자리. 로그인 전에도 IPC 가 상태를 답할 수 있게 한다
+  const sync = new SyncEngineHolder()
   // === 홈 버튼 / 설정 페이지 (신규 추가분) ===================================
   // newTabUrl(홈과 동일/빈 페이지) + homeUrl 을 조합해 tab-manager 가 쓸 최종
   // 기본 주소를 계산한다. tab-manager 는 이 enum 을 몰라도 되게 분리했다
@@ -117,6 +126,8 @@ export function registerIpc(
     ipcMain.removeAllListeners(IPC.vaultCaptureDecision)
     ipcMain.removeAllListeners(IPC.vaultCapture)
     ipcMain.removeAllListeners(IPC.vaultUndoPasswordUpdate)
+    sync.current()?.stop()
+    sync.release()
     vault.dispose()
   })
 
@@ -380,5 +391,12 @@ export function registerIpc(
   })
   // === 자체 새 탭 페이지 끝 =============================================================
 
-  return { settings, agent, db, vault }
+  // === 동기화(2b) ======================================================================
+  // 엔진은 로그인 이후에 만들어져 holder 에 붙는다. 붙기 전에는 오프라인 상태를 답한다
+  handleFromRenderer(IPC.syncStatus, () => sync.status())
+  handleFromRenderer(IPC.syncNow, () => sync.syncNow())
+  sync.onStatusChanged((status) => send(IPC.syncStatusChanged, status))
+  // === 동기화 끝 =======================================================================
+
+  return { settings, agent, db, vault, sync }
 }

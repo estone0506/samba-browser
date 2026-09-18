@@ -19,7 +19,8 @@ import {
   type AuditLogDto,
   type ImportPasswordsResult,
   type ImportBookmarksResult,
-  type BookmarkTreeDto
+  type BookmarkTreeDto,
+  type SyncStatus
 } from '../shared/ipc'
 
 // 북마크 관리자 페이지용 요청 입력 타입
@@ -203,6 +204,16 @@ const api = {
   favicon: {
     get: (host: string): Promise<IpcResult<{ dataUrl: string | null }>> =>
       invoke(IPC.faviconGet, host)
+  },
+  // 동기화 — 상태 표시줄용. 토큰·비밀값은 오지 않는다
+  sync: {
+    status: (): Promise<IpcResult<SyncStatus>> => invoke(IPC.syncStatus),
+    now: (): Promise<IpcResult<SyncStatus>> => invoke(IPC.syncNow),
+    onStatusChanged: (cb: (status: SyncStatus) => void): (() => void) => {
+      const h = (_: unknown, status: SyncStatus): void => cb(status)
+      ipcRenderer.on(IPC.syncStatusChanged, h)
+      return () => ipcRenderer.off(IPC.syncStatusChanged, h)
+    }
   }
 }
 

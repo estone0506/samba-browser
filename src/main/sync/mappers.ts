@@ -6,6 +6,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { decrypt, encrypt } from '../vault/crypto'
+import { aadFor, isSecretField, parseFields, serializeFields } from '../vault/fields'
 import type { RemoteKeyedRow, RemoteRow } from './backend'
 
 export interface MapCtx {
@@ -124,7 +125,7 @@ export interface VaultItemSyncRow {
 export function vaultItemToRemote(row: VaultItemSyncRow, ctx: MapCtx & { key: Buffer }): RemoteRow {
   const id = row.remoteId ?? randomUUID()
   const aad = vaultSyncAad(id)
-  const sealed = encrypt(ctx.key, row.fieldsJson, aad)
+  const sealed = encrypt(ctx.key, stampFieldAads(row.fieldsJson, row.id), aad)
   return {
     id,
     user_id: ctx.userId,
@@ -162,6 +163,26 @@ export function vaultItemFromRemote(
     updatedAt: fromIso(row.updated_at),
     deletedAt: fromIsoOrNull(row.deleted_at)
   }
+}
+
+/**
+ * 필드별 암호문의 AAD 를 fields JSON 안에 명시적으로 적어 둔다.
+ *
+ * 필드 암호문의 기본 AAD 는 `${로컬 항목 id}:${필드 키}` 인데, 다른 PC 에서는 같은 항목이
+ * 다른 로컬 id 를 받는다. 그대로 올리면 받는 쪽에서 복호화가 실패한다.
+ * 재암호화 없이 AAD 만 적어 두면(fields.aadFor 가 저장된 값을 우선한다) id 가 바뀌어도 열린다
+ */
+function stampFieldAads(fieldsJson: string, itemId: number): string {
+  const sections = parseFields(fieldsJson)
+  if (sections.length === 0) return fieldsJson
+  return serializeFields(
+    sections.map((section) => ({
+      ...section,
+      fields: section.fields.map((field) =>
+        isSecretField(field) ? { ...field, aad: aadFor(itemId, field) } : field
+      )
+    }))
+  )
 }
 
 // --- 북마크 -----------------------------------------------------------------

@@ -29,6 +29,11 @@ import { settingUpdatedAtKey, type OutboxRow, type SyncOutbox } from './outbox'
 export interface SettingsAccess {
   get: () => Settings
   set: (patch: Partial<Settings>) => Settings
+  /**
+   * 원격에서 받은 값을 적용할 때 쓴다. 변경 로그를 남기지 않아 되돌아가는 전송(에코)이 없다.
+   * 없으면 set 을 쓴다(테스트용 최소 스텁 호환)
+   */
+  setFromSync?: (patch: Partial<Settings>) => Settings
 }
 
 /** 금고에서 동기화가 필요로 하는 부분만. VaultService 가 그대로 만족한다 */
