@@ -39,7 +39,8 @@ export const bookmarkFolders = sqliteTable('bookmark_folders', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   parentId: integer('parent_id'),
   name: text('name').notNull(),
-  position: integer('position').notNull().default(0)
+  position: integer('position').notNull().default(0),
+  isToolbar: integer('is_toolbar').notNull().default(0)
 })
 export const bookmarks = sqliteTable('bookmarks', {
   id: integer('id').primaryKey({ autoIncrement: true }),

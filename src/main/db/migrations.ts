@@ -17,5 +17,9 @@ export const migrations: Migration[] = [
       'CREATE TABLE `vault_items` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`account_id` integer,\n\t`type` text NOT NULL,\n\t`label` text NOT NULL,\n\t`ciphertext` blob NOT NULL,\n\t`iv` blob NOT NULL,\n\t`updated_at` integer NOT NULL,\n\tFOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE cascade\n);',
       'CREATE TABLE `vault_meta` (\n\t`key` text PRIMARY KEY NOT NULL,\n\t`value` blob NOT NULL\n);'
     ]
+  },
+  {
+    tag: '0001_foamy_puma',
+    sql: ['ALTER TABLE `bookmark_folders` ADD `is_toolbar` integer DEFAULT 0 NOT NULL;']
   }
 ]

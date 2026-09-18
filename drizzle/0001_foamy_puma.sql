@@ -1,0 +1,1 @@
+ALTER TABLE `bookmark_folders` ADD `is_toolbar` integer DEFAULT 0 NOT NULL;

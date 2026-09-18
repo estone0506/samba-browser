@@ -8,6 +8,13 @@
       "when": 1789711520242,
       "tag": "0000_lying_smiling_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789714044318,
+      "tag": "0001_foamy_puma",
+      "breakpoints": true
     }
   ]
 }
