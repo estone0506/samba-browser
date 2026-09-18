@@ -123,6 +123,7 @@ export function BookmarkTree(): React.JSX.Element {
   const tree = useBookmarkStore((s) => s.tree)
   const loading = useBookmarkStore((s) => s.loading)
   const load = useBookmarkStore((s) => s.load)
+  const setView = useUiStore((s) => s.setView)
 
   useEffect(() => {
     void load()
@@ -136,8 +137,15 @@ export function BookmarkTree(): React.JSX.Element {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="px-2 pb-1.5 pt-3 text-[11px] font-semibold text-[var(--text3)]">
-        {t('bookmark.title')}
+      <div className="flex items-center justify-between px-2 pb-1.5 pt-3">
+        <span className="text-[11px] font-semibold text-[var(--text3)]">{t('bookmark.title')}</span>
+        <button
+          type="button"
+          onClick={() => setView('bookmarks')}
+          className="text-[11px] font-medium text-[var(--text3)] hover:text-[var(--text)] hover:underline"
+        >
+          {t('bookmark.manage')}
+        </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         {!loading && isEmpty && (

@@ -40,7 +40,15 @@ export const IPC = {
   importPasswords: 'import:passwords',
   importBookmarks: 'import:bookmarks',
   bookmarksTree: 'bookmarks:tree',
-  bookmarksRemove: 'bookmarks:remove'
+  bookmarksRemove: 'bookmarks:remove',
+  // --- 북마크 관리자 페이지 (신규 추가분) -----------------------------------
+  bookmarksCreateFolder: 'bookmarks:createFolder',
+  bookmarksCreateLink: 'bookmarks:createLink',
+  bookmarksRename: 'bookmarks:rename',
+  bookmarksMove: 'bookmarks:move',
+  bookmarksRemoveFolder: 'bookmarks:removeFolder',
+  bookmarksSort: 'bookmarks:sort',
+  bookmarksExport: 'bookmarks:export'
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }

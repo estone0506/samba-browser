@@ -25,5 +25,9 @@ export const migrations: Migration[] = [
   {
     tag: '0002_fat_ender_wiggin',
     sql: ['ALTER TABLE `audit_log` ADD `account_id` integer;']
+  },
+  {
+    tag: '0003_add_bookmark_folder_add_date',
+    sql: ['ALTER TABLE `bookmark_folders` ADD `add_date` integer;']
   }
 ]

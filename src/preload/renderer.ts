@@ -19,6 +19,13 @@ import {
   type BookmarkTreeDto
 } from '../shared/ipc'
 
+// 북마크 관리자 페이지용 요청 입력 타입
+interface BookmarkMoveInput {
+  id: number
+  kind: 'folder' | 'link'
+  toFolderId: number | null
+}
+
 // 항목 저장 요청. value(평문)는 렌더러 → 메인 방향으로만 흐른다
 interface PutItemInput {
   // 편집 대상 항목 id. 주면 그 항목을 그대로 갱신한다
@@ -132,7 +139,18 @@ const api = {
   },
   bookmarks: {
     tree: (): Promise<IpcResult<BookmarkTreeDto>> => invoke(IPC.bookmarksTree),
-    remove: (id: number): Promise<IpcResult<void>> => invoke(IPC.bookmarksRemove, id)
+    remove: (id: number): Promise<IpcResult<void>> => invoke(IPC.bookmarksRemove, id),
+    createFolder: (parentId: number | null, name: string): Promise<IpcResult<number>> =>
+      invoke(IPC.bookmarksCreateFolder, { parentId, name }),
+    createLink: (folderId: number | null, title: string, url: string): Promise<IpcResult<number>> =>
+      invoke(IPC.bookmarksCreateLink, { folderId, title, url }),
+    rename: (id: number, kind: 'folder' | 'link', name: string): Promise<IpcResult<void>> =>
+      invoke(IPC.bookmarksRename, { id, kind, name }),
+    move: (input: BookmarkMoveInput): Promise<IpcResult<void>> => invoke(IPC.bookmarksMove, input),
+    removeFolder: (id: number): Promise<IpcResult<void>> => invoke(IPC.bookmarksRemoveFolder, id),
+    sort: (folderId: number | null): Promise<IpcResult<void>> =>
+      invoke(IPC.bookmarksSort, { folderId, by: 'name' }),
+    export: (): Promise<IpcResult<string | undefined>> => invoke(IPC.bookmarksExport)
   }
 }
 

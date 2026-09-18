@@ -75,7 +75,48 @@
     "toolbar": "Bookmarks Bar",
     "empty": "Empty",
     "delete": "Delete",
-    "emptyAll": "No bookmarks saved yet"
+    "emptyAll": "No bookmarks saved yet",
+    "manage": "Manage"
+  },
+  "bookmarksPage": {
+    "title": "Bookmarks",
+    "searchPlaceholder": "Search title or URL",
+    "toolbarFolder": "Bookmarks Bar",
+    "otherFolder": "Other Bookmarks",
+    "empty": "This folder is empty",
+    "noSearchResults": "No results found",
+    "root": "Root",
+    "url": "URL",
+    "menu": {
+      "open": "Open in new tab",
+      "rename": "Rename",
+      "move": "Move",
+      "delete": "Delete"
+    },
+    "topMenu": {
+      "sortByName": "Sort by name",
+      "addBookmark": "Add bookmark",
+      "addFolder": "Add folder",
+      "import": "Import bookmarks",
+      "export": "Export bookmarks"
+    },
+    "dialog": {
+      "addBookmarkTitle": "New bookmark",
+      "addFolderTitle": "New folder",
+      "renameTitle": "Rename",
+      "moveTitle": "Choose a folder to move to",
+      "titleLabel": "Title",
+      "urlLabel": "URL",
+      "nameLabel": "Name",
+      "cancel": "Cancel",
+      "save": "Save",
+      "add": "Add",
+      "move": "Move"
+    },
+    "deleteFolderConfirm": "Delete the folder \"{{name}}\" and everything inside it?",
+    "exportSuccess": "Export complete",
+    "exportFailed": "Export failed",
+    "importSuccess": "Import complete"
   },
   "vault": {
     "setup": {

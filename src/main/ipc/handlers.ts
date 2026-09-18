@@ -48,6 +48,14 @@ export function registerIpc(
     }
   }
   const importService = new ImportService(db, vault, importDialogs)
+  // === 북마크 관리자 페이지 (신규 추가분) — 내보내기용 저장 다이얼로그를 나중에 덧붙인다 ===
+  // (importDialogs 리터럴 자체는 건드리지 않고, 참조가 같은 객체에 속성만 추가한다)
+  importDialogs.showSaveDialog = async (filters, defaultPath) => {
+    const result = await dialog.showSaveDialog(win, { filters, defaultPath })
+    if (result.canceled || !result.filePath) return undefined
+    return result.filePath
+  }
+  // === 북마크 관리자 페이지 끝 ===========================================================
 
   tabs.onChange((list) => send(IPC.tabUpdated, list))
 
@@ -186,6 +194,34 @@ export function registerIpc(
   ipcMain.handle(IPC.bookmarksRemove, (_, id: number) =>
     wrap(() => importService.removeBookmark(id))
   )
+
+  // === 북마크 관리자 페이지 (신규 추가분 — 병합 편의를 위해 이 블록만 별도로 추가) =========
+  ipcMain.handle(IPC.bookmarksCreateFolder, (_, o: { parentId: number | null; name: string }) =>
+    wrap(() => importService.createBookmarkFolder(o.parentId, o.name))
+  )
+  ipcMain.handle(
+    IPC.bookmarksCreateLink,
+    (_, o: { folderId: number | null; title: string; url: string }) =>
+      wrap(() => importService.createBookmarkLink(o.folderId, o.title, o.url))
+  )
+  ipcMain.handle(
+    IPC.bookmarksRename,
+    (_, o: { id: number; kind: 'folder' | 'link'; name: string }) =>
+      wrap(() => importService.renameBookmark(o.id, o.kind, o.name))
+  )
+  ipcMain.handle(
+    IPC.bookmarksMove,
+    (_, o: { id: number; kind: 'folder' | 'link'; toFolderId: number | null }) =>
+      wrap(() => importService.moveBookmark(o.id, o.kind, o.toFolderId))
+  )
+  ipcMain.handle(IPC.bookmarksRemoveFolder, (_, id: number) =>
+    wrap(() => importService.removeBookmarkFolder(id))
+  )
+  ipcMain.handle(IPC.bookmarksSort, (_, o: { folderId: number | null; by: 'name' }) =>
+    wrap(() => importService.sortBookmarkFolder(o.folderId))
+  )
+  ipcMain.handle(IPC.bookmarksExport, () => wrap(() => importService.exportBookmarks()))
+  // === 북마크 관리자 페이지 끝 ===========================================================
 
   return { settings, agent, db, vault }
 }

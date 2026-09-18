@@ -1,0 +1,147 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { openDatabase, type Db } from '../src/main/db/client'
+import { BookmarkRepo } from '../src/main/bookmarks/repo'
+
+describe('BookmarkRepo', () => {
+  let db: Db
+  let repo: BookmarkRepo
+
+  beforeEach(async () => {
+    db = await openDatabase(':memory:')
+    repo = new BookmarkRepo(db)
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  describe('createFolder / createLink', () => {
+    it('루트에 폴더를 만들고 트리에서 조회할 수 있다', () => {
+      const id = repo.createFolder(null, '새 폴더')
+      const tree = repo.tree()
+      expect(tree.folders).toHaveLength(1)
+      expect(tree.folders[0].id).toBe(id)
+      expect(tree.folders[0].name).toBe('새 폴더')
+      expect(tree.folders[0].isToolbar).toBe(false)
+    })
+
+    it('폴더 안에 링크를 만들 수 있다', () => {
+      const folderId = repo.createFolder(null, '폴더')
+      const linkId = repo.createLink(folderId, '링크', 'https://example.com')
+      const tree = repo.tree()
+      expect(tree.folders[0].links).toHaveLength(1)
+      expect(tree.folders[0].links[0]).toMatchObject({
+        id: linkId,
+        title: '링크',
+        url: 'https://example.com'
+      })
+    })
+
+    it('같은 부모 아래 새로 만든 폴더/링크는 순서대로 뒤에 추가된다', () => {
+      repo.createFolder(null, 'A')
+      repo.createFolder(null, 'B')
+      const tree = repo.tree()
+      expect(tree.folders.map((f) => f.name)).toEqual(['A', 'B'])
+    })
+  })
+
+  describe('rename', () => {
+    it('폴더 이름을 바꿀 수 있다', () => {
+      const id = repo.createFolder(null, '이전 이름')
+      repo.renameFolder(id, '새 이름')
+      expect(repo.tree().folders[0].name).toBe('새 이름')
+    })
+
+    it('링크 제목을 바꿀 수 있다', () => {
+      const id = repo.createLink(null, '이전 제목', 'https://example.com')
+      repo.renameLink(id, '새 제목')
+      expect(repo.tree().links[0].title).toBe('새 제목')
+    })
+  })
+
+  describe('move', () => {
+    it('폴더를 다른 폴더 아래로 이동할 수 있다', () => {
+      const a = repo.createFolder(null, 'A')
+      const b = repo.createFolder(null, 'B')
+      repo.moveFolder(b, a)
+      const tree = repo.tree()
+      expect(tree.folders).toHaveLength(1)
+      expect(tree.folders[0].folders).toHaveLength(1)
+      expect(tree.folders[0].folders[0].name).toBe('B')
+    })
+
+    it('링크를 다른 폴더로 이동할 수 있다', () => {
+      const folderId = repo.createFolder(null, '폴더')
+      const linkId = repo.createLink(null, '링크', 'https://example.com')
+      repo.moveLink(linkId, folderId)
+      const tree = repo.tree()
+      expect(tree.links).toHaveLength(0)
+      expect(tree.folders[0].links).toHaveLength(1)
+    })
+
+    it('폴더를 루트(null)로 이동할 수 있다', () => {
+      const parent = repo.createFolder(null, '부모')
+      const child = repo.createFolder(parent, '자식')
+      repo.moveFolder(child, null)
+      const tree = repo.tree()
+      expect(tree.folders.map((f) => f.name).sort()).toEqual(['부모', '자식'])
+    })
+  })
+
+  describe('removeFolder (cascade)', () => {
+    it('폴더를 지우면 하위 폴더·링크가 모두 함께 지워진다', () => {
+      const parent = repo.createFolder(null, '부모')
+      const child = repo.createFolder(parent, '자식')
+      repo.createLink(parent, '부모 링크', 'https://a.example.com')
+      repo.createLink(child, '자식 링크', 'https://b.example.com')
+
+      repo.removeFolder(parent)
+
+      const tree = repo.tree()
+      expect(tree.folders).toHaveLength(0)
+      expect(tree.links).toHaveLength(0)
+    })
+
+    it('형제 폴더는 영향을 받지 않는다', () => {
+      const a = repo.createFolder(null, 'A')
+      const b = repo.createFolder(null, 'B')
+      repo.removeFolder(a)
+      const tree = repo.tree()
+      expect(tree.folders).toHaveLength(1)
+      expect(tree.folders[0].id).toBe(b)
+    })
+  })
+
+  describe('sortFolder', () => {
+    it('폴더 안의 링크를 제목 오름차순으로 정렬한다', () => {
+      const folderId = repo.createFolder(null, '폴더')
+      repo.createLink(folderId, '다', 'https://c.example.com')
+      repo.createLink(folderId, '가', 'https://a.example.com')
+      repo.createLink(folderId, '나', 'https://b.example.com')
+
+      repo.sortFolder(folderId)
+
+      const tree = repo.tree()
+      expect(tree.folders[0].links.map((l) => l.title)).toEqual(['가', '나', '다'])
+    })
+
+    it('루트(null) 폴더도 정렬할 수 있다', () => {
+      repo.createFolder(null, '다')
+      repo.createFolder(null, '가')
+      repo.createFolder(null, '나')
+
+      repo.sortFolder(null)
+
+      const tree = repo.tree()
+      expect(tree.folders.map((f) => f.name)).toEqual(['가', '나', '다'])
+    })
+  })
+
+  describe('remove (링크)', () => {
+    it('링크 하나를 지울 수 있다', () => {
+      const id = repo.createLink(null, '링크', 'https://example.com')
+      repo.remove(id)
+      expect(repo.tree().links).toHaveLength(0)
+    })
+  })
+})

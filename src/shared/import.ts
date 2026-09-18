@@ -19,12 +19,14 @@ export interface BookmarkLinkDto {
   id: number
   title: string
   url: string
+  addDate?: number
 }
 
 export interface BookmarkFolderDto {
   id: number
   name: string
   isToolbar: boolean
+  addDate?: number
   folders: BookmarkFolderDto[]
   links: BookmarkLinkDto[]
 }
