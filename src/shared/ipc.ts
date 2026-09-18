@@ -89,7 +89,11 @@ export const IPC = {
   authSignIn: 'auth:signIn',
   authSignInGoogle: 'auth:signInGoogle', // 브라우저를 열고 루프백 콜백까지 기다린다
   authSignOut: 'auth:signOut',
-  authStateChanged: 'auth:stateChanged' // main → renderer 이벤트
+  authStateChanged: 'auth:stateChanged', // main → renderer 이벤트
+  // --- 확장(2b) — 압축 해제된 크롬 확장 폴더만 다룬다(CRX·웹스토어 없음) ------
+  extList: 'ext:list',
+  extLoad: 'ext:load', // 경로를 안 주면 메인에서 폴더 선택 다이얼로그를 연다
+  extRemove: 'ext:remove'
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -164,6 +168,8 @@ export type {
   TaskModelKey,
   TaskModels
 } from './ai'
+
+export type { ExtensionDto, ExtensionError, ExtensionListDto } from './extensions'
 
 export type {
   ImportPasswordsResult,

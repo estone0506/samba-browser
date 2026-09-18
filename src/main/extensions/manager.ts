@@ -8,20 +8,9 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Settings } from '../../shared/settings'
+import type { ExtensionDto, ExtensionError } from '../../shared/extensions'
 
-/** 렌더러·설정 화면에 보내는 확장 한 줄 */
-export interface ExtensionDto {
-  id: string
-  name: string
-  version: string
-  path: string
-}
-
-/** 로드 실패 한 건. 앱을 멈추지 않고 화면에 표시만 한다 */
-export interface ExtensionError {
-  path: string
-  error: string
-}
+export type { ExtensionDto, ExtensionError }
 
 /** 세션이 돌려주는 확장 정보(테스트에서 흉내내기 쉽도록 최소한만) */
 export interface LoadedExtension {
@@ -102,7 +91,7 @@ function messageOf(e: unknown): string {
  * Electron 39 는 ses.extensions 아래에 있고, 구버전은 세션에 직접 달려 있다
  */
 interface SessionExtensionApi {
-  loadExtension: (path: string, options?: { allowFileAccess?: boolean }) => Promise<LoadedExtension>
+  loadExtension: (path: string, options: { allowFileAccess: boolean }) => Promise<LoadedExtension>
   removeExtension: (id: string) => void
 }
 

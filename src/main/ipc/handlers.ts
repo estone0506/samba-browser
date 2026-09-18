@@ -3,6 +3,7 @@ import {
   dialog,
   ipcMain,
   safeStorage,
+  session,
   shell,
   type BrowserWindow,
   type WebContents
@@ -40,6 +41,7 @@ import { createSessionStore } from '../sync/session-store'
 import { createSupabaseBackend } from '../sync/supabase-backend'
 import { WorkspaceService } from '../workspace/service'
 import { workspaceShortcutIndex } from '../workspace/shortcut'
+import { ExtensionManager, createSessionExtensionHost } from '../extensions/manager'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -537,6 +539,34 @@ export function registerIpc(
   )
   handleFromRenderer(IPC.workspaceDelete, (id: number) => workspace.remove(id))
   // === 작업공간 끝 =====================================================================
+
+  // === 확장(압축 해제된 크롬 확장 폴더) — 이 블록만 따로 추가한다 ======================
+  // 기본 세션에 걸고, 작업공간 파티션 세션이 새로 생기면 같은 확장을 그 세션에도 건다.
+  // 로드 실패는 항목별 오류 문자열로만 남고 앱을 멈추지 않는다
+  const extensions = new ExtensionManager(
+    createSessionExtensionHost(session.defaultSession),
+    settings
+  )
+  void extensions.loadSaved().catch((e: unknown) => console.error('저장된 확장 로드 실패', e))
+  tabs.setSessionHook((ses) => {
+    void extensions
+      .attachHost(createSessionExtensionHost(ses))
+      .catch((e: unknown) => console.error('파티션 세션 확장 로드 실패', e))
+  })
+
+  handleFromRenderer(IPC.extList, () => ({ items: extensions.list(), errors: extensions.errors() }))
+  // 경로를 주지 않으면 폴더 선택 다이얼로그를 연다. 취소하면 null 을 돌려준다
+  handleFromRenderer(IPC.extLoad, async (rawPath?: unknown) => {
+    let folder = typeof rawPath === 'string' ? rawPath : ''
+    if (!folder) {
+      const picked = await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
+      if (picked.canceled || picked.filePaths.length === 0) return null
+      folder = picked.filePaths[0]
+    }
+    return extensions.add(folder)
+  })
+  handleFromRenderer(IPC.extRemove, (id: string) => extensions.remove(id))
+  // === 확장 끝 =========================================================================
 
   return { settings, agent, db, vault, auth }
 }

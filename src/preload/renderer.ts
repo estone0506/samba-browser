@@ -24,7 +24,9 @@ import {
   type AiProviderStatus,
   type ApiKeyVendor,
   type TaskModelKey,
-  type TaskModels
+  type TaskModels,
+  type ExtensionDto,
+  type ExtensionListDto
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 
@@ -263,6 +265,12 @@ const api = {
       ipcRenderer.on(IPC.workspaceChanged, h)
       return () => ipcRenderer.off(IPC.workspaceChanged, h)
     }
+  },
+  // 확장 — 압축 해제된 폴더만 다룬다. load 를 인자 없이 부르면 메인이 폴더 선택창을 연다
+  extensions: {
+    list: (): Promise<IpcResult<ExtensionListDto>> => invoke(IPC.extList),
+    load: (path?: string): Promise<IpcResult<ExtensionDto | null>> => invoke(IPC.extLoad, path),
+    remove: (id: string): Promise<IpcResult<void>> => invoke(IPC.extRemove, id)
   }
 }
 
