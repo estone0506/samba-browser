@@ -15,6 +15,10 @@ const DEFAULT_MEMORY_KIB = 65536
 const MIN_MEMORY_KIB = 8192
 const MAX_MEMORY_KIB = 1048576
 
+// argon2id iterations/parallelism 기본값(저장된 kdf_params 가 없을 때)
+const DEFAULT_ITERATIONS = 3
+const DEFAULT_PARALLELISM = 1
+
 // randomBytes 로 생성 가능한 바이트 수 범위
 const MIN_RANDOM_BYTES = 1
 const MAX_RANDOM_BYTES = 1024
@@ -48,11 +52,13 @@ function resolveMemoryKiBFromEnv(): number {
  * 메모리 비용은 opts.memoryKiB 명시 인자가 우선이고, 없으면 기본값(65536)을 쓴다.
  * VAULT_KDF_MEM 환경변수는 vitest 실행 중(process.env.VITEST === 'true')에만
  * 허용되며 8192~1048576 범위로 clamp 되고, 숫자가 아니면 기본값을 쓴다.
+ * iterations/parallelism 은 저장된 kdf_params 를 그대로 전달할 수 있도록 열어 두며,
+ * 생략하면 기본값(3/1)을 쓴다.
  */
 export async function deriveKey(
   password: string,
   salt: Uint8Array,
-  opts?: { memoryKiB?: number }
+  opts?: { memoryKiB?: number; iterations?: number; parallelism?: number }
 ): Promise<Buffer> {
   if (salt.length !== SALT_LENGTH) {
     throw new Error(`salt 는 ${SALT_LENGTH}바이트여야 합니다`)
@@ -65,8 +71,8 @@ export async function deriveKey(
   const hash = await argon2id({
     password,
     salt,
-    parallelism: 1,
-    iterations: 3,
+    parallelism: opts?.parallelism ?? DEFAULT_PARALLELISM,
+    iterations: opts?.iterations ?? DEFAULT_ITERATIONS,
     memorySize,
     hashLength: KEY_LENGTH,
     outputType: 'binary'

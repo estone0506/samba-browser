@@ -4,6 +4,8 @@ process.env.VAULT_KDF_MEM = '8192'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { openDatabase, type Db } from '../src/main/db/client'
 import { VaultService, type SafeStorageLike } from '../src/main/vault/service'
+import { VaultRepo } from '../src/main/vault/repo'
+import { deriveKey, makeVerifier, randomBytes } from '../src/main/vault/crypto'
 import { DEFAULT_SETTINGS, type Settings } from '../src/shared/settings'
 
 const SECRET = 'sup3rs3cret!'
@@ -12,6 +14,20 @@ const SECRET = 'sup3rs3cret!'
 function makeSettings(patch: Partial<Settings> = {}): { get: () => Settings } {
   const value: Settings = { ...DEFAULT_SETTINGS, ...patch }
   return { get: () => value }
+}
+
+// 테스트 중간에 옵션을 바꿔야 하는 케이스(기기 기억 해제 등)를 위한 변경 가능한 스텁
+function makeMutableSettings(patch: Partial<Settings> = {}): {
+  get: () => Settings
+  set: (patch: Partial<Settings>) => void
+} {
+  let value: Settings = { ...DEFAULT_SETTINGS, ...patch }
+  return {
+    get: () => value,
+    set: (p: Partial<Settings>) => {
+      value = { ...value, ...p }
+    }
+  }
 }
 
 // safeStorage 스텁 — 실제 DPAPI 대신 접두사만 붙여 왕복을 흉내낸다
@@ -340,6 +356,126 @@ describe('VaultService', () => {
       const second = new VaultService(db, settings, { safeStorage })
       expect(second.state()).toBe('locked')
       second.dispose()
+    })
+
+    it('옵션을 켠 채로 해제해 뒀다가 옵션을 끄고 touch() 하면 저장된 감싼 키가 삭제된다', async () => {
+      const settings = makeMutableSettings({ vaultRememberDevice: true })
+      const safeStorage = makeSafeStorage()
+      const repo = new VaultRepo(db)
+      const service = new VaultService(db, settings, { safeStorage })
+      await service.setup('master-pw')
+      // 감싼 키가 저장되어 있어야 한다
+      expect(repo.getMeta('device_wrapped_key')).not.toBeNull()
+
+      settings.set({ vaultRememberDevice: false })
+      service.touch()
+      expect(repo.getMeta('device_wrapped_key')).toBeNull()
+      service.dispose()
+    })
+
+    it('옵션을 켠 채로 해제해 뒀다가 옵션을 끄고 lock() 하면 저장된 감싼 키가 삭제된다', async () => {
+      const settings = makeMutableSettings({ vaultRememberDevice: true })
+      const safeStorage = makeSafeStorage()
+      const repo = new VaultRepo(db)
+      const service = new VaultService(db, settings, { safeStorage })
+      await service.setup('master-pw')
+      expect(repo.getMeta('device_wrapped_key')).not.toBeNull()
+
+      settings.set({ vaultRememberDevice: false })
+      service.lock()
+      expect(repo.getMeta('device_wrapped_key')).toBeNull()
+      service.dispose()
+    })
+  })
+
+  describe('호스트 정규화', () => {
+    it('www.·대문자·포트가 섞인 호스트로 저장해도 정규화된 호스트로 조회된다', async () => {
+      await vault.setup('master-pw')
+      vault.upsertAccount({
+        host: 'www.Naver.com:443',
+        label: '네이버',
+        username: 'alice',
+        isDefault: true
+      })
+
+      const accounts = vault.listAccounts('naver.com')
+      expect(accounts).toHaveLength(1)
+      expect(accounts[0].host).toBe('naver.com')
+    })
+  })
+
+  describe('저장된 KDF 파라미터로 unlock', () => {
+    it('기본값과 다른 iterations/parallelism 로 만들어진 금고도 저장된 값으로 unlock 된다', async () => {
+      // setup() 을 거치지 않고 커스텀 파라미터로 직접 금고를 초기화한다(예전에 다른 파라미터로 만들어진 상황을 흉내)
+      const repo = new VaultRepo(db)
+      const salt = randomBytes(16)
+      const customParams = { memoryKiB: 8192, iterations: 2, parallelism: 1 }
+      const key = await deriveKey('old-master', salt, customParams)
+      const verifier = makeVerifier(key)
+      repo.setMeta('salt', salt)
+      repo.setMeta('kdf_params', Buffer.from(JSON.stringify(customParams), 'utf8'))
+      repo.setMeta('verifier_ct', verifier.ciphertext)
+      repo.setMeta('verifier_iv', verifier.iv)
+
+      // 새 인스턴스로 다시 읽어야 tryDeviceUnlock 등 생성자 로직이 새 데이터를 본다
+      const reopened = new VaultService(db, makeSettings())
+      expect(reopened.state()).toBe('locked')
+      await expect(reopened.unlock('old-master')).resolves.toBe(true)
+      expect(reopened.state()).toBe('unlocked')
+      reopened.dispose()
+    })
+  })
+
+  describe('같은 (accountId,type) putItem 재저장', () => {
+    it('두 번째 putItem 이후 reveal 은 새 값을, item id 는 그대로 돌려준다', async () => {
+      await vault.setup('master-pw')
+      const account = vault.upsertAccount({
+        host: 'example.com',
+        label: '메인',
+        username: 'alice',
+        isDefault: true
+      })
+      const first = vault.putItem({
+        accountId: account.id,
+        type: 'login_password',
+        label: '로그인 비밀번호',
+        value: 'old-secret'
+      })
+      const second = vault.putItem({
+        accountId: account.id,
+        type: 'login_password',
+        label: '로그인 비밀번호',
+        value: 'new-secret'
+      })
+
+      expect(second.id).toBe(first.id)
+      expect(vault.reveal(second.id)).toBe('new-secret')
+      expect(vault.listItems(account.id)).toHaveLength(1)
+    })
+  })
+
+  describe('putItem 감사 로그', () => {
+    it("putItem 은 action='save', source='user' 감사 로그를 남긴다", async () => {
+      await vault.setup('master-pw')
+      const account = vault.upsertAccount({
+        host: 'example.com',
+        label: '메인',
+        username: 'alice',
+        isDefault: true
+      })
+      const meta = vault.putItem({
+        accountId: account.id,
+        type: 'login_password',
+        label: '로그인 비밀번호',
+        value: SECRET
+      })
+
+      const log = vault.listAudit()
+      const save = log.find((r) => r.action === 'save')
+      expect(save).toBeDefined()
+      expect(save?.source).toBe('user')
+      expect(save?.itemId).toBe(meta.id)
+      expect(JSON.stringify(log)).not.toMatch(/sup3rs3cret/)
     })
   })
 })

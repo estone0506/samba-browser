@@ -5,6 +5,7 @@ import { SettingsStore } from '../settings/store'
 import { AgentRunner } from '../agent/runner'
 import type { Db } from '../db/client'
 import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vault/service'
+import { normalizeHost } from '../../shared/host'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -114,9 +115,10 @@ export function registerIpc(
     const capture = vault.takePendingCapture()
     if (!accept || !capture) return
     try {
+      const host = normalizeHost(capture.host) || capture.host
       const account = vault.upsertAccount({
-        host: capture.host,
-        label: capture.host,
+        host,
+        label: host,
         username: capture.username
       })
       vault.putItem({

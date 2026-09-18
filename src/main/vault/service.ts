@@ -30,6 +30,7 @@ import type {
   VaultState
 } from '../../shared/vault'
 import type { Settings } from '../../shared/settings'
+import { normalizeHost } from '../../shared/host'
 
 // electron safeStorage 중 실제로 쓰는 부분만 좁혀 둔 인터페이스(테스트에서 스텁 주입)
 export interface SafeStorageLike {
@@ -144,7 +145,11 @@ export class VaultService {
       iterations: 3,
       parallelism: 1
     }
-    const key = await deriveKey(master, salt, { memoryKiB: params.memoryKiB })
+    const key = await deriveKey(master, salt, {
+      memoryKiB: params.memoryKiB,
+      iterations: params.iterations,
+      parallelism: params.parallelism
+    })
     const verifier = makeVerifier(key)
 
     this.repo.setMeta(META_SALT, salt)
@@ -163,7 +168,11 @@ export class VaultService {
     if (!salt || !ct || !iv) throw new Error('금고 메타데이터가 손상되었습니다')
 
     const params = this.readKdfParams()
-    const key = await deriveKey(master, salt, { memoryKiB: params.memoryKiB })
+    const key = await deriveKey(master, salt, {
+      memoryKiB: params.memoryKiB,
+      iterations: params.iterations,
+      parallelism: params.parallelism
+    })
     if (!checkVerifier(key, { ciphertext: ct, iv })) {
       zeroize(key)
       return false
@@ -182,12 +191,21 @@ export class VaultService {
       this.key = null
       this.emit()
     }
+    this.pruneDeviceWrappedKeyIfDisabled()
   }
 
   // 사용자 활동이 있을 때마다 자동 잠금 타이머를 되돌린다
   touch(): void {
+    this.pruneDeviceWrappedKeyIfDisabled()
     if (!this.key) return
     this.restartAutoLock()
+  }
+
+  // vaultRememberDevice 가 꺼져 있는데 예전에 저장된 감싼 키가 남아 있으면 지운다.
+  // lock()/touch() 양쪽에서 불러 옵션을 끈 시점 이후 첫 상태 확인에서 곧바로 반영되게 한다
+  private pruneDeviceWrappedKeyIfDisabled(): void {
+    if (this.settings.get().vaultRememberDevice) return
+    if (this.repo.getMeta(META_DEVICE_KEY)) this.repo.deleteMeta(META_DEVICE_KEY)
   }
 
   // 인스턴스를 버릴 때 타이머·키를 정리한다(앱 종료·테스트)
@@ -226,6 +244,8 @@ export class VaultService {
 
   // 키를 채택하고(기기 기억 옵션 반영) 자동 잠금 타이머를 건다
   private applyKey(key: Buffer): void {
+    // 이미 채택된 키가 있으면(예: unlock 을 다시 호출) 새 키로 덮어쓰기 전에 메모리에서 지운다
+    if (this.key) zeroize(this.key)
     this.key = key
     this.syncDeviceWrappedKey()
     this.restartAutoLock()
@@ -300,8 +320,9 @@ export class VaultService {
   }
 
   listAccounts(host?: string): AccountDto[] {
+    const normalizedHost = host === undefined ? undefined : normalizeHost(host)
     const types = this.repo.itemTypesByAccount()
-    return this.repo.listAccounts(host).map((a) => ({
+    return this.repo.listAccounts(normalizedHost).map((a) => ({
       id: a.id,
       siteId: a.siteId,
       host: a.host,
@@ -323,7 +344,11 @@ export class VaultService {
   // --- 쓰기 -------------------------------------------------------------
 
   upsertAccount(input: UpsertAccountInput): AccountDto {
-    const row = this.repo.upsertAccount(input)
+    // 정규화 결과가 빈 문자열이면(예: 호스트만 있고 파싱이 안 되는 값) 원래 값을 그대로 둔다 —
+    // 계정 자체를 잃어버리는 것보다 정규화 실패를 허용하는 편이 안전하다
+    const normalized = normalizeHost(input.host)
+    const host = normalized || input.host
+    const row = this.repo.upsertAccount({ ...input, host })
     const types = this.repo.itemTypesByAccount()
     return {
       id: row.id,
@@ -349,6 +374,7 @@ export class VaultService {
         this.repo.insertItemPlaceholder(input.accountId, input.type, input.label, now)
       const blob = encrypt(key, input.value, String(id))
       this.repo.updateItemSecret(id, blob.ciphertext, blob.iv, input.label, now)
+      this.repo.insertAudit({ itemId: id, action: 'save', source: 'user' })
       return this.repo.itemMeta(id)
     })
     if (!meta) throw new Error('항목을 저장하지 못했습니다')
