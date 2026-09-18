@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { TabManager } from '../src/main/browser/tab-manager'
 import type { ToolContext } from '../src/main/agent/tools'
 
@@ -29,6 +29,7 @@ vi.mock('../src/main/browser/page-bridge', () => ({ pageBridge }))
 const { createSambaTools } = await import('../src/main/agent/tools')
 const { DEFAULT_DANGER_WORDS } = await import('../src/shared/danger')
 const { isAllowedUrl, BLOCKED_URL_MESSAGE } = await import('../src/shared/url')
+const { setOcrEnabled } = await import('../src/main/agent/tools-ocr')
 
 interface ToolStub {
   name: string
@@ -232,5 +233,20 @@ describe('finalConfirm — done 호출 전에 확인 카드를 띄운다', () =>
     const r = await get(tools, 'done').handler({ summary: '작업 완료' })
     expect(confirm).not.toHaveBeenCalled()
     expect(textOut(r)).toBe('DONE: 작업 완료')
+  })
+})
+
+describe('ocr — 설정(ocrEnabled) 반영', () => {
+  afterEach(() => {
+    // 다른 테스트에 영향을 주지 않도록 기본값(켬)으로 되돌린다
+    setOcrEnabled(true)
+  })
+
+  it('ocrEnabled 를 false 로 설정하면 캡처하지 않고 바로 거부한다', async () => {
+    setOcrEnabled(false)
+    const { tools, steps } = build(true)
+    const r = await get(tools, 'ocr').handler({})
+    expect(textOut(r)).toBe('refused: OCR is disabled in settings')
+    expect(steps.at(-1)?.ok).toBe(false)
   })
 })
