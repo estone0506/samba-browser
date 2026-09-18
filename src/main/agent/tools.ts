@@ -8,6 +8,7 @@ import type { PermissionMode, VaultAccessPolicy } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
 import type { AccountDto, VaultItemType } from '../../shared/vault'
 import { normalizeHost, registrableDomain } from '../../shared/host'
+import { createOcrTool } from './tools-ocr'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -535,6 +536,7 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     tools: [
       getPage,
       screenshot,
+      createOcrTool(ctx),
       navigate,
       click,
       typeTool,
@@ -554,6 +556,7 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
 export const SAMBA_TOOL_NAMES = [
   'get_page',
   'screenshot',
+  'ocr',
   'navigate',
   'click',
   'type',
