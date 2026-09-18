@@ -35,7 +35,15 @@ export default function App(): React.JSX.Element {
   // useLayoutEffect 로 페인트 전에 접어서, 뷰 전환 시 네이티브 뷰가 새 렌더러 콘텐츠 위에
   // 한 프레임 겹쳐 보이는 현상을 없앤다
   useLayoutEffect(() => {
-    if (view !== 'browser') void window.samba.layout.set({ x: 0, y: 0, width: 0, height: 0 })
+    if (view !== 'browser')
+      void window.samba.layout.set({
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight
+      })
   }, [view])
   return (
     <div className="flex h-full bg-[var(--bg)]">
