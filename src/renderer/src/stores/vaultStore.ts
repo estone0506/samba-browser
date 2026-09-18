@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   AccountDto,
+  CapturePromptDto,
   ImportBookmarksResult,
   ImportPasswordsResult,
   SiteDto,
@@ -41,6 +42,12 @@ interface VaultStoreState {
   query: string
   loading: boolean
   error: string | null
+  // 자동 저장 제안 카드. main 이 push 한 것을 그대로 담아둔다(비밀번호는 담기지 않음)
+  capture: CapturePromptDto | null
+  captureSubscribed: boolean
+  subscribeCapture: () => void
+  setCapture: (prompt: CapturePromptDto | null) => void
+  decideCapture: (accept: boolean) => void
   refreshState: () => Promise<void>
   setup: (master: string, remember: boolean) => Promise<boolean>
   unlock: (master: string, remember: boolean) => Promise<boolean>
@@ -73,6 +80,22 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
   query: '',
   loading: false,
   error: null,
+  capture: null,
+  captureSubscribed: false,
+
+  // App 마운트 시 한 번만 구독한다(중복 구독 방지)
+  subscribeCapture: () => {
+    if (get().captureSubscribed) return
+    set({ captureSubscribed: true })
+    window.samba.vault.onCapturePrompt((prompt) => set({ capture: prompt }))
+  },
+
+  setCapture: (prompt) => set({ capture: prompt }),
+
+  decideCapture: (accept) => {
+    window.samba.vault.captureDecision(accept)
+    set({ capture: null })
+  },
 
   refreshState: async () => {
     const r = await window.samba.vault.state()
