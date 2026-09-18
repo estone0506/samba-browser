@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   FaviconService,
   FAVICON_MAX_BYTES,
+  FAVICON_MEMORY_CACHE_LIMIT,
   FAVICON_NEGATIVE_TTL_MS,
   FAVICON_TTL_MS,
   safeFaviconHost,
@@ -148,6 +149,30 @@ describe('FaviconService — 캐시와 네트워크', () => {
     expect(await s.get('example.com')).toBeNull()
   })
 
+  it('허용 목록에 없는 이미지 MIME(svg 등)은 버린다', async () => {
+    const fetchFn = vi.fn<FaviconFetch>(async () => response('<svg></svg>', 'image/svg+xml'))
+    const s = new FaviconService({ cacheDir: dir, fetch: fetchFn })
+    expect(await s.get('example.com')).toBeNull()
+  })
+
+  it('허용 목록의 MIME(png/x-icon/vnd.microsoft.icon/jpeg/gif/webp)은 통과한다', async () => {
+    for (const mime of [
+      'image/png',
+      'image/x-icon',
+      'image/vnd.microsoft.icon',
+      'image/jpeg',
+      'image/gif',
+      'image/webp'
+    ]) {
+      const fetchFn = vi.fn<FaviconFetch>(async () => response(PNG, mime))
+      const s = new FaviconService({
+        cacheDir: join(dir, mime.replace(/\W/g, '_')),
+        fetch: fetchFn
+      })
+      expect(await s.get('example.com')).toContain(`data:${mime};base64,`)
+    }
+  })
+
   it('빈 본문은 파비콘으로 보지 않는다', async () => {
     const fetchFn = vi.fn<FaviconFetch>(async () => response(new Uint8Array(0)))
     expect(
@@ -179,6 +204,18 @@ describe('FaviconService — 캐시와 네트워크', () => {
     const results = await all
     expect(new Set(results).size).toBe(1)
     expect(fetchFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('메모리 캐시는 상한을 넘으면 가장 오래된 항목부터 버린다(LRU)', async () => {
+    const fetchFn = vi.fn<FaviconFetch>(async () => response(PNG))
+    const s = new FaviconService({ cacheDir: dir, fetch: fetchFn })
+    for (let i = 0; i < FAVICON_MEMORY_CACHE_LIMIT + 1; i++) {
+      await s.get(`host${i}.example.com`)
+    }
+    // 가장 먼저 넣은 host0 은 밀려나 peek 이 null(메모리에는 없음)
+    expect(s.peek('host0.example.com')).toBeNull()
+    // 가장 최근 것은 남아 있다
+    expect(s.peek(`host${FAVICON_MEMORY_CACHE_LIMIT}.example.com`)).toContain('data:image/png')
   })
 
   it('peek 은 캐시에 없으면 null 이고 네트워크를 타지 않는다', () => {
@@ -221,6 +258,31 @@ describe('FaviconService.storeFromPage — 탭이 받은 파비콘 저장', () =
     await s.storeFromPage('https://example.com', 'data:image/png;base64,AAAA', tabFetch)
     await s.storeFromPage('samba://newtab', 'https://example.com/i.ico', tabFetch)
     expect(tabFetch).not.toHaveBeenCalled()
+  })
+
+  it('사설·루프백 주소의 아이콘 URL 은 요청하지 않는다(SSRF 방지)', async () => {
+    const tabFetch = vi.fn<FaviconFetch>(async () => response(PNG))
+    const s = new FaviconService({ cacheDir: dir, fetch: tabFetch })
+    const privateUrls = [
+      'http://127.0.0.1/i.ico',
+      'http://localhost/i.ico',
+      'http://10.0.0.5/i.ico',
+      'http://192.168.1.1/i.ico',
+      'http://172.16.0.1/i.ico',
+      'http://172.31.255.255/i.ico',
+      'http://[::1]/i.ico'
+    ]
+    for (const url of privateUrls) {
+      await s.storeFromPage('https://example.com', url, tabFetch)
+    }
+    expect(tabFetch).not.toHaveBeenCalled()
+  })
+
+  it('공인 주소의 아이콘 URL 은 정상 요청한다', async () => {
+    const tabFetch = vi.fn<FaviconFetch>(async () => response(PNG))
+    const s = new FaviconService({ cacheDir: dir, fetch: tabFetch })
+    await s.storeFromPage('https://example.com', 'https://172.32.0.1/i.ico', tabFetch)
+    expect(tabFetch).toHaveBeenCalledTimes(1)
   })
 
   it('이미 신선한 아이콘이 있으면 다시 받지 않는다', async () => {

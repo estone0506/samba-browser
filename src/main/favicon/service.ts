@@ -20,6 +20,17 @@ export const FAVICON_NEGATIVE_TTL_MS = 24 * 60 * 60 * 1000
 export const FAVICON_MAX_BYTES = 64 * 1024
 /** 요청 타임아웃(4초) */
 export const FAVICON_TIMEOUT_MS = 4000
+/** 메모리 캐시 상한(호스트 수). 넘으면 가장 오래된 항목부터 버린다(LRU) */
+export const FAVICON_MEMORY_CACHE_LIMIT = 200
+// 파비콘으로 허용하는 MIME 목록. svg 는 스크립트를 담을 수 있어 제외한다
+const ALLOWED_MIME = new Set([
+  'image/png',
+  'image/x-icon',
+  'image/vnd.microsoft.icon',
+  'image/jpeg',
+  'image/gif',
+  'image/webp'
+])
 
 // net.fetch / session.fetch 의 응답 중 실제로 쓰는 부분만 좁힌 형태.
 // DOM 의 Response 가 구조적으로 이 모양을 만족하므로 그대로 넘길 수 있다
@@ -64,12 +75,41 @@ export function safeFaviconHost(urlOrHost: string): string {
   return host
 }
 
-// Content-Type 헤더에서 image/* 만 통과시킨다
+// Content-Type 헤더에서 허용 목록(ALLOWED_MIME)에 있는 이미지 타입만 통과시킨다
 function imageMime(headers: { get: (name: string) => string | null }): string {
   const raw = headers.get('content-type') ?? ''
   const mime = raw.split(';')[0].trim().toLowerCase()
-  if (!mime.startsWith('image/')) return ''
+  if (!ALLOWED_MIME.has(mime)) return ''
   return mime
+}
+
+// 사설·루프백 주소인지 검사한다(SSRF 방지). storeFromPage 는 페이지가 알려준 URL을
+// 그대로 받아 요청하므로, 내부망·로컬 서비스를 찌르는 데 악용되지 않게 걸러야 한다
+function isPrivateOrLoopbackHost(hostname: string): boolean {
+  // URL#hostname 은 IPv6 를 대괄호째로 돌려준다(예: "[::1]")
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (host === 'localhost' || host === '::1') return true
+  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/)
+  if (!m) return false
+  const a = Number(m[1])
+  const b = Number(m[2])
+  if (a === 127) return true // 127.0.0.0/8 (루프백)
+  if (a === 10) return true // 10.0.0.0/8
+  if (a === 192 && b === 168) return true // 192.168.0.0/16
+  if (a === 172 && b >= 16 && b <= 31) return true // 172.16.0.0/12
+  return false
+}
+
+/** http(s) 이면서 사설·루프백 주소가 아닌 URL 인지 검사한다 */
+function isSafeExternalUrl(url: string): boolean {
+  let u: URL
+  try {
+    u = new URL(url)
+  } catch {
+    return false
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+  return !isPrivateOrLoopbackHost(u.hostname)
 }
 
 export class FaviconService {
@@ -127,14 +167,28 @@ export class FaviconService {
   async storeFromPage(pageUrl: string, iconUrl: string, fetchFn?: FaviconFetch): Promise<void> {
     const host = safeFaviconHost(pageUrl)
     if (!host) return
-    if (!/^https?:\/\//i.test(iconUrl)) return
+    // 사설·루프백 주소로는 요청하지 않는다(SSRF 방지)
+    if (!isSafeExternalUrl(iconUrl)) return
     // 이미 신선한 아이콘이 있으면 페이지를 열 때마다 다시 받지 않는다
     const hit = this.memory.get(host)
     if (hit && hit.dataUrl && !this.expired(hit)) return
     const dataUrl = await this.download(iconUrl, fetchFn)
     if (!dataUrl) return
-    this.memory.set(host, { dataUrl, at: this.now() })
+    this.setMemory(host, { dataUrl, at: this.now() })
     await this.writeCache(host, dataUrl)
+  }
+
+  // 메모리 캐시에 넣는다. 이미 있던 키는 맨 뒤로 옮기고(최근 사용),
+  // 상한(FAVICON_MEMORY_CACHE_LIMIT)을 넘으면 가장 오래된 키(맨 앞)부터 버린다.
+  // Map 은 삽입 순서를 유지하므로 delete 후 다시 set 하면 순서가 뒤로 밀린다
+  private setMemory(host: string, entry: CacheEntry): void {
+    this.memory.delete(host)
+    this.memory.set(host, entry)
+    while (this.memory.size > FAVICON_MEMORY_CACHE_LIMIT) {
+      const oldest = this.memory.keys().next().value
+      if (oldest === undefined) break
+      this.memory.delete(oldest)
+    }
   }
 
   private expired(entry: CacheEntry): boolean {
@@ -146,20 +200,20 @@ export class FaviconService {
   private async resolve(host: string): Promise<string | null> {
     const cached = await this.readCache(host)
     if (cached) {
-      this.memory.set(host, cached)
+      this.setMemory(host, cached)
       if (!this.expired(cached)) return cached.dataUrl
     }
 
     for (const url of [`https://${host}/favicon.ico`, `https://www.${host}/favicon.ico`]) {
       const dataUrl = await this.download(url)
       if (dataUrl) {
-        this.memory.set(host, { dataUrl, at: this.now() })
+        this.setMemory(host, { dataUrl, at: this.now() })
         await this.writeCache(host, dataUrl)
         return dataUrl
       }
     }
 
-    this.memory.set(host, { dataUrl: null, at: this.now() })
+    this.setMemory(host, { dataUrl: null, at: this.now() })
     await this.writeCache(host, null)
     return null
   }
