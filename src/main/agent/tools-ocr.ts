@@ -7,8 +7,8 @@ import type { ToolContext } from './tools'
 
 // 응답 길이 상한 — 캡처 전체가 글자일 때 컨텍스트를 잡아먹지 않게 한다
 const MAX_RESULT_CHARS = 4000
-// 모델이 아직 없을 때 돌려줄 안내. 모델은 백그라운드로 내려받는다
-const DOWNLOADING = 'downloading OCR models… call again in 30s'
+// 모델이 아직 없을 때 돌려줄 안내. 모델은 백그라운드로 내려받는다(최초 1회, 합계 약 18MB)
+const DOWNLOADING = 'downloading ~18MB model once… call again in 30s'
 // 설정에서 OCR 을 끈 경우
 const OCR_DISABLED = 'refused: OCR is disabled in settings'
 // UI 스텝 라벨
