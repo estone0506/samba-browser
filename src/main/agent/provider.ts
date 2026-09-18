@@ -32,16 +32,48 @@ export function runQuery(input: ProviderInput): Query {
   })
 }
 
+// 인증 없음으로 볼 문구. SDK 의 SDKAssistantMessageError 값과 실제 401 응답 문구를 모두 포함
+const MISSING_PATTERNS = [
+  'not logged in',
+  'login',
+  'authentication',
+  'authentication_error',
+  'authentication_failed',
+  'oauth',
+  'api key',
+  'api_key',
+  'x-api-key',
+  'unauthorized',
+  'account_on_hold',
+  'verification_required',
+  'billing_error',
+  'cloud_credential_error',
+  'credential'
+]
+
+// 사용 한도 문구
+const LIMIT_PATTERNS = ['rate limit', 'rate_limit', 'usage limit', 'quota', '429']
+
 // 인증 오류 문구 판별 → UI 안내 키
 export function classifyAuthError(message: string): 'missing' | 'limit' | null {
   const m = message.toLowerCase()
-  if (
-    m.includes('not logged in') ||
-    m.includes('authentication') ||
-    m.includes('api key') ||
-    m.includes('unauthorized')
-  )
-    return 'missing'
-  if (m.includes('rate limit') || m.includes('usage limit') || m.includes('429')) return 'limit'
+  if (MISSING_PATTERNS.some((p) => m.includes(p))) return 'missing'
+  if (LIMIT_PATTERNS.some((p) => m.includes(p))) return 'limit'
   return null
+}
+
+// 재시도해도 회복되지 않는 인증/계정 오류. api_retry 관측 시 즉시 중단한다
+const FATAL_API_ERRORS = new Set([
+  'authentication_failed',
+  'oauth_org_not_allowed',
+  'account_on_hold',
+  'verification_required',
+  'billing_error',
+  'cloud_credential_error',
+  'invalid_request',
+  'model_not_found'
+])
+
+export function isFatalApiError(error: string): boolean {
+  return FATAL_API_ERRORS.has(error)
 }
