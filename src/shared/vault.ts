@@ -47,3 +47,13 @@ export interface CapturePromptDto {
   username: string
   isNew: boolean
 }
+
+// 사용 기록(감사 로그) 한 줄. 값(평문)은 절대 포함하지 않는다
+export interface AuditLogDto {
+  id: number
+  at: number
+  itemId: number | null
+  action: string
+  jobId: string | null
+  source: string
+}

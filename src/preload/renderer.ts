@@ -13,6 +13,7 @@ import {
   type VaultItemMeta,
   type VaultItemType,
   type VaultState,
+  type AuditLogDto,
   type ImportPasswordsResult,
   type ImportBookmarksResult,
   type BookmarkTreeDto
@@ -102,6 +103,9 @@ const api = {
     reveal: (id: number): Promise<IpcResult<string>> => invoke(IPC.vaultReveal, id),
     upsertAccount: (dto: UpsertAccountInput): Promise<IpcResult<AccountDto>> =>
       invoke(IPC.vaultUpsertAccount, dto),
+    // 사용 기록(감사 로그). accountId 생략 시 전체(최근 200건), 계정 지정 시 해당 계정 항목만
+    audit: (accountId?: number, limit?: number): Promise<IpcResult<AuditLogDto[]>> =>
+      invoke(IPC.vaultAudit, accountId, limit),
     onStateChanged: (cb: (state: VaultState) => void): (() => void) => {
       const h = (_: unknown, state: VaultState): void => cb(state)
       ipcRenderer.on(IPC.vaultStateChanged, h)

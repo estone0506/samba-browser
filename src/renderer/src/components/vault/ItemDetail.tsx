@@ -4,7 +4,26 @@ import { useTranslation } from 'react-i18next'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { useVaultStore } from '@renderer/stores/vaultStore'
 import { Button } from '@renderer/components/ui/button'
-import type { VaultItemMeta } from '@shared/ipc'
+import type { AuditLogDto, VaultItemMeta } from '@shared/ipc'
+
+const USAGE_HISTORY_LIMIT = 10
+// 값을 클립보드에 복사한 뒤 이 시간(ms)이 지나면, 복사 당시와 값이 같을 때만 비운다
+const CLIPBOARD_CLEAR_MS = 30_000
+
+// 클립보드에 값을 복사하고, 일정 시간 뒤에도 여전히 같은 값이면 비운다.
+// readText 권한이 없는 환경(권한 거부 등)에서는 안전 쪽으로 그냥 비운다
+async function copyWithAutoClear(value: string): Promise<void> {
+  await navigator.clipboard.writeText(value)
+  setTimeout(() => {
+    void navigator.clipboard
+      .readText()
+      .then((current) => {
+        if (current === value) return navigator.clipboard.writeText('')
+        return undefined
+      })
+      .catch(() => navigator.clipboard.writeText('').catch(() => {}))
+  }, CLIPBOARD_CLEAR_MS)
+}
 
 const PERSONAL_TYPES = new Set([
   'card',
@@ -47,7 +66,7 @@ function RevealRow({
 
   const copy = async (): Promise<void> => {
     const v = value ?? (await reveal(item.id))
-    if (v) void navigator.clipboard.writeText(v)
+    if (v) void copyWithAutoClear(v)
   }
 
   return (
@@ -75,6 +94,7 @@ function RevealRow({
         <button
           type="button"
           onClick={() => void copy()}
+          title={t('vault.detail.copyClearHint')}
           className="h-6 rounded-[7px] border border-[var(--line)] px-2 text-[11.5px] text-[var(--text2)]"
         >
           {t('vault.detail.copy')}
@@ -105,6 +125,7 @@ function PlainRow({
           <button
             type="button"
             onClick={onCopy}
+            title={t('vault.detail.copyClearHint')}
             className="h-6 rounded-[7px] border border-[var(--line)] px-2 text-[11.5px] text-[var(--text2)]"
           >
             {t('vault.detail.copy')}
@@ -126,9 +147,11 @@ function PlainRow({
 
 interface Props {
   onEdit: () => void
+  // 전역(계정 없는) 항목 편집. 계정용 onEdit 과 분리해 항상 대상 항목을 명시적으로 넘긴다
+  onEditGlobal: (item: VaultItemMeta) => void
 }
 
-export function ItemDetail({ onEdit }: Props): React.JSX.Element {
+export function ItemDetail({ onEdit, onEditGlobal }: Props): React.JSX.Element {
   const { t } = useTranslation()
   const setView = useUiStore((s) => s.setView)
   const accounts = useVaultStore((s) => s.accounts)
@@ -166,7 +189,12 @@ export function ItemDetail({ onEdit }: Props): React.JSX.Element {
             </div>
           </div>
           <div className="ml-auto flex gap-1.5">
-            <Button variant="outline" size="sm" className="h-[30px] rounded-[9px]" onClick={onEdit}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-[30px] rounded-[9px]"
+              onClick={() => onEditGlobal(item)}
+            >
               {t('vault.detail.edit')}
             </Button>
             <Button
@@ -187,7 +215,7 @@ export function ItemDetail({ onEdit }: Props): React.JSX.Element {
             <RevealRow label={t('vault.detail.value')} item={item} />
           </div>
         </section>
-        <UsageSection />
+        <UsageSection key={`global-${item.id}`} itemId={item.id} />
       </div>
     )
   }
@@ -249,7 +277,7 @@ export function ItemDetail({ onEdit }: Props): React.JSX.Element {
           <PlainRow
             label={t('vault.detail.username')}
             value={account.username}
-            onCopy={() => void navigator.clipboard.writeText(account.username)}
+            onCopy={() => void copyWithAutoClear(account.username)}
           />
           {loginItem && <RevealRow label={t('vault.detail.password')} item={loginItem} />}
           {site?.loginUrl && (
@@ -286,21 +314,66 @@ export function ItemDetail({ onEdit }: Props): React.JSX.Element {
         </section>
       )}
 
-      <UsageSection />
+      <UsageSection key={`account-${account.id}`} accountId={account.id} />
     </div>
   )
 }
 
-function UsageSection(): React.JSX.Element {
+// 사용 기록(감사 로그) 최근 10건. accountId 를 주면 그 계정 소유 항목, itemId 를 주면
+// 전역 항목 하나(계정이 없어 accountId 로 걸러낼 수 없다)의 기록만 보여준다
+function UsageSection({
+  accountId,
+  itemId
+}: {
+  accountId?: number
+  itemId?: number
+}): React.JSX.Element {
   const { t } = useTranslation()
+  const [logs, setLogs] = useState<AuditLogDto[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void window.samba.vault.audit(accountId).then((r) => {
+      if (cancelled) return
+      if (!r.ok) {
+        setLogs([])
+        return
+      }
+      const rows = itemId !== undefined ? r.data.filter((l) => l.itemId === itemId) : r.data
+      setLogs(rows.slice(0, USAGE_HISTORY_LIMIT))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [accountId, itemId])
+
   return (
     <section className="mb-5">
       <h4 className="mb-2 text-[12px] font-semibold text-[var(--text2)]">
         {t('vault.detail.history')}
       </h4>
-      <div className="rounded-xl border border-[var(--line)] bg-white px-3.5 py-4 text-center text-[12.5px] text-[var(--text3)]">
-        {t('vault.detail.noHistory')}
-      </div>
+      {!logs || logs.length === 0 ? (
+        <div className="rounded-xl border border-[var(--line)] bg-white px-3.5 py-4 text-center text-[12.5px] text-[var(--text3)]">
+          {t('vault.detail.noHistory')}
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-white">
+          {logs.map((log) => (
+            <div
+              key={log.id}
+              className="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-b border-black/[.05] px-3.5 py-2.5 last:border-b-0"
+            >
+              <span className="text-[12.5px] text-[var(--text2)]">
+                {new Date(log.at).toLocaleString()}
+              </span>
+              <span className="text-[12.5px]">{t(`vault.detail.auditAction.${log.action}`)}</span>
+              <span className="rounded-full bg-[var(--bg)] px-1.5 py-0.5 text-[10.5px] text-[var(--text2)]">
+                {t(`vault.detail.auditSource.${log.source}`)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   )
 }
