@@ -55,8 +55,11 @@ export const DEFAULT_SETTINGS = {
   // 기본 홈 주소는 자체 새 탭 페이지. 사용자가 config.json 에 저장해 둔 값이 있으면 그대로 유지된다
   homeUrl: NEW_TAB_URL,
   newTabUrl: 'home' as const,
-  searchEngine: 'google' as const
+  searchEngine: 'google' as const,
   // === 신규 추가분 끝 =======================================================
+  // 활성 작업공간(브라우저 프로필) id. 0 이면 아직 정해지지 않음.
+  // 기기마다 다를 수 있는 값이라 동기화 대상이 아니다
+  activeWorkspaceId: 0
 }
 
 // 손상된 config.json 이어도 앱이 뜨도록 필드마다 catch 로 기본값으로 되돌린다
@@ -99,8 +102,10 @@ export const settingsSchema = z.object({
     .refine((v) => isHttpUrl(v) || isInternalUrl(v))
     .catch(DEFAULT_SETTINGS.homeUrl),
   newTabUrl: z.enum(NEW_TAB_URL_MODES).catch(DEFAULT_SETTINGS.newTabUrl),
-  searchEngine: z.enum(SEARCH_ENGINES).catch(DEFAULT_SETTINGS.searchEngine)
+  searchEngine: z.enum(SEARCH_ENGINES).catch(DEFAULT_SETTINGS.searchEngine),
   // === 신규 추가분 끝 =========================================================
+  // 활성 작업공간 id(기기별 값, 동기화 제외). 음수·소수 등 손상된 값은 0 으로 되돌린다
+  activeWorkspaceId: z.number().int().min(0).catch(DEFAULT_SETTINGS.activeWorkspaceId)
 })
 
 export type Settings = z.infer<typeof settingsSchema>
