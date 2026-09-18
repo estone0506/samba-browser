@@ -164,7 +164,8 @@ describe('installCaptureListener', () => {
 
   it('submit 시 host/username/password 를 전달한다', () => {
     const send = vi.fn()
-    installCaptureListener(send)
+    // jsdom 의 dispatchEvent 는 isTrusted=false 이므로 테스트에서만 합성 이벤트를 허용한다
+    installCaptureListener(send, { allowUntrusted: true })
     ;(document.querySelector('[name=userId]') as HTMLInputElement).value = 'shopmine'
     ;(document.querySelector('[name=pw]') as HTMLInputElement).value = 'p@ss'
     const form = document.getElementById('loginForm') as HTMLFormElement
@@ -178,8 +179,19 @@ describe('installCaptureListener', () => {
 
   it('password 가 비어 있으면 전달하지 않는다', () => {
     const send = vi.fn()
-    installCaptureListener(send)
+    installCaptureListener(send, { allowUntrusted: true })
     ;(document.querySelector('[name=userId]') as HTMLInputElement).value = 'shopmine'
+    const form = document.getElementById('loginForm') as HTMLFormElement
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('신뢰되지 않은(합성) submit 이벤트는 옵션 없이는 무시한다', () => {
+    const send = vi.fn()
+    installCaptureListener(send) // allowUntrusted 미지정 → 기본값(page.ts 와 동일)
+    ;(document.querySelector('[name=userId]') as HTMLInputElement).value = 'shopmine'
+    ;(document.querySelector('[name=pw]') as HTMLInputElement).value = 'p@ss'
     const form = document.getElementById('loginForm') as HTMLFormElement
     form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
 
@@ -193,7 +205,7 @@ describe('installCaptureListener', () => {
       <button id="go" type="button">로그인</button>
     `
     const send = vi.fn()
-    installCaptureListener(send)
+    installCaptureListener(send, { allowUntrusted: true })
     ;(document.getElementById('u') as HTMLInputElement).value = 'me'
     ;(document.getElementById('p') as HTMLInputElement).value = 'secret1'
     document.getElementById('go')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -202,5 +214,54 @@ describe('installCaptureListener', () => {
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({ username: 'me', password: 'secret1' })
     )
+  })
+
+  it('비밀번호가 채워진 상태에서 무관한 버튼을 클릭해도 전송하지 않는다(오탐 방지)', () => {
+    document.body.innerHTML = `
+      <form id="loginForm">
+        <input type="text" name="userId" placeholder="아이디">
+        <input type="password" name="pw">
+        <button type="submit">로그인</button>
+      </form>
+      <button id="cancel" type="button">취소</button>
+    `
+    const send = vi.fn()
+    installCaptureListener(send, { allowUntrusted: true })
+    ;(document.querySelector('[name=userId]') as HTMLInputElement).value = 'shopmine'
+    ;(document.querySelector('[name=pw]') as HTMLInputElement).value = 'p@ss'
+    document.getElementById('cancel')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('form 밖의 로그인과 무관한 버튼 클릭은 전송하지 않는다', () => {
+    document.body.innerHTML = `
+      <input type="text" id="u">
+      <input type="password" id="p">
+      <button id="unrelated" type="button">검색</button>
+    `
+    const send = vi.fn()
+    installCaptureListener(send, { allowUntrusted: true })
+    ;(document.getElementById('u') as HTMLInputElement).value = 'me'
+    ;(document.getElementById('p') as HTMLInputElement).value = 'secret1'
+    document.getElementById('unrelated')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('호스트당 30초에 4번째 전송(서명 무관)은 무시한다', () => {
+    const send = vi.fn()
+    installCaptureListener(send, { allowUntrusted: true })
+    const userEl = document.querySelector('[name=userId]') as HTMLInputElement
+    const pwEl = document.querySelector('[name=pw]') as HTMLInputElement
+    const form = document.getElementById('loginForm') as HTMLFormElement
+
+    for (let i = 0; i < 4; i++) {
+      userEl.value = `user${i}`
+      pwEl.value = `pass${i}`
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    }
+
+    expect(send).toHaveBeenCalledTimes(3)
   })
 })

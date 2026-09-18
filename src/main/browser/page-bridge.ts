@@ -71,8 +71,14 @@ export const pageBridge = {
     const wc = tab.view.webContents
     if (wc.isDestroyed()) return 'page is gone'
     try {
+      // JSON.stringify 는 스펙상 U+2028/U+2029(line/paragraph separator)를 이스케이프하지 않는다.
+      // 현재 엔진(Electron ^39, ES2019+)은 문자열 리터럴 내 미이스케이프 U+2028/2029 도 정상
+      // 파싱하지만, 향후 엔진/실행 경로 변경에 대비해 방어적으로 직접 이스케이프해 둔다.
+      const encoded = JSON.stringify(value)
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029')
       const raw: unknown = await wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [
-        { code: `__samba.fillValue(${id}, ${JSON.stringify(value)})` }
+        { code: `__samba.fillValue(${id}, ${encoded})` }
       ])
       const parsed = resultSchema.safeParse(raw)
       return parsed.success ? parsed.data : 'fill failed'

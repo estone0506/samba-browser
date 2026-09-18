@@ -1,4 +1,4 @@
-import { dialog, ipcMain, safeStorage, type BrowserWindow } from 'electron'
+import { dialog, ipcMain, safeStorage, type BrowserWindow, type WebContents } from 'electron'
 import { z } from 'zod'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import type { TabManager } from '../browser/tab-manager'
@@ -130,9 +130,24 @@ export function registerIpc(
     username: z.string().max(512),
     password: z.string().min(1).max(512)
   })
+  // preload 쪽 레이트리밋과 별개로, sender(webContents) 당 30초에 최대 3회로 다시 한 번 제한한다
+  // (메인이 유일하게 신뢰할 수 있는 경계이므로 preload 우회 가능성에 대비한 방어선)
+  const CAPTURE_WINDOW_MS = 30_000
+  const CAPTURE_MAX_PER_WINDOW = 3
+  const captureSentAt = new WeakMap<WebContents, number[]>()
   ipcMain.on(IPC.vaultCapture, (e, raw: unknown) => {
     // 발신자가 실제 탭의 webContents 가 아니면 무시(위조 발신자 방지)
     if (!tabs.hasWebContents(e.sender)) return
+    const now = Date.now()
+    const timestamps = (captureSentAt.get(e.sender) ?? []).filter(
+      (t) => now - t < CAPTURE_WINDOW_MS
+    )
+    if (timestamps.length >= CAPTURE_MAX_PER_WINDOW) {
+      captureSentAt.set(e.sender, timestamps)
+      return
+    }
+    timestamps.push(now)
+    captureSentAt.set(e.sender, timestamps)
     const parsed = captureSchema.safeParse(raw)
     if (!parsed.success) return
     const { host: rawHost, username, password } = parsed.data

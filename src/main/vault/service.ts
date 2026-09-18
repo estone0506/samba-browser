@@ -10,6 +10,7 @@
 //   "빈 암호문으로 행을 먼저 만들고(id 확보) → 같은 트랜잭션에서 암호문을 UPDATE" 하는 방식을 쓴다.
 //   (per-item 랜덤 aadToken 컬럼을 추가하는 대안 대신, 스키마 변경이 없는 이 방식을 선택했다)
 
+import { timingSafeEqual } from 'node:crypto'
 import type { Db } from '../db/client'
 import { VaultRepo, type AuditRow } from './repo'
 import {
@@ -435,7 +436,12 @@ export class VaultService {
     const row = this.repo.findItemRow(account.id, 'login_password')
     if (!row) return false
     try {
-      return decrypt(this.key, row.ciphertext, row.iv, String(row.id)) === password
+      const stored = decrypt(this.key, row.ciphertext, row.iv, String(row.id))
+      // 타이밍 오라클 방지: 길이가 다르면 즉시 false, 같으면 상수 시간 비교
+      const a = Buffer.from(stored, 'utf8')
+      const b = Buffer.from(password, 'utf8')
+      if (a.length !== b.length) return false
+      return timingSafeEqual(a, b)
     } catch {
       return false
     }

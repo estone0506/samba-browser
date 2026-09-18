@@ -193,15 +193,20 @@ function isTextishInput(el: HTMLInputElement): boolean {
   return el.type === 'text' || el.type === 'email' || el.type === 'tel'
 }
 
-// password 입력칸보다 문서 순서상 앞에 있는, 보이는 text/email/tel 입력을 문서 순서대로 모은다
+// password 입력칸보다 문서 순서상 앞에 있는, 보이는 text/email/tel 입력을 문서 순서대로 모은다.
+// password 가 form 안에 있으면 같은 form 소속만 후보로 삼는다(무관한 폼의 입력을 잘못 고르지 않도록).
+// form 이 없을 때만 문서 전체에서 찾는다.
 function textCandidatesBefore(passwordEl: HTMLInputElement): HTMLInputElement[] {
+  const pwForm = formOf(passwordEl)
   const all = Array.from(document.querySelectorAll<HTMLInputElement>('input'))
   const pwPos = all.indexOf(passwordEl)
   if (pwPos === -1) return []
   const candidates: HTMLInputElement[] = []
   for (let i = 0; i < pwPos; i++) {
     const el = all[i]
-    if (isVisible(el) && isTextishInput(el)) candidates.push(el)
+    if (!isVisible(el) || !isTextishInput(el)) continue
+    if (pwForm && formOf(el) !== pwForm) continue
+    candidates.push(el)
   }
   return candidates
 }
@@ -283,13 +288,36 @@ export function submitForm(id: number): string {
 }
 
 // --- 폼 제출 감지(저장 제안) -----------------------------------------------
+
+export interface InstallCaptureListenerOptions {
+  // 테스트 전용: jsdom 의 dispatchEvent 는 isTrusted=false 이므로 합성 이벤트도 허용한다.
+  // 실제 page.ts 는 이 옵션 없이(옵션 생략 = 신뢰된 이벤트만) 호출해야 한다.
+  allowUntrusted?: boolean
+}
+
+const CAPTURE_WINDOW_MS = 30_000
+const CAPTURE_MAX_PER_WINDOW = 3
+
 // ipcRenderer.send 등 실제 전송 함수는 주입받는다(테스트에서 스텁 가능하도록)
 export function installCaptureListener(
-  send: (payload: { host: string; username: string; password: string }) => void
+  send: (payload: { host: string; username: string; password: string }) => void,
+  options: InstallCaptureListenerOptions = {}
 ): void {
+  const allowUntrusted = options.allowUntrusted === true
+
   // 같은 제출이 submit 과 click 양쪽에서 잡혀 중복 전송되는 것을 짧게 막는다
   let lastSignature = ''
   let lastSentAt = 0
+
+  // 시그니처와 무관하게, 적대 페이지가 서로 다른 값을 반복 주입/제출해 플러딩하는 것을 막는다
+  // (호스트당 30초 최대 3회)
+  const sentTimestamps: number[] = []
+  const withinRateLimit = (now: number): boolean => {
+    while (sentTimestamps.length > 0 && now - sentTimestamps[0] >= CAPTURE_WINDOW_MS) {
+      sentTimestamps.shift()
+    }
+    return sentTimestamps.length < CAPTURE_MAX_PER_WINDOW
+  }
 
   const attempt = (): void => {
     const pwEls = Array.from(
@@ -302,20 +330,48 @@ export function installCaptureListener(
     const signature = `${username}:${pw.value}`
     const now = Date.now()
     if (signature === lastSignature && now - lastSentAt < 1000) return
+    if (!withinRateLimit(now)) return
     lastSignature = signature
     lastSentAt = now
+    sentTimestamps.push(now)
     send({ host: location.host, username, password: pw.value })
   }
 
+  // click 이 감지된 password 와 관련된 제출 액션인지 판정한다.
+  // - password 가 form 안에 있으면: 그 form 소속의 submit 성격 버튼일 때만
+  // - password 가 form 밖이면: findSubmit() 이 로그인 텍스트로 고르는 것과 같은 기준(같은 요소)일 때만
+  function isRelevantSubmitClick(clicked: HTMLElement, pw: HTMLInputElement): boolean {
+    const pwForm = formOf(pw)
+    if (pwForm) {
+      return isSubmitLike(clicked) && formOf(clicked) === pwForm
+    }
+    return isButtonish(clicked) && LOGIN_TEXT.test(labelOf(clicked))
+  }
+
   // 일반적인 폼 제출(캡처 단계 — 페이지 핸들러의 preventDefault 와 무관하게 이벤트는 도달한다)
-  document.addEventListener('submit', attempt, true)
+  document.addEventListener(
+    'submit',
+    (ev) => {
+      if (!allowUntrusted && ev.isTrusted !== true) return
+      attempt()
+    },
+    true
+  )
   // SPA 대비: 페이지가 submit 을 아예 막고 클릭만으로 처리하는 경우도 감지
   document.addEventListener(
     'click',
     (ev) => {
+      if (!allowUntrusted && ev.isTrusted !== true) return
       const target = ev.target
       if (!(target instanceof HTMLElement)) return
-      if (!target.closest('button, input[type="submit"]')) return
+      const clicked = target.closest('button, input[type="submit"]')
+      if (!(clicked instanceof HTMLElement)) return
+      const pwEls = Array.from(
+        document.querySelectorAll<HTMLInputElement>('input[type="password"]')
+      ).filter(isVisible)
+      const pw = pwEls[0]
+      if (!pw) return
+      if (!isRelevantSubmitClick(clicked, pw)) return
       attempt()
     },
     true

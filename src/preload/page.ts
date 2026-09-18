@@ -38,4 +38,5 @@ Object.assign(globalThis, { __samba: api })
 
 // 폼 제출 감지 → 메인의 vault:capture 로 전달(비밀번호는 이 채널로만, pendingCapture 에만 잠깐 머문다)
 // 격리 월드 preload 는 contextIsolation 하에서도 ipcRenderer 를 직접 사용할 수 있다
+// 옵션 없이 호출 → 합성(스크립트 생성) 이벤트는 무시하고 신뢰된(isTrusted) 사용자 이벤트만 처리한다
 installCaptureListener((payload) => ipcRenderer.send(IPC.vaultCapture, payload))
