@@ -144,3 +144,7 @@ Aside Password 설정 화면 기준 요약:
 ### 로고 메뉴 › Extensions (실물)
 - Manage all extensions · **Import extensions**(크롬에서 확장 가져오기) · Installed: **Aside Vault 자체가 확장으로 구현됨**(핀 아이콘), 샵백 캐시백 확장
 - 시사점: Aside 는 비밀번호 관리자를 크롬 확장(MV3) 형태로 만들어 자동 채움을 처리. 삼바는 preload 격리 월드 방식(동일 효과). 확장 가져오기/관리는 2b(Electron `session.extensions.loadExtension`, MV3 제한 확인).
+
+### 설정 전 화면 재확인 (2026-09-18 저녁, 9장) — 기존 기록과 일치. 추가 관찰:
+- **Memory 에피소드 실제 내용**(2026-09-17.md): 에이전트가 무신사머니 인출 중 만난 사실을 시각·근거(sessions.get id)와 함께 기록 — 예: "NICE ePAY 결제비밀번호 창이 **별도 창(m.niceepay.com:7006/epay/pinCert.do)** 으로 열림", "키패드 스냅샷에는 숫자 버튼·입력완료가 보이지만 **몇 자리 입력됐는지는 스크린샷으로만 확인 가능(값은 알 수 없음)**", "사용자 직접 실행과 에이전트 시도의 인과를 구분해 기록". → 3단계 결제/인증 설계 참고: ① 결제창은 팝업(별도 WebContents) 이므로 팝업 탭도 스냅샷·조작 대상에 포함 ② 보안 키패드는 입력 자리수 표시(●)로 진행 확인 ③ 메모리 항목은 "사실 + 근거 세션 + 주의" 구조.
+- Account › Sync: "Browser data recovery" 토글(클라우드 복구) — 2b 동기화 설계에 복구 옵션 포함.
