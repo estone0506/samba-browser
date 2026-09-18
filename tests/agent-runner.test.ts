@@ -32,6 +32,20 @@ describe('classifyAuthError — SDK 실측 문구', () => {
       'missing'
     ))
   it('rate_limit', () => expect(classifyAuthError('rate_limit 429')).toBe('limit'))
+  it('billing_error 는 인증이 아니라 한도 안내', () =>
+    expect(classifyAuthError('billing_error')).toBe('limit'))
+})
+
+describe('classifyAuthError — 오분류 방지', () => {
+  it("모델 요약의 'login' 단어만으로는 인증 오류가 아니다", () => {
+    expect(classifyAuthError('로그인 페이지로 이동했습니다')).toBeNull()
+    expect(classifyAuthError('Clicked the login button')).toBeNull()
+    expect(classifyAuthError('Opened the Login page and stopped')).toBeNull()
+  })
+  it('실제 인증 실패 문구는 여전히 잡는다', () => {
+    expect(classifyAuthError('Please login with claude login')).toBe('missing')
+    expect(classifyAuthError('Error: Not logged in')).toBe('missing')
+  })
 })
 
 describe('isFatalApiError', () => {

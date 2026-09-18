@@ -142,14 +142,20 @@ export class AgentRunner {
           emit({ type: 'progress', kind: 'apiRetry', attempt: msg.attempt, reason: msg.error })
         } else if (msg.type === 'result') {
           const failed = msg.subtype !== 'success' || msg.is_error
-          // 실패 사유 문구를 모아 인증 오류 여부를 판정
+          // 화면에 보여줄 실패 사유(모델이 쓴 result 문구 포함)
           const detail = [
             msg.subtype === 'success' ? (msg.is_error ? msg.result : '') : msg.errors.join(' '),
             apiError
           ]
             .filter(Boolean)
             .join(' ')
-          const kind = classifyAuthError(detail)
+          // 인증 분류에는 모델이 생성한 result 텍스트를 넣지 않는다.
+          // ("로그인 페이지로 이동했습니다" 같은 정상 요약이 auth:missing 으로 오분류됐다)
+          const kind = classifyAuthError(
+            [msg.subtype === 'success' ? '' : msg.errors.join(' '), apiError]
+              .filter(Boolean)
+              .join(' ')
+          )
           // assistant 텍스트를 한 번도 못 받았을 때만 최종 결과 문자열을 대신 보여준다
           if (!failed && deduper.count() === 0) {
             const text = deduper.accept(msg.subtype === 'success' ? msg.result : '')

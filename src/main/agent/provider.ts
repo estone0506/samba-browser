@@ -34,8 +34,10 @@ export function runQuery(input: ProviderInput): Query {
 
 // 인증 없음으로 볼 문구. SDK 의 SDKAssistantMessageError 값과 실제 401 응답 문구를 모두 포함
 const MISSING_PATTERNS = [
+  // 'login' 단독은 페이지·모델 텍스트("로그인 버튼을 눌렀습니다")와 겹쳐 오분류를 만든다
   'not logged in',
-  'login',
+  'please login',
+  'please log in',
   'authentication',
   'authentication_error',
   'authentication_failed',
@@ -46,13 +48,12 @@ const MISSING_PATTERNS = [
   'unauthorized',
   'account_on_hold',
   'verification_required',
-  'billing_error',
   'cloud_credential_error',
   'credential'
 ]
 
-// 사용 한도 문구
-const LIMIT_PATTERNS = ['rate limit', 'rate_limit', 'usage limit', 'quota', '429']
+// 사용 한도·결제 문구. billing_error 는 인증 문제가 아니라 한도/결제 안내가 맞다
+const LIMIT_PATTERNS = ['rate limit', 'rate_limit', 'usage limit', 'quota', '429', 'billing_error']
 
 // 인증 오류 문구 판별 → UI 안내 키
 export function classifyAuthError(message: string): 'missing' | 'limit' | null {

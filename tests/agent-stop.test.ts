@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { AgentEvent } from '../src/shared/ipc'
+import type { TabManager } from '../src/main/browser/tab-manager'
+import type { SettingsStore } from '../src/main/settings/store'
 
 // 스트림이 늦게 끝나는 상황(api_retry 백오프)을 흉내내는 하네스.
 // 스트림 메시지와 지연은 테스트가 매번 주입한다
@@ -38,8 +40,11 @@ function makeRunner(): { runner: InstanceType<typeof AgentRunner>; events: Agent
       maxToolCalls: 40
     })
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const runner = new AgentRunner({} as any, settings as any, (e) => events.push(e))
+  const runner = new AgentRunner(
+    {} as unknown as TabManager,
+    settings as unknown as SettingsStore,
+    (e) => events.push(e)
+  )
   return { runner, events }
 }
 
@@ -132,6 +137,25 @@ describe('AgentRunner 텍스트 중복', () => {
       attempt: 3,
       reason: 'rate_limit'
     })
+  })
+
+  it('모델이 쓴 결과 문구의 login 은 인증 오류로 오분류하지 않는다', async () => {
+    script = {
+      delayMs: 0,
+      messages: [
+        {
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          result: 'Could not finish: the login page kept redirecting'
+        }
+      ]
+    }
+    const { runner, events } = makeRunner()
+    await runner.run('작업')
+    const last = events.at(-1)
+    expect(last).toMatchObject({ type: 'status', state: 'failed' })
+    expect(last?.type === 'status' && last.message?.startsWith('auth:')).toBe(false)
   })
 
   it('회복 불가 api_retry 는 즉시 실패로 끝낸다', async () => {

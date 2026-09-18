@@ -175,6 +175,8 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
       })
   )
 
+  // done 은 guard 를 거치지 않으므로 도구 호출 상한(tick)에 계산되지 않는다.
+  // 상한에 도달했을 때 "done 으로 마무리하라"고 안내하기 때문에, 마무리 호출까지 막으면 안 된다
   const done = tool(
     'done',
     'Finish the task with a short summary for the user.',

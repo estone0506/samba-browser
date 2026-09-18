@@ -32,9 +32,17 @@ pnpm dev
 - **Tailwind CSS** — 스타일링
 - **shadcn/ui** — UI 컴포넌트
 - **Zustand** — 상태 관리
-- **Claude API** — AI 기능
+- **Claude Agent SDK** — AI 기능 (Claude 구독 로그인 연결. `ANTHROPIC_API_KEY` 가 있으면 그것을 우선 사용)
 
 자세한 기술 스택 정보는 [기술스택](docs/기술스택.md)을 참고하세요.
+
+## 알려진 한계 (MVP 1단계)
+
+- **확인 게이트는 `click` / `type` 도구에만 적용됩니다.** AI 가 `navigate` 로 위험한 URL 에
+  직접 이동하거나 `select` 로 옵션을 고르는 경우는 확인을 거치지 않습니다 (2단계에서 확장).
+- 탭이 열 수 있는 주소는 `http`/`https`/`about:blank` 뿐입니다. `file:`·`javascript:`·`data:` 는 차단됩니다.
+- 작업당 도구 호출 상한은 40회이며 `done` 호출은 상한에 포함되지 않습니다.
+- Windows 전용으로 검증했습니다. macOS/Linux 는 1단계 범위 밖입니다.
 
 ## IDE 추천
 
