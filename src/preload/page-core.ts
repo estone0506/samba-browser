@@ -1,5 +1,8 @@
+// [규칙] 이 파일은 page.ts 와 함께 sandbox preload 로 번들된다.
+// src/shared/* 에서 **값(value)** 을 import 하지 말 것 — Rollup 청크 분리로 require() 가 생겨
+// preload 로드가 실패한다. 타입은 `import type` 만 사용(번들에 남지 않음), 값은 ./page-constants 에서.
 import type { PageElement, PageSnapshot } from '../shared/snapshot'
-import { MAX_ELEMENTS } from '../shared/snapshot'
+import { MAX_ELEMENTS } from './page-constants'
 
 // 스냅샷 id → 실제 DOM 요소 매핑 (스냅샷마다 갱신)
 let registry: HTMLElement[] = []

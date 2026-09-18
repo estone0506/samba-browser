@@ -1,5 +1,19 @@
+// [규칙 — 절대 어기지 말 것]
+// 이 파일은 탭 WebContentsView 에 `sandbox: true` 로 주입되는 preload 다.
+// sandbox preload 는 **다른 파일을 require() 할 수 없다**. 따라서 번들 결과
+// out/preload/page.js 는 `require('electron')` 외에 어떤 require 도 있어선 안 된다.
+//
+// page.ts / page-core.ts 에서 src/shared/* 의 **값(value)** 을 import 하면
+// renderer.ts 도 같은 모듈을 쓰기 때문에 Rollup 이 out/preload/chunks/*.js 로 공통 청크를
+// 분리하고, page.js 가 그것을 require() 하게 된다 → preload 로드 실패
+// → globalThis.__samba 미정의 → AI 의 get_page/login 이 전부 실패한다.
+//
+// 규칙: shared 에서는 `import type` 만(타입은 번들에 남지 않는다).
+//       상수/채널명 등 값은 ./page-constants.ts 에 복제해서 쓴다.
+//       relative import(./page-core 등)는 같은 엔트리에 인라인되므로 안전하다.
+// 회귀 방지 테스트: tests/preload-bundle.test.ts
 import { ipcRenderer } from 'electron'
-import { IPC } from '../shared/ipc'
+import { PAGE_IPC } from './page-constants'
 import {
   buildSnapshot,
   textOf,
@@ -42,4 +56,4 @@ Object.assign(globalThis, { __samba: api })
 // 폼 제출 감지 → 메인의 vault:capture 로 전달(비밀번호는 이 채널로만, pendingCapture 에만 잠깐 머문다)
 // 격리 월드 preload 는 contextIsolation 하에서도 ipcRenderer 를 직접 사용할 수 있다
 // 옵션 없이 호출 → 합성(스크립트 생성) 이벤트는 무시하고 신뢰된(isTrusted) 사용자 이벤트만 처리한다
-installCaptureListener((payload) => ipcRenderer.send(IPC.vaultCapture, payload))
+installCaptureListener((payload) => ipcRenderer.send(PAGE_IPC.vaultCapture, payload))
