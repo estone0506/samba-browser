@@ -120,6 +120,8 @@ export class TabManager {
         contextIsolation: true
       }
     })
+    // 카드 모서리(rounded-2xl = 16px)와 맞춰서, 창 모서리 사각형 삐져나옴을 없앤다
+    view.setBorderRadius(16)
     const tab: Tab = { id: randomUUID(), view, profile, mobile: opts.mobile ?? false }
     this.tabs.push(tab)
     const wc = view.webContents

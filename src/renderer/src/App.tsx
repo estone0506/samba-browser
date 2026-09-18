@@ -23,8 +23,8 @@ export default function App(): React.JSX.Element {
   return (
     <div className="flex h-full bg-[var(--bg)]">
       <Sidebar width={sidebarWidth} />
-      <main className="flex min-w-0 flex-1 flex-col py-2.5 pr-2.5">
-        <div className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-white shadow-[0_1px_2px_rgba(0,0,0,.04),0_8px_24px_rgba(0,0,0,.06)]">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col py-2.5 pr-2.5">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-white shadow-[0_1px_2px_rgba(0,0,0,.04),0_8px_24px_rgba(0,0,0,.06)]">
           <TabBar />
           <AddressBar />
           <ProgressBar
