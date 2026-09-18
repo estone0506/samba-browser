@@ -25,7 +25,12 @@ export const accounts = sqliteTable('accounts', {
   // 사용자 태그(JSON string[])
   tags: text('tags'),
   createdAt: integer('created_at').notNull(),
-  updatedAt: integer('updated_at').notNull()
+  updatedAt: integer('updated_at').notNull(),
+  // 서버(Supabase)의 uuid. 아직 올리지 않았으면 null
+  remoteId: text('remote_id'),
+  workspaceId: integer('workspace_id'),
+  // 삭제 표식(tombstone). 값이 있으면 지워진 행으로 본다
+  deletedAt: integer('deleted_at')
 })
 // 비밀 항목 — 값은 항상 암호문
 export const vaultItems = sqliteTable('vault_items', {
@@ -38,7 +43,10 @@ export const vaultItems = sqliteTable('vault_items', {
   fields: text('fields'),
   ciphertext: blob('ciphertext', { mode: 'buffer' }).notNull(),
   iv: blob('iv', { mode: 'buffer' }).notNull(),
-  updatedAt: integer('updated_at').notNull()
+  updatedAt: integer('updated_at').notNull(),
+  remoteId: text('remote_id'),
+  workspaceId: integer('workspace_id'),
+  deletedAt: integer('deleted_at')
 })
 export const vaultMeta = sqliteTable('vault_meta', {
   key: text('key').primaryKey(),
@@ -58,7 +66,12 @@ export const bookmarks = sqliteTable('bookmarks', {
   title: text('title').notNull(),
   url: text('url').notNull(),
   position: integer('position').notNull().default(0),
-  addedAt: integer('added_at')
+  addedAt: integer('added_at'),
+  remoteId: text('remote_id'),
+  workspaceId: integer('workspace_id'),
+  // 북마크는 원래 수정 시각이 없었다. 합집합 병합에서 어느 쪽 제목·순서를 쓸지 가리는 데 쓴다
+  updatedAt: integer('updated_at'),
+  deletedAt: integer('deleted_at')
 })
 export const auditLog = sqliteTable('audit_log', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -70,4 +83,38 @@ export const auditLog = sqliteTable('audit_log', {
   action: text('action').notNull(),
   jobId: text('job_id'),
   source: text('source').notNull()
+})
+
+// 작업공간(브라우저 프로필) — 북마크·금고 항목·설정 세트를 가르는 상위 계층
+export const workspaces = sqliteTable('workspaces', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  // 서버(Supabase)의 uuid. 아직 올리지 않았으면 null
+  remoteId: text('remote_id').unique(),
+  name: text('name').notNull(),
+  color: text('color'),
+  position: integer('position').notNull().default(0),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(false),
+  updatedAt: integer('updated_at').notNull(),
+  deletedAt: integer('deleted_at')
+})
+
+// 변경 로그 — 로컬 쓰기마다 한 행. 온라인이면 즉시, 아니면 쌓아 두고 재연결 시 전송한다
+export const syncOutbox = sqliteTable('sync_outbox', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  // 'settings' | 'accounts' | 'vault_items' | 'bookmarks'
+  table: text('table').notNull(),
+  // 로컬 행 식별자(settings 는 설정 키 문자열, 그 외는 숫자 id 의 문자열)
+  rowId: text('row_id').notNull(),
+  op: text('op').notNull(),
+  // 전송 시점에 다시 읽으면 되므로 보통 비어 있다. settings 처럼 DB 밖 값만 담는다
+  payload: text('payload'),
+  createdAt: integer('created_at').notNull(),
+  triedAt: integer('tried_at'),
+  error: text('error')
+})
+
+// 동기화 부가 상태. 'lastPulledAt' | 'deviceId' | 'userId' | 'settings:<key>:updatedAt'
+export const syncState = sqliteTable('sync_state', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull()
 })
