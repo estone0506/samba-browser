@@ -7,8 +7,15 @@ import { serializeSnapshot } from '../../shared/snapshot'
 import { isDangerous } from '../../shared/danger'
 import type { PermissionMode, VaultAccessPolicy } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
-import type { AccountDto, AgentAccess, VaultItemType } from '../../shared/vault'
-import { normalizeHost, registrableDomain } from '../../shared/host'
+import type { AccountDto, VaultItemType } from '../../shared/vault'
+import { normalizeHost } from '../../shared/host'
+import {
+  checkVaultGate,
+  effectiveAccess,
+  isHostExcluded as isHostExcludedIn,
+  isSecurePageUrl,
+  sameRegistrableDomain
+} from '../vault/access-gate'
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
 import { formatDialogNote } from '../browser/dialogs'
 import { createOcrTool } from './tools-ocr'
@@ -45,24 +52,11 @@ const VAULT_HOST_EXCLUDED = 'refused: host is excluded from KeyMaster'
 const LIST_ACCOUNTS_HOST_EXCLUDED = 'refused: host excluded'
 // 평문(http)으로 열린 페이지에 비밀값을 채우려 할 때 돌려주는 문자열
 const INSECURE_PAGE = 'refused: insecure page (https required)'
-// http 라도 비밀값 입력을 허용하는 로컬 개발 호스트
-const LOCAL_HOSTNAMES = ['localhost', '127.0.0.1', '[::1]', '::1']
+// 값을 채우기 직전, 페이지가 계정과 다른 등록 도메인으로 옮겨 갔을 때 돌려주는 문자열
+const FILL_HOST_MISMATCH = 'refused: HOST_MISMATCH — page moved to another domain'
 
-/**
- * 비밀값을 채워도 되는 페이지인지 판정한다.
- * https 만 허용하고, 로컬 개발 서버(http://localhost 등)만 예외로 둔다.
- * 파싱이 안 되는 URL(about:blank 등)도 거부한다.
- */
-export function isSecurePageUrl(url: string): boolean {
-  try {
-    const u = new URL(url)
-    if (u.protocol === 'https:') return true
-    if (u.protocol === 'http:') return LOCAL_HOSTNAMES.includes(u.hostname)
-    return false
-  } catch {
-    return false
-  }
-}
+// https·제외 도메인·접근 정책 판정은 하네스·자동 채움과 공유한다(vault/access-gate.ts)
+export { isSecurePageUrl, effectiveAccess }
 
 // 금고에 저장된 항목 종류(도구 스키마용). shared/vault 의 VaultItemType 과 단일 소스로 유지한다.
 // `satisfies` 는 초과/오타 항목을 잡고, 아래 완전성 체크는 누락 항목을 컴파일 타임에 잡는다
@@ -103,18 +97,6 @@ export function resolveAccount(
   const preferred = accounts.find((a) => a.isDefault)
   if (preferred) return preferred
   return accounts.length === 1 ? accounts[0] : null
-}
-
-/**
- * 계정별 접근 정책과 전역 정책을 합쳐 실제 적용할 정책을 고른다.
- * 계정이 'inherit' 이면 전역 정책을, 아니면 계정 설정이 전역을 override 한다.
- */
-export function effectiveAccess(
-  accountAccess: AgentAccess | undefined,
-  globalPolicy: VaultAccessPolicy
-): VaultAccessPolicy {
-  if (!accountAccess || accountAccess === 'inherit') return globalPolicy
-  return accountAccess
 }
 
 export interface ToolContext {
@@ -255,18 +237,9 @@ ${raw}`
   // 현재 탭의 호스트(정규화). 탭이 없거나 정규화에 실패하면 빈 문자열
   const currentHost = (): string => normalizeHost(currentUrl())
 
-  // 현재 호스트가 제외 도메인 목록에 있는지 확인한다. 정확 일치뿐 아니라 같은 등록 도메인
-  // (eTLD+1)이면 제외로 취급한다 — 제외 설정이 "example.com" 이어도 "login.example.com" 은
-  // 새는 서브도메인이 되면 안 된다
-  const isHostExcluded = (host: string): boolean => {
-    const excluded = ctx.vaultExcludedHosts ?? []
-    if (excluded.length === 0 || !host) return false
-    const hostDomain = registrableDomain(host)
-    return excluded.some((raw) => {
-      const h = normalizeHost(raw) || raw
-      return h === host || registrableDomain(h) === hostDomain
-    })
-  }
+  // 현재 호스트가 제외 도메인 목록에 있는지(같은 등록 도메인이면 제외로 본다)
+  const isHostExcluded = (host: string): boolean =>
+    isHostExcludedIn(host, ctx.vaultExcludedHosts ?? [])
 
   // 전역 접근 정책(계정이 'inherit' 일 때 적용된다)
   const globalPolicy = (): VaultAccessPolicy => ctx.vaultAccessPolicy ?? 'while_unlocked'
@@ -294,6 +267,28 @@ ${raw}`
     if (state === 'uninitialized') return VAULT_NOT_SET_UP
     if (state !== 'unlocked') return VAULT_LOCKED
     return v
+  }
+
+  // checkVaultGate 결과를 모델이 읽는 안내 문자열로 바꾼다(https·호스트·제외 도메인)
+  const gateRefusal = (url: string): string | null => {
+    const reason = checkVaultGate({ url, excludedHosts: ctx.vaultExcludedHosts ?? [] })
+    if (reason === 'host-unknown') return HOST_UNKNOWN
+    if (reason === 'insecure-page') return INSECURE_PAGE
+    if (reason === 'excluded') return VAULT_HOST_EXCLUDED
+    return null
+  }
+
+  /**
+   * 값을 채우기 직전 재검증 — 이동·리다이렉트로 조건이 바뀌었을 수 있다.
+   * https 여야 하고, 제외 도메인이 아니어야 하며, 현재 호스트가 계정 호스트와 같은
+   * 등록 도메인(eTLD+1)이어야 한다. 통과하면 null, 막히면 안내 문자열을 돌려준다
+   */
+  const verifyFillTarget = (account: AccountDto): string | null => {
+    const url = currentUrl()
+    const blocked = gateRefusal(url)
+    if (blocked) return blocked
+    if (!sameRegistrableDomain(normalizeHost(url), account.host)) return FILL_HOST_MISMATCH
+    return null
   }
 
   // 계정을 특정하지 않는 경로(현재는 없음)를 위한 전역 정책 게이트
@@ -500,7 +495,7 @@ ${raw}`
         // 다른 서브도메인에 저장된 계정은 허용한다
         if (host) {
           const h = normalizeHost(host) || host
-          if (h !== target && registrableDomain(h) !== registrableDomain(target)) {
+          if (h !== target && !sameRegistrableDomain(h, target)) {
             return JSON.stringify({ accounts: [], note: HOST_MISMATCH })
           }
         }
@@ -538,10 +533,9 @@ ${raw}`
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
         const host = currentHost()
-        if (!host) return HOST_UNKNOWN
         // 평문(http) 페이지에는 비밀값을 절대 채우지 않는다(네트워크 도청·다운그레이드 방어)
-        if (!isSecurePageUrl(currentUrl())) return INSECURE_PAGE
-        if (isHostExcluded(host)) return VAULT_HOST_EXCLUDED
+        const blocked = gateRefusal(currentUrl())
+        if (blocked) return blocked
         const available = vaultAvailable()
         if (typeof available === 'string') return available
         // 계정을 먼저 특정해야 계정별 접근 정책을 적용할 수 있다.
@@ -569,6 +563,9 @@ ${raw}`
         const fieldKey = field ?? DEFAULT_FIELD_KEY
         const value = v.getSecretForFill(account.id, itemType, fieldKey, ctx.jobId)
         if (value === null) return `not found: no ${itemType}.${fieldKey} saved for this account`
+        // 확인 대기 사이에 페이지가 옮겨 갔을 수 있어 채우기 직전에 다시 검증한다
+        const moved = verifyFillTarget(account)
+        if (moved) return moved
         // 평문은 여기서만 존재하고 반환값·step 라벨·로그 어디에도 남기지 않는다
         const filled = await pageBridge.fillValue(tab, elementId, value)
         if (filled !== 'ok') return filled
@@ -589,10 +586,9 @@ ${raw}`
           const tab = activeOr(ctx)
           if (!tab) return 'no active tab'
           const host = currentHost()
-          if (!host) return HOST_UNKNOWN
           // 평문(http) 로그인 페이지에는 비밀번호를 채우지 않는다
-          if (!isSecurePageUrl(currentUrl())) return INSECURE_PAGE
-          if (isHostExcluded(host)) return VAULT_HOST_EXCLUDED
+          const blocked = gateRefusal(currentUrl())
+          if (blocked) return blocked
           const available = vaultAvailable()
           if (typeof available === 'string') return available
           label = `로그인: ${host}`
@@ -601,10 +597,19 @@ ${raw}`
           if (fields.stage === 'none') {
             return 'fields not found: navigate to the login page first'
           }
-          // 폴백 이동으로 평문(http) 페이지에 내려섰을 수 있어 다시 확인한다
-          if (!isSecurePageUrl(currentUrl())) return INSECURE_PAGE
+          // 폴백(알려진 로그인 URL 이동·로그인 링크 클릭)으로 평문 페이지나 다른 도메인에
+          // 내려섰을 수 있다. 29cm → musinsa 통합 로그인처럼 다른 등록 도메인으로 넘어가는
+          // 정상 흐름이 있으므로, 막는 대신 "옮겨 간 도메인의 계정"으로 다시 조회한다
+          const loginHost = currentHost()
+          const movedBlocked = gateRefusal(currentUrl())
+          if (movedBlocked) return movedBlocked
+          label = `로그인: ${loginHost}`
           // 라벨을 안 주면 탭 프로필과 같은 라벨의 계정을 자동으로 고른다(계정 순회 지원)
-          const account = resolveAccount(available.listAccounts(host), accountLabel, tab.profile)
+          const account = resolveAccount(
+            available.listAccounts(loginHost),
+            accountLabel,
+            tab.profile
+          )
           if (!account) return ACCOUNT_NOT_FOUND
           const gate = await applyPolicy(
             available,
@@ -612,7 +617,7 @@ ${raw}`
           )
           if (typeof gate === 'string') return gate
           const v = gate
-          label = `로그인: ${host} (${account.label})`
+          label = `로그인: ${loginHost} (${account.label})`
           // 2단계 로그인 1단계(아이디 화면): 아이디만 채워 제출한 뒤 비밀번호 화면을 다시 탐지한다
           if (fields.stage === 'username-only' && fields.username !== undefined) {
             const idFilled = await pageBridge.fillValue(tab, fields.username, account.username)
@@ -623,6 +628,9 @@ ${raw}`
             const idSubmitted = await pageBridge.submitForm(tab, fields.submit ?? fields.username)
             if (idSubmitted !== 'ok') return idSubmitted
             await pageBridge.waitForLoad(tab)
+            // 아이디 제출로 페이지가 옮겨 갔을 수 있어 https·등록 도메인을 다시 확인한다
+            const moved = verifyFillTarget(account)
+            if (moved) return moved
             fields = await pageBridge.findLoginFields(tab)
           }
           if (fields.password === undefined) {
@@ -635,6 +643,9 @@ ${raw}`
             const userFilled = await pageBridge.fillValue(tab, fields.username, account.username)
             if (userFilled !== 'ok') return userFilled
           }
+          // 비밀번호를 넣기 직전 마지막 재검증 — 이 사이에 페이지가 바뀌었을 수 있다
+          const beforeFill = verifyFillTarget(account)
+          if (beforeFill) return beforeFill
           const pwFilled = await pageBridge.fillValue(tab, fields.password, password)
           if (pwFilled !== 'ok') return pwFilled
           // 자동 제출이 꺼져 있으면 채우기만 하고 제출은 사용자에게 맡긴다
