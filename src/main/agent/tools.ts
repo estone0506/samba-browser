@@ -4,7 +4,7 @@ import type { TabManager } from '../browser/tab-manager'
 import { pageBridge } from '../browser/page-bridge'
 import { serializeSnapshot } from '../../shared/snapshot'
 import { isDangerous } from '../../shared/danger'
-import type { PermissionMode } from '../../shared/settings'
+import type { PermissionMode, VaultAccessPolicy } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
 import type { AccountDto, VaultItemType } from '../../shared/vault'
 import { normalizeHost } from '../../shared/host'
@@ -28,6 +28,12 @@ const CONFIRM_ITEM_TYPES: VaultItemType[] = ['payment_password', 'card']
 const SECRET_TARGET_ITEM_TYPES: VaultItemType[] = ['login_password', 'payment_password', 'card']
 // 대상 요소가 비밀 입력칸이 아닐 때 돌려주는 문자열
 const NOT_A_SECRET_FIELD = 'refused: target is not a secret input'
+// 접근 정책이 never 일 때 돌려주는 문자열
+const VAULT_ACCESS_NEVER = 'refused: KeyMaster access policy is Never'
+// 현재 호스트가 제외 도메인 목록에 있을 때 돌려주는 문자열
+const VAULT_HOST_EXCLUDED = 'refused: host is excluded from KeyMaster'
+// 접근 정책 always 에서 기기 자동 해제를 시도하는 횟수
+const AUTO_UNLOCK_ATTEMPTS = 3
 
 // 금고에 저장된 항목 종류(도구 스키마용). shared/vault 의 VaultItemType 과 단일 소스로 유지한다.
 // `satisfies` 는 초과/오타 항목을 잡고, 아래 완전성 체크는 누락 항목을 컴파일 타임에 잡는다
@@ -80,6 +86,12 @@ export interface ToolContext {
   vault?: VaultService
   // 감사 로그에 남길 작업 식별자(실행 1건 = jobId 1개)
   jobId?: string
+  // 키마스터 AI 접근 정책. 미지정 시 while_unlocked 로 동작한다(구버전 호출부·테스트 호환)
+  vaultAccessPolicy?: VaultAccessPolicy
+  // 자동 채움 후 자동 제출 여부. 미지정 시 true(기존 동작)로 동작한다
+  vaultAutoSubmit?: boolean
+  // 제외 도메인(정규화된 host 문자열). 미지정 시 빈 목록으로 동작한다
+  vaultExcludedHosts?: string[]
 }
 
 const text = (t: string): { content: [{ type: 'text'; text: string }] } => ({
@@ -123,21 +135,37 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     }
   }
 
-  // 실행 가능하면 잠금 해제된 금고를, 아니면 사용자에게 보여 줄 안내 문자열을 돌려준다.
-  // 미주입은 기존 호출부·테스트 호환을 위해 "잠금"으로 취급한다
-  const vaultGate = (): VaultService | string => {
-    const v = ctx.vault
-    if (!v) return VAULT_LOCKED
-    const state = v.state()
-    if (state === 'uninitialized') return VAULT_NOT_SET_UP
-    if (state !== 'unlocked') return VAULT_LOCKED
-    return v
-  }
-
   // 현재 탭의 호스트(정규화). 탭이 없거나 정규화에 실패하면 빈 문자열
   const currentHost = (): string => {
     const tab = activeOr(ctx)
     return tab ? normalizeHost(tab.view.webContents.getURL()) : ''
+  }
+
+  // 현재 호스트가 제외 도메인 목록에 있는지 확인한다(양쪽 다 normalizeHost 를 거쳐 비교)
+  const isHostExcluded = (host: string): boolean => {
+    const excluded = ctx.vaultExcludedHosts ?? []
+    if (excluded.length === 0 || !host) return false
+    return excluded.some((h) => (normalizeHost(h) || h) === host)
+  }
+
+  // 실행 가능하면 잠금 해제된 금고를, 아니면 사용자에게 보여 줄 안내 문자열을 돌려준다.
+  // 미주입은 기존 호출부·테스트 호환을 위해 "잠금"으로 취급한다.
+  // 접근 정책 never 는 즉시 거부하고, always 는 잠겨 있을 때 기기 키로 자동 해제를 시도한다
+  const vaultGate = async (): Promise<VaultService | string> => {
+    const v = ctx.vault
+    if (!v) return VAULT_LOCKED
+    const policy = ctx.vaultAccessPolicy ?? 'while_unlocked'
+    if (policy === 'never') return VAULT_ACCESS_NEVER
+    if (v.state() === 'uninitialized') return VAULT_NOT_SET_UP
+    if (policy === 'always') {
+      for (let i = 0; i < AUTO_UNLOCK_ATTEMPTS && v.state() !== 'unlocked'; i++) {
+        await v.ensureUnlockedByDevice()
+      }
+    }
+    const state = v.state()
+    if (state === 'uninitialized') return VAULT_NOT_SET_UP
+    if (state !== 'unlocked') return VAULT_LOCKED
+    return v
   }
 
   const getPage = tool(
@@ -308,13 +336,14 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     ({ elementId, itemType, accountLabel }) =>
       guard(`입력: ${itemType} (#${elementId})`, async () => {
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
-        const gate = vaultGate()
-        if (typeof gate === 'string') return gate
-        const v = gate
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
         const host = currentHost()
         if (!host) return HOST_UNKNOWN
+        if (isHostExcluded(host)) return VAULT_HOST_EXCLUDED
+        const gate = await vaultGate()
+        if (typeof gate === 'string') return gate
+        const v = gate
         // 비밀번호류는 대상 요소가 실제 비밀 입력칸(type=password)일 때만 채운다.
         // 최신 스냅샷을 신뢰하지 않고, 매번 페이지에서 직접 확인한다
         if (SECRET_TARGET_ITEM_TYPES.includes(itemType)) {
@@ -347,13 +376,14 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
         () => label,
         async () => {
           if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
-          const gate = vaultGate()
-          if (typeof gate === 'string') return gate
-          const v = gate
           const tab = activeOr(ctx)
           if (!tab) return 'no active tab'
           const host = currentHost()
           if (!host) return HOST_UNKNOWN
+          if (isHostExcluded(host)) return VAULT_HOST_EXCLUDED
+          const gate = await vaultGate()
+          if (typeof gate === 'string') return gate
+          const v = gate
           label = `로그인: ${host}`
           const fields = await pageBridge.findLoginFields(tab)
           if (fields.password === undefined) {
@@ -371,6 +401,10 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
           }
           const pwFilled = await pageBridge.fillValue(tab, fields.password, password)
           if (pwFilled !== 'ok') return pwFilled
+          // 자동 제출이 꺼져 있으면 채우기만 하고 제출은 사용자에게 맡긴다
+          if (ctx.vaultAutoSubmit === false) {
+            return 'filled: submit is disabled by setting; ask the user to press login'
+          }
           const submitted = await pageBridge.submitForm(tab, fields.submit ?? fields.password)
           if (submitted !== 'ok') return submitted
           await pageBridge.waitForLoad(tab)

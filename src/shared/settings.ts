@@ -9,9 +9,13 @@ export const MAX_TOOL_CALLS = 200
 const MIN_PANEL_WIDTH = 280
 const MAX_PANEL_WIDTH = 900
 
-// 자동 잠금 대기 시간(분) 허용 범위
+// 자동 잠금 대기 시간(분) 허용 범위. 상한(43200 = 30일)은 "안 함"에 해당하는 매우 긴 시간이다
 export const MIN_VAULT_AUTO_LOCK_MINUTES = 1
-export const MAX_VAULT_AUTO_LOCK_MINUTES = 1440
+export const MAX_VAULT_AUTO_LOCK_MINUTES = 43200
+
+// 키마스터 AI 에이전트 접근 정책: 항상 허용 · 잠금 해제 중에만 허용 · 절대 허용 안 함
+export const VAULT_ACCESS_POLICIES = ['always', 'while_unlocked', 'never'] as const
+export type VaultAccessPolicy = (typeof VAULT_ACCESS_POLICIES)[number]
 
 // 사용 권한 모드: 읽기 전용(read_only) · 위험 행동 확인(guard) · 자동(full)
 export const PERMISSION_MODES = ['read_only', 'guard', 'full'] as const
@@ -26,8 +30,12 @@ export const DEFAULT_SETTINGS = {
   maxToolCalls: 40,
   permissionMode: 'guard' as const,
   finalConfirm: false,
-  vaultAutoLockMinutes: 15,
-  vaultRememberDevice: false
+  // Aside 방식: 자동 잠금 기본 1주(10080분), 이 PC 에서 기억 기본 켬
+  vaultAutoLockMinutes: 10080,
+  vaultRememberDevice: true,
+  vaultAccessPolicy: 'while_unlocked' as const,
+  vaultAutoSubmit: true,
+  vaultExcludedHosts: [] as string[]
 }
 
 // 손상된 config.json 이어도 앱이 뜨도록 필드마다 catch 로 기본값으로 되돌린다
@@ -52,7 +60,13 @@ export const settingsSchema = z.object({
     .max(MAX_VAULT_AUTO_LOCK_MINUTES)
     .catch(DEFAULT_SETTINGS.vaultAutoLockMinutes),
   // 이 PC 에서 마스터 키를 safeStorage 로 감싸 기억할지 여부
-  vaultRememberDevice: z.boolean().catch(DEFAULT_SETTINGS.vaultRememberDevice)
+  vaultRememberDevice: z.boolean().catch(DEFAULT_SETTINGS.vaultRememberDevice),
+  // 키마스터 AI 에이전트 접근 정책
+  vaultAccessPolicy: z.enum(VAULT_ACCESS_POLICIES).catch(DEFAULT_SETTINGS.vaultAccessPolicy),
+  // 자동 채움 후 자동 제출 여부
+  vaultAutoSubmit: z.boolean().catch(DEFAULT_SETTINGS.vaultAutoSubmit),
+  // 제외 도메인(정규화된 host 문자열 목록). 손상된 값은 빈 배열로 되돌린다
+  vaultExcludedHosts: z.array(z.string()).catch(DEFAULT_SETTINGS.vaultExcludedHosts)
 })
 
 export type Settings = z.infer<typeof settingsSchema>

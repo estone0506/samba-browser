@@ -313,25 +313,43 @@ export class VaultService {
 
   // 시작 시 감싼 키가 있으면 마스터 입력 없이 해제를 시도한다(실패하면 잠긴 채로 둔다)
   private tryDeviceUnlock(): void {
-    if (!this.isInitialized()) return
-    if (!this.settings.get().vaultRememberDevice) return
-    if (!this.canUseSafeStorage() || !this.safeStorage) return
+    this.unlockWithDeviceKey()
+  }
+
+  // 기기에 감싸 저장된 키로 잠금 해제를 1회 시도한다. 성공하면 true.
+  // 생성자의 tryDeviceUnlock 과 ensureUnlockedByDevice() 가 공유하는 핵심 로직이다
+  private unlockWithDeviceKey(): boolean {
+    if (!this.isInitialized()) return false
+    if (!this.settings.get().vaultRememberDevice) return false
+    if (!this.canUseSafeStorage() || !this.safeStorage) return false
     const wrapped = this.repo.getMeta(META_DEVICE_KEY)
-    if (!wrapped) return
+    if (!wrapped) return false
     const ct = this.repo.getMeta(META_VERIFIER_CT)
     const iv = this.repo.getMeta(META_VERIFIER_IV)
-    if (!ct || !iv) return
+    if (!ct || !iv) return false
     try {
       const key = Buffer.from(this.safeStorage.decryptString(wrapped), 'base64')
       if (!checkVerifier(key, { ciphertext: ct, iv })) {
         zeroize(key)
-        return
+        return false
       }
       this.key = key
       this.restartAutoLock()
+      this.emit()
+      return true
     } catch {
       // 복호화 실패(다른 기기·사용자) → 잠긴 상태 유지
+      return false
     }
+  }
+
+  /**
+   * 접근 정책이 'always' 일 때, 잠긴 상태에서 AI 도구/UI 진입 시 기기 키로 자동 해제를 시도한다.
+   * 이미 해제돼 있으면 즉시 true. 기기 기억이 꺼져 있거나 기기 키가 없으면 false.
+   */
+  async ensureUnlockedByDevice(): Promise<boolean> {
+    if (this.key) return true
+    return this.unlockWithDeviceKey()
   }
 
   // --- 조회 -------------------------------------------------------------

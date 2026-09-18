@@ -156,6 +156,9 @@ export function registerIpc(
     if (!parsed.success) return
     const { host: rawHost, username, password } = parsed.data
     const host = normalizeHost(rawHost) || rawHost
+    // 제외 도메인이면 저장 제안 자체를 띄우지 않는다
+    const excluded = settings.get().vaultExcludedHosts
+    if (excluded.some((h) => (normalizeHost(h) || h) === host)) return
     // 값 자체는 절대 로그로 남기지 않는다
     if (vault.state() === 'unlocked') {
       if (vault.hasSameSecret(host, username, password)) return // 기존 값과 동일하면 제안하지 않음

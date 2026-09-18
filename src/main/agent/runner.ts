@@ -96,6 +96,9 @@ export class AgentRunner {
       dangerWords: s.dangerWords,
       mode: s.permissionMode,
       finalConfirm: s.finalConfirm,
+      vaultAccessPolicy: s.vaultAccessPolicy,
+      vaultAutoSubmit: s.vaultAutoSubmit,
+      vaultExcludedHosts: s.vaultExcludedHosts,
       tick: counter.tick,
       onStep: (label, ok) => emit({ type: 'step', label, ok }),
       confirm: (action, kind = 'danger') =>

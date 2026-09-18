@@ -68,6 +68,7 @@ interface Built {
   steps: Array<{ label: string; ok: boolean }>
   getSecretForFill: ReturnType<typeof vi.fn>
   listAccounts: ReturnType<typeof vi.fn>
+  ensureUnlockedByDevice: ReturnType<typeof vi.fn>
 }
 
 function build(
@@ -79,16 +80,27 @@ function build(
     confirmResult?: boolean
     // 호스트를 알 수 없는 상황(정규화 실패)을 재현하기 위한 탭 URL 오버라이드
     tabUrl?: string
+    vaultAccessPolicy?: ToolContext['vaultAccessPolicy']
+    vaultAutoSubmit?: ToolContext['vaultAutoSubmit']
+    vaultExcludedHosts?: ToolContext['vaultExcludedHosts']
+    // ensureUnlockedByDevice 호출 시 상태가 바뀌는지(자동 해제 성공 시뮬레이션)
+    deviceUnlockSucceeds?: boolean
   } = {}
 ): Built {
   const confirm = vi.fn(async () => opts.confirmResult ?? true)
   const steps: Array<{ label: string; ok: boolean }> = []
   const listAccounts = vi.fn(() => opts.accounts ?? [account()])
   const getSecretForFill = vi.fn(() => (opts.secret === undefined ? PASSWORD : opts.secret))
+  let currentState = opts.state ?? 'unlocked'
+  const ensureUnlockedByDevice = vi.fn(async () => {
+    if (opts.deviceUnlockSucceeds) currentState = 'unlocked'
+    return currentState === 'unlocked'
+  })
   const vault = {
-    state: () => opts.state ?? 'unlocked',
+    state: () => currentState,
     listAccounts,
-    getSecretForFill
+    getSecretForFill,
+    ensureUnlockedByDevice
   } as unknown as VaultService
   const tab =
     opts.tabUrl === undefined
@@ -110,7 +122,10 @@ function build(
     tick: () => null,
     onStep: (label, ok) => steps.push({ label, ok }),
     vault,
-    jobId: 'job-1'
+    jobId: 'job-1',
+    vaultAccessPolicy: opts.vaultAccessPolicy,
+    vaultAutoSubmit: opts.vaultAutoSubmit,
+    vaultExcludedHosts: opts.vaultExcludedHosts
   }
   const server = createSambaTools(ctx) as unknown as { tools: ToolStub[] }
   return {
@@ -118,7 +133,8 @@ function build(
     confirm,
     steps,
     getSecretForFill,
-    listAccounts
+    listAccounts,
+    ensureUnlockedByDevice
   }
 }
 
@@ -366,5 +382,56 @@ describe('금고 AI 도구', () => {
     const listAccounts = build({ state: 'uninitialized' })
     const raw = await callTool(listAccounts, 'list_accounts', {})
     expect(JSON.parse(raw)).toEqual({ accounts: [], note: NOT_SET_UP })
+  })
+
+  it('접근 정책 never: fill_secret·login 을 즉시 거부한다', async () => {
+    const NEVER = 'refused: KeyMaster access policy is Never'
+    const b = build({ vaultAccessPolicy: 'never' })
+    expect(await callTool(b, 'fill_secret', { elementId: 5, itemType: 'card' })).toBe(NEVER)
+    expect(await callTool(b, 'login', {})).toBe(NEVER)
+    expect(b.getSecretForFill).not.toHaveBeenCalled()
+  })
+
+  it('접근 정책 always: 잠겨 있어도 기기 키로 자동 해제를 시도한 뒤 진행한다', async () => {
+    // 이전 테스트가 mockResolvedValueOnce(false) 를 큐에 남겨 뒀을 수 있어 명시적으로 되돌린다
+    pageBridge.isSecretField.mockReset()
+    pageBridge.isSecretField.mockImplementation(async () => true)
+    const b = build({
+      vaultAccessPolicy: 'always',
+      state: 'locked',
+      deviceUnlockSucceeds: true
+    })
+    const result = await callTool(b, 'fill_secret', { elementId: 12, itemType: 'card' })
+    expect(result).toBe('ok')
+    expect(b.ensureUnlockedByDevice).toHaveBeenCalled()
+  })
+
+  it('접근 정책 always 라도 기기 자동 해제가 계속 실패하면 잠금 안내를 돌려준다', async () => {
+    const b = build({
+      vaultAccessPolicy: 'always',
+      state: 'locked',
+      deviceUnlockSucceeds: false
+    })
+    const result = await callTool(b, 'fill_secret', { elementId: 12, itemType: 'card' })
+    expect(result).toBe('locked: ask the user to unlock 키마스터')
+    expect(b.ensureUnlockedByDevice).toHaveBeenCalledTimes(3)
+  })
+
+  it('vaultAutoSubmit=false 이면 login 은 채우기만 하고 제출하지 않는다', async () => {
+    const b = build({ vaultAutoSubmit: false })
+    pageBridge.submitForm.mockClear()
+    const result = await callTool(b, 'login', {})
+    expect(result).toBe('filled: submit is disabled by setting; ask the user to press login')
+    expect(pageBridge.submitForm).not.toHaveBeenCalled()
+    assertNoSecretLeak(b, result)
+  })
+
+  it('제외 도메인이면 fill_secret·login 모두 건너뛴다', async () => {
+    const EXCLUDED = 'refused: host is excluded from KeyMaster'
+    const b = build({ vaultExcludedHosts: ['shop.example'] })
+    expect(await callTool(b, 'fill_secret', { elementId: 5, itemType: 'card' })).toBe(EXCLUDED)
+    expect(await callTool(b, 'login', {})).toBe(EXCLUDED)
+    expect(b.listAccounts).not.toHaveBeenCalled()
+    expect(b.getSecretForFill).not.toHaveBeenCalled()
   })
 })

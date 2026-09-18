@@ -263,28 +263,33 @@ describe('VaultService', () => {
 
   it('미사용 시간이 설정값(분)을 넘으면 자동으로 잠긴다', async () => {
     vi.useFakeTimers()
-    await vault.setup('master-pw')
-    expect(vault.state()).toBe('unlocked')
+    // 기본값(1주)이 아니라 설정 가능한 값 자체를 검증하기 위해 15분으로 명시한다
+    const v = new VaultService(db, makeSettings({ vaultAutoLockMinutes: 15 }))
+    await v.setup('master-pw')
+    expect(v.state()).toBe('unlocked')
 
-    // 기본 15분 - 1ms 까지는 열려 있다
+    // 설정한 15분 - 1ms 까지는 열려 있다
     vi.advanceTimersByTime(15 * 60 * 1000 - 1)
-    expect(vault.state()).toBe('unlocked')
+    expect(v.state()).toBe('unlocked')
 
     vi.advanceTimersByTime(1)
-    expect(vault.state()).toBe('locked')
+    expect(v.state()).toBe('locked')
+    v.dispose()
   })
 
   it('touch() 는 자동 잠금 타이머를 되돌린다', async () => {
     vi.useFakeTimers()
-    await vault.setup('master-pw')
+    const v = new VaultService(db, makeSettings({ vaultAutoLockMinutes: 15 }))
+    await v.setup('master-pw')
 
     vi.advanceTimersByTime(14 * 60 * 1000)
-    vault.touch()
+    v.touch()
     vi.advanceTimersByTime(14 * 60 * 1000)
-    expect(vault.state()).toBe('unlocked')
+    expect(v.state()).toBe('unlocked')
 
     vi.advanceTimersByTime(60 * 1000)
-    expect(vault.state()).toBe('locked')
+    expect(v.state()).toBe('locked')
+    v.dispose()
   })
 
   it('onStateChanged 구독자가 상태 변화를 받는다', async () => {
@@ -395,6 +400,24 @@ describe('VaultService', () => {
       service.lock()
       expect(repo.getMeta('device_wrapped_key')).toBeNull()
       service.dispose()
+    })
+
+    it('ensureUnlockedByDevice: 잠긴 상태에서 기기 키로 잠금 해제를 시도한다(접근 정책 always 용)', async () => {
+      const settings = makeSettings({ vaultRememberDevice: true })
+      const safeStorage = makeSafeStorage()
+      const first = new VaultService(db, settings, { safeStorage })
+      await first.setup('master-pw')
+      first.dispose()
+
+      // 새 인스턴스는 생성자에서 이미 자동 해제됐을 수 있으니, lock() 으로 다시 잠근 뒤 확인한다
+      const second = new VaultService(db, settings, { safeStorage })
+      second.lock()
+      expect(second.state()).toBe('locked')
+
+      const ok = await second.ensureUnlockedByDevice()
+      expect(ok).toBe(true)
+      expect(second.state()).toBe('unlocked')
+      second.dispose()
     })
   })
 
