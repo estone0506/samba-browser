@@ -164,8 +164,11 @@ export class TabManager {
         contextIsolation: true
       }
     })
-    // 카드 모서리(rounded-2xl = 16px)와 맞춰서, 창 모서리 사각형 삐져나옴을 없앤다
-    view.setBorderRadius(16)
+    // WebContentsView 는 네이티브 레이어라 CSS overflow-hidden 으로 잘리지 않는다.
+    // setBorderRadius 는 4개 모서리를 한 번에 같은 값으로만 설정할 수 있어(상단만 둥글게 불가),
+    // 카드가 상단만 둥글고(rounded-t-2xl) 하단은 창 바닥에 닿는 edge-to-edge 레이아웃에서는
+    // 0 으로 둬 하단 사각 모서리와 일치시킨다(상단은 카드 테두리 뒤에 가려져 시각적으로 차이가 적다)
+    view.setBorderRadius(0)
     const tab: Tab = { id: randomUUID(), view, profile, mobile: opts.mobile ?? false }
     this.tabs.push(tab)
     const wc = view.webContents

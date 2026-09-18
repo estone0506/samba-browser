@@ -13,7 +13,7 @@ export function ChatPanel(): React.JSX.Element {
   const handleEvent = useChatStore((s) => s.handleEvent)
   useEffect(() => window.samba.agent.onEvent(handleEvent), [handleEvent])
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-white shadow-[0_1px_2px_rgba(0,0,0,.04),0_8px_24px_rgba(0,0,0,.06)]">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-2xl border border-[var(--line)] bg-white shadow-[0_1px_2px_rgba(0,0,0,.04),0_8px_24px_rgba(0,0,0,.06)]">
       <div className="flex items-center justify-between border-b border-black/5 px-3.5 py-3 font-semibold">
         {t('chat.title')}
         <span className="flex items-center gap-1.5 text-[12px] font-normal text-[var(--text2)]">

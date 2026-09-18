@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { computeViewBounds } from '../src/main/browser/tab-manager'
 import type { Layout } from '../src/shared/ipc'
 
-// 렌더러가 1440x900 뷰포트에서 잰 실측값(카드 py-2.5 = 아래 10px 여백, 테두리 1px)
+// 렌더러가 1440x900 뷰포트에서 잰 실측값(계산 로직 자체는 여백 수치에 의존하지 않으므로
+// 임의의 여백 값으로도 알고리즘 검증이 가능하다 — edge-to-edge 레이아웃 이후에도 그대로 유효)
 const reported: Layout = {
   x: 233,
   y: 101,
