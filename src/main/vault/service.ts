@@ -423,6 +423,24 @@ export class VaultService {
     }
   }
 
+  /**
+   * capture 로 감지된 (host, username, password) 가 이미 저장된 로그인 비밀번호와 같은지 확인한다.
+   * 같으면 저장 제안을 다시 띄우지 않기 위해 쓴다. 잠겨 있거나 계정이 없으면 false.
+   */
+  hasSameSecret(host: string, username: string, password: string): boolean {
+    if (!this.key) return false
+    const normalized = normalizeHost(host) || host
+    const account = this.repo.listAccounts(normalized).find((a) => a.username === username)
+    if (!account) return false
+    const row = this.repo.findItemRow(account.id, 'login_password')
+    if (!row) return false
+    try {
+      return decrypt(this.key, row.ciphertext, row.iv, String(row.id)) === password
+    } catch {
+      return false
+    }
+  }
+
   private requireKey(): Buffer {
     if (!this.key) throw new Error('금고가 잠겨 있습니다')
     return this.key

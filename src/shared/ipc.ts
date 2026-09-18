@@ -34,6 +34,7 @@ export const IPC = {
   vaultStateChanged: 'vault:stateChanged', // main → renderer 이벤트
   vaultCapturePrompt: 'vault:capturePrompt', // main → renderer 이벤트 (비밀번호 제외)
   vaultCaptureDecision: 'vault:captureDecision', // renderer → main
+  vaultCapture: 'vault:capture', // preload(격리 월드) → main, 폼 제출에서 감지한 자격정보
   // 가져오기 — filePath 생략 시 메인에서 dialog.showOpenDialog 를 연다
   importPasswords: 'import:passwords',
   importBookmarks: 'import:bookmarks',

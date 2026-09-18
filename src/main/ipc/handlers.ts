@@ -1,4 +1,5 @@
 import { dialog, ipcMain, safeStorage, type BrowserWindow } from 'electron'
+import { z } from 'zod'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import type { TabManager } from '../browser/tab-manager'
 import { SettingsStore } from '../settings/store'
@@ -54,6 +55,7 @@ export function registerIpc(
     for (const channel of Object.values(IPC)) ipcMain.removeHandler(channel)
     ipcMain.removeAllListeners(IPC.agentConfirmReply)
     ipcMain.removeAllListeners(IPC.vaultCaptureDecision)
+    ipcMain.removeAllListeners(IPC.vaultCapture)
     vault.dispose()
   })
 
@@ -121,6 +123,30 @@ export function registerIpc(
   ipcMain.handle(IPC.vaultUpsertAccount, (_, dto: UpsertAccountInput) =>
     wrap(() => vault.upsertAccount(dto))
   )
+  // 페이지(preload 격리 월드)가 감지한 로그인 폼 제출. host/username/password 만 담고 길이 상한을 둔다
+  const captureSchema = z.object({
+    host: z.string().min(1).max(512),
+    username: z.string().max(512),
+    password: z.string().min(1).max(512)
+  })
+  ipcMain.on(IPC.vaultCapture, (e, raw: unknown) => {
+    // 발신자가 실제 탭의 webContents 가 아니면 무시(위조 발신자 방지)
+    if (!tabs.hasWebContents(e.sender)) return
+    const parsed = captureSchema.safeParse(raw)
+    if (!parsed.success) return
+    const { host: rawHost, username, password } = parsed.data
+    const host = normalizeHost(rawHost) || rawHost
+    // 값 자체는 절대 로그로 남기지 않는다
+    if (vault.state() === 'unlocked') {
+      if (vault.hasSameSecret(host, username, password)) return // 기존 값과 동일하면 제안하지 않음
+      const isNew = !vault.listAccounts(host).some((a) => a.username === username)
+      vault.setPendingCapture({ host, username, password, isNew })
+    } else {
+      // 잠긴 상태에서는 기존 값과 비교할 수 없으므로 항상 프롬프트를 띄운다
+      vault.setPendingCapture({ host, username, password, isNew: true })
+    }
+  })
+
   // 저장 제안 수락/거절. 거절이면 보관 중이던 비밀번호를 그냥 버린다
   ipcMain.on(IPC.vaultCaptureDecision, (_, accept: boolean) => {
     const capture = vault.takePendingCapture()

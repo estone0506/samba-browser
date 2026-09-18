@@ -28,6 +28,13 @@ const snapshotSchema = z.object({
 // 행동 도구(click/type/select/scroll/textOf)는 결과가 항상 문자열이어야 한다
 const resultSchema = z.string()
 
+// findLoginFields 결과 — 못 찾은 필드는 없음(undefined)
+const loginFieldsSchema = z.object({
+  username: z.number().int().optional(),
+  password: z.number().int().optional(),
+  submit: z.number().int().optional()
+})
+
 // 탭 안 preload(격리 월드의 __samba)를 호출하고 결과를 스키마로 검증한다
 async function call<T>(wc: WebContents, expr: string, schema: z.ZodType<T>): Promise<T> {
   if (wc.isDestroyed()) throw new Error('page is gone')
@@ -58,6 +65,25 @@ export const pageBridge = {
     call(tab.view.webContents, `__samba.select(${id}, ${JSON.stringify(value)})`, resultSchema),
   scroll: (tab: Tab, dir: 'up' | 'down'): Promise<string> =>
     call(tab.view.webContents, `__samba.scroll(${JSON.stringify(dir)})`, resultSchema),
+  // 값 주입(SECRET 허용) — 값이 code 문자열 안에 들어가므로, 실패해도 code 를 담은 오류를
+  // 만들지 않도록 공용 call() 을 쓰지 않고 이 함수 안에서 직접 try/catch 한다
+  fillValue: async (tab: Tab, id: number, value: string): Promise<string> => {
+    const wc = tab.view.webContents
+    if (wc.isDestroyed()) return 'page is gone'
+    try {
+      const raw: unknown = await wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [
+        { code: `__samba.fillValue(${id}, ${JSON.stringify(value)})` }
+      ])
+      const parsed = resultSchema.safeParse(raw)
+      return parsed.success ? parsed.data : 'fill failed'
+    } catch {
+      return 'fill failed'
+    }
+  },
+  findLoginFields: (tab: Tab): Promise<{ username?: number; password?: number; submit?: number }> =>
+    call(tab.view.webContents, '__samba.findLoginFields()', loginFieldsSchema),
+  submitForm: (tab: Tab, id: number): Promise<string> =>
+    call(tab.view.webContents, `__samba.submitForm(${id})`, resultSchema),
   waitForLoad: (tab: Tab, timeoutMs = 10000): Promise<void> =>
     new Promise<void>((resolve) => {
       const wc = tab.view.webContents

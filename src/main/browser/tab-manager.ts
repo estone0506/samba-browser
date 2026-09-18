@@ -103,6 +103,11 @@ export class TabManager {
     return this.tabs.find((t) => t.id === id) ?? null
   }
 
+  // IPC 발신자가 실제로 관리 중인 탭의 webContents 인지 확인(위조 발신자 방지, vault:capture 검증용)
+  hasWebContents(wc: WebContents): boolean {
+    return this.tabs.some((t) => t.view.webContents === wc)
+  }
+
   create(opts: { url?: string; profile?: string; mobile?: boolean } = {}): TabInfo {
     if (this.disposed) throw new Error('window closed')
     const url = opts.url ?? DEFAULT_URL
