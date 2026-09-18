@@ -114,3 +114,4 @@ Free, 월 500 크레딧, 추가 구매, 자동 충전. 월별 사용량 표.
 - 삼바 반영: 항목 6종 재편(로그인/비밀번호/신용카드/보안메모/신원정보/문서), + 메뉴 동일, 추천 섹션, 자동 채우기 버튼, 툴바 열쇠 팝오버 (2단계 Task 11)
 - **New Login 폼**: 금고 선택(Personal) · Cancel/Save · 제목 New Login + 부제 **현재 사이트 호스트 자동** · Credentials(Username, Password + 생성 버튼 ↻) · Website(**현재 URL 자동 입력** + 도메인/전체URL 전환 ⇄ + **URL 추가**로 여러 URL) → 삼바 Task 11: 로그인 추가 시 현재 탭 호스트/URL 자동, 비밀번호 생성, 계정당 URL 여러 개(sites.loginUrl → login_urls 목록)
 - **New Credit Card 폼**: 섹션(Section 이름) 단위 필드 그룹, 드래그 핸들(≡)로 필드 순서 변경, 필드: cardholder name · type(선택) · card number · CVC · (만료 등). 1Password 식 "섹션+필드" 스키마 → 삼바 Task 11: 카드 항목 필드(소유자·카드사/종류·번호·유효기간·CVC·결제비밀번호), 필드 단위 암호화(값별 ciphertext) 고려
+- **New Password 폼**: Section · password(생성 ↻) · website(https://) · **+ Add custom field**(사용자 정의 필드) · **Tags**(태그 입력) → 삼바 Task 11: 모든 항목에 사용자 정의 필드·태그 지원(태그로 KR/CN/JP·계정군 필터), 필드 스키마 = 섹션[ ] > 필드{label,type(text|password|url|date|select),value}
