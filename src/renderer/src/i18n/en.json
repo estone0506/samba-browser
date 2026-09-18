@@ -318,6 +318,26 @@
         "bookmarksSupports": "Netscape format auto-detected"
       }
     },
+    "export": {
+      "title": "Export KeyMaster",
+      "settingsDesc": "Export saved items to a CSV or JSON file",
+      "open": "Export",
+      "warning": "The exported file contains your passwords in plain text. Move it somewhere safe and delete the original afterwards.",
+      "format": "Format",
+      "formatCsv": "CSV (Chrome compatible)",
+      "formatCsvDesc": "Only login items that have both a username and a password",
+      "formatJson": "JSON",
+      "formatJsonDesc": "Every item and field, including cards and notes",
+      "master": "Re-enter master password",
+      "masterPlaceholder": "Master password",
+      "submit": "Export",
+      "running": "Exporting…",
+      "done": "Saved {{count}} items to {{path}}",
+      "lockedError": "The vault is locked. Unlock it first",
+      "invalidMaster": "That master password is not correct",
+      "cancelled": "Export cancelled",
+      "failed": "Export failed"
+    },
     "add": {
       "menu": "Add",
       "login": "Login",
