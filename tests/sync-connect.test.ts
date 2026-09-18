@@ -60,8 +60,11 @@ describe('SyncConnection', () => {
   let settings: SyncSettingsTarget & { recorder: OutboxRecorder | null }
   let bookmarks: ReturnType<typeof makeBookmarks>
   let connection: SyncConnection
+  // 작업공간 전환을 흉내낸다 — 엔진은 주기마다 이 값을 다시 읽는다
+  let activeWorkspaceId: number
 
   beforeEach(async () => {
+    activeWorkspaceId = 1
     vi.useFakeTimers()
     db = await openDatabase(':memory:')
     backend = createFakeBackend()
@@ -84,7 +87,10 @@ describe('SyncConnection', () => {
       vault,
       settings,
       bookmarks,
-      workspaceRemoteId: () => workspaceRemoteId(db, 1),
+      workspace: () => ({
+        localId: activeWorkspaceId,
+        remoteId: workspaceRemoteId(db, activeWorkspaceId)
+      }),
       device: {
         hostname: () => '내-PC',
         osLabel: () => 'Windows_NT 10.0.26200',
@@ -165,6 +171,26 @@ describe('SyncConnection', () => {
     expect(auth.state().signedIn).toBe(false)
     expect(vault.state()).toBe('locked')
     expect(holder.current()).toBeNull()
+  })
+
+  it('작업공간을 바꾸면 다음 주기의 푸시 payload 가 새 uuid 로 올라간다', async () => {
+    // 예전에는 엔진 생성 시 uuid 를 한 번만 읽어, B 작업공간의 변경이 A 의 uuid 로 올라갔다
+    await auth.signIn(EMAIL, 'password-1234')
+    await vi.advanceTimersByTimeAsync(0)
+
+    vault.upsertAccount({ host: 'a.example', username: 'a' })
+    await vi.advanceTimersByTimeAsync(SYNC_POLL_INTERVAL_MS)
+    const first = backend.rows('accounts_sync').find((r) => r.host === 'a.example')
+    expect(first?.workspace_id).toBe(workspaceRemoteId(db, 1))
+
+    // 작업공간 전환 — 엔진은 그대로 돌고, 다음 주기에 새 uuid 를 읽는다
+    activeWorkspaceId = 2
+    vault.upsertAccount({ host: 'b.example', username: 'b' })
+    await vi.advanceTimersByTimeAsync(SYNC_POLL_INTERVAL_MS)
+
+    const second = backend.rows('accounts_sync').find((r) => r.host === 'b.example')
+    expect(second?.workspace_id).toBe(workspaceRemoteId(db, 2))
+    expect(second?.workspace_id).not.toBe(first?.workspace_id)
   })
 
   it('작업공간 원격 uuid 는 한 번 정해지면 그대로다', () => {

@@ -198,6 +198,8 @@ export class VaultRepo {
       .innerJoin(sites, eq(accounts.siteId, sites.id))
     const conds = [
       host ? eq(sites.host, host) : undefined,
+      // 원격에서 지워진 행(tombstone)은 화면·피커·자동채움 어디에도 나오지 않는다
+      isNull(accounts.deletedAt),
       this.scopeWhere(accounts.workspaceId)
     ].filter((c): c is SQL => c !== undefined)
     const rows = conds.length > 0 ? base.where(and(...conds)).all() : base.all()
@@ -290,6 +292,7 @@ export class VaultRepo {
     const rows = this.d
       .select({ accountId: vaultItems.accountId, type: vaultItems.type })
       .from(vaultItems)
+      .where(isNull(vaultItems.deletedAt))
       .all()
     const map = new Map<number, VaultItemType[]>()
     for (const row of rows) {
@@ -319,6 +322,7 @@ export class VaultRepo {
       .where(
         and(
           accountId === null ? isNull(vaultItems.accountId) : eq(vaultItems.accountId, accountId),
+          isNull(vaultItems.deletedAt),
           this.scopeWhere(vaultItems.workspaceId)
         )
       )
@@ -338,7 +342,12 @@ export class VaultRepo {
       .select()
       .from(vaultItems)
       .where(
-        and(isNull(vaultItems.accountId), eq(vaultItems.type, type), eq(vaultItems.label, label))
+        and(
+          isNull(vaultItems.accountId),
+          eq(vaultItems.type, type),
+          eq(vaultItems.label, label),
+          isNull(vaultItems.deletedAt)
+        )
       )
       .all()
     const row = rows[0]
@@ -352,7 +361,8 @@ export class VaultRepo {
       .where(
         and(
           accountId === null ? isNull(vaultItems.accountId) : eq(vaultItems.accountId, accountId),
-          eq(vaultItems.type, type)
+          eq(vaultItems.type, type),
+          isNull(vaultItems.deletedAt)
         )
       )
       .all()

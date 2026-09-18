@@ -249,7 +249,9 @@ export function registerIpc(
           if (result.canceled || !result.filePath) return undefined
           return result.filePath
         },
-        writeFile: (filePath, content) => writeFile(filePath, content, 'utf8')
+        // 평문이 담기는 파일이다 — 만들 때부터 소유자만 읽을 수 있게 한다(0o600)
+        writeFile: (filePath, content) =>
+          writeFile(filePath, content, { encoding: 'utf8', mode: 0o600 })
       },
       req
     )
@@ -593,7 +595,11 @@ export function registerIpc(
     vault,
     settings,
     bookmarks: importService,
-    workspaceRemoteId: () => workspaceRemoteId(db, workspace.activeId()),
+    // 주기마다 다시 불린다 — 작업공간을 바꿔도 다음 주기부터 새 uuid 로 올라간다
+    workspace: () => {
+      const localId = workspace.activeId()
+      return { localId, remoteId: workspaceRemoteId(db, localId) }
+    },
     device: {
       hostname: () => os.hostname(),
       osLabel: () => `${os.type()} ${os.release()}`,
@@ -628,7 +634,9 @@ export function registerIpc(
   })
 
   handleFromRenderer(IPC.extList, () => ({ items: extensions.list(), errors: extensions.errors() }))
-  // 경로를 주지 않으면 폴더 선택 다이얼로그를 연다. 취소하면 null 을 돌려준다
+  // 경로를 주지 않으면 폴더 선택 다이얼로그를 연다. 취소하면 null 을 돌려준다.
+  // 렌더러가 준 경로든 다이얼로그로 고른 경로든 resolveExtensionFolder 를 반드시 지난다 —
+  // realpath 로 푼 실제 디렉터리이고 manifest.json 검증을 통과해야만 세션에 넘어간다
   handleFromRenderer(IPC.extLoad, async (rawPath?: unknown) => {
     let folder = typeof rawPath === 'string' ? rawPath : ''
     if (!folder) {

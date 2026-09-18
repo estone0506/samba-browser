@@ -1,7 +1,7 @@
 // 북마크 저장소 — 폴더/링크 트리를 DB 에 저장하고, 트리 DTO 로 조회한다.
 // 같은 URL 의 링크는 전체 DB 기준으로 이미 있으면 건너뛴다(폴더 위치와 무관하게 중복 제거).
 
-import { eq, or, isNull, type SQL } from 'drizzle-orm'
+import { and, eq, or, isNull, type SQL } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import type { OutboxRecorder } from '../../shared/sync'
 import { bookmarkFolders, bookmarks } from '../db/schema'
@@ -68,6 +68,16 @@ export class BookmarkRepo {
     return eq(bookmarks.workspaceId, this.scope.id)
   }
 
+  /**
+   * 조회 조건 = 작업공간 범위 + 살아 있는 행.
+   * 원격에서 지워진 행(deleted_at 이 찍힌 tombstone)은 목록 어디에도 나오지 않는다
+   */
+  private visibleWhere(): SQL {
+    const scope = this.scopeWhere()
+    const alive = isNull(bookmarks.deletedAt)
+    return scope ? (and(scope, alive) as SQL) : alive
+  }
+
   /** 변경 로그 훅을 붙인다(로그인 상태에서만) */
   setOutboxRecorder(recorder: OutboxRecorder | null): void {
     this.outbox = recorder
@@ -80,9 +90,11 @@ export class BookmarkRepo {
 
   // 이미 저장된 URL 목록(전체 DB 기준) — 트리 삽입 전에 한 번만 읽어 중복 판단에 쓴다
   private existingUrls(): Set<string> {
-    const where = this.scopeWhere()
-    const base = this.d.select({ url: bookmarks.url }).from(bookmarks)
-    const rows = (where ? base.where(where) : base).all()
+    const rows = this.d
+      .select({ url: bookmarks.url })
+      .from(bookmarks)
+      .where(this.visibleWhere())
+      .all()
     return new Set(rows.map((r) => r.url))
   }
 
@@ -179,16 +191,19 @@ export class BookmarkRepo {
   }
 
   private bookmarkRows(): BookmarkRow[] {
-    const where = this.scopeWhere()
-    const base = this.d.select().from(bookmarks)
-    return (where ? base.where(where) : base).all().map((r) => ({
-      id: r.id,
-      folderId: r.folderId,
-      title: r.title,
-      url: r.url,
-      position: r.position,
-      addedAt: r.addedAt
-    }))
+    return this.d
+      .select()
+      .from(bookmarks)
+      .where(this.visibleWhere())
+      .all()
+      .map((r) => ({
+        id: r.id,
+        folderId: r.folderId,
+        title: r.title,
+        url: r.url,
+        position: r.position,
+        addedAt: r.addedAt
+      }))
   }
 
   private buildTree(
@@ -346,6 +361,18 @@ export class BookmarkRepo {
       for (const f of folders.filter((f) => f.parentId === folderId)) collect(f.id)
     }
     collect(id)
+
+    // 삭제 표식(tombstone)은 행이 남아 있을 때만 뜰 수 있다 — 지우기 전에 링크 id 를 모은다.
+    // 이 기록이 없으면 다른 PC 가 다음 풀에서 같은 북마크를 되살린다(좀비 북마크)
+    const linkIds = idsToRemove.flatMap((folderId) =>
+      this.d
+        .select({ id: bookmarks.id })
+        .from(bookmarks)
+        .where(eq(bookmarks.folderId, folderId))
+        .all()
+        .map((r) => r.id)
+    )
+    for (const linkId of linkIds) this.record(linkId, 'delete')
 
     this.d.transaction(() => {
       for (const folderId of idsToRemove) {

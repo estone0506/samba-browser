@@ -1,6 +1,10 @@
 // 작업공간(브라우저 프로필) — 북마크·금고 항목을 가르는 상위 계층.
 // 활성 작업공간 id 는 DB 가 아니라 설정(activeWorkspaceId)에 둔다. 기기마다 다를 수 있어
-// 동기화 대상이 아니기 때문이다. workspaces 표 자체는 LWW 로 동기화된다.
+// 동기화 대상이 아니기 때문이다.
+//
+// workspaces 표 자체는 2b 에서 동기화하지 않는다(2c 예정) — SYNC_TABLES 에 없고,
+// 원격 uuid 도 PC 마다 따로 만들어져(connect.workspaceRemoteId) 서로 다르다.
+// 그래서 remote_id 컬럼은 2b 동안 항상 null 이다.
 
 import { asc, eq, isNull } from 'drizzle-orm'
 import type { Db } from '../db/client'

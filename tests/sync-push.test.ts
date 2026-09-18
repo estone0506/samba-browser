@@ -71,7 +71,7 @@ describe('pushAll', () => {
       vault,
       settings,
       userId: FAKE_USER_ID,
-      workspaceRemoteId: WORKSPACE
+      workspace: () => ({ localId: 1, remoteId: WORKSPACE })
     }
   })
 
@@ -183,7 +183,9 @@ describe('pushAll', () => {
     expect(rows[0].id).toBeUndefined()
   })
 
-  it('동기화 대상이 아닌 설정 키는 보내지 않고 변경 로그에서 지운다', async () => {
+  it('동기화 대상이 아닌 설정 키는 버리면서 키 이름을 로그로 남긴다', async () => {
+    // 조용히 사라지면 "왜 안 올라가지" 를 추적할 수 없다
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     outbox.record('settings', 'lastUrl', 'upsert')
 
     const result = await pushAll(deps)
@@ -191,6 +193,11 @@ describe('pushAll', () => {
     expect(result.sent).toBe(0)
     expect(backend.keyedRows('settings_sync')).toHaveLength(0)
     expect(outbox.count()).toBe(0)
+    expect(warn).toHaveBeenCalledWith(
+      '동기화 대상이 아닌 설정 키라 변경 로그에서 버립니다',
+      'lastUrl'
+    )
+    warn.mockRestore()
   })
 
   it('삭제한 항목은 삭제 표식(tombstone)으로 올라간다', async () => {

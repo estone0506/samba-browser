@@ -27,28 +27,54 @@ export interface PullResult {
   pruned: number
 }
 
-/** 다음 풀에서 어디부터 읽을지(원격 updated_at 의 최대값). 시계 차이에 안전하도록 서버 값을 쓴다 */
+/**
+ * 2b 초기의 단일 커서. 지금은 표별 커서로 나뉘었고, 이 값은 표별 커서가 아직 없는
+ * 옛 DB 의 출발점으로만 읽는다(더 이상 쓰지 않는다)
+ */
 export const PULL_CURSOR_KEY = 'pullCursor'
+
+/** 다음 풀에서 이 표를 어디부터 읽을지(원격 updated_at 의 최대값) */
+export function pullCursorKey(table: PullTable): string {
+  return `pullCursor:${table}`
+}
+
 /** 마지막으로 풀에 성공한 시각(로컬 시계). 상태 표시줄에 그대로 보여 준다 */
 export const LAST_PULLED_AT_KEY = 'lastPulledAt'
 
-export async function pullAll(deps: PullDeps): Promise<PullResult> {
-  const local = new SyncLocal(deps.db)
-  const result: PullResult = { applied: 0, conflicts: 0, pruned: 0 }
-  const since = local.getStateNumber(PULL_CURSOR_KEY) ?? 0
-  let cursor = since
+/** 풀이 도는 표. 커서를 표마다 따로 센다 */
+export type PullTable = 'accounts' | 'vault_items' | 'bookmarks' | 'settings'
 
-  const advance = (rows: { updatedAt: number }[]): void => {
-    for (const row of rows) if (row.updatedAt > cursor) cursor = row.updatedAt
+/**
+ * 한 표에서 본 행들. null 이면 이번 주기에 그 표를 읽지 못했다는 뜻이다.
+ * 커서를 하나만 쓰면 금고가 잠겨 vault_items 를 통째로 건너뛴 주기에도 다른 표의
+ * updated_at 때문에 커서가 전진해, 잠금 해제 후 그 구간의 금고 행이 영영 내려오지 않았다
+ */
+type Seen = { updatedAt: number }[] | null
+
+export async function pullAll(deps: PullDeps): Promise<PullResult> {
+  // 내려받은 행에 지금 작업공간을 찍어 둔다 — 그러지 않으면 비기본 작업공간에서 보이지 않는다
+  const local = new SyncLocal(deps.db, deps.workspace().localId)
+  const result: PullResult = { applied: 0, conflicts: 0, pruned: 0 }
+  // 표별 커서가 아직 없는 옛 DB 는 단일 커서 자리에서 이어 간다
+  const legacy = local.getStateNumber(PULL_CURSOR_KEY) ?? 0
+
+  const step = async (table: PullTable, fn: (since: number) => Promise<Seen>): Promise<void> => {
+    const stored = local.getStateNumber(pullCursorKey(table))
+    const since = stored ?? legacy
+    const seen = await fn(since)
+    // 건너뛴 표는 커서를 두고 간다 — 다음 주기에 같은 구간을 다시 본다
+    if (seen === null) return
+    let next = since
+    for (const row of seen) if (row.updatedAt > next) next = row.updatedAt
+    if (next > since || stored === null) local.setStateNumber(pullCursorKey(table), next)
   }
 
-  advance(await pullAccounts(deps, local, since, result))
-  advance(await pullVaultItems(deps, local, since, result))
-  advance(await pullBookmarks(deps, local, since, result))
-  advance(await pullSettings(deps, local, since, result))
+  await step('accounts', (since) => pullAccounts(deps, local, since, result))
+  await step('vault_items', (since) => pullVaultItems(deps, local, since, result))
+  await step('bookmarks', (since) => pullBookmarks(deps, local, since, result))
+  await step('settings', (since) => pullSettings(deps, local, since, result))
 
   result.pruned = local.pruneExpiredTombstones(Date.now())
-  local.setStateNumber(PULL_CURSOR_KEY, cursor)
   local.setStateNumber(LAST_PULLED_AT_KEY, Date.now())
   return result
 }
@@ -78,8 +104,8 @@ async function pullAccounts(
   local: SyncLocal,
   since: number,
   result: PullResult
-): Promise<{ updatedAt: number }[]> {
-  const rows = await deps.backend.select(remoteTableOf('accounts'), since)
+): Promise<Seen> {
+  const rows = await deps.backend.select(remoteTableOf('accounts'), since, workspaceOf(deps))
   const seen: { updatedAt: number }[] = []
 
   for (const raw of rows) {
@@ -114,8 +140,8 @@ async function pullVaultItems(
   local: SyncLocal,
   since: number,
   result: PullResult
-): Promise<{ updatedAt: number }[]> {
-  const rows = await deps.backend.select(remoteTableOf('vault_items'), since)
+): Promise<Seen> {
+  const rows = await deps.backend.select(remoteTableOf('vault_items'), since, workspaceOf(deps))
   if (rows.length === 0) return []
 
   // 금고가 잠겨 있으면 복호화할 수 없다 — 커서도 올리지 않고 다음 주기에 다시 본다
@@ -146,7 +172,8 @@ async function pullVaultItems(
     }
     return applied
   })
-  return seen ?? []
+  // null 이면 금고가 잠겨 한 행도 보지 못했다 — 호출부가 커서를 그대로 둔다
+  return seen
 }
 
 async function pullBookmarks(
@@ -154,8 +181,8 @@ async function pullBookmarks(
   local: SyncLocal,
   since: number,
   result: PullResult
-): Promise<{ updatedAt: number }[]> {
-  const rows = await deps.backend.select(remoteTableOf('bookmarks'), since)
+): Promise<Seen> {
+  const rows = await deps.backend.select(remoteTableOf('bookmarks'), since, workspaceOf(deps))
   if (rows.length === 0) return []
 
   // 북마크는 합집합이다. 같은 (폴더 경로, URL) 만 한 개로 합치고 나머지는 양쪽 다 남는다
@@ -192,8 +219,8 @@ async function pullSettings(
   local: SyncLocal,
   since: number,
   result: PullResult
-): Promise<{ updatedAt: number }[]> {
-  const rows = await deps.backend.selectKeyed('settings_sync', since)
+): Promise<Seen> {
+  const rows = await deps.backend.selectKeyed('settings_sync', since, workspaceOf(deps))
   const seen: { updatedAt: number }[] = []
 
   for (const raw of rows) {
@@ -223,4 +250,9 @@ function applyFromSync(deps: PullDeps, patch: Partial<Settings>): void {
 
 function isSyncedSettingKey(key: string): key is (typeof SYNCED_SETTING_KEYS)[number] {
   return (SYNCED_SETTING_KEYS as readonly string[]).includes(key)
+}
+
+/** 지금 활성 작업공간의 원격 uuid. 주기마다 다시 읽는다(작업공간 전환 반영) */
+function workspaceOf(deps: PullDeps): string {
+  return deps.workspace().remoteId
 }

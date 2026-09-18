@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDatabase, type Db } from '../src/main/db/client'
-import { sites, workspaces, syncOutbox, syncState } from '../src/main/db/schema'
+import { bookmarks, sites, workspaces, syncOutbox, syncState } from '../src/main/db/schema'
 import { eq, sql } from 'drizzle-orm'
 
 describe('openDatabase(:memory:)', () => {
@@ -190,6 +190,30 @@ describe('0005 동기화 스키마', () => {
     }
     // 북마크는 LWW 비교를 위해 updated_at 도 필요하다
     expect(columnsOf('bookmarks')).toContain('updated_at')
+  })
+
+  it('remote_id 에 UNIQUE 인덱스가 걸린다(NULL 은 여러 개 허용)', async () => {
+    db = await openDatabase(':memory:')
+
+    const indexesOf = (table: string): string[] => {
+      const rows = db!.drizzle.all<{ name: string }>(sql.raw(`PRAGMA index_list(${table})`))
+      return rows.map((row) => row.name)
+    }
+    for (const table of ['accounts', 'vault_items', 'bookmarks']) {
+      expect(indexesOf(table)).toContain(`${table}_remote_id_unique`)
+    }
+
+    const insert = (remoteId: string | null): void => {
+      db!.drizzle
+        .insert(bookmarks)
+        .values({ folderId: null, title: 't', url: `https://e${Math.random()}`, remoteId })
+        .run()
+    }
+    // 아직 올리지 않은 행(NULL)은 여러 개 공존한다
+    insert(null)
+    insert(null)
+    insert('remote-1')
+    expect(() => insert('remote-1')).toThrow()
   })
 
   it('같은 파일 DB 를 두 번 열어도 0005 가 중복 적용되지 않는다', async () => {

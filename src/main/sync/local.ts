@@ -14,7 +14,20 @@ import type { AccountSyncRow, BookmarkSyncRow, VaultItemSyncRow } from './mapper
 const PATH_SEPARATOR = '/'
 
 export class SyncLocal {
-  constructor(private readonly db: Db) {}
+  /**
+   * 풀로 내려받은 행에 채울 활성 작업공간의 로컬 id.
+   * null 이면(동기화 밖 호출) 작업공간 컬럼을 건드리지 않는다 — 이 값이 없으면 내려받은
+   * 행이 전부 NULL 로 남아 비기본 작업공간에서는 보이지 않는다
+   */
+  constructor(
+    private readonly db: Db,
+    private readonly workspaceLocalId: number | null = null
+  ) {}
+
+  /** 내려받은 행에 붙일 작업공간 컬럼. 모르면 아예 넣지 않는다 */
+  private get workspacePatch(): { workspaceId: number } | Record<string, never> {
+    return this.workspaceLocalId === null ? {} : { workspaceId: this.workspaceLocalId }
+  }
 
   private get d(): Db['drizzle'] {
     return this.db.drizzle
@@ -129,7 +142,8 @@ export class SyncLocal {
       pausedUntil: row.pausedUntil,
       updatedAt: row.updatedAt,
       remoteId: row.remoteId,
-      deletedAt: row.deletedAt
+      deletedAt: row.deletedAt,
+      ...this.workspacePatch
     }
     if (localId !== null) {
       this.d.update(accounts).set(patch).where(eq(accounts.id, localId)).run()
@@ -220,7 +234,8 @@ export class SyncLocal {
       fields: row.fieldsJson,
       updatedAt: row.updatedAt,
       remoteId: row.remoteId,
-      deletedAt: row.deletedAt
+      deletedAt: row.deletedAt,
+      ...this.workspacePatch
     }
     if (localId !== null) {
       this.d.update(vaultItems).set(patch).where(eq(vaultItems.id, localId)).run()
@@ -350,7 +365,8 @@ export class SyncLocal {
       position: row.position,
       updatedAt: row.updatedAt,
       remoteId: row.remoteId,
-      deletedAt: row.deletedAt
+      deletedAt: row.deletedAt,
+      ...this.workspacePatch
     }
     if (localId !== null) {
       this.d.update(bookmarks).set(patch).where(eq(bookmarks.id, localId)).run()
