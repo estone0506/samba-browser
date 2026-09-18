@@ -198,7 +198,8 @@ export class VaultRepo {
       .insert(accounts)
       .values({
         siteId,
-        label: input.label ?? input.username ?? input.host,
+        // 빈 문자열("")도 "값 없음"으로 취급해 다음 후보로 넘어간다 — ?? 는 ''를 값으로 인정해 버린다
+        label: input.label || input.username || input.host,
         username: input.username,
         isDefault: input.isDefault ?? false,
         createdAt: now,

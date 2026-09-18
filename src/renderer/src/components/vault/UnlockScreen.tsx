@@ -18,6 +18,9 @@ export function UnlockScreen(): React.JSX.Element {
   // 예전에는 항상 false 로 시작해서, 잠금 해제만 해도 "이 PC 에서 기억" 이 꺼져버렸다
   const [remember, setRemember] = useState(true)
   const [savedRemember, setSavedRemember] = useState<boolean | null>(null)
+  // 사용자가 체크박스를 직접 건드렸는지 — settings.get() 응답이 아직 안 왔어도
+  // (savedRemember 가 null 이어도) 방금 바꾼 값을 무시하지 않기 위해 따로 추적한다
+  const [rememberTouched, setRememberTouched] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
@@ -35,8 +38,9 @@ export function UnlockScreen(): React.JSX.Element {
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault()
     setErr(null)
-    // 체크 상태가 그대로면 settings 를 건드리지 않는다
-    const changed = savedRemember !== null && remember !== savedRemember
+    // 체크 상태가 그대로면 settings 를 건드리지 않는다. 사용자가 방금 체크박스를 바꿨다면
+    // settings.get() 응답이 아직 안 왔더라도(savedRemember === null) 항상 반영한다
+    const changed = rememberTouched || (savedRemember !== null && remember !== savedRemember)
     const ok = changed ? await unlock(pw, remember) : await unlockOnly(pw)
     if (!ok) setErr(t('vault.unlock.failed'))
   }
@@ -65,7 +69,10 @@ export function UnlockScreen(): React.JSX.Element {
           <input
             type="checkbox"
             checked={remember}
-            onChange={(e) => setRemember(e.target.checked)}
+            onChange={(e) => {
+              setRemember(e.target.checked)
+              setRememberTouched(true)
+            }}
             className="h-3.5 w-3.5 rounded border-[var(--line)]"
           />
           {t('vault.setup.remember')}

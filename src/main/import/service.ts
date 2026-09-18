@@ -132,7 +132,7 @@ export class ImportService {
     const inserted = this.bookmarkRepo.insertTree(tree)
     tree = undefined
 
-    this.vault.logAudit('import', 'user')
+    // 감사 로그는 비밀 항목(키마스터) 전용이다 — 북마크는 비밀이 아니므로 기록하지 않는다
     return { folders: inserted.folders, bookmarks: inserted.bookmarks, skipped: inserted.skipped }
   }
 
@@ -147,15 +147,12 @@ export class ImportService {
   // --- 북마크 관리자 페이지용 CRUD ------------------------------------------
 
   createBookmarkFolder(parentId: number | null, name: string): number {
-    const id = this.bookmarkRepo.createFolder(parentId, name)
-    this.vault.logAudit('save', 'user')
-    return id
+    // 감사 로그는 비밀 항목(키마스터) 전용이다 — 북마크는 비밀이 아니므로 기록하지 않는다
+    return this.bookmarkRepo.createFolder(parentId, name)
   }
 
   createBookmarkLink(folderId: number | null, title: string, url: string): number {
-    const id = this.bookmarkRepo.createLink(folderId, title, url)
-    this.vault.logAudit('save', 'user')
-    return id
+    return this.bookmarkRepo.createLink(folderId, title, url)
   }
 
   renameBookmark(id: number, kind: 'folder' | 'link', name: string): void {

@@ -2,6 +2,9 @@
 export interface Migration {
   tag: string
   sql: string[]
+  // 이 태그들 중 하나가 __migrations 에 이미 있으면, 태그 이름만 바뀐 것으로 보고
+  // SQL 을 다시 실행하지 않는다(drizzle-kit generate 재실행으로 태그가 바뀌는 경우 대비)
+  aliases?: string[]
 }
 
 export const migrations: Migration[] = [
@@ -27,7 +30,10 @@ export const migrations: Migration[] = [
     sql: ['ALTER TABLE `audit_log` ADD `account_id` integer;']
   },
   {
-    tag: '0003_add_bookmark_folder_add_date',
-    sql: ['ALTER TABLE `bookmark_folders` ADD `add_date` integer;']
+    // drizzle-kit generate 가 임의로 지어 준 이름. 예전에 손으로 붙였던
+    // '0003_add_bookmark_folder_add_date' 태그가 이미 적용된 DB 도 호환되도록 alias 를 둔다
+    tag: '0003_bouncy_quasar',
+    sql: ['ALTER TABLE `bookmark_folders` ADD `add_date` integer;'],
+    aliases: ['0003_add_bookmark_folder_add_date']
   }
 ]

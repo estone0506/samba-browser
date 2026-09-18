@@ -22,6 +22,8 @@ import {
   checkVerifier,
   zeroize,
   clampMemoryKiB,
+  clampIterations,
+  clampParallelism,
   resolveDefaultKdfParams,
   type KdfParams
 } from './crypto'
@@ -251,11 +253,13 @@ export class VaultService {
       if (typeof parsed !== 'object' || parsed === null) return fallback
       const p = parsed as Partial<KdfParams>
       return {
-        // DB 값이 변조돼 터무니없이 작아도 허용 범위 아래로는 내려가지 않는다
+        // DB 값이 변조돼 터무니없이 작거나 커도 허용 범위를 벗어나지 않는다(정수로도 맞춘다)
         memoryKiB:
           typeof p.memoryKiB === 'number' ? clampMemoryKiB(p.memoryKiB) : fallback.memoryKiB,
-        iterations: typeof p.iterations === 'number' ? p.iterations : fallback.iterations,
-        parallelism: typeof p.parallelism === 'number' ? p.parallelism : fallback.parallelism
+        iterations:
+          typeof p.iterations === 'number' ? clampIterations(p.iterations) : fallback.iterations,
+        parallelism:
+          typeof p.parallelism === 'number' ? clampParallelism(p.parallelism) : fallback.parallelism
       }
     } catch {
       return fallback

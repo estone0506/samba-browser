@@ -1,0 +1,1 @@
+ALTER TABLE `bookmark_folders` ADD `add_date` integer;

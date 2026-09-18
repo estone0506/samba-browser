@@ -180,14 +180,14 @@ describe('ImportService', () => {
       expect(second.skipped).toBe(2)
     })
 
-    it('가져오기 후 감사 로그가 한 줄 남는다', async () => {
+    it('북마크 가져오기는 감사 로그를 남기지 않는다(감사 로그는 비밀 항목 전용)', async () => {
       const service = new ImportService(db, vault, makeDialogs(), {
         readFile: async () => BOOKMARK_HTML
       })
       await service.importBookmarks('bookmarks.html')
 
       const audit = vault.listAudit()
-      expect(audit.some((r) => r.action === 'import' && r.itemId === null)).toBe(true)
+      expect(audit.some((r) => r.action === 'import')).toBe(false)
     })
 
     it('트리 DTO JSON 에 비밀번호 문자열이 없다(가져온 계정과 무관한 데이터임을 확인)', async () => {

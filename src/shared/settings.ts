@@ -52,7 +52,7 @@ export const settingsSchema = z.object({
   maxToolCalls: z.number().catch(DEFAULT_SETTINGS.maxToolCalls),
   permissionMode: z.enum(PERMISSION_MODES).catch(DEFAULT_SETTINGS.permissionMode),
   finalConfirm: z.boolean().catch(DEFAULT_SETTINGS.finalConfirm),
-  // 금고 미사용 자동 잠금(분). 손상된 값은 기본 15분으로 되돌린다
+  // 금고 미사용 자동 잠금(분). 손상된 값은 기본 1주(10080분)로 되돌린다
   vaultAutoLockMinutes: z
     .number()
     .int()

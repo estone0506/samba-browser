@@ -19,6 +19,12 @@ const MAX_MEMORY_KIB = 1048576
 const DEFAULT_ITERATIONS = 3
 const DEFAULT_PARALLELISM = 1
 
+// argon2id iterations/parallelism 허용 범위 — DB 값이 변조돼도 이 범위를 벗어나지 못하게 한다
+const MIN_ITERATIONS = 1
+const MAX_ITERATIONS = 10
+const MIN_PARALLELISM = 1
+const MAX_PARALLELISM = 4
+
 // randomBytes 로 생성 가능한 바이트 수 범위
 const MIN_RANDOM_BYTES = 1
 const MAX_RANDOM_BYTES = 1024
@@ -47,10 +53,22 @@ export interface KdfParams {
   parallelism: number
 }
 
-/** 메모리 비용(KiB)을 8192~1048576 범위로 clamp 한다. 숫자가 아니면 기본값(65536) */
+/** 메모리 비용(KiB)을 8192~1048576 범위의 정수로 clamp 한다. 숫자가 아니면 기본값(65536) */
 export function clampMemoryKiB(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_MEMORY_KIB
-  return Math.min(MAX_MEMORY_KIB, Math.max(MIN_MEMORY_KIB, value))
+  return Math.round(Math.min(MAX_MEMORY_KIB, Math.max(MIN_MEMORY_KIB, value)))
+}
+
+/** iterations 를 1~10 범위의 정수로 clamp 한다. 숫자가 아니면 기본값(3) */
+export function clampIterations(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_ITERATIONS
+  return Math.round(Math.min(MAX_ITERATIONS, Math.max(MIN_ITERATIONS, value)))
+}
+
+/** parallelism 을 1~4 범위의 정수로 clamp 한다. 숫자가 아니면 기본값(1) */
+export function clampParallelism(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_PARALLELISM
+  return Math.round(Math.min(MAX_PARALLELISM, Math.max(MIN_PARALLELISM, value)))
 }
 
 /** VAULT_KDF_MEM 환경변수를 8192~1048576 범위로 clamp 해서 읽는다. 숫자가 아니면 기본값 */
