@@ -19,6 +19,7 @@ function LetterFavicon({ title }: { title: string }): React.JSX.Element {
 }
 
 function LinkRow({ link, depth }: { link: BookmarkLinkDto; depth: number }): React.JSX.Element {
+  const { t } = useTranslation()
   const remove = useBookmarkStore((s) => s.remove)
   const activeTab = useBrowserStore((s) => s.activeTab)
   const setView = useUiStore((s) => s.setView)
@@ -42,8 +43,8 @@ function LinkRow({ link, depth }: { link: BookmarkLinkDto; depth: number }): Rea
       type="button"
       onClick={() => void open()}
       onContextMenu={(e) => {
+        // 우클릭으로 즉시 삭제하지 않는다 — 삭제는 hover 시 나타나는 × 버튼으로만 한다
         e.preventDefault()
-        void remove(link.id)
       }}
       style={{ paddingLeft: 10 + depth * 14 }}
       className="group flex w-full items-center gap-2 rounded-[8px] py-1 pr-1.5 text-left text-[12.5px] text-[var(--text)] hover:bg-black/5"
@@ -53,6 +54,7 @@ function LinkRow({ link, depth }: { link: BookmarkLinkDto; depth: number }): Rea
       <span
         role="button"
         tabIndex={-1}
+        title={t('bookmark.delete')}
         onClick={onRemove}
         className="hidden h-4 w-4 shrink-0 items-center justify-center rounded-full text-[var(--text3)] hover:bg-black/10 group-hover:flex"
       >
@@ -127,6 +129,10 @@ export function BookmarkTree(): React.JSX.Element {
   }, [load])
 
   const isEmpty = !tree || (tree.folders.length === 0 && tree.links.length === 0)
+  // 북마크 바(isToolbar) 폴더는 항상 맨 앞에 오도록 안정 정렬한다
+  const folders = tree
+    ? [...tree.folders].sort((a, b) => (a.isToolbar === b.isToolbar ? 0 : a.isToolbar ? -1 : 1))
+    : []
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -139,7 +145,7 @@ export function BookmarkTree(): React.JSX.Element {
             {t('bookmark.emptyAll')}
           </div>
         )}
-        {tree?.folders.map((f) => (
+        {folders.map((f) => (
           <FolderRow key={f.id} folder={f} depth={0} />
         ))}
         {tree?.links.map((l) => (
