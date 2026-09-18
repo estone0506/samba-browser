@@ -22,15 +22,18 @@ export default function App(): React.JSX.Element {
   const chat = useChatStore()
   const refreshVaultState = useVaultStore((s) => s.refreshState)
   const subscribeCapture = useVaultStore((s) => s.subscribeCapture)
+  const subscribePasswordUpdated = useVaultStore((s) => s.subscribePasswordUpdated)
   useEffect(() => {
     void refresh()
     return window.samba.tabs.onUpdated(setTabs)
   }, [refresh, setTabs])
-  // 자동 저장 제안 카드(vault:capturePrompt) 구독은 앱 전체에서 한 번만 한다
+  // 자동 저장 제안 카드(vault:capturePrompt) · 자동 갱신 토스트(vault:passwordUpdated) 구독은
+  // 앱 전체에서 한 번만 한다
   useEffect(() => {
     void refreshVaultState()
     subscribeCapture()
-  }, [refreshVaultState, subscribeCapture])
+    subscribePasswordUpdated()
+  }, [refreshVaultState, subscribeCapture, subscribePasswordUpdated])
   // browser 뷰가 아닐 때는 네이티브 웹뷰(WebContentsView)가 렌더러 위를 덮지 않도록
   // bounds 를 0 으로 접는다. WebArea 는 마운트될 때 다시 자기 크기를 보고하므로
   // browser 뷰로 돌아오면 자동으로 재측정된다.

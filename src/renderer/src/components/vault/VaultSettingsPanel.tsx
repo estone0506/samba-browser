@@ -45,6 +45,7 @@ export function VaultSettingsPanel({ open, onOpenChange }: Props): React.JSX.Ele
   const [autoLockMinutes, setAutoLockMinutes] = useState(10080)
   const [accessPolicy, setAccessPolicy] = useState<VaultAccessPolicy>('while_unlocked')
   const [autoSubmit, setAutoSubmit] = useState(true)
+  const [autoUpdatePassword, setAutoUpdatePassword] = useState(true)
   const [rememberDevice, setRememberDevice] = useState(true)
   const [excludedHostsText, setExcludedHostsText] = useState('')
 
@@ -55,6 +56,7 @@ export function VaultSettingsPanel({ open, onOpenChange }: Props): React.JSX.Ele
       setAutoLockMinutes(r.data.vaultAutoLockMinutes)
       setAccessPolicy(r.data.vaultAccessPolicy)
       setAutoSubmit(r.data.vaultAutoSubmit)
+      setAutoUpdatePassword(r.data.vaultAutoUpdatePassword)
       setRememberDevice(r.data.vaultRememberDevice)
       setExcludedHostsText(r.data.vaultExcludedHosts.join(', '))
     })
@@ -71,6 +73,10 @@ export function VaultSettingsPanel({ open, onOpenChange }: Props): React.JSX.Ele
   const toggleAutoSubmit = (v: boolean): void => {
     setAutoSubmit(v)
     void window.samba.settings.set({ vaultAutoSubmit: v })
+  }
+  const toggleAutoUpdatePassword = (v: boolean): void => {
+    setAutoUpdatePassword(v)
+    void window.samba.settings.set({ vaultAutoUpdatePassword: v })
   }
   const toggleRemember = (v: boolean): void => {
     setRememberDevice(v)
@@ -167,6 +173,19 @@ export function VaultSettingsPanel({ open, onOpenChange }: Props): React.JSX.Ele
               </span>
             </span>
             <Switch checked={autoSubmit} onCheckedChange={toggleAutoSubmit} />
+          </div>
+
+          {/* 로그인 성공 감지 자동 갱신 */}
+          <div className="flex items-center justify-between">
+            <span>
+              <span className="block text-[12.5px] font-medium text-[var(--text)]">
+                {t('vault.settings.autoUpdatePassword')}
+              </span>
+              <span className="block text-[11px] text-[var(--text2)]">
+                {t('vault.settings.autoUpdatePasswordDesc')}
+              </span>
+            </span>
+            <Switch checked={autoUpdatePassword} onCheckedChange={toggleAutoUpdatePassword} />
           </div>
 
           {/* 이 PC 에서 기억 */}
