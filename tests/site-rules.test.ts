@@ -4,7 +4,7 @@ import {
   knownLoginUrl,
   changePasswordUrl,
   appendsTwoFactorToPassword,
-  normalizeHost,
+  normalizeRuleHost,
   isLikelyLoginUrl,
   correctLoginUrl,
   KNOWN_LOGIN_URLS
@@ -105,7 +105,7 @@ describe('Apple 규칙 데이터', () => {
     expect(appendsTwoFactorToPassword('naver.com')).toBe(false)
   })
 
-  it('normalizeHost 는 포트와 www 를 없앤다', () => {
-    expect(normalizeHost('WWW.Example.COM:8080')).toBe('example.com')
+  it('normalizeRuleHost 는 포트와 www 를 없앤다', () => {
+    expect(normalizeRuleHost('WWW.Example.COM:8080')).toBe('example.com')
   })
 })
