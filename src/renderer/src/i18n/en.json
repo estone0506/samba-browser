@@ -1,0 +1,41 @@
+{
+  "app": { "name": "Samba Browser" },
+  "sidebar": {
+    "browser": "Browser",
+    "tasks": "Tasks",
+    "automation": "Automation",
+    "accounts": "Accounts · Vault",
+    "phones": "Phones",
+    "logs": "Logs",
+    "settings": "Settings",
+    "chats": "Chats"
+  },
+  "address": {
+    "placeholder": "Search or enter URL",
+    "pc": "PC",
+    "mobile": "Mobile",
+    "profile": "Profile"
+  },
+  "tab": { "new": "New Tab" },
+  "chat": {
+    "title": "AI",
+    "placeholder": "Type an instruction…",
+    "send": "Send",
+    "stop": "Stop",
+    "thinking": "Thinking…",
+    "done": "Done",
+    "failed": "Failed",
+    "toolCalls": "Tool calls {{n}} / {{max}}"
+  },
+  "confirm": {
+    "title": "Confirmation required",
+    "body": "AI is about to perform: {{action}}",
+    "approve": "Approve",
+    "deny": "Deny"
+  },
+  "auth": {
+    "missing": "AI is not connected. Run claude login in a terminal or add an API key in Settings.",
+    "limit": "You've reached the AI usage limit. Please try again later."
+  },
+  "settings": { "model": "Model", "language": "Language" }
+}

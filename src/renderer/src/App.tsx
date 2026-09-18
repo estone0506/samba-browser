@@ -1,34 +1,19 @@
-import Versions from './components/Versions'
-import electronLogo from './assets/electron.svg'
+import { useTranslation } from 'react-i18next'
+import { Button } from '@renderer/components/ui/button'
 
 function App(): React.JSX.Element {
-  const ipcHandle = (): void => window.electron.ipcRenderer.send('ping')
+  const { t, i18n } = useTranslation()
 
   return (
-    <>
-      <img alt="logo" className="logo" src={electronLogo} />
-      <div className="creator">Powered by electron-vite</div>
-      <div className="text">
-        Build an Electron app with <span className="react">React</span>
-        &nbsp;and <span className="ts">TypeScript</span>
-      </div>
-      <p className="tip">
-        Please try pressing <code>F12</code> to open the devTool
-      </p>
-      <div className="actions">
-        <div className="action">
-          <a href="https://electron-vite.org/" target="_blank" rel="noreferrer">
-            Documentation
-          </a>
-        </div>
-        <div className="action">
-          <a target="_blank" rel="noreferrer" onClick={ipcHandle}>
-            Send IPC
-          </a>
-        </div>
-      </div>
-      <Versions></Versions>
-    </>
+    <div className="flex items-center gap-3 p-6">
+      <h1 className="text-lg font-semibold">{t('app.name')}</h1>
+      <Button
+        variant="outline"
+        onClick={() => i18n.changeLanguage(i18n.language === 'ko' ? 'en' : 'ko')}
+      >
+        {t('settings.language')}
+      </Button>
+    </div>
   )
 }
 

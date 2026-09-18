@@ -1,0 +1,41 @@
+{
+  "app": { "name": "삼바브라우저" },
+  "sidebar": {
+    "browser": "브라우저",
+    "tasks": "작업",
+    "automation": "자동화",
+    "accounts": "계정 · Vault",
+    "phones": "폰",
+    "logs": "로그",
+    "settings": "설정",
+    "chats": "채팅"
+  },
+  "address": {
+    "placeholder": "검색어 또는 URL 입력",
+    "pc": "PC",
+    "mobile": "모바일",
+    "profile": "프로필"
+  },
+  "tab": { "new": "새 탭" },
+  "chat": {
+    "title": "AI",
+    "placeholder": "지시를 입력하세요…",
+    "send": "전송",
+    "stop": "중단",
+    "thinking": "생각 중…",
+    "done": "완료",
+    "failed": "실패",
+    "toolCalls": "도구 호출 {{n}} / {{max}}"
+  },
+  "confirm": {
+    "title": "확인이 필요합니다",
+    "body": "AI가 다음 행동을 하려고 합니다: {{action}}",
+    "approve": "승인",
+    "deny": "거부"
+  },
+  "auth": {
+    "missing": "AI 연결이 안 됐어요. 터미널에서 claude login 을 실행하거나 설정에서 API 키를 입력하세요.",
+    "limit": "AI 사용 한도에 도달했어요. 잠시 후 다시 시도하세요."
+  },
+  "settings": { "model": "모델", "language": "언어" }
+}
