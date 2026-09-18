@@ -21,7 +21,8 @@
     "cancel": "Cancel",
     "save": "Save",
     "shortcutHint": "Ctrl+Alt+1–9 to switch",
-    "switchedNotice": "Switched workspace. Already open tabs keep their old session; new tabs use the new one."
+    "switchedNotice": "Switched workspace. Already open tabs keep their old session; new tabs use the new one.",
+    "settingsHint": "Workspaces are managed from the sidebar"
   },
   "address": {
     "placeholder": "Search or enter URL",
@@ -92,7 +93,9 @@
       "fast": "Fast",
       "standard": "Standard",
       "deep": "Deep",
-      "visual": "Visual"
+      "visual": "Visual",
+      "use": "Use this path",
+      "inUse": "In use"
     }
   },
   "capture": {
@@ -443,6 +446,167 @@
       "description": "KeyMaster save/lock policy",
       "descriptionDetail": "Configure auto-lock, AI access policy, auto-submit, and more",
       "open": "Open KeyMaster settings"
+    },
+    "placeholder": "Coming in a later stage",
+    "groups": {
+      "personal": "Personal",
+      "agent": "Agent"
+    },
+    "sections": {
+      "general": "General",
+      "appearance": "Appearance",
+      "account": "Account",
+      "plan": "Plan",
+      "security": "Security",
+      "agent": "Agent",
+      "ai": "AI connection",
+      "keymaster": "Key Master",
+      "automation": "Automation",
+      "developer": "Developer"
+    },
+    "general": {
+      "searchTitle": "Search",
+      "startupTitle": "Startup",
+      "importTitle": "Import",
+      "importDesc": "Bring in password CSV and bookmark HTML exported from another browser"
+    },
+    "appearance": {
+      "themeTitle": "Theme",
+      "themeSystem": "System",
+      "themeLight": "Light",
+      "themeDark": "Dark",
+      "zoomTitle": "Display size",
+      "zoom": "Zoom {{percent}}%",
+      "zoomDesc": "Choose between {{min}}% and {{max}}%",
+      "sidebarTitle": "Sidebar",
+      "sidebarBookmarks": "Show bookmarks",
+      "sidebarBookmarksDesc": "Show the bookmark list in the sidebar",
+      "sidebarChat": "Show chat",
+      "sidebarChatDesc": "Show the AI chat shortcut in the sidebar",
+      "shortcutsTitle": "Shortcuts",
+      "shortcutsDesc": "Read-only for now",
+      "shortcutNewTab": "New tab",
+      "shortcutCloseTab": "Close tab",
+      "shortcutAddressBar": "Focus address bar",
+      "shortcutReload": "Reload",
+      "shortcutWorkspace": "Switch workspace"
+    },
+    "agent": {
+      "notifyTitle": "Notifications",
+      "notify": "Notify when done",
+      "notifyDesc": "Let you know when the agent finishes a task",
+      "sound": "Completion sound",
+      "soundDesc": "Play a short sound with the notification",
+      "queueTitle": "Follow-up instructions",
+      "queue": "Queue while running",
+      "queueDesc": "Queue new instructions while the agent is busy and run them in order",
+      "cleanupTitle": "Tab cleanup",
+      "cleanup": "Auto-close tabs opened by the agent",
+      "cleanupDesc": "Close agent-opened tabs after the chosen time",
+      "cleanupOff": "Off",
+      "cleanupMinutes": "{{n}} min"
+    },
+    "security": {
+      "autofillTitle": "Autofill"
+    },
+    "keymaster": {
+      "open": "Open Key Master",
+      "export": "Export",
+      "exportUnavailable": "Export is coming in a later stage"
     }
+  },
+  "account": {
+    "title": "Account",
+    "signedIn": "Signed in",
+    "signInTitle": "Sign in",
+    "signUpTitle": "Sign up",
+    "signInDesc": "Signing in syncs settings, bookmarks and the vault across your devices",
+    "email": "Email",
+    "password": "Password",
+    "signIn": "Sign in",
+    "signUp": "Sign up",
+    "toSignUp": "I need an account",
+    "toSignIn": "I already have an account",
+    "signOut": "Sign out",
+    "continueWithGoogle": "Continue with Google",
+    "googleWaiting": "Finish the Google sign-in in your browser",
+    "googleWaitingDetail": "We wait up to 5 minutes. If you closed the window, cancel and try again",
+    "googleCancel": "Cancel",
+    "planFree": "Free",
+    "planPro": "Pro",
+    "notConfigured": "Sync needs Supabase to be configured",
+    "notConfiguredDetail": "Follow the document below to fill SAMBA_SUPABASE_URL and SAMBA_SUPABASE_ANON_KEY in .env",
+    "devicesTitle": "Devices",
+    "devicesDesc": "Devices signed in with this account",
+    "devicesLoading": "Loading",
+    "devicesEmpty": "No devices yet",
+    "devicesUnavailable": "The device list is not ready yet",
+    "thisDevice": "This device",
+    "deviceRevoked": "Signed out",
+    "lastSeen": "Last seen",
+    "revokeDevice": "Sign out remotely",
+    "dangerTitle": "Danger zone",
+    "dangerDesc": "Deleting the account removes all synced data from the server",
+    "deleteConfirmLabel": "Type {{word}} to confirm",
+    "deleteAccount": "Delete account",
+    "deleteAccountUnavailable": "Account deletion is not ready yet"
+  },
+  "sync": {
+    "title": "Sync",
+    "connection": "Connection",
+    "online": "Online",
+    "offline": "Offline",
+    "pending": "Unsent changes",
+    "lastPulledAt": "Last pulled",
+    "lastError": "Last error",
+    "syncNow": "Sync now",
+    "syncing": "Syncing"
+  },
+  "ai": {
+    "claudeSubscriptionDesc": "Reuses the Claude Code login already on this PC",
+    "claudeInstallHint": "Claude Code is not installed. Install it in a terminal and check again",
+    "claudeLoginHint": "Run claude login in a terminal",
+    "noKey": "No key saved",
+    "keyPlaceholder": "Paste a key to save it right away",
+    "testOk": "The key works",
+    "testFail": "Could not verify the key",
+    "vendor": {
+      "anthropic": "Claude (Anthropic)",
+      "openai": "OpenAI",
+      "gemini": "Gemini"
+    },
+    "taskTable": {
+      "fastPurpose": "Short judgements and sorting",
+      "fastUsedIn": "URL checks, quick summaries",
+      "standardPurpose": "Everyday task execution",
+      "standardUsedIn": "Default agent runs",
+      "deepPurpose": "Long reasoning, hard tasks",
+      "deepUsedIn": "Complex multi-step work",
+      "visualPurpose": "Screen and image understanding",
+      "visualUsedIn": "Screenshot reading, captcha checks",
+      "remapped": "Switching connection path remapped these models: {{list}}",
+      "dismiss": "Got it"
+    }
+  },
+  "recovery": {
+    "title": "Reissue recovery key",
+    "sectionTitle": "Recovery key",
+    "sectionDesc": "The last way into the vault if you forget the master password",
+    "reissue": "Reissue recovery key",
+    "warnBody": "Creating a new recovery key makes the previous one stop working immediately",
+    "warnDetail": "If you lose both the master password and the recovery key, the vault cannot be recovered",
+    "issue": "Create a new recovery key",
+    "cancel": "Cancel",
+    "showBody": "Store this key somewhere safe. You cannot see it again after closing this screen",
+    "showDetail": "24 characters in 6 groups of 4. Case and hyphens are ignored",
+    "copy": "Copy",
+    "print": "Print",
+    "next": "Next",
+    "confirmBody": "Type the recovery key you saved, exactly",
+    "confirmFailed": "Confirmation failed. Please try again",
+    "done": "Done",
+    "back": "Back",
+    "doneBody": "A new recovery key was issued. The old one no longer works",
+    "close": "Close"
   }
 }
