@@ -1,0 +1,186 @@
+// 동기화 엔진 — 60초 폴링 + Realtime 구독 + 상태 통지.
+//
+// Realtime 은 "있으면 좋은" 기능이다. 구독이 실패해도 start() 는 성공하고 폴링은 계속 돈다.
+// 인증 만료(401·기기 원격 로그아웃)는 상태로만 알리고, 로그아웃·금고 잠금은 호출부가 한다
+
+import type { SyncStatus } from '../../shared/sync'
+import { SYNC_TABLES } from '../../shared/sync'
+import { AuthExpiredError } from './backend'
+import { SyncLocal } from './local'
+import { remoteTableOf } from './mappers'
+import { LAST_PULLED_AT_KEY, pullAll } from './pull'
+import { pushAll, type PushDeps } from './push'
+
+export const SYNC_POLL_INTERVAL_MS = 60_000
+
+export interface EngineDeps extends PushDeps {
+  /**
+   * 인증이 만료됐을 때 한 번 불린다. 로그아웃·금고 잠금 연결은 호출부(Task 9)가 한다 —
+   * 엔진은 여기서 아무것도 스스로 정리하지 않는다
+   */
+  onAuthExpired?: () => void
+}
+
+export class SyncEngine {
+  private timer: ReturnType<typeof setInterval> | undefined
+  private unsubscribers: (() => void)[] = []
+  private listeners = new Set<(status: SyncStatus) => void>()
+  private inFlight: Promise<SyncStatus> | null = null
+  private started = false
+  private online = false
+  private lastError: string | undefined
+  // 만료를 알린 뒤 다시 성공할 때까지는 같은 알림을 반복하지 않는다
+  private authExpiredNotified = false
+  private readonly local: SyncLocal
+
+  constructor(private readonly deps: EngineDeps) {
+    this.local = new SyncLocal(deps.db)
+  }
+
+  /** 즉시 1회 동기화하고, 60초 주기 폴링과 Realtime 구독을 건다 */
+  start(): void {
+    if (this.started) return
+    this.started = true
+    void this.syncNow()
+    this.timer = setInterval(() => {
+      void this.syncNow()
+    }, SYNC_POLL_INTERVAL_MS)
+    this.timer.unref?.()
+    void this.subscribeAll()
+  }
+
+  stop(): void {
+    this.started = false
+    if (this.timer) clearInterval(this.timer)
+    this.timer = undefined
+    for (const unsubscribe of this.unsubscribers) {
+      try {
+        unsubscribe()
+      } catch (e: unknown) {
+        console.warn('Realtime 구독 해제 실패', e instanceof Error ? e.message : String(e))
+      }
+    }
+    this.unsubscribers = []
+    this.online = false
+    this.emit()
+  }
+
+  status(): SyncStatus {
+    return {
+      online: this.online,
+      pending: this.deps.outbox.count(),
+      lastPulledAt: this.local.getStateNumber(LAST_PULLED_AT_KEY),
+      ...(this.lastError === undefined ? {} : { lastError: this.lastError })
+    }
+  }
+
+  /** 지금 한 번 동기화한다. 이미 돌고 있으면 그 결과를 함께 기다린다 */
+  syncNow(): Promise<SyncStatus> {
+    if (this.inFlight) return this.inFlight
+    this.inFlight = this.runOnce().finally(() => {
+      this.inFlight = null
+    })
+    return this.inFlight
+  }
+
+  onStatusChanged(fn: (status: SyncStatus) => void): () => void {
+    this.listeners.add(fn)
+    return () => {
+      this.listeners.delete(fn)
+    }
+  }
+
+  private async runOnce(): Promise<SyncStatus> {
+    try {
+      // 먼저 받고(pull) 나서 보낸다(push) — 로컬 변경이 원격 최신본 위에 얹히도록
+      await pullAll(this.deps)
+      await pushAll(this.deps)
+      this.online = true
+      this.lastError = undefined
+      this.authExpiredNotified = false
+    } catch (e: unknown) {
+      this.online = false
+      // 예외 메시지만 담는다 — 스택·페이로드는 담지 않는다
+      this.lastError = e instanceof Error ? e.message : String(e)
+      if (e instanceof AuthExpiredError && !this.authExpiredNotified) {
+        this.authExpiredNotified = true
+        this.deps.onAuthExpired?.()
+      }
+    }
+    const status = this.status()
+    this.emit(status)
+    return status
+  }
+
+  private async subscribeAll(): Promise<void> {
+    for (const table of SYNC_TABLES) {
+      try {
+        const unsubscribe = await this.deps.backend.subscribe(remoteTableOf(table), () => {
+          void this.syncNow()
+        })
+        // stop() 이 먼저 불렸다면 방금 건 구독을 바로 푼다
+        if (!this.started) unsubscribe()
+        else this.unsubscribers.push(unsubscribe)
+      } catch (e: unknown) {
+        console.warn(
+          'Realtime 구독 실패(폴링으로 계속)',
+          e instanceof Error ? e.message : String(e)
+        )
+      }
+    }
+  }
+
+  private emit(status: SyncStatus = this.status()): void {
+    for (const fn of this.listeners) fn(status)
+  }
+}
+
+/** 엔진이 붙기 전(로그아웃 상태)의 기본 상태 */
+export function offlineStatus(): SyncStatus {
+  return { online: false, pending: 0, lastPulledAt: null }
+}
+
+/**
+ * 엔진은 로그인 이후에 만들어진다. IPC 는 앱 시작 시 한 번만 등록되므로,
+ * 그 사이를 이어 주는 자리다 — 붙기 전에도 상태를 답할 수 있다
+ */
+export class SyncEngineHolder {
+  private engine: SyncEngine | null = null
+  private listeners = new Set<(status: SyncStatus) => void>()
+  private detach: (() => void) | null = null
+
+  attach(engine: SyncEngine): void {
+    this.release()
+    this.engine = engine
+    this.detach = engine.onStatusChanged((status) => {
+      for (const fn of this.listeners) fn(status)
+    })
+  }
+
+  release(): void {
+    this.detach?.()
+    this.detach = null
+    this.engine = null
+    const status = offlineStatus()
+    for (const fn of this.listeners) fn(status)
+  }
+
+  current(): SyncEngine | null {
+    return this.engine
+  }
+
+  status(): SyncStatus {
+    return this.engine ? this.engine.status() : offlineStatus()
+  }
+
+  async syncNow(): Promise<SyncStatus> {
+    return this.engine ? this.engine.syncNow() : offlineStatus()
+  }
+
+  onStatusChanged(fn: (status: SyncStatus) => void): () => void {
+    this.listeners.add(fn)
+    return () => {
+      this.listeners.delete(fn)
+    }
+  }
+}

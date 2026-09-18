@@ -24,7 +24,8 @@ import {
   type AiProviderStatus,
   type ApiKeyVendor,
   type TaskModelKey,
-  type TaskModels
+  type TaskModels,
+  type SyncStatus
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 
@@ -262,6 +263,16 @@ const api = {
       const h = (_: unknown, w: WorkspaceDto): void => cb(w)
       ipcRenderer.on(IPC.workspaceChanged, h)
       return () => ipcRenderer.off(IPC.workspaceChanged, h)
+    }
+  },
+  // 동기화 — 상태 표시줄용. 토큰·비밀값은 오지 않는다
+  sync: {
+    status: (): Promise<IpcResult<SyncStatus>> => invoke(IPC.syncStatus),
+    now: (): Promise<IpcResult<SyncStatus>> => invoke(IPC.syncNow),
+    onStatusChanged: (cb: (status: SyncStatus) => void): (() => void) => {
+      const h = (_: unknown, status: SyncStatus): void => cb(status)
+      ipcRenderer.on(IPC.syncStatusChanged, h)
+      return () => ipcRenderer.off(IPC.syncStatusChanged, h)
     }
   }
 }

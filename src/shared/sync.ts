@@ -56,3 +56,35 @@ export interface WorkspaceDto {
   position: number
   isActive: boolean
 }
+
+/** 변경 로그 한 줄의 연산 종류 */
+export type SyncOp = 'upsert' | 'delete'
+
+/**
+ * 쓰기 지점(금고·북마크·설정)이 변경 로그를 남길 때 쓰는 훅.
+ * 주입하지 않으면 아무 일도 하지 않는다(동기화를 끈 상태 = 2단계까지의 동작 그대로)
+ */
+export type OutboxRecorder = (table: SyncTable, rowId: string, op: SyncOp, payload?: string) => void
+
+/**
+ * 동기화 대상 설정 키.
+ * 기기마다 달라야 하는 값(마지막 URL·패널 폭·이 PC 에서 기억·OCR 사용 여부)은 일부러 뺀다
+ */
+export const SYNCED_SETTING_KEYS = [
+  'model',
+  'language',
+  'dangerWords',
+  'maxToolCalls',
+  'permissionMode',
+  'finalConfirm',
+  'vaultAutoLockMinutes',
+  'vaultAccessPolicy',
+  'vaultAutoSubmit',
+  'vaultAutoUpdatePassword',
+  'vaultExcludedHosts',
+  'homeUrl',
+  'newTabUrl',
+  'searchEngine'
+] as const
+
+export type SyncedSettingKey = (typeof SYNCED_SETTING_KEYS)[number]
