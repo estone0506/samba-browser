@@ -27,6 +27,7 @@ import {
   type TaskModels
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
+import type { ExportRequest, ExportResult } from '../shared/vault'
 
 // 북마크 관리자 페이지용 요청 입력 타입
 interface BookmarkMoveInput {
@@ -160,6 +161,9 @@ const api = {
     // 사용 기록(감사 로그). accountId 생략 시 전체(최근 200건), 계정 지정 시 해당 계정 항목만
     audit: (accountId?: number, limit?: number): Promise<IpcResult<AuditLogDto[]>> =>
       invoke(IPC.vaultAudit, accountId, limit),
+    // 내보내기. master(재입력 값)는 메인 방향으로만 흐르고, 응답에는 개수·경로만 온다
+    exportVault: (req: ExportRequest): Promise<IpcResult<ExportResult>> =>
+      invoke(IPC.vaultExport, req),
     onStateChanged: (cb: (state: VaultState) => void): (() => void) => {
       const h = (_: unknown, state: VaultState): void => cb(state)
       ipcRenderer.on(IPC.vaultStateChanged, h)
