@@ -17,7 +17,7 @@ export const pickerFillSchema = z.object({
 
 // 피커는 사용자가 아이콘을 누를 때마다 열리므로 저장 제안보다 넉넉하게 잡는다
 export const PICKER_WINDOW_MS = 30_000
-export const PICKER_MAX_PER_WINDOW = 20
+export const PICKER_MAX_PER_WINDOW = 60
 
 // VaultService 중 피커 경로에서 실제로 쓰는 부분만 좁힌 인터페이스
 export interface PickerVaultLike {

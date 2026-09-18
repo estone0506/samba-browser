@@ -23,11 +23,16 @@ export interface PickerAccountsResponse {
   accounts: PickerAccount[]
 }
 
+// 채우기 결과(값은 담기지 않는다). 실패해도 메인 로그에만 남지 않도록 페이지로 돌려준다
+export interface PickerFillResponse {
+  outcome: PickerOutcome
+}
+
 export interface AutofillPickerDeps {
   // 메인에 계정 목록을 요청한다(vault:pickerAccounts)
   listAccounts: (host: string) => Promise<PickerAccountsResponse>
-  // 선택한 계정으로 채우기를 요청한다(vault:pickerFill)
-  fill: (accountId: number) => void
+  // 선택한 계정으로 채우기를 요청한다(vault:pickerFill). 결과 문자열만 돌아온다
+  fill: (accountId: number) => Promise<PickerFillResponse>
   // 잠금 등 상태 문구(호출부에서 번역된 문자열을 넘긴다)
   labels: { locked: string; empty: string; title: string }
 }
@@ -97,7 +102,17 @@ const STYLE = `
  * 피커를 설치한다. 로그인 입력칸에 포커스가 가면 아이콘을 띄운다.
  * 한 번만 호출한다(page.ts).
  */
-export function installAutofillPicker(deps: AutofillPickerDeps): void {
+export interface InstallPickerOptions {
+  // 테스트 전용: jsdom 의 focus()/dispatchEvent 는 isTrusted=false 이므로 합성 이벤트도 허용한다.
+  // 실제 page.ts 는 이 옵션 없이(옵션 생략 = 신뢰된 이벤트만) 호출해야 한다
+  allowUntrusted?: boolean
+}
+
+export function installAutofillPicker(
+  deps: AutofillPickerDeps,
+  options: InstallPickerOptions = {}
+): void {
+  const allowUntrusted = options.allowUntrusted === true
   let host: HTMLDivElement | null = null
   let root: ShadowRoot | null = null
   let icon: HTMLDivElement | null = null
@@ -196,7 +211,8 @@ export function installAutofillPicker(deps: AutofillPickerDeps): void {
       button.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
-        deps.fill(acc.id)
+        // 실패 사유는 페이지 UI 에 노출하지 않고(피싱 힌트가 될 수 있다) 조용히 무시한다
+        void deps.fill(acc.id).catch(() => undefined)
         hideIcon()
       })
       menu.appendChild(button)
@@ -235,8 +251,10 @@ export function installAutofillPicker(deps: AutofillPickerDeps): void {
       const el = e.target
       if (!(el instanceof Element) || !isPickerTarget(el)) return
       showIcon(el)
-      // Aside 처럼 포커스만으로 계정 목록을 바로 연다(이미 열려 있으면 그대로 둔다)
-      if (!menu) void renderMenu()
+      // 페이지 스크립트가 만들어 쏜 합성 이벤트로는 목록을 열지 않는다.
+      // (el.focus() 가 만드는 이벤트는 브라우저가 신뢰됨으로 표시하므로 완전한 방어는
+      //  아니지만, 목록에는 값이 없고 아이디/라벨만 있어 노출 범위는 여기까지다)
+      if (!menu && (allowUntrusted || e.isTrusted)) void renderMenu()
     },
     true
   )

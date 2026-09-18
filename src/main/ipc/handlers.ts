@@ -12,6 +12,7 @@ import { VaultCaptureGate } from './vault-capture'
 import { watchLoginSuccess } from './login-watch'
 import { VaultPickerGate } from './vault-picker'
 import { autofillAccount, type AutofillDeps } from '../vault/autofill'
+import { assertFromRenderer, isFromRenderer } from './sender'
 import { normalizeHost } from '../../shared/host'
 import { isAllowedExternalUrl, isInternalUrl } from '../../shared/url'
 import { toolbarBookmarks } from '../bookmarks/newtab'
@@ -55,6 +56,11 @@ export function registerIpc(
   const agent = new AgentRunner(tabs, settings, (ev) => send(IPC.agentEvent, ev), vault)
   // 페이지 JS 대화상자는 AI 작업이 도는 동안에만 자동 처리한다
   tabs.setAgentRunningProvider(() => agent.isRunning())
+  // guard 모드에서 confirm/beforeunload 는 사용자 확인 카드를 거쳐야 '예' 가 된다
+  tabs.setDialogPolicy({
+    mode: () => settings.get().permissionMode,
+    confirm: (message) => agent.requestConfirm(`페이지 확인: ${message}`, 'danger')
+  })
   vault.onStateChanged((state) => send(IPC.vaultStateChanged, state))
   // 저장 제안 카드에는 host/username/isNew 만 간다(비밀번호는 메인에 남는다)
   vault.onCapturePrompt((prompt) => send(IPC.vaultCapturePrompt, prompt))
@@ -77,6 +83,31 @@ export function registerIpc(
   }
   // === 북마크 관리자 페이지 끝 ===========================================================
 
+  // --- 발신자 검증 ---------------------------------------------------------
+  // 렌더러 창(메인 UI)에서 온 요청만 허용한다. 탭 안의 웹 페이지 preload 는 별도 게이트
+  // (VaultCaptureGate·VaultPickerGate·newTabSender)를 가진 채널만 쓸 수 있다.
+  // 판정 자체는 ipc/sender.ts 의 순수 함수에 있다
+  /** 렌더러 전용 invoke 채널을 등록한다(발신자 검증 + {ok,data} 포장) */
+  function handleFromRenderer<A extends unknown[], T>(
+    channel: string,
+    fn: (...args: A) => T | Promise<T>
+  ): void {
+    ipcMain.handle(channel, (e, ...args: unknown[]) =>
+      wrap(() => {
+        assertFromRenderer(win, e.sender)
+        return fn(...(args as A))
+      })
+    )
+  }
+
+  /** 렌더러 전용 단방향(send) 채널을 등록한다. 다른 발신자의 메시지는 조용히 버린다 */
+  function onFromRenderer<A extends unknown[]>(channel: string, fn: (...args: A) => void): void {
+    ipcMain.on(channel, (e, ...args: unknown[]) => {
+      if (!isFromRenderer(win, e.sender)) return
+      fn(...(args as A))
+    })
+  }
+
   tabs.onChange((list) => send(IPC.tabUpdated, list))
 
   // 창이 닫히면 등록한 핸들러를 모두 걷어낸다(1단계는 단일 창)
@@ -86,93 +117,72 @@ export function registerIpc(
     ipcMain.removeAllListeners(IPC.vaultCaptureDecision)
     ipcMain.removeAllListeners(IPC.vaultCapture)
     ipcMain.removeAllListeners(IPC.vaultUndoPasswordUpdate)
-    ipcMain.removeAllListeners(IPC.vaultPickerFill)
     vault.dispose()
   })
 
-  ipcMain.handle(IPC.tabList, () => wrap(() => tabs.list()))
-  ipcMain.handle(IPC.tabCreate, (_, o: { url?: string; profile?: string; mobile?: boolean }) =>
-    wrap(() => tabs.create(o))
+  handleFromRenderer(IPC.tabList, () => tabs.list())
+  handleFromRenderer(IPC.tabCreate, (o: { url?: string; profile?: string; mobile?: boolean }) =>
+    tabs.create(o)
   )
-  ipcMain.handle(IPC.tabClose, (_, id: string) => wrap(() => tabs.close(id)))
-  ipcMain.handle(IPC.tabActivate, (_, id: string) => wrap(() => tabs.activate(id)))
-  ipcMain.handle(IPC.tabNavigate, (_, id: string, url: string) =>
-    wrap(() => tabs.navigate(id, url))
-  )
-  ipcMain.handle(IPC.tabBack, (_, id: string) => wrap(() => tabs.back(id)))
-  ipcMain.handle(IPC.tabForward, (_, id: string) => wrap(() => tabs.forward(id)))
-  ipcMain.handle(IPC.tabReload, (_, id: string) => wrap(() => tabs.reload(id)))
-  ipcMain.handle(IPC.tabSetMobile, (_, id: string, mobile: boolean) =>
-    wrap(() => tabs.setMobile(id, mobile))
-  )
-  ipcMain.handle(IPC.layoutSet, (_, l: Layout) => wrap(() => tabs.setLayout(l)))
+  handleFromRenderer(IPC.tabClose, (id: string) => tabs.close(id))
+  handleFromRenderer(IPC.tabActivate, (id: string) => tabs.activate(id))
+  handleFromRenderer(IPC.tabNavigate, (id: string, url: string) => tabs.navigate(id, url))
+  handleFromRenderer(IPC.tabBack, (id: string) => tabs.back(id))
+  handleFromRenderer(IPC.tabForward, (id: string) => tabs.forward(id))
+  handleFromRenderer(IPC.tabReload, (id: string) => tabs.reload(id))
+  handleFromRenderer(IPC.tabSetMobile, (id: string, mobile: boolean) => tabs.setMobile(id, mobile))
+  handleFromRenderer(IPC.layoutSet, (l: Layout) => tabs.setLayout(l))
 
   // 실행 시작만 즉시 확인해 주고, 완료·실패는 status 이벤트로만 알린다.
   // (예전처럼 완료까지 기다리면 늦게 끝난 이전 작업의 응답이 새 작업 UI 를 덮어썼다)
-  ipcMain.handle(IPC.agentRun, (_, prompt: string) =>
-    wrap(() => {
-      void agent.run(prompt).catch((e: unknown) => console.error('작업 실행 실패', e))
-      return { started: true }
-    })
-  )
-  ipcMain.handle(IPC.agentStop, () => wrap(() => agent.stop()))
-  ipcMain.on(IPC.agentConfirmReply, (_, requestId: string, approved: boolean) =>
+  handleFromRenderer(IPC.agentRun, (prompt: string) => {
+    void agent.run(prompt).catch((e: unknown) => console.error('작업 실행 실패', e))
+    return { started: true }
+  })
+  handleFromRenderer(IPC.agentStop, () => agent.stop())
+  onFromRenderer(IPC.agentConfirmReply, (requestId: string, approved: boolean) =>
     agent.resolveConfirm(requestId, approved)
   )
 
   ipcMain.handle(IPC.settingsGet, () => wrap(() => settings.get()))
-  ipcMain.handle(IPC.settingsSet, (_, patch: Partial<Settings>) =>
-    wrap(() => {
-      const s = settings.set(patch)
-      // 홈 주소·새 탭 주소·검색엔진이 바뀌면 tab-manager 도 즉시 반영한다
-      applyBrowserDefaults(s)
-      setOcrEnabled(s.ocrEnabled)
-      return s
-    })
-  )
+  handleFromRenderer(IPC.settingsSet, (patch: Partial<Settings>) => {
+    const s = settings.set(patch)
+    // 홈 주소·새 탭 주소·검색엔진이 바뀌면 tab-manager 도 즉시 반영한다
+    applyBrowserDefaults(s)
+    setOcrEnabled(s.ocrEnabled)
+    return s
+  })
 
   // --- 금고 ---------------------------------------------------------------
   // 비밀값(평문)을 돌려주는 채널은 vault:reveal 하나뿐이다. 나머지는 전부 메타/상태만 보낸다.
-  ipcMain.handle(IPC.vaultState, () => wrap(() => vault.state()))
-  ipcMain.handle(IPC.vaultSetup, (_, master: string) => wrap(() => vault.setup(master)))
-  ipcMain.handle(IPC.vaultUnlock, (_, master: string) => wrap(() => vault.unlock(master)))
-  ipcMain.handle(IPC.vaultLock, () => wrap(() => vault.lock()))
-  ipcMain.handle(IPC.vaultSites, () =>
-    wrap(() => {
-      vault.touch()
-      return vault.listSites()
-    })
-  )
-  ipcMain.handle(IPC.vaultAccounts, (_, host?: string) =>
-    wrap(() => {
-      vault.touch()
-      return vault.listAccounts(host)
-    })
-  )
-  ipcMain.handle(IPC.vaultItems, (_, accountId: number | null) =>
-    wrap(() => {
-      vault.touch()
-      return vault.listItems(accountId ?? null)
-    })
-  )
-  ipcMain.handle(IPC.vaultPutItem, (_, input: PutItemInput) => wrap(() => vault.putItem(input)))
-  ipcMain.handle(IPC.vaultDeleteItem, (_, id: number) => wrap(() => vault.deleteItem(id)))
+  handleFromRenderer(IPC.vaultState, () => vault.state())
+  handleFromRenderer(IPC.vaultSetup, (master: string) => vault.setup(master))
+  handleFromRenderer(IPC.vaultUnlock, (master: string) => vault.unlock(master))
+  handleFromRenderer(IPC.vaultLock, () => vault.lock())
+  handleFromRenderer(IPC.vaultSites, () => {
+    vault.touch()
+    return vault.listSites()
+  })
+  handleFromRenderer(IPC.vaultAccounts, (host?: string) => {
+    vault.touch()
+    return vault.listAccounts(host)
+  })
+  handleFromRenderer(IPC.vaultItems, (accountId: number | null) => {
+    vault.touch()
+    return vault.listItems(accountId ?? null)
+  })
+  handleFromRenderer(IPC.vaultPutItem, (input: PutItemInput) => vault.putItem(input))
+  handleFromRenderer(IPC.vaultDeleteItem, (id: number) => vault.deleteItem(id))
   // 사용자가 '보기' 를 눌렀을 때만 호출된다(감사 로그 기록됨)
-  ipcMain.handle(IPC.vaultReveal, (_, id: number, fieldKey?: string) =>
-    wrap(() => vault.reveal(id, fieldKey))
+  handleFromRenderer(IPC.vaultReveal, (id: number, fieldKey?: string) => vault.reveal(id, fieldKey))
+  handleFromRenderer(IPC.vaultDeleteAccounts, (ids: number[]) =>
+    vault.deleteAccounts(Array.isArray(ids) ? ids : [])
   )
-  ipcMain.handle(IPC.vaultDeleteAccounts, (_, ids: number[]) =>
-    wrap(() => vault.deleteAccounts(Array.isArray(ids) ? ids : []))
-  )
-  ipcMain.handle(IPC.vaultUndoDelete, (_, token: string) =>
-    wrap(() => vault.undoDeleteAccounts(token))
-  )
-  ipcMain.handle(IPC.vaultUpsertAccount, (_, dto: UpsertAccountInput) =>
-    wrap(() => vault.upsertAccount(dto))
-  )
+  handleFromRenderer(IPC.vaultUndoDelete, (token: string) => vault.undoDeleteAccounts(token))
+  handleFromRenderer(IPC.vaultUpsertAccount, (dto: UpsertAccountInput) => vault.upsertAccount(dto))
   // 사용 기록(감사 로그). accountId 를 주면 그 계정 소유 항목만, 아니면 전체를 반환한다
-  ipcMain.handle(IPC.vaultAudit, (_, accountId?: number, limit?: number) =>
-    wrap(() => vault.listAudit(accountId, limit))
+  handleFromRenderer(IPC.vaultAudit, (accountId?: number, limit?: number) =>
+    vault.listAudit(accountId, limit)
   )
   // 페이지(preload 격리 월드)가 감지한 로그인 폼 제출.
   // 검증·레이트리밋·호스트 대조는 전부 VaultCaptureGate 안에 있다(테스트 가능하도록 분리)
@@ -198,7 +208,7 @@ export function registerIpc(
   })
 
   // 자동 갱신 되돌리기(60초 이내). 실패해도 조용히 무시한다(토큰 만료 등)
-  ipcMain.on(IPC.vaultUndoPasswordUpdate, (_, token: string) => {
+  onFromRenderer(IPC.vaultUndoPasswordUpdate, (token: string) => {
     try {
       vault.undoAutoPasswordUpdate(token)
     } catch (e: unknown) {
@@ -213,8 +223,8 @@ export function registerIpc(
     activeTab: () => tabs.active(),
     excludedHosts: () => settings.get().vaultExcludedHosts
   }
-  ipcMain.handle(IPC.vaultAutofill, (_, accountId: number) =>
-    wrap(() => autofillAccount(autofillDeps, accountId))
+  handleFromRenderer(IPC.vaultAutofill, (accountId: number) =>
+    autofillAccount(autofillDeps, accountId)
   )
 
   // 페이지 내 자동 채움 피커. 목록은 {id,label,username} 뿐이고, 값은 메인이 직접 채운다
@@ -230,21 +240,34 @@ export function registerIpc(
     )
     return { outcome: result.outcome, accounts: result.accounts }
   })
-  ipcMain.on(IPC.vaultPickerFill, (e, raw: unknown) => {
+  // 피커 채우기는 활성 탭이 아니라 "요청을 보낸 탭"에, 게이트가 검증한 호스트로만 채운다.
+  // 결과는 호출한 페이지(격리 월드)로 돌려줘 실패를 조용히 삼키지 않는다
+  ipcMain.handle(IPC.vaultPickerFill, async (e, raw: unknown) => {
     const result = pickerGate.fill(
       e.sender,
       { trusted: tabs.hasWebContents(e.sender), frameUrl: e.senderFrame?.url ?? '' },
       raw
     )
-    if (result.outcome !== 'ok' || result.accountId === undefined) return
-    void autofillAccount(autofillDeps, result.accountId).catch((err: unknown) => {
+    if (result.outcome !== 'ok' || result.accountId === undefined || result.host === undefined) {
+      return { outcome: result.outcome }
+    }
+    const tab = tabs.findByWebContents(e.sender)
+    if (!tab) return { outcome: 'untrusted-sender' }
+    try {
+      const filled = await autofillAccount(autofillDeps, result.accountId, {
+        tab,
+        host: result.host
+      })
+      return { outcome: filled }
+    } catch (err: unknown) {
       // 실패 사유만 남긴다 — 값은 절대 로그에 넣지 않는다
       console.error('피커 자동 채움 실패', err instanceof Error ? err.message : String(err))
-    })
+      return { outcome: 'fill-failed' }
+    }
   })
 
   // 저장 제안 수락/거절. 거절이면 보관 중이던 비밀번호를 그냥 버린다
-  ipcMain.on(IPC.vaultCaptureDecision, (_, accept: boolean) => {
+  onFromRenderer(IPC.vaultCaptureDecision, (accept: boolean) => {
     const capture = vault.takePendingCapture()
     if (!accept || !capture) return
     // 수락했는데 그 사이 금고가 잠겼다면(자동 잠금 등) 조용히 버리지 않고 제안을 다시 띄운다.
@@ -277,43 +300,41 @@ export function registerIpc(
   })
 
   // --- 가져오기 -------------------------------------------------------------
-  ipcMain.handle(IPC.importPasswords, (_, filePath?: string) =>
-    wrap(() => importService.importPasswords(filePath))
+  handleFromRenderer(IPC.importPasswords, (filePath?: string) =>
+    importService.importPasswords(filePath)
   )
-  ipcMain.handle(IPC.importBookmarks, (_, filePath?: string) =>
-    wrap(() => importService.importBookmarks(filePath))
+  handleFromRenderer(IPC.importBookmarks, (filePath?: string) =>
+    importService.importBookmarks(filePath)
   )
-  ipcMain.handle(IPC.bookmarksTree, () => wrap(() => importService.tree()))
-  ipcMain.handle(IPC.bookmarksRemove, (_, id: number) =>
-    wrap(() => importService.removeBookmark(id))
-  )
+  handleFromRenderer(IPC.bookmarksTree, () => importService.tree())
+  handleFromRenderer(IPC.bookmarksRemove, (id: number) => importService.removeBookmark(id))
 
   // === 북마크 관리자 페이지 (신규 추가분 — 병합 편의를 위해 이 블록만 별도로 추가) =========
-  ipcMain.handle(IPC.bookmarksCreateFolder, (_, o: { parentId: number | null; name: string }) =>
-    wrap(() => importService.createBookmarkFolder(o.parentId, o.name))
+  handleFromRenderer(IPC.bookmarksCreateFolder, (o: { parentId: number | null; name: string }) =>
+    importService.createBookmarkFolder(o.parentId, o.name)
   )
-  ipcMain.handle(
+  handleFromRenderer(
     IPC.bookmarksCreateLink,
-    (_, o: { folderId: number | null; title: string; url: string }) =>
-      wrap(() => importService.createBookmarkLink(o.folderId, o.title, o.url))
+    (o: { folderId: number | null; title: string; url: string }) =>
+      importService.createBookmarkLink(o.folderId, o.title, o.url)
   )
-  ipcMain.handle(
+  handleFromRenderer(
     IPC.bookmarksRename,
-    (_, o: { id: number; kind: 'folder' | 'link'; name: string }) =>
-      wrap(() => importService.renameBookmark(o.id, o.kind, o.name))
+    (o: { id: number; kind: 'folder' | 'link'; name: string }) =>
+      importService.renameBookmark(o.id, o.kind, o.name)
   )
-  ipcMain.handle(
+  handleFromRenderer(
     IPC.bookmarksMove,
-    (_, o: { id: number; kind: 'folder' | 'link'; toFolderId: number | null }) =>
-      wrap(() => importService.moveBookmark(o.id, o.kind, o.toFolderId))
+    (o: { id: number; kind: 'folder' | 'link'; toFolderId: number | null }) =>
+      importService.moveBookmark(o.id, o.kind, o.toFolderId)
   )
-  ipcMain.handle(IPC.bookmarksRemoveFolder, (_, id: number) =>
-    wrap(() => importService.removeBookmarkFolder(id))
+  handleFromRenderer(IPC.bookmarksRemoveFolder, (id: number) =>
+    importService.removeBookmarkFolder(id)
   )
-  ipcMain.handle(IPC.bookmarksSort, (_, o: { folderId: number | null; by: 'name' }) =>
-    wrap(() => importService.sortBookmarkFolder(o.folderId))
+  handleFromRenderer(IPC.bookmarksSort, (o: { folderId: number | null; by: 'name' }) =>
+    importService.sortBookmarkFolder(o.folderId)
   )
-  ipcMain.handle(IPC.bookmarksExport, () => wrap(() => importService.exportBookmarks()))
+  handleFromRenderer(IPC.bookmarksExport, () => importService.exportBookmarks())
   // === 북마크 관리자 페이지 끝 ===========================================================
 
   // === 자체 새 탭 페이지(samba://newtab) ================================================

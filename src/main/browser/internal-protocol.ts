@@ -34,9 +34,16 @@ export function devTarget(base: string, page: string, pathname: string, search =
   return `${base.replace(/\/$/, '')}${path}${search}`
 }
 
-// 디렉터리 밖(../ 경유)으로 빠져나가는 요청은 거부한다
-function safeJoin(root: string, pathname: string): string | null {
-  const target = resolve(join(root, normalize(decodeURIComponent(pathname))))
+// 디렉터리 밖(../ 경유)으로 빠져나가는 요청은 거부한다.
+// 잘못된 퍼센트 인코딩(%ZZ 등)은 decodeURIComponent 가 던지므로 null 로 바꿔 403 을 준다
+export function safeJoin(root: string, pathname: string): string | null {
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(pathname)
+  } catch {
+    return null
+  }
+  const target = resolve(join(root, normalize(decoded)))
   const base = resolve(root)
   if (target !== base && !target.startsWith(base + sep)) return null
   return target
