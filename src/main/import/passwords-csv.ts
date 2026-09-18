@@ -2,6 +2,7 @@
 // 순수 함수 — Electron 의존성 없음. 행 내용은 절대 로그로 남기지 않는다.
 
 import Papa from 'papaparse'
+import { normalizeHost } from '../../shared/host'
 
 export interface ParsedLogin {
   name: string
@@ -19,35 +20,8 @@ const USERNAME_KEYS = ['username', 'login_username']
 const PASSWORD_KEYS = ['password', 'login_password']
 const NOTE_KEYS = ['note', 'notes']
 
-/** url 문자열에서 호스트만 추출한다. www. 접두사·포트 제거, 소문자화. 유효하지 않으면 빈 문자열 */
-export function normalizeHost(url: string): string {
-  const trimmed = url.trim()
-  if (!trimmed) return ''
-
-  let hostname = ''
-  try {
-    hostname = new URL(trimmed).hostname
-  } catch {
-    hostname = ''
-  }
-  if (!hostname) {
-    // 스킴이 없거나(예: "example.com:443" 이 콜론 때문에 스킴으로 오인됨) 파싱이 실패한 경우
-    // 호스트만 적힌 값으로 간주하고 http:// 를 붙여 재시도
-    try {
-      hostname = new URL(`http://${trimmed}`).hostname
-    } catch {
-      return ''
-    }
-  }
-
-  if (!hostname) return ''
-
-  let host = hostname.toLowerCase()
-  if (host.startsWith('www.')) {
-    host = host.slice('www.'.length)
-  }
-  return host
-}
+// 공용 호스트 정규화 함수를 그대로 재수출한다(호출부 변경 없이 src/shared/host.ts 로 로직 이전)
+export { normalizeHost }
 
 /** 헤더 키(대소문자 무관)를 실제 파싱된 컬럼명으로 매핑한다 */
 function buildKeyMap(fields: string[]): Map<string, string> {
