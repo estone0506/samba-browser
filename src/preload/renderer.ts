@@ -25,7 +25,8 @@ import {
   type ApiKeyVendor,
   type TaskModelKey,
   type TaskModels,
-  type SyncStatus
+  type SyncStatus,
+  type DeviceDto
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 
@@ -264,6 +265,11 @@ const api = {
       ipcRenderer.on(IPC.workspaceChanged, h)
       return () => ipcRenderer.off(IPC.workspaceChanged, h)
     }
+  },
+  // 기기 — 목록과 원격 로그아웃. 취소된 PC 는 다음 동기화 주기에 스스로 로그아웃한다
+  devices: {
+    list: (): Promise<IpcResult<DeviceDto[]>> => invoke(IPC.devicesList),
+    revoke: (id: string): Promise<IpcResult<void>> => invoke(IPC.devicesRevoke, id)
   },
   // 동기화 — 상태 표시줄용. 토큰·비밀값은 오지 않는다
   sync: {

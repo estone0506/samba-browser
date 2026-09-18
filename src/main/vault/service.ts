@@ -150,6 +150,8 @@ const META_VERIFIER_CT = 'verifier_ct'
 const META_VERIFIER_IV = 'verifier_iv'
 const META_KDF_PARAMS = 'kdf_params'
 const META_DEVICE_KEY = 'device_wrapped_key'
+/** 복구 키 변경을 알리는 변경 로그 키(값은 담지 않는다) */
+const RECOVERY_SYNC_KEY = 'recovery_wrapped_key'
 const META_RECOVERY_SALT = 'recovery_salt'
 const META_RECOVERY_CT = 'recovery_wrapped_key'
 const META_RECOVERY_IV = 'recovery_wrapped_iv'
@@ -500,6 +502,9 @@ export class VaultService {
     this.repo.setMeta(META_RECOVERY_SALT, salt)
     this.repo.setMeta(META_RECOVERY_CT, blob.ciphertext)
     this.repo.setMeta(META_RECOVERY_IV, blob.iv)
+    // 다른 PC 도 복구 키가 바뀐 것을 알아야 한다. 감싼 키(암호문)는 vault_meta 에만 있고
+    // 변경 로그에는 "이 키가 바뀌었다"는 사실만 남는다(값·복구 키는 담지 않는다)
+    this.outbox?.('settings', RECOVERY_SYNC_KEY, 'upsert')
     // 확인이 끝난 발급 값은 곧바로 버린다(재사용 방지)
     this.pendingRecovery = null
     this.logAudit('recovery_create', 'user')

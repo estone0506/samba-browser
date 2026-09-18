@@ -15,6 +15,11 @@ export const SYNC_POLL_INTERVAL_MS = 60_000
 
 export interface EngineDeps extends PushDeps {
   /**
+   * 주기마다 맨 앞에서 불린다(기기 heartbeat·원격 로그아웃 확인).
+   * 여기서 AuthExpiredError 를 던지면 아래 인증 만료 경로와 똑같이 처리된다
+   */
+  onCycleStart?: () => Promise<void>
+  /**
    * 인증이 만료됐을 때 한 번 불린다. 로그아웃·금고 잠금 연결은 호출부(Task 9)가 한다 —
    * 엔진은 여기서 아무것도 스스로 정리하지 않는다
    */
@@ -92,6 +97,7 @@ export class SyncEngine {
 
   private async runOnce(): Promise<SyncStatus> {
     try {
+      await this.deps.onCycleStart?.()
       // 먼저 받고(pull) 나서 보낸다(push) — 로컬 변경이 원격 최신본 위에 얹히도록
       await pullAll(this.deps)
       await pushAll(this.deps)

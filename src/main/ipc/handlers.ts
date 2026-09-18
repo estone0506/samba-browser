@@ -8,6 +8,7 @@ import {
   type WebContents
 } from 'electron'
 import { join } from 'node:path'
+import * as os from 'node:os'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import { defaultTabUrl } from '../../shared/settings'
 import type { TabManager } from '../browser/tab-manager'
@@ -39,6 +40,8 @@ import { AuthService } from '../sync/auth'
 import { hasSupabaseEnv } from '../sync/env'
 import { createSessionStore } from '../sync/session-store'
 import { createSupabaseBackend } from '../sync/supabase-backend'
+import { SyncConnection, workspaceRemoteId } from '../sync/connect'
+import type { DeviceService } from '../sync/devices'
 import { WorkspaceService } from '../workspace/service'
 import { workspaceShortcutIndex } from '../workspace/shortcut'
 
@@ -478,8 +481,9 @@ export function registerIpc(
     join(app.getPath('userData'), 'sync-session.bin'),
     safeStorage
   )
+  const syncBackend = syncConfigured ? createSupabaseBackend(sessionStore) : null
   const auth = new AuthService({
-    backend: syncConfigured ? createSupabaseBackend(sessionStore) : null,
+    backend: syncBackend,
     configured: syncConfigured,
     openExternal: (url) => shell.openExternal(url)
   })
@@ -555,6 +559,34 @@ export function registerIpc(
   handleFromRenderer(IPC.syncStatus, () => sync.status())
   handleFromRenderer(IPC.syncNow, () => sync.syncNow())
   sync.onStatusChanged((status) => send(IPC.syncStatusChanged, status))
+  // 로그인하면 이 PC 를 기기 목록에 올리고, 저장소에 변경 로그 훅을 붙인 뒤 엔진을 돌린다.
+  // 로그아웃·토큰 만료·기기 원격 로그아웃은 모두 같은 정리 경로(엔진 정지·훅 해제·금고 잠금)를 탄다
+  const connection = new SyncConnection({
+    db,
+    backend: syncBackend,
+    auth,
+    holder: sync,
+    vault,
+    settings,
+    bookmarks: importService,
+    workspaceRemoteId: () => workspaceRemoteId(db, workspace.activeId()),
+    device: {
+      hostname: () => os.hostname(),
+      osLabel: () => `${os.type()} ${os.release()}`,
+      appVersion: () => app.getVersion()
+    }
+  })
+  // 세션 복구가 이 시점보다 먼저 끝났을 수 있다 — 지금 상태를 한 번 반영한다
+  void connection.refresh()
+  win.once('closed', () => connection.dispose())
+
+  const requireDevices = (): DeviceService => {
+    const devices = connection.devices()
+    if (!devices) throw new Error('로그인이 필요합니다')
+    return devices
+  }
+  handleFromRenderer(IPC.devicesList, () => requireDevices().list())
+  handleFromRenderer(IPC.devicesRevoke, (deviceId: string) => requireDevices().revoke(deviceId))
   // === 동기화 끝 =======================================================================
 
   return { settings, agent, db, vault, auth, sync }
