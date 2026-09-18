@@ -64,8 +64,9 @@ app
     db = await openDatabase(join(app.getPath('userData'), 'data.db'))
     const ipc = registerIpc(win, tabs, db)
     vault = ipc.vault
-    // 하네스 모드: 저장된 사이트를 순회하며 자동 로그인을 검증하고 끝나면 앱을 종료한다
-    const e2eTarget = process.env.SAMBA_E2E_LOGIN
+    // 하네스 모드: 저장된 사이트를 순회하며 자동 로그인을 검증하고 끝나면 앱을 종료한다.
+    // 환경변수 스위치는 개발 빌드에서만 인정한다 — 패키징된 앱에서는 무시한다
+    const e2eTarget = app.isPackaged ? undefined : process.env.SAMBA_E2E_LOGIN
     if (e2eTarget) {
       const outFile = process.env.SAMBA_E2E_OUT ?? 'docs/검수/e2e-login-results.md'
       await vault.ensureUnlockedByDevice()

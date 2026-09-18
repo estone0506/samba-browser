@@ -1,10 +1,17 @@
-import { BrowserWindow, WebContentsView, session, type Session, type WebContents } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  WebContentsView,
+  session,
+  type Session,
+  type WebContents
+} from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type { Layout, TabInfo } from '../../shared/ipc'
 import { BLOCKED_URL_MESSAGE, isAllowedUrl, isInternalUrl, NEW_TAB_URL } from '../../shared/url'
 import { attachInternalProtocol } from './internal-protocol'
-import type { SearchEngine } from '../../shared/settings'
+import type { PermissionMode, SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
 import { installDialogHandler, isAutomationActive } from './dialogs'
 
@@ -120,6 +127,9 @@ export class TabManager {
   // AI 작업이 실행 중인지 알려 주는 판정기(handlers 가 AgentRunner 를 연결한다).
   // 페이지 JS 대화상자는 작업 실행 중에만 자동 처리한다
   private agentRunning: () => boolean = () => false
+  // 대화상자 처리 정책(사용 권한 모드 + 사용자 확인 수단). handlers 가 연결한다
+  private dialogMode: () => PermissionMode = () => 'guard'
+  private dialogConfirm: ((message: string) => Promise<boolean>) | undefined
   // 자동 처리한 대화상자 문구(탭별 1건). 다음 도구 결과 앞에 붙이고 비운다
   private lastDialogMessage = new Map<string, string>()
 
@@ -154,6 +164,18 @@ export class TabManager {
   /** AI 작업 실행 여부 판정기를 연결한다(대화상자 자동 처리 조건) */
   setAgentRunningProvider(fn: () => boolean): void {
     this.agentRunning = fn
+  }
+
+  /**
+   * 페이지 대화상자 처리 정책을 연결한다.
+   * guard 모드의 confirm/beforeunload 는 confirm 으로 사용자 승인을 받는다
+   */
+  setDialogPolicy(policy: {
+    mode: () => PermissionMode
+    confirm?: (message: string) => Promise<boolean>
+  }): void {
+    this.dialogMode = policy.mode
+    this.dialogConfirm = policy.confirm
   }
 
   /**
@@ -264,7 +286,11 @@ export class TabManager {
     guardNavigation(wc)
     // 페이지 JS 대화상자(alert/confirm/prompt)는 작업 실행 중에만 자동으로 닫는다
     installDialogHandler(wc, {
-      isAutomationActive: () => isAutomationActive(this.agentRunning()),
+      // SAMBA_E2E 환경변수는 개발 빌드에서만 인정한다(패키징된 앱에서 자동 처리 금지)
+      isAutomationActive: () =>
+        isAutomationActive(this.agentRunning(), process.env, !app.isPackaged),
+      mode: () => this.dialogMode(),
+      ...(this.dialogConfirm ? { confirm: this.dialogConfirm } : {}),
       onMessage: (message) => this.lastDialogMessage.set(tab.id, message)
     })
     wc.setWindowOpenHandler(({ url: target }) => {

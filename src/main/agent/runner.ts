@@ -38,6 +38,28 @@ export class AgentRunner {
     return this.abort !== null
   }
 
+  /**
+   * 사용자 확인 카드를 띄우고 응답을 기다린다(AI 도구·페이지 대화상자 공용).
+   * 응답이 없으면 상한 시간 뒤 거부로 처리한다
+   */
+  requestConfirm(
+    action: string,
+    kind: 'danger' | 'finish' = 'danger',
+    emit: (e: AgentEvent) => void = this.emit
+  ): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const id = randomUUID()
+      const timer = setTimeout(() => {
+        // 응답이 없으면 거부 처리
+        if (this.pending.delete(id)) resolve(false)
+      }, CONFIRM_TIMEOUT_MS)
+      // 대기 타이머가 앱 종료를 막지 않도록 한다
+      timer.unref?.()
+      this.pending.set(id, { resolve, timer })
+      emit({ type: 'confirm', requestId: id, action, kind })
+    })
+  }
+
   resolveConfirm(id: string, approved: boolean): void {
     const p = this.pending.get(id)
     if (!p) return
@@ -106,18 +128,7 @@ export class AgentRunner {
       vaultExcludedHosts: s.vaultExcludedHosts,
       tick: counter.tick,
       onStep: (label, ok) => emit({ type: 'step', label, ok }),
-      confirm: (action, kind = 'danger') =>
-        new Promise<boolean>((resolve) => {
-          const id = randomUUID()
-          const timer = setTimeout(() => {
-            // 응답이 없으면 거부 처리
-            if (this.pending.delete(id)) resolve(false)
-          }, CONFIRM_TIMEOUT_MS)
-          // 대기 타이머가 앱 종료를 막지 않도록 한다
-          timer.unref?.()
-          this.pending.set(id, { resolve, timer })
-          emit({ type: 'confirm', requestId: id, action, kind })
-        })
+      confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit)
     })
     emit({ type: 'status', state: 'running', toolCalls: 0 })
     try {
