@@ -39,6 +39,13 @@ import {
   resolveDefaultKdfParams,
   type KdfParams
 } from './crypto'
+import {
+  generateRecoveryKey,
+  isValidRecoveryKey,
+  normalizeRecoveryKey,
+  unwrapMasterKey,
+  wrapMasterKey
+} from './recovery'
 import type {
   AccountDto,
   AgentAccess,
@@ -142,6 +149,12 @@ const META_VERIFIER_CT = 'verifier_ct'
 const META_VERIFIER_IV = 'verifier_iv'
 const META_KDF_PARAMS = 'kdf_params'
 const META_DEVICE_KEY = 'device_wrapped_key'
+const META_RECOVERY_SALT = 'recovery_salt'
+const META_RECOVERY_CT = 'recovery_wrapped_key'
+const META_RECOVERY_IV = 'recovery_wrapped_iv'
+
+// 발급한 복구 키를 재입력 확인까지 메모리에 들고 있는 시간
+const RECOVERY_PENDING_TTL_MS = 10 * 60_000
 
 // 되돌리기 유효 시간(ms) — 계정 삭제 스냅샷과 자동 비밀번호 갱신 모두 60초(스펙)
 const UNDO_TTL_MS = 60_000
@@ -156,6 +169,8 @@ export class VaultService {
   // 마스터 키. 잠금 해제 상태에서만 값이 있고, lock() 이 0으로 덮어쓴다
   private key: Buffer | null = null
   private autoLockTimer: ReturnType<typeof setTimeout> | undefined
+  // 발급했지만 아직 재입력 확인을 못 받은 복구 키(정규화된 값). 10분 뒤 스스로 버린다
+  private pendingRecovery: { compact: string; expiresAt: number } | null = null
   private captureTimer: ReturnType<typeof setTimeout> | undefined
   private pending: (PendingCapture & { expiresAt: number }) | null = null
   private listeners = new Set<(state: VaultState) => void>()
@@ -258,6 +273,8 @@ export class VaultService {
       clearTimeout(this.autoLockTimer)
       this.autoLockTimer = undefined
     }
+    // 확인 못 받은 복구 키는 잠그는 순간 버린다(마스터 키가 없으면 감쌀 수도 없다)
+    this.pendingRecovery = null
     // 키 zeroize 는 DB 상태와 무관하게 항상 수행한다(메모리에 평문 키를 남기지 않는 것이 최우선)
     if (this.key) {
       zeroize(this.key)
@@ -415,6 +432,90 @@ export class VaultService {
   async ensureUnlockedByDevice(): Promise<boolean> {
     if (this.key) return true
     return this.unlockWithDeviceKey()
+  }
+
+  // --- 복구 키 -----------------------------------------------------------
+
+  /** 복구 키가 이미 등록돼 있는가(값은 절대 돌려주지 않는다) */
+  hasRecoveryKey(): boolean {
+    if (this.db.isClosed) return false
+    return this.repo.getMeta(META_RECOVERY_CT) !== null
+  }
+
+  /**
+   * 새 복구 키를 발급한다. 반환값은 화면 표시 전용이며 여기서는 저장하지 않는다 —
+   * 사용자가 재입력해 confirmRecoveryKey() 를 통과해야 감싼 마스터 키가 DB 에 남는다.
+   * 발급 값은 메모리에만 10분 머문다
+   */
+  createRecoveryKey(): string {
+    if (!this.key) throw new Error('금고가 잠겨 있습니다')
+    const key = generateRecoveryKey()
+    this.pendingRecovery = {
+      compact: normalizeRecoveryKey(key),
+      expiresAt: Date.now() + RECOVERY_PENDING_TTL_MS
+    }
+    return key
+  }
+
+  /**
+   * 사용자가 옮겨 적은 복구 키를 확인한다. 정확히 일치할 때만 마스터 키를
+   * 복구 키로 감싸 vault_meta 에 저장하고 true 를 돌려준다.
+   * 틀렸거나 발급 기록이 없거나 10분이 지났으면 아무것도 저장하지 않고 false 다
+   */
+  async confirmRecoveryKey(input: string): Promise<boolean> {
+    const pending = this.pendingRecovery
+    if (!pending || !this.key) return false
+    if (Date.now() > pending.expiresAt) {
+      this.pendingRecovery = null
+      return false
+    }
+    if (!this.matchesPendingRecovery(input, pending.compact)) return false
+
+    const salt = randomBytes(SALT_BYTES)
+    const blob = await wrapMasterKey(this.key, pending.compact, salt)
+    this.repo.setMeta(META_RECOVERY_SALT, salt)
+    this.repo.setMeta(META_RECOVERY_CT, blob.ciphertext)
+    this.repo.setMeta(META_RECOVERY_IV, blob.iv)
+    // 확인이 끝난 발급 값은 곧바로 버린다(재사용 방지)
+    this.pendingRecovery = null
+    this.logAudit('recovery_create', 'user')
+    return true
+  }
+
+  /** 입력값을 발급 값과 상수 시간으로 비교한다(길이 차이는 먼저 걸러낸다) */
+  private matchesPendingRecovery(input: string, expected: string): boolean {
+    if (!isValidRecoveryKey(input)) return false
+    const given = Buffer.from(normalizeRecoveryKey(input), 'utf8')
+    const want = Buffer.from(expected, 'utf8')
+    if (given.length !== want.length) return false
+    return timingSafeEqual(given, want)
+  }
+
+  /** 복구 키로 금고를 해제한다. 마스터 비밀번호를 잊었을 때의 마지막 수단이다 */
+  async unlockWithRecoveryKey(input: string): Promise<boolean> {
+    if (!this.isInitialized()) return false
+    if (!isValidRecoveryKey(input)) return false
+    const salt = this.repo.getMeta(META_RECOVERY_SALT)
+    const ct = this.repo.getMeta(META_RECOVERY_CT)
+    const iv = this.repo.getMeta(META_RECOVERY_IV)
+    const verifierCt = this.repo.getMeta(META_VERIFIER_CT)
+    const verifierIv = this.repo.getMeta(META_VERIFIER_IV)
+    if (!salt || !ct || !iv || !verifierCt || !verifierIv) return false
+
+    let key: Buffer
+    try {
+      key = await unwrapMasterKey({ ciphertext: ct, iv }, input, salt)
+    } catch {
+      // 복구 키가 틀리면 GCM 인증이 실패한다
+      return false
+    }
+    if (!checkVerifier(key, { ciphertext: verifierCt, iv: verifierIv })) {
+      zeroize(key)
+      return false
+    }
+    this.applyKey(key)
+    this.logAudit('recovery_unlock', 'user')
+    return true
   }
 
   // --- 조회 -------------------------------------------------------------
