@@ -251,6 +251,12 @@ export class TabManager {
     wc.on('page-title-updated', () => this.emit())
     wc.on('did-navigate', () => this.emit())
     // 로드 실패는 원인 파악이 어려우므로 항상 로그로 남긴다(내부 페이지·차단된 주소 진단용)
+    // 내부 페이지의 콘솔 오류는 메인 로그로 넘긴다(개발자 도구 없이 진단)
+    wc.on('console-message', (ev) => {
+      if (ev.level === 'error' && isInternalUrl(wc.getURL())) {
+        console.error(`내부 페이지 콘솔: ${ev.message} (${ev.sourceId}:${ev.lineNumber})`)
+      }
+    })
     wc.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
       if (isMainFrame && code !== -3) console.error(`탭 로드 실패 ${code} ${desc}: ${failedUrl}`)
     })

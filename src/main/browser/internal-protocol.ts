@@ -28,9 +28,10 @@ export function registerInternalScheme(): void {
 }
 
 // 개발 모드에서는 vite 개발 서버의 같은 경로로 넘긴다
-function devTarget(base: string, page: string, pathname: string): string {
+// 쿼리(?import 등)는 vite 가 JSON·CSS 를 JS 모듈로 바꾸는 신호이므로 반드시 그대로 넘긴다
+export function devTarget(base: string, page: string, pathname: string, search = ''): string {
   const path = pathname === '/' || pathname === '' ? `/${page}` : pathname
-  return `${base.replace(/\/$/, '')}${path}`
+  return `${base.replace(/\/$/, '')}${path}${search}`
 }
 
 // 디렉터리 밖(../ 경유)으로 빠져나가는 요청은 거부한다
@@ -67,7 +68,7 @@ export function registerInternalProtocol(opts: {
     const page = PAGES[url.hostname]
     if (!page) return new Response('not found', { status: 404 })
     if (opts.devServerUrl) {
-      return net.fetch(devTarget(opts.devServerUrl, page, url.pathname))
+      return net.fetch(devTarget(opts.devServerUrl, page, url.pathname, url.search))
     }
     const pathname = url.pathname === '/' || url.pathname === '' ? `/${page}` : url.pathname
     const file = safeJoin(opts.rendererDir, pathname)
