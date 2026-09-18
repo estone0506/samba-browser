@@ -6,6 +6,7 @@ import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
 import { buildSystemPrompt } from './prompt'
 import { runQuery, classifyAuthError, isFatalApiError } from './provider'
+import { resolveModel } from '../ai/models'
 import { makeCounter } from './counter'
 import { createTextDeduper } from './dedupe'
 
@@ -135,7 +136,8 @@ export class AgentRunner {
       const stream = runQuery({
         prompt,
         systemPrompt: buildSystemPrompt(s.language, s.permissionMode),
-        model: s.model,
+        // 작업별 모델 표의 '표준' 칸이 기본 실행 모델이다(s.model 은 하위 호환으로만 남는다)
+        model: resolveModel(s.taskModels, 'standard', s.aiProvider),
         mcpServers: { samba: server },
         allowedTools: SAMBA_TOOL_NAMES,
         abort

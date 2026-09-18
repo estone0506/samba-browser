@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { AI_PROVIDERS, type AiProviderId, type TaskModels } from './ai'
 import { DEFAULT_DANGER_WORDS, mergeDangerWords } from './danger'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 
@@ -55,8 +56,27 @@ export const DEFAULT_SETTINGS = {
   // 기본 홈 주소는 자체 새 탭 페이지. 사용자가 config.json 에 저장해 둔 값이 있으면 그대로 유지된다
   homeUrl: NEW_TAB_URL,
   newTabUrl: 'home' as const,
-  searchEngine: 'google' as const
+  searchEngine: 'google' as const,
   // === 신규 추가분 끝 =======================================================
+  // === AI 연결 / 에이전트 / 작업공간 (2b 추가분) ============================
+  // AI 연결 경로와 작업별 모델
+  aiProvider: 'claude_subscription' as AiProviderId,
+  taskModels: {
+    fast: 'haiku',
+    standard: 'sonnet',
+    deep: 'opus',
+    visual: 'sonnet'
+  } as TaskModels,
+  // 에이전트 동작
+  agentNotify: true,
+  agentSound: false,
+  // 에이전트가 연 탭을 몇 분 뒤 정리할지(0 이면 정리 안 함)
+  agentTabCleanupMinutes: 15,
+  // 작업공간(기기 로컬 — 동기화하지 않는다)
+  activeWorkspaceId: 0,
+  // 확장 폴더 경로(로컬 전용)
+  extensionPaths: [] as string[]
+  // === 2b 추가분 끝 =========================================================
 }
 
 // 손상된 config.json 이어도 앱이 뜨도록 필드마다 catch 로 기본값으로 되돌린다
@@ -99,8 +119,24 @@ export const settingsSchema = z.object({
     .refine((v) => isHttpUrl(v) || isInternalUrl(v))
     .catch(DEFAULT_SETTINGS.homeUrl),
   newTabUrl: z.enum(NEW_TAB_URL_MODES).catch(DEFAULT_SETTINGS.newTabUrl),
-  searchEngine: z.enum(SEARCH_ENGINES).catch(DEFAULT_SETTINGS.searchEngine)
+  searchEngine: z.enum(SEARCH_ENGINES).catch(DEFAULT_SETTINGS.searchEngine),
   // === 신규 추가분 끝 =========================================================
+  // === AI 연결 / 에이전트 / 작업공간 (2b 추가분) ==============================
+  aiProvider: z.enum(AI_PROVIDERS).catch(DEFAULT_SETTINGS.aiProvider),
+  taskModels: z
+    .object({
+      fast: z.string(),
+      standard: z.string(),
+      deep: z.string(),
+      visual: z.string()
+    })
+    .catch(DEFAULT_SETTINGS.taskModels),
+  agentNotify: z.boolean().catch(DEFAULT_SETTINGS.agentNotify),
+  agentSound: z.boolean().catch(DEFAULT_SETTINGS.agentSound),
+  agentTabCleanupMinutes: z.number().int().min(0).catch(DEFAULT_SETTINGS.agentTabCleanupMinutes),
+  activeWorkspaceId: z.number().int().min(0).catch(DEFAULT_SETTINGS.activeWorkspaceId),
+  extensionPaths: z.array(z.string()).catch(DEFAULT_SETTINGS.extensionPaths)
+  // === 2b 추가분 끝 ===========================================================
 })
 
 export type Settings = z.infer<typeof settingsSchema>

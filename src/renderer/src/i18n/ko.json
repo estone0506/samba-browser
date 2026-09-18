@@ -64,7 +64,25 @@
   },
   "settings": {
     "model": "모델",
-    "language": "언어"
+    "language": "언어",
+    "ai": {
+      "title": "AI 연결",
+      "claudeSubscription": "Claude 구독",
+      "apiKey": "내 API 키",
+      "serviceCredit": "서비스 크레딧",
+      "serviceCreditSoon": "Pro 요금제에서 제공 예정",
+      "connected": "연결됨",
+      "needsLogin": "로그인 필요",
+      "notInstalled": "설치되지 않음",
+      "unset": "연결 안 됨",
+      "keyKept": "키는 이 PC 에만 암호화되어 저장되며 동기화되지 않아요",
+      "testKey": "키 확인",
+      "taskModels": "작업별 모델",
+      "fast": "빠르게",
+      "standard": "표준",
+      "deep": "깊게",
+      "visual": "화면 인식"
+    }
   },
   "capture": {
     "title": "{{host}} 계정 정보를 저장할까요?",

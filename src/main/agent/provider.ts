@@ -9,11 +9,34 @@ export interface ProviderInput {
   abort: AbortController
 }
 
+// 사용자가 설정에 넣어 둔 내 API 키를 읽는 함수. 메인 프로세스가 주입한다.
+// **`ApiKeyStore.get`(평문 키)을 호출하는 곳은 이 모듈 하나뿐이다.** 값은 SDK 하위 프로세스의
+// 환경변수로만 흘러가고, 로그·IPC·렌더러 어디에도 나가지 않는다
+let apiKeyResolver: (() => string | null) | null = null
+
+export function setApiKeyResolver(fn: (() => string | null) | null): void {
+  apiKeyResolver = fn
+}
+
+// 내 API 키를 쓸 때만 환경을 교체한다(교체 시 process.env 를 통째로 펼쳐 PATH 등을 유지)
+function resolveEnv(): Record<string, string | undefined> | undefined {
+  let key: string | null = null
+  try {
+    key = apiKeyResolver?.() ?? null
+  } catch {
+    // 키 조회 실패는 구독 경로로 조용히 되돌린다(값은 로그에 남기지 않는다)
+    key = null
+  }
+  if (!key) return undefined
+  return { ...process.env, ANTHROPIC_API_KEY: key }
+}
+
 // Claude Agent SDK 호출. Claude Code 로그인 또는 ANTHROPIC_API_KEY 자동 사용
 export function runQuery(input: ProviderInput): Query {
   return query({
     prompt: input.prompt,
     options: {
+      env: resolveEnv(),
       systemPrompt: input.systemPrompt,
       model: input.model,
       mcpServers: input.mcpServers,
