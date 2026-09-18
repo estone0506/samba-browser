@@ -23,6 +23,8 @@
     "send": "Send",
     "stop": "Stop",
     "thinking": "Thinking…",
+    "provider": "Claude subscription",
+    "apiRetry": "Waiting for AI (retry {{n}} · {{reason}})",
     "done": "Done",
     "failed": "Failed",
     "toolCalls": "Tool calls {{n}} / {{max}}"

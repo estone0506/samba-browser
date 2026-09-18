@@ -23,6 +23,8 @@
     "send": "전송",
     "stop": "중단",
     "thinking": "생각 중…",
+    "provider": "Claude 구독",
+    "apiRetry": "AI 응답 대기 중 (재시도 {{n}}회 · {{reason}})",
     "done": "완료",
     "failed": "실패",
     "toolCalls": "도구 호출 {{n}} / {{max}}"

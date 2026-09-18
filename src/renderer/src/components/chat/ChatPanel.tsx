@@ -17,7 +17,7 @@ export function ChatPanel(): React.JSX.Element {
         {t('chat.title')}
         <span className="flex items-center gap-1.5 text-[12px] font-normal text-[var(--text2)]">
           <span className="h-[7px] w-[7px] rounded-full bg-[var(--ok)]" />
-          Claude
+          {t('chat.provider')}
         </span>
       </div>
       <AuthBanner />

@@ -29,7 +29,11 @@ export default function App(): React.JSX.Element {
           <AddressBar />
           <ProgressBar
             running={chat.status === 'running'}
-            label={chat.currentLabel || t('chat.thinking')}
+            label={
+              chat.retry
+                ? t('chat.apiRetry', { n: chat.retry.attempt, reason: chat.retry.reason })
+                : chat.currentLabel || t('chat.thinking')
+            }
             toolCalls={chat.toolCalls}
             max={40}
             onStop={() => void chat.stop()}
