@@ -36,6 +36,11 @@ export const IPC = {
   vaultCapturePrompt: 'vault:capturePrompt', // main → renderer 이벤트 (비밀번호 제외)
   vaultCaptureDecision: 'vault:captureDecision', // renderer → main
   vaultCapture: 'vault:capture', // preload(격리 월드) → main, 폼 제출에서 감지한 자격정보
+  // 상세 화면의 '자동 채우기' — 메인이 활성 탭에 직접 채운다(AI 미경유, 값은 IPC 로 나가지 않는다)
+  vaultAutofill: 'vault:autofill',
+  // 페이지 내 자동 채움 피커 — 목록은 {id,label,username} 만, 채우기는 메인이 수행한다
+  vaultPickerAccounts: 'vault:pickerAccounts', // preload(격리 월드) → main (invoke)
+  vaultPickerFill: 'vault:pickerFill', // preload(격리 월드) → main (send)
   // 가져오기 — filePath 생략 시 메인에서 dialog.showOpenDialog 를 연다
   importPasswords: 'import:passwords',
   importBookmarks: 'import:bookmarks',
@@ -101,8 +106,13 @@ export type { PageSnapshot }
 
 export type {
   VaultItemType,
+  VaultField,
+  VaultSection,
+  FieldKind,
+  AgentAccess,
   SiteDto,
   AccountDto,
+  PickerAccountDto,
   VaultItemMeta,
   VaultState,
   CapturePromptDto,

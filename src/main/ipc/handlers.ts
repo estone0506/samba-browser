@@ -7,6 +7,8 @@ import type { Db } from '../db/client'
 import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vault/service'
 import { ImportService, type ImportDialogs } from '../import/service'
 import { VaultCaptureGate } from './vault-capture'
+import { VaultPickerGate } from './vault-picker'
+import { autofillAccount, type AutofillDeps } from '../vault/autofill'
 import { normalizeHost } from '../../shared/host'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
@@ -76,6 +78,7 @@ export function registerIpc(
     ipcMain.removeAllListeners(IPC.agentConfirmReply)
     ipcMain.removeAllListeners(IPC.vaultCaptureDecision)
     ipcMain.removeAllListeners(IPC.vaultCapture)
+    ipcMain.removeAllListeners(IPC.vaultPickerFill)
     vault.dispose()
   })
 
@@ -166,6 +169,43 @@ export function registerIpc(
       { trusted: tabs.hasWebContents(e.sender), frameUrl: e.senderFrame?.url ?? '' },
       raw
     )
+  })
+
+  // 자동 채움(사용자 조작) — 값은 메인 안에서만 오간다.
+  // 상세 화면의 '자동 채우기' 버튼과 페이지 내 피커가 같은 경로를 쓴다
+  const autofillDeps: AutofillDeps = {
+    vault,
+    activeTab: () => tabs.active(),
+    excludedHosts: () => settings.get().vaultExcludedHosts
+  }
+  ipcMain.handle(IPC.vaultAutofill, (_, accountId: number) =>
+    wrap(() => autofillAccount(autofillDeps, accountId))
+  )
+
+  // 페이지 내 자동 채움 피커. 목록은 {id,label,username} 뿐이고, 값은 메인이 직접 채운다
+  const pickerGate = new VaultPickerGate({
+    vault,
+    excludedHosts: () => settings.get().vaultExcludedHosts
+  })
+  ipcMain.handle(IPC.vaultPickerAccounts, (e, rawHost: unknown) => {
+    const result = pickerGate.accounts(
+      e.sender,
+      { trusted: tabs.hasWebContents(e.sender), frameUrl: e.senderFrame?.url ?? '' },
+      rawHost
+    )
+    return { outcome: result.outcome, accounts: result.accounts }
+  })
+  ipcMain.on(IPC.vaultPickerFill, (e, raw: unknown) => {
+    const result = pickerGate.fill(
+      e.sender,
+      { trusted: tabs.hasWebContents(e.sender), frameUrl: e.senderFrame?.url ?? '' },
+      raw
+    )
+    if (result.outcome !== 'ok' || result.accountId === undefined) return
+    void autofillAccount(autofillDeps, result.accountId).catch((err: unknown) => {
+      // 실패 사유만 남긴다 — 값은 절대 로그에 넣지 않는다
+      console.error('피커 자동 채움 실패', err instanceof Error ? err.message : String(err))
+    })
   })
 
   // 저장 제안 수락/거절. 거절이면 보관 중이던 비밀번호를 그냥 버린다

@@ -13,6 +13,7 @@ import {
   isSecretField,
   installCaptureListener
 } from './page-core'
+import { installAutofillPicker, type PickerAccountsResponse } from './page-picker'
 
 // AI 실행기. contextIsolation 이 켜져 있으면 preload 는 격리 월드(WorldId 999)에서 실행되므로
 // contextBridge 로 메인 월드에 노출하지 않고 격리 월드 전역에만 둔다.
@@ -43,3 +44,17 @@ Object.assign(globalThis, { __samba: api })
 // 격리 월드 preload 는 contextIsolation 하에서도 ipcRenderer 를 직접 사용할 수 있다
 // 옵션 없이 호출 → 합성(스크립트 생성) 이벤트는 무시하고 신뢰된(isTrusted) 사용자 이벤트만 처리한다
 installCaptureListener((payload) => ipcRenderer.send(IPC.vaultCapture, payload))
+
+// 페이지 내 자동 채움 피커. 계정 목록에는 값이 없고, 채우기는 메인이 수행한다.
+// 문구는 페이지 언어가 아니라 앱 언어를 따라야 하지만, 격리 월드에서는 i18n 을 쓸 수 없어
+// 한국어 기본 문구를 쓴다(2단계 범위)
+installAutofillPicker({
+  listAccounts: (host) =>
+    ipcRenderer.invoke(IPC.vaultPickerAccounts, host) as Promise<PickerAccountsResponse>,
+  fill: (accountId) => ipcRenderer.send(IPC.vaultPickerFill, { accountId }),
+  labels: {
+    locked: '키마스터 잠금 해제 필요',
+    empty: '이 사이트에 저장된 계정이 없어요',
+    title: '키마스터 계정'
+  }
+})
