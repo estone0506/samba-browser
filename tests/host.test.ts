@@ -12,7 +12,9 @@ describe('registrableDomain', () => {
 
   it('공유 호스팅(vercel.app·github.io 등)은 사용자 서브도메인까지 등록 도메인으로 본다', () => {
     expect(registrableDomain('attacker.vercel.app')).toBe('attacker.vercel.app')
-    expect(registrableDomain('victim.vercel.app')).not.toBe(registrableDomain('attacker.vercel.app'))
+    expect(registrableDomain('victim.vercel.app')).not.toBe(
+      registrableDomain('attacker.vercel.app')
+    )
     expect(registrableDomain('me.github.io')).toBe('me.github.io')
     expect(registrableDomain('blog.tistory.com')).toBe('blog.tistory.com')
   })
