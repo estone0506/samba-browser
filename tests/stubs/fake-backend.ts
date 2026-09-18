@@ -104,6 +104,11 @@ export function createFakeBackend(): FakeBackend {
         .sort((a, b) => updatedAtMs(a) - updatedAtMs(b))
         .map((r) => ({ ...r }))
     },
+    async selectAll(name) {
+      guard()
+      calls.select += 1
+      return [...table(name).values()].map((r) => ({ ...r }))
+    },
     async upsert(name, rows) {
       guard()
       calls.upsert += 1

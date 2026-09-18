@@ -26,6 +26,11 @@ export interface SyncBackend {
   currentUser(): Promise<{ userId: string; email: string } | null>
   /** updated_at 이 sinceMs 보다 큰 행만 오래된 순으로 준다 */
   select(table: string, sinceMs: number): Promise<RemoteRow[]>
+  /**
+   * 표의 행을 전부 준다. updated_at 컬럼이 없는 표(devices)용이다 —
+   * 커서로 걸러 낼 수 없고 행 수도 기기 수만큼이라 통째로 읽는다
+   */
+  selectAll(table: string): Promise<RemoteRow[]>
   upsert(table: string, rows: RemoteRow[]): Promise<void>
   remove(table: string, ids: string[]): Promise<void>
   /** 복합 PK 표(settings_sync)에서 읽는다 */
