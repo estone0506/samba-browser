@@ -23,10 +23,11 @@ function maskUsername(u: string): string {
 
 interface Props {
   onAdd: () => void
+  onAddGlobal: () => void
   onImport: () => void
 }
 
-export function ItemList({ onAdd, onImport }: Props): React.JSX.Element {
+export function ItemList({ onAdd, onAddGlobal, onImport }: Props): React.JSX.Element {
   const { t } = useTranslation()
   const accounts = useVaultStore((s) => s.accounts)
   const sites = useVaultStore((s) => s.sites)
@@ -154,11 +155,21 @@ export function ItemList({ onAdd, onImport }: Props): React.JSX.Element {
               ))}
             </div>
           ))}
-        {filteredGlobalItems.length > 0 && (
+        {(globalItems.length > 0 || !q) && (
           <div>
-            <div className="flex justify-between px-2 pb-1 pt-3 text-[11px] font-semibold text-[var(--text3)]">
+            <div className="flex items-center justify-between px-2 pb-1 pt-3 text-[11px] font-semibold text-[var(--text3)]">
               <span>{t('vault.list.globalGroup')}</span>
-              <span>{filteredGlobalItems.length}</span>
+              <span className="flex items-center gap-1.5">
+                {filteredGlobalItems.length}
+                <button
+                  type="button"
+                  onClick={onAddGlobal}
+                  title={t('vault.list.addGlobal')}
+                  className="flex h-[18px] w-[18px] items-center justify-center rounded-[6px] border border-[var(--line)] text-[var(--text2)]"
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
+              </span>
             </div>
             {filteredGlobalItems
               .filter((i) => GLOBAL_TYPES.has(i.type))
@@ -187,7 +198,7 @@ export function ItemList({ onAdd, onImport }: Props): React.JSX.Element {
               ))}
           </div>
         )}
-        {grouped.length === 0 && filteredGlobalItems.length === 0 && (
+        {grouped.length === 0 && globalItems.length === 0 && (
           <p className="px-2 py-6 text-center text-[12px] text-[var(--text3)]">
             {t('vault.list.empty')}
           </p>

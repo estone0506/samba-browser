@@ -374,8 +374,26 @@ export class VaultRepo {
     this.db.scheduleSave()
   }
 
-  listAudit(limit = AUDIT_LIST_LIMIT): AuditRow[] {
-    return this.d.select().from(auditLog).orderBy(desc(auditLog.id)).limit(limit).all()
+  // accountId 를 주면 vault_items 와 조인해 그 계정 소유 항목의 기록만 반환한다
+  listAudit(accountId?: number, limit = AUDIT_LIST_LIMIT): AuditRow[] {
+    if (accountId === undefined) {
+      return this.d.select().from(auditLog).orderBy(desc(auditLog.id)).limit(limit).all()
+    }
+    return this.d
+      .select({
+        id: auditLog.id,
+        at: auditLog.at,
+        itemId: auditLog.itemId,
+        action: auditLog.action,
+        jobId: auditLog.jobId,
+        source: auditLog.source
+      })
+      .from(auditLog)
+      .innerJoin(vaultItems, eq(auditLog.itemId, vaultItems.id))
+      .where(eq(vaultItems.accountId, accountId))
+      .orderBy(desc(auditLog.id))
+      .limit(limit)
+      .all()
   }
 
   // 여러 쓰기를 한 트랜잭션으로 묶는다(항목 생성: placeholder insert → 암호문 update)

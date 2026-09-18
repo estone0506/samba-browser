@@ -31,6 +31,7 @@ export const IPC = {
   vaultDeleteItem: 'vault:deleteItem',
   vaultReveal: 'vault:reveal',
   vaultUpsertAccount: 'vault:upsertAccount',
+  vaultAudit: 'vault:audit',
   vaultStateChanged: 'vault:stateChanged', // main → renderer 이벤트
   vaultCapturePrompt: 'vault:capturePrompt', // main → renderer 이벤트 (비밀번호 제외)
   vaultCaptureDecision: 'vault:captureDecision', // renderer → main
@@ -91,7 +92,8 @@ export type {
   AccountDto,
   VaultItemMeta,
   VaultState,
-  CapturePromptDto
+  CapturePromptDto,
+  AuditLogDto
 } from './vault'
 
 export type {

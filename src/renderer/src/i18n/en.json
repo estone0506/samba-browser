@@ -93,6 +93,7 @@
       "chipAll": "All",
       "chipGlobal": "Global",
       "add": "Add account",
+      "addGlobal": "Add global item",
       "import": "Import",
       "default": "Default",
       "globalGroup": "Global items",
@@ -114,10 +115,22 @@
       "show": "Show",
       "hide": "Hide",
       "copy": "Copy",
+      "copyClearHint": "Cleared from clipboard after 30 seconds",
       "open": "Open",
       "dangerBadge": "Sensitive",
       "value": "Value",
-      "empty": "Select an account or item on the left"
+      "empty": "Select an account or item on the left",
+      "auditAction": {
+        "fill": "Auto-filled",
+        "reveal": "Value shown",
+        "save": "Saved",
+        "import": "Imported",
+        "delete": "Deleted"
+      },
+      "auditSource": {
+        "ai": "AI",
+        "user": "User"
+      }
     },
     "itemType": {
       "login_password": "Login password",
@@ -133,7 +146,10 @@
     "editor": {
       "editTitle": "Edit account",
       "addTitle": "Add account",
+      "editGlobalTitle": "Edit global item",
+      "addGlobalTitle": "Add global item",
       "label": "Account label",
+      "itemLabel": "Label",
       "username": "Username",
       "host": "Site host",
       "itemType": "Item type",

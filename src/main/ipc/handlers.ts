@@ -124,6 +124,10 @@ export function registerIpc(
   ipcMain.handle(IPC.vaultUpsertAccount, (_, dto: UpsertAccountInput) =>
     wrap(() => vault.upsertAccount(dto))
   )
+  // 사용 기록(감사 로그). accountId 를 주면 그 계정 소유 항목만, 아니면 전체를 반환한다
+  ipcMain.handle(IPC.vaultAudit, (_, accountId?: number, limit?: number) =>
+    wrap(() => vault.listAudit(accountId, limit))
+  )
   // 페이지(preload 격리 월드)가 감지한 로그인 폼 제출. host/username/password 만 담고 길이 상한을 둔다
   const captureSchema = z.object({
     host: z.string().min(1).max(512),
