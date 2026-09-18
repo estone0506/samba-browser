@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { DEFAULT_DANGER_WORDS, mergeDangerWords } from './danger'
-import { isHttpUrl } from './url'
+import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 
 // 도구 호출 상한 허용 범위
 export const MIN_TOOL_CALLS = 1
@@ -36,7 +36,7 @@ export const DEFAULT_SETTINGS = {
   model: 'sonnet' as const,
   language: 'ko' as const,
   panelWidth: 380,
-  lastUrl: 'https://www.google.com',
+  lastUrl: NEW_TAB_URL,
   dangerWords: DEFAULT_DANGER_WORDS,
   maxToolCalls: 40,
   permissionMode: 'guard' as const,
@@ -52,7 +52,8 @@ export const DEFAULT_SETTINGS = {
   // === 홈/새 탭/검색엔진 기본값 (신규 추가분) ===============================
   // 로컬 OCR(ocr 도구) 사용 여부. 첫 사용 시 모델(약 18MB)을 내려받는다
   ocrEnabled: true,
-  homeUrl: 'https://www.google.com',
+  // 기본 홈 주소는 자체 새 탭 페이지. 사용자가 config.json 에 저장해 둔 값이 있으면 그대로 유지된다
+  homeUrl: NEW_TAB_URL,
   newTabUrl: 'home' as const,
   searchEngine: 'google' as const
   // === 신규 추가분 끝 =======================================================
@@ -90,12 +91,12 @@ export const settingsSchema = z.object({
   // 제외 도메인(정규화된 host 문자열 목록). 손상된 값은 빈 배열로 되돌린다
   vaultExcludedHosts: z.array(z.string()).catch(DEFAULT_SETTINGS.vaultExcludedHosts),
   // === 홈/새 탭/검색엔진 (신규 추가분) =======================================
-  // 홈 주소. http/https 가 아니면(about:blank·javascript: 등) 기본값으로 되돌린다
+  // 홈 주소. http/https 나 내부 페이지(samba://newtab)가 아니면 기본값으로 되돌린다
   // 로컬 OCR 사용 여부
   ocrEnabled: z.boolean().catch(DEFAULT_SETTINGS.ocrEnabled),
   homeUrl: z
     .string()
-    .refine((v) => isHttpUrl(v))
+    .refine((v) => isHttpUrl(v) || isInternalUrl(v))
     .catch(DEFAULT_SETTINGS.homeUrl),
   newTabUrl: z.enum(NEW_TAB_URL_MODES).catch(DEFAULT_SETTINGS.newTabUrl),
   searchEngine: z.enum(SEARCH_ENGINES).catch(DEFAULT_SETTINGS.searchEngine)
@@ -103,6 +104,11 @@ export const settingsSchema = z.object({
 })
 
 export type Settings = z.infer<typeof settingsSchema>
+
+// 새 탭·첫 탭이 열 주소. 'blank' 면 빈 페이지, 아니면 홈 주소(기본값은 자체 새 탭 페이지)
+export function defaultTabUrl(s: Pick<Settings, 'newTabUrl' | 'homeUrl'>): string {
+  return s.newTabUrl === 'blank' ? 'about:blank' : s.homeUrl
+}
 
 export function clampToolCalls(n: number): number {
   if (!Number.isFinite(n)) return DEFAULT_SETTINGS.maxToolCalls
