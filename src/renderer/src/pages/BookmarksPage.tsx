@@ -60,6 +60,11 @@ function flattenFolders(
   return rows
 }
 
+// folder 자신과 모든 하위 폴더의 id 를 모은다(이동 대상 목록에서 제외할 때 씀)
+function collectFolderIds(folder: BookmarkFolderDto): number[] {
+  return [folder.id, ...folder.folders.flatMap(collectFolderIds)]
+}
+
 // 검색어와 제목/URL 부분일치하는 링크를 트리 전체에서 모은다
 function searchLinks(tree: BookmarkTreeDto, query: string): BookmarkLinkDto[] {
   const q = query.trim().toLowerCase()
@@ -363,6 +368,17 @@ export function BookmarksPage(): React.JSX.Element {
     setDialog({ kind: 'move', id, kind2 })
   }
 
+  // 이동 다이얼로그의 이동 대상 목록 — 폴더를 이동할 때는 자기 자신·자손 폴더를 골라도
+  // 거부되므로(repo 의 moveFolder 가드) 애초에 목록에서 빼서 헛수고를 막는다
+  const moveTargetFolders: FlatFolder[] = useMemo(() => {
+    if (!dialog || dialog.kind !== 'move' || dialog.kind2 !== 'folder' || !tree) {
+      return flatFolders
+    }
+    const movingFolder = findFolder(tree.folders, dialog.id)
+    const excluded = new Set(movingFolder ? collectFolderIds(movingFolder) : [dialog.id])
+    return flatFolders.filter((f) => !excluded.has(f.id))
+  }, [dialog, tree, flatFolders])
+
   const closeDialog = (): void => setDialog(null)
 
   const submitDialog = async (): Promise<void> => {
@@ -657,7 +673,7 @@ export function BookmarksPage(): React.JSX.Element {
             <DialogTitle>{t('bookmarksPage.dialog.moveTitle')}</DialogTitle>
           </DialogHeader>
           <div className="max-h-[320px] overflow-auto">
-            {flatFolders.map((f) => (
+            {moveTargetFolders.map((f) => (
               <button
                 key={f.id}
                 type="button"

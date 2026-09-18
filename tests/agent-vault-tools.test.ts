@@ -299,6 +299,20 @@ describe('금고 AI 도구', () => {
     expect(b.listAccounts).not.toHaveBeenCalled()
   })
 
+  it('list_accounts 는 접근 정책 never 면 즉시 거부한다', async () => {
+    const b = build({ vaultAccessPolicy: 'never' })
+    const raw = await callTool(b, 'list_accounts', {})
+    expect(raw).toBe('refused: KeyMaster access policy is Never')
+    expect(b.listAccounts).not.toHaveBeenCalled()
+  })
+
+  it('list_accounts 는 제외 도메인이면 계정 목록을 노출하지 않는다', async () => {
+    const b = build({ vaultExcludedHosts: ['shop.example'] })
+    const raw = await callTool(b, 'list_accounts', {})
+    expect(raw).toBe('refused: host excluded')
+    expect(b.listAccounts).not.toHaveBeenCalled()
+  })
+
   it('저장된 항목이 없으면 값 없이 not found 를 돌려준다', async () => {
     const b = build({ secret: null })
     expect(await callTool(b, 'fill_secret', { elementId: 4, itemType: 'passport' })).toBe(
@@ -424,7 +438,7 @@ describe('금고 AI 도구', () => {
     })
     const result = await callTool(b, 'fill_secret', { elementId: 12, itemType: 'card' })
     expect(result).toBe('locked: ask the user to unlock 키마스터')
-    expect(b.ensureUnlockedByDevice).toHaveBeenCalledTimes(3)
+    expect(b.ensureUnlockedByDevice).toHaveBeenCalledTimes(1)
   })
 
   it('vaultAutoSubmit=false 이면 login 은 채우기만 하고 제출하지 않는다', async () => {

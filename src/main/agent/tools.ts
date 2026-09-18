@@ -34,8 +34,8 @@ const NOT_A_SECRET_FIELD = 'refused: target is not a secret input'
 const VAULT_ACCESS_NEVER = 'refused: KeyMaster access policy is Never'
 // 현재 호스트가 제외 도메인 목록에 있을 때 돌려주는 문자열
 const VAULT_HOST_EXCLUDED = 'refused: host is excluded from KeyMaster'
-// 접근 정책 always 에서 기기 자동 해제를 시도하는 횟수
-const AUTO_UNLOCK_ATTEMPTS = 3
+// list_accounts 에서 제외 도메인일 때 돌려주는 문자열(계정 목록 자체를 노출하지 않는다)
+const LIST_ACCOUNTS_HOST_EXCLUDED = 'refused: host excluded'
 // 평문(http)으로 열린 페이지에 비밀값을 채우려 할 때 돌려주는 문자열
 const INSECURE_PAGE = 'refused: insecure page (https required)'
 // http 라도 비밀값 입력을 허용하는 로컬 개발 호스트
@@ -182,10 +182,8 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     const policy = ctx.vaultAccessPolicy ?? 'while_unlocked'
     if (policy === 'never') return VAULT_ACCESS_NEVER
     if (v.state() === 'uninitialized') return VAULT_NOT_SET_UP
-    if (policy === 'always') {
-      for (let i = 0; i < AUTO_UNLOCK_ATTEMPTS && v.state() !== 'unlocked'; i++) {
-        await v.ensureUnlockedByDevice()
-      }
+    if (policy === 'always' && v.state() !== 'unlocked') {
+      await v.ensureUnlockedByDevice()
     }
     const state = v.state()
     if (state === 'uninitialized') return VAULT_NOT_SET_UP
@@ -340,6 +338,10 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
         if (host && normalizeHost(host) !== target) {
           return JSON.stringify({ accounts: [], note: HOST_MISMATCH })
         }
+        // 접근 정책 never·제외 도메인은 vaultGate 와 같은 기준으로 즉시 거부한다(계정 열거 자체를 막는다)
+        const policy = ctx.vaultAccessPolicy ?? 'while_unlocked'
+        if (policy === 'never') return VAULT_ACCESS_NEVER
+        if (isHostExcluded(target)) return LIST_ACCOUNTS_HOST_EXCLUDED
         const state = v.state()
         if (state === 'uninitialized') {
           return JSON.stringify({ accounts: [], note: VAULT_NOT_SET_UP })

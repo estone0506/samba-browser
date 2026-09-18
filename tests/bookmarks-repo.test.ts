@@ -86,6 +86,25 @@ describe('BookmarkRepo', () => {
       const tree = repo.tree()
       expect(tree.folders.map((f) => f.name).sort()).toEqual(['부모', '자식'])
     })
+
+    it('폴더를 자기 자신 아래로 이동하려 하면 거부한다', () => {
+      const a = repo.createFolder(null, 'A')
+      expect(() => repo.moveFolder(a, a)).toThrow(
+        'cannot move folder into itself or its descendant'
+      )
+    })
+
+    it('폴더를 자신의 자손 아래로 이동하려 하면 거부한다', () => {
+      const parent = repo.createFolder(null, '부모')
+      const child = repo.createFolder(parent, '자식')
+      const grandchild = repo.createFolder(child, '손주')
+      expect(() => repo.moveFolder(parent, grandchild)).toThrow(
+        'cannot move folder into itself or its descendant'
+      )
+      expect(() => repo.moveFolder(parent, child)).toThrow(
+        'cannot move folder into itself or its descendant'
+      )
+    })
   })
 
   describe('removeFolder (cascade)', () => {

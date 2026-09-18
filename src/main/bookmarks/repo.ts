@@ -6,6 +6,7 @@ import type { Db } from '../db/client'
 import { bookmarkFolders, bookmarks } from '../db/schema'
 import type { BookmarkFolderNode, BookmarkTree } from '../import/bookmarks-html'
 import type { BookmarkFolderDto, BookmarkLinkDto, BookmarkTreeDto } from '../../shared/import'
+import { isAllowedUrl } from '../../shared/url'
 
 export interface InsertTreeResult {
   folders: number
@@ -217,6 +218,8 @@ export class BookmarkRepo {
   }
 
   createLink(folderId: number | null, title: string, url: string): number {
+    // http(s)/about:blank 이외 스킴(javascript:, data: 등)은 거부한다
+    if (!isAllowedUrl(url)) throw new Error('cannot create bookmark link: URL scheme not allowed')
     const inserted = this.d
       .insert(bookmarks)
       .values({ folderId, title, url, position: this.nextLinkPosition(folderId) })
@@ -236,7 +239,27 @@ export class BookmarkRepo {
     this.db.scheduleSave()
   }
 
+  // toFolderId 가 id 자신이거나 id 의 자손이면 이동을 거부한다(트리가 끊어지는 것을 막는다)
+  private isSelfOrDescendant(id: number, toFolderId: number | null): boolean {
+    if (toFolderId === null) return false
+    if (toFolderId === id) return true
+    const folders = this.folderRows()
+    const byId = new Map(folders.map((f) => [f.id, f]))
+    let cursor: number | null = toFolderId
+    const visited = new Set<number>()
+    while (cursor !== null) {
+      if (cursor === id) return true
+      if (visited.has(cursor)) break // 순환 방어
+      visited.add(cursor)
+      cursor = byId.get(cursor)?.parentId ?? null
+    }
+    return false
+  }
+
   moveFolder(id: number, toFolderId: number | null): void {
+    if (this.isSelfOrDescendant(id, toFolderId)) {
+      throw new Error('cannot move folder into itself or its descendant')
+    }
     this.d
       .update(bookmarkFolders)
       .set({ parentId: toFolderId, position: this.nextFolderPosition(toFolderId) })
@@ -258,18 +281,23 @@ export class BookmarkRepo {
   removeFolder(id: number): void {
     const folders = this.folderRows()
     const idsToRemove: number[] = []
+    const visited = new Set<number>() // 순환 방어 — 데이터가 꼬여 있어도 무한 재귀에 빠지지 않는다
     const collect = (folderId: number): void => {
+      if (visited.has(folderId)) return
+      visited.add(folderId)
       idsToRemove.push(folderId)
       for (const f of folders.filter((f) => f.parentId === folderId)) collect(f.id)
     }
     collect(id)
 
-    for (const folderId of idsToRemove) {
-      this.d.delete(bookmarks).where(eq(bookmarks.folderId, folderId)).run()
-    }
-    for (const folderId of idsToRemove) {
-      this.d.delete(bookmarkFolders).where(eq(bookmarkFolders.id, folderId)).run()
-    }
+    this.d.transaction(() => {
+      for (const folderId of idsToRemove) {
+        this.d.delete(bookmarks).where(eq(bookmarks.folderId, folderId)).run()
+      }
+      for (const folderId of idsToRemove) {
+        this.d.delete(bookmarkFolders).where(eq(bookmarkFolders.id, folderId)).run()
+      }
+    })
     this.db.scheduleSave()
   }
 
@@ -279,15 +307,21 @@ export class BookmarkRepo {
     const folders = this.folderRows()
       .filter((f) => f.parentId === folderId)
       .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
-    folders.forEach((f, i) => {
-      this.d.update(bookmarkFolders).set({ position: i }).where(eq(bookmarkFolders.id, f.id)).run()
-    })
-
     const links = this.bookmarkRows()
       .filter((b) => b.folderId === folderId)
       .sort((a, b) => a.title.localeCompare(b.title, 'ko'))
-    links.forEach((b, i) => {
-      this.d.update(bookmarks).set({ position: i }).where(eq(bookmarks.id, b.id)).run()
+
+    this.d.transaction(() => {
+      folders.forEach((f, i) => {
+        this.d
+          .update(bookmarkFolders)
+          .set({ position: i })
+          .where(eq(bookmarkFolders.id, f.id))
+          .run()
+      })
+      links.forEach((b, i) => {
+        this.d.update(bookmarks).set({ position: i }).where(eq(bookmarks.id, b.id)).run()
+      })
     })
     this.db.scheduleSave()
   }
