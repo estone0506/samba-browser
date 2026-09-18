@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import {
   IPC,
   type AgentEvent,
+  type AgentRunAck,
   type IpcResult,
   type Layout,
   type Settings,
@@ -41,7 +42,8 @@ const api = {
     set: (l: Layout): Promise<IpcResult<void>> => invoke(IPC.layoutSet, l)
   },
   agent: {
-    run: (prompt: string): Promise<IpcResult<void>> => invoke(IPC.agentRun, prompt),
+    // 반환은 "시작 접수" ack 뿐. 완료·실패는 onEvent 의 status 이벤트로 온다
+    run: (prompt: string): Promise<IpcResult<AgentRunAck>> => invoke(IPC.agentRun, prompt),
     stop: (): Promise<IpcResult<void>> => invoke(IPC.agentStop),
     confirmReply: (requestId: string, approved: boolean): void => {
       ipcRenderer.send(IPC.agentConfirmReply, requestId, approved)

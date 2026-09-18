@@ -20,6 +20,8 @@ export interface Retry {
 
 interface ChatState {
   messages: ChatMessage[]
+  // 실행 세대 번호. 이전 작업의 늦은 IPC 응답이 새 작업 UI 를 덮지 않게 한다
+  runSeq: number
   status: 'idle' | 'running' | 'done' | 'failed' | 'stopped'
   toolCalls: number
   currentLabel: string
@@ -38,6 +40,7 @@ const nid = (): string => String(++seq)
 // 진행 로그(step)는 마지막 AI 메시지에 붙인다
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
+  runSeq: 0,
   status: 'idle',
   toolCalls: 0,
   currentLabel: '',
@@ -46,20 +49,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
   authError: null,
   send: async (text) => {
     if (get().status === 'running') return
+    const seq = get().runSeq + 1
     set((s) => ({
       messages: [
         ...s.messages,
         { id: nid(), role: 'user', text },
         { id: nid(), role: 'ai', text: '', steps: [] }
       ],
+      runSeq: seq,
       status: 'running',
       toolCalls: 0,
       currentLabel: '',
       retry: null,
+      confirm: null,
       authError: null
     }))
+    // 메인은 "시작 접수" ack 만 즉시 돌려준다. 완료·실패는 status 이벤트로 온다.
+    // 늦게 도착한 이전 세대의 응답은 버린다
     const r = await window.samba.agent.run(text)
-    if (!r.ok) set({ status: 'failed', currentLabel: r.error, retry: null })
+    if (!r.ok && get().runSeq === seq) set({ status: 'failed', currentLabel: r.error, retry: null })
   },
   stop: async () => {
     await window.samba.agent.stop()

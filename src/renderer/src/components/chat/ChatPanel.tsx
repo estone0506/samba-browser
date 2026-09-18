@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useChatStore } from '@renderer/stores/chatStore'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
-import { ConfirmDialog } from './ConfirmDialog'
+import { ConfirmCard } from './ConfirmCard'
 import { AuthBanner } from './AuthBanner'
 
 export function ChatPanel(): React.JSX.Element {
@@ -22,8 +22,8 @@ export function ChatPanel(): React.JSX.Element {
       </div>
       <AuthBanner />
       <MessageList />
+      <ConfirmCard />
       <ChatInput />
-      <ConfirmDialog />
     </div>
   )
 }
