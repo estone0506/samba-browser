@@ -19,6 +19,14 @@ export const MAX_VAULT_AUTO_LOCK_MINUTES = 43200
 export const VAULT_ACCESS_POLICIES = ['always', 'while_unlocked', 'never'] as const
 export type VaultAccessPolicy = (typeof VAULT_ACCESS_POLICIES)[number]
 
+// 화면 테마: 시스템 따라감 · 밝게 · 어둡게
+export const THEME_MODES = ['system', 'light', 'dark'] as const
+export type ThemeMode = (typeof THEME_MODES)[number]
+
+// 화면 확대 비율(%) 허용 범위
+export const MIN_UI_ZOOM = 80
+export const MAX_UI_ZOOM = 150
+
 // 사용 권한 모드: 읽기 전용(read_only) · 위험 행동 확인(guard) · 자동(full)
 export const PERMISSION_MODES = ['read_only', 'guard', 'full'] as const
 export type PermissionMode = (typeof PERMISSION_MODES)[number]
@@ -75,7 +83,12 @@ export const DEFAULT_SETTINGS = {
   // 작업공간(기기 로컬 — 동기화하지 않는다)
   activeWorkspaceId: 0,
   // 확장 폴더 경로(로컬 전용)
-  extensionPaths: [] as string[]
+  extensionPaths: [] as string[],
+  // 모양(기기 로컬 — 동기화하지 않는다)
+  theme: 'system' as ThemeMode,
+  uiZoom: 100,
+  sidebarShowBookmarks: true,
+  sidebarShowChat: true
   // === 2b 추가분 끝 =========================================================
 }
 
@@ -135,7 +148,12 @@ export const settingsSchema = z.object({
   agentSound: z.boolean().catch(DEFAULT_SETTINGS.agentSound),
   agentTabCleanupMinutes: z.number().int().min(0).catch(DEFAULT_SETTINGS.agentTabCleanupMinutes),
   activeWorkspaceId: z.number().int().min(0).catch(DEFAULT_SETTINGS.activeWorkspaceId),
-  extensionPaths: z.array(z.string()).catch(DEFAULT_SETTINGS.extensionPaths)
+  extensionPaths: z.array(z.string()).catch(DEFAULT_SETTINGS.extensionPaths),
+  // 모양 — 범위를 벗어나거나 타입이 틀리면 기본값으로 되돌린다
+  theme: z.enum(THEME_MODES).catch(DEFAULT_SETTINGS.theme),
+  uiZoom: z.number().int().min(MIN_UI_ZOOM).max(MAX_UI_ZOOM).catch(DEFAULT_SETTINGS.uiZoom),
+  sidebarShowBookmarks: z.boolean().catch(DEFAULT_SETTINGS.sidebarShowBookmarks),
+  sidebarShowChat: z.boolean().catch(DEFAULT_SETTINGS.sidebarShowChat)
   // === 2b 추가분 끝 ===========================================================
 })
 
