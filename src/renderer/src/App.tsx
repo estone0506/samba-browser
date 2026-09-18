@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Sidebar } from '@renderer/components/layout/Sidebar'
@@ -23,8 +23,10 @@ export default function App(): React.JSX.Element {
   }, [refresh, setTabs])
   // browser 뷰가 아닐 때는 네이티브 웹뷰(WebContentsView)가 렌더러 위를 덮지 않도록
   // bounds 를 0 으로 접는다. WebArea 는 마운트될 때 다시 자기 크기를 보고하므로
-  // browser 뷰로 돌아오면 자동으로 재측정된다
-  useEffect(() => {
+  // browser 뷰로 돌아오면 자동으로 재측정된다.
+  // useLayoutEffect 로 페인트 전에 접어서, 뷰 전환 시 네이티브 뷰가 새 렌더러 콘텐츠 위에
+  // 한 프레임 겹쳐 보이는 현상을 없앤다
+  useLayoutEffect(() => {
     if (view !== 'browser') void window.samba.layout.set({ x: 0, y: 0, width: 0, height: 0 })
   }, [view])
   return (

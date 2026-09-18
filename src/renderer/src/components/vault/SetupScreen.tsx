@@ -47,12 +47,18 @@ export function SetupScreen(): React.JSX.Element {
           <Input
             type="password"
             autoFocus
+            autoComplete="off"
+            data-lpignore="true"
+            spellCheck={false}
             placeholder={t('vault.setup.password1')}
             value={pw1}
             onChange={(e) => setPw1(e.target.value)}
           />
           <Input
             type="password"
+            autoComplete="off"
+            data-lpignore="true"
+            spellCheck={false}
             placeholder={t('vault.setup.password2')}
             value={pw2}
             onChange={(e) => setPw2(e.target.value)}

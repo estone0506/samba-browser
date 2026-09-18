@@ -35,6 +35,9 @@ export function UnlockScreen(): React.JSX.Element {
         <Input
           type="password"
           autoFocus
+          autoComplete="off"
+          data-lpignore="true"
+          spellCheck={false}
           placeholder={t('vault.unlock.placeholder')}
           value={pw}
           onChange={(e) => setPw(e.target.value)}
