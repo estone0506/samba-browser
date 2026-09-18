@@ -5,11 +5,49 @@ import { pageBridge } from '../browser/page-bridge'
 import { serializeSnapshot } from '../../shared/snapshot'
 import { isDangerous } from '../../shared/danger'
 import type { PermissionMode } from '../../shared/settings'
+import type { VaultService } from '../vault/service'
+import type { AccountDto, VaultItemType } from '../../shared/vault'
+import { normalizeHost } from '../../shared/host'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
 // finalConfirm 이 거부됐을 때 모델이 계속 작업하도록 돌려주는 문자열
 const CONTINUE_INSTRUCTION = 'user asked to continue; do not finish yet'
+// 금고가 잠겨 있을 때 돌려주는 문자열(모델이 사용자에게 해제를 요청하도록 유도)
+const VAULT_LOCKED = 'locked: ask the user to unlock 개인정보'
+// 계정을 특정하지 못했을 때 돌려주는 문자열
+const ACCOUNT_NOT_FOUND = 'account not found: use list_accounts'
+// guard 모드에서 추가 확인을 받아야 하는 민감 항목
+const CONFIRM_ITEM_TYPES: VaultItemType[] = ['payment_password', 'card']
+
+// 금고에 저장된 항목 종류(도구 스키마용). shared/vault 의 VaultItemType 과 같은 집합이어야 한다
+const ITEM_TYPES = [
+  'login_password',
+  'payment_password',
+  'card',
+  'passport',
+  'id_card',
+  'birth_date',
+  'address',
+  'phone',
+  'custom'
+] as const
+
+/** 사용자명 마스킹 — 앞 2글자만 남기고 `***` 를 붙인다 */
+export function maskUsername(username: string): string {
+  return `${username.slice(0, 2)}***`
+}
+
+/**
+ * 계정 선택 규칙 — 라벨 지정 > 기본 계정 > 유일한 계정.
+ * 특정하지 못하면 null 을 돌려준다(도구는 ACCOUNT_NOT_FOUND 를 반환).
+ */
+export function resolveAccount(accounts: AccountDto[], label?: string): AccountDto | null {
+  if (label) return accounts.find((a) => a.label === label) ?? null
+  const preferred = accounts.find((a) => a.isDefault)
+  if (preferred) return preferred
+  return accounts.length === 1 ? accounts[0] : null
+}
 
 export interface ToolContext {
   tabs: TabManager
@@ -23,6 +61,10 @@ export interface ToolContext {
   // 호출 카운터. 상한 넘으면 문자열 반환
   tick: () => string | null
   onStep: (label: string, ok: boolean) => void
+  // 개인정보 금고. 주입되지 않은 실행(구버전 호출부·테스트)에서는 금고 도구가 잠금으로 동작한다
+  vault?: VaultService
+  // 감사 로그에 남길 작업 식별자(실행 1건 = jobId 1개)
+  jobId?: string
 }
 
 const text = (t: string): { content: [{ type: 'text'; text: string }] } => ({
@@ -38,10 +80,12 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
   // 상한 도달 알림은 1회만 보낸다
   let limitNotified = false
 
+  // label 은 실행 뒤에야 알 수 있는 경우(예: login 의 호스트·계정)를 위해 함수도 받는다
   const guard = async <T>(
-    label: string,
+    label: string | (() => string),
     fn: () => Promise<T>
   ): Promise<ReturnType<typeof text>> => {
+    const resolveLabel = (): string => (typeof label === 'string' ? label : label())
     const over = ctx.tick()
     if (over) {
       if (!limitNotified) {
@@ -53,12 +97,25 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     try {
       const r = await fn()
       const s = typeof r === 'string' ? r : JSON.stringify(r)
-      ctx.onStep(label, !/not found|refused|denied|error/i.test(s))
+      ctx.onStep(resolveLabel(), !/not found|refused|denied|error|locked/i.test(s))
       return text(s)
     } catch (e) {
-      ctx.onStep(label, false)
+      ctx.onStep(resolveLabel(), false)
       return text(`error: ${e instanceof Error ? e.message : String(e)}`)
     }
+  }
+
+  // 잠금 해제된 금고만 돌려준다(미주입·잠금은 null)
+  const unlockedVault = (): VaultService | null => {
+    const v = ctx.vault
+    if (!v || v.state() !== 'unlocked') return null
+    return v
+  }
+
+  // 현재 탭의 호스트(정규화). 탭이 없으면 빈 문자열
+  const currentHost = (): string => {
+    const tab = activeOr(ctx)
+    return tab ? normalizeHost(tab.view.webContents.getURL()) : ''
   }
 
   const getPage = tool(
@@ -190,6 +247,94 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
       })
   )
 
+  const listAccounts = tool(
+    'list_accounts',
+    'List saved accounts for a host (usernames are masked). Use it to pick an account label for fill_secret/login.',
+    { host: z.string().optional() },
+    ({ host }) =>
+      guard('계정 목록', async () => {
+        const v = ctx.vault
+        if (!v) return JSON.stringify({ vaultLocked: true, accounts: [] })
+        const target = host ?? currentHost()
+        // 사용자명은 비밀값이 아니므로 잠겨 있어도 목록 자체는 보여 준다
+        const accounts = v.listAccounts(target || undefined).map((a) => ({
+          label: a.label,
+          username: maskUsername(a.username),
+          types: a.itemTypes
+        }))
+        if (v.state() !== 'unlocked') return JSON.stringify({ vaultLocked: true, accounts })
+        return JSON.stringify(accounts)
+      })
+  )
+
+  const fillSecret = tool(
+    'fill_secret',
+    'Fill a saved secret (password, card, ...) into input [n] without ever revealing its value.',
+    {
+      elementId: z.number().int(),
+      itemType: z.enum(ITEM_TYPES),
+      accountLabel: z.string().optional()
+    },
+    ({ elementId, itemType, accountLabel }) =>
+      guard(`입력: ${itemType} (#${elementId})`, async () => {
+        if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+        const v = unlockedVault()
+        if (!v) return VAULT_LOCKED
+        const tab = activeOr(ctx)
+        if (!tab) return 'no active tab'
+        // guard 모드에서 결제 비밀번호·카드는 사용자 확인을 한 번 더 받는다
+        if (ctx.mode === 'guard' && CONFIRM_ITEM_TYPES.includes(itemType)) {
+          const ok = await ctx.confirm(`개인정보 입력: ${itemType}`, 'danger')
+          if (!ok) return 'denied by user'
+        }
+        const account = resolveAccount(v.listAccounts(currentHost() || undefined), accountLabel)
+        if (!account) return ACCOUNT_NOT_FOUND
+        const value = v.getSecretForFill(account.id, itemType, ctx.jobId)
+        if (value === null) return `not found: no ${itemType} saved for this account`
+        // 평문은 여기서만 존재하고 반환값·step 라벨·로그 어디에도 남기지 않는다
+        await pageBridge.fillValue(tab, elementId, value)
+        return 'ok'
+      })
+  )
+
+  const login = tool(
+    'login',
+    'Sign in to the current site with a saved account. Never ask the user for a password.',
+    { accountLabel: z.string().optional() },
+    ({ accountLabel }) => {
+      let label = '로그인'
+      return guard(
+        () => label,
+        async () => {
+          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+          const v = unlockedVault()
+          if (!v) return VAULT_LOCKED
+          const tab = activeOr(ctx)
+          if (!tab) return 'no active tab'
+          const host = currentHost()
+          label = `로그인: ${host}`
+          const fields = await pageBridge.findLoginFields(tab)
+          if (fields.password === undefined) {
+            return 'fields not found: navigate to the login page first'
+          }
+          const account = resolveAccount(v.listAccounts(host || undefined), accountLabel)
+          if (!account) return ACCOUNT_NOT_FOUND
+          label = `로그인: ${host} (${account.label})`
+          const password = v.getSecretForFill(account.id, 'login_password', ctx.jobId)
+          if (password === null) return 'not found: no login password saved for this account'
+          // 사용자명은 비밀값이 아니므로 평문 그대로 채운다
+          if (fields.username !== undefined) {
+            await pageBridge.fillValue(tab, fields.username, account.username)
+          }
+          await pageBridge.fillValue(tab, fields.password, password)
+          await pageBridge.submitForm(tab, fields.submit ?? fields.password)
+          await pageBridge.waitForLoad(tab)
+          return 'submitted: check the page for success or captcha/2FA'
+        }
+      )
+    }
+  )
+
   // done 은 guard 를 거치지 않으므로 도구 호출 상한(tick)에 계산되지 않는다.
   // 상한에 도달했을 때 "done 으로 마무리하라"고 안내하기 때문에, 마무리 호출까지 막으면 안 된다
   const done = tool(
@@ -212,7 +357,21 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
   return createSdkMcpServer({
     name: 'samba',
     version: '0.1.0',
-    tools: [getPage, navigate, click, typeTool, select, scroll, wait, newTab, switchTab, done]
+    tools: [
+      getPage,
+      navigate,
+      click,
+      typeTool,
+      select,
+      scroll,
+      wait,
+      newTab,
+      switchTab,
+      listAccounts,
+      fillSecret,
+      login,
+      done
+    ]
   })
 }
 
@@ -226,5 +385,8 @@ export const SAMBA_TOOL_NAMES = [
   'wait',
   'new_tab',
   'switch_tab',
+  'list_accounts',
+  'fill_secret',
+  'login',
   'done'
 ].map((n) => `mcp__samba__${n}`)
