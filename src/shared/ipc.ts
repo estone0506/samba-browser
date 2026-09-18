@@ -75,7 +75,14 @@ export const IPC = {
   aiSetApiKey: 'ai:setApiKey', // 렌더러 → 메인 한 방향으로만 평문 키가 흐른다
   aiTestKey: 'ai:testKey', // 모델 목록 1회 호출로 확인, {ok} 만 반환
   aiTaskModels: 'ai:taskModels',
-  aiSetTaskModel: 'ai:setTaskModel'
+  aiSetTaskModel: 'ai:setTaskModel',
+  // --- 계정 인증(2b) — 토큰·비밀번호는 어느 방향으로도 돌려주지 않는다 --------
+  authState: 'auth:state',
+  authSignUp: 'auth:signUp',
+  authSignIn: 'auth:signIn',
+  authSignInGoogle: 'auth:signInGoogle', // 브라우저를 열고 루프백 콜백까지 기다린다
+  authSignOut: 'auth:signOut',
+  authStateChanged: 'auth:stateChanged' // main → renderer 이벤트
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }

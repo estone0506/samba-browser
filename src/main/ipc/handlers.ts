@@ -1,4 +1,13 @@
-import { app, dialog, ipcMain, safeStorage, type BrowserWindow, type WebContents } from 'electron'
+import {
+  app,
+  dialog,
+  ipcMain,
+  safeStorage,
+  shell,
+  type BrowserWindow,
+  type WebContents
+} from 'electron'
+import { join } from 'node:path'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import { defaultTabUrl } from '../../shared/settings'
 import type { TabManager } from '../browser/tab-manager'
@@ -18,7 +27,6 @@ import { isAllowedExternalUrl, isInternalUrl } from '../../shared/url'
 import { toolbarBookmarks } from '../bookmarks/newtab'
 import type { NewTabInitDto } from '../../shared/newtab'
 // === AI 연결(2b 추가분) ===============================================================
-import { join as joinPath } from 'path'
 import { isAiProviderId, isApiKeyVendor, isTaskModelKey } from '../../shared/ai'
 import type { AiProviderId, ApiKeyVendor, TaskModelKey } from '../../shared/ai'
 import { ApiKeyStore } from '../ai/keys'
@@ -26,6 +34,10 @@ import { defaultProbes, detectProviders, testApiKey } from '../ai/providers'
 import { remapOnProviderChange, taskModelChoices } from '../ai/models'
 import { setApiKeyResolver } from '../agent/provider'
 // === AI 연결 끝 =======================================================================
+import { AuthService } from '../sync/auth'
+import { hasSupabaseEnv } from '../sync/env'
+import { createSessionStore } from '../sync/session-store'
+import { createSupabaseBackend } from '../sync/supabase-backend'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -42,7 +54,7 @@ export function registerIpc(
   win: BrowserWindow,
   tabs: TabManager,
   db: Db
-): { settings: SettingsStore; agent: AgentRunner; db: Db; vault: VaultService } {
+): { settings: SettingsStore; agent: AgentRunner; db: Db; vault: VaultService; auth: AuthService } {
   const settings = new SettingsStore()
   // === 홈 버튼 / 설정 페이지 (신규 추가분) ===================================
   // newTabUrl(홈과 동일/빈 페이지) + homeUrl 을 조합해 tab-manager 가 쓸 최종
@@ -392,7 +404,7 @@ export function registerIpc(
   // === AI 연결(2b 추가분 — 병합 편의를 위해 이 블록만 별도로 추가) ======================
   // 평문 API 키는 이 저장소와 agent/provider.ts 안에만 머문다. 렌더러로 나가는 것은
   // 마스킹 문자열(sk-ant-••••1234)과 boolean 뿐이다
-  const apiKeys = new ApiKeyStore(joinPath(app.getPath('userData'), 'ai-keys.bin'), safeStorage)
+  const apiKeys = new ApiKeyStore(join(app.getPath('userData'), 'ai-keys.bin'), safeStorage)
   const aiProbes = defaultProbes()
   // ApiKeyStore.get 의 유일한 소비자(agent/provider.ts)에 조회기를 심는다.
   // '내 API 키' 경로를 고른 경우에만 키를 넘긴다
@@ -444,5 +456,36 @@ export function registerIpc(
   })
   // === AI 연결 끝 =======================================================================
 
-  return { settings, agent, db, vault }
+  // === 계정 인증(2b) ===================================================================
+  // .env 가 비어 있으면 백엔드를 아예 만들지 않는다(설정 전에도 앱은 그대로 돈다).
+  // refresh token 은 safeStorage 로 감싼 파일에만 남고 렌더러로는 나가지 않는다
+  const syncConfigured = hasSupabaseEnv()
+  const sessionStore = createSessionStore(
+    join(app.getPath('userData'), 'sync-session.bin'),
+    safeStorage
+  )
+  const auth = new AuthService({
+    backend: syncConfigured ? createSupabaseBackend(sessionStore) : null,
+    configured: syncConfigured,
+    openExternal: (url) => shell.openExternal(url)
+  })
+  auth.onStateChanged((state) => send(IPC.authStateChanged, state))
+  // 구글 로그인을 기다리는 중에 창이 닫히면 루프백 서버가 최대 5분 남는다
+  win.once('closed', () => auth.dispose())
+  // 저장된 세션이 있으면 조용히 되살린다(실패는 로그아웃으로 본다)
+  void auth.restore()
+
+  handleFromRenderer(IPC.authState, () => auth.state())
+  handleFromRenderer(IPC.authSignUp, (email: string, password: string) =>
+    auth.signUp(email, password)
+  )
+  handleFromRenderer(IPC.authSignIn, (email: string, password: string) =>
+    auth.signIn(email, password)
+  )
+  // 브라우저에서 구글 로그인을 마칠 때까지(최대 5분) 응답이 늦게 온다
+  handleFromRenderer(IPC.authSignInGoogle, () => auth.signInGoogle())
+  handleFromRenderer(IPC.authSignOut, () => auth.signOut())
+  // === 계정 인증 끝 ====================================================================
+
+  return { settings, agent, db, vault, auth }
 }
