@@ -69,5 +69,16 @@ export const migrations: Migration[] = [
       'ALTER TABLE `bookmarks` ADD `deleted_at` integer;'
     ],
     aliases: ['0005_stage2b_sync']
+  },
+  {
+    // remote_id 는 원격 행과 1:1 이라 schema.ts 에서 unique 로 선언돼 있는데,
+    // 0005 에는 인덱스가 빠져 있었다. SQLite 의 UNIQUE 는 NULL 을 여러 개 허용하므로
+    // 아직 올리지 않은 행(remote_id IS NULL)은 그대로 공존한다
+    tag: '0006_remote_id_unique',
+    sql: [
+      'CREATE UNIQUE INDEX `accounts_remote_id_unique` ON `accounts` (`remote_id`);',
+      'CREATE UNIQUE INDEX `vault_items_remote_id_unique` ON `vault_items` (`remote_id`);',
+      'CREATE UNIQUE INDEX `bookmarks_remote_id_unique` ON `bookmarks` (`remote_id`);'
+    ]
   }
 ]

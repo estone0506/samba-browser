@@ -26,8 +26,8 @@ export const accounts = sqliteTable('accounts', {
   tags: text('tags'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
-  // 서버(Supabase)의 uuid. 아직 올리지 않았으면 null
-  remoteId: text('remote_id'),
+  // 서버(Supabase)의 uuid. 아직 올리지 않았으면 null(NULL 은 여러 행이 가질 수 있다)
+  remoteId: text('remote_id').unique(),
   workspaceId: integer('workspace_id'),
   // 삭제 표식(tombstone). 값이 있으면 지워진 행으로 본다
   deletedAt: integer('deleted_at')
@@ -44,7 +44,7 @@ export const vaultItems = sqliteTable('vault_items', {
   ciphertext: blob('ciphertext', { mode: 'buffer' }).notNull(),
   iv: blob('iv', { mode: 'buffer' }).notNull(),
   updatedAt: integer('updated_at').notNull(),
-  remoteId: text('remote_id'),
+  remoteId: text('remote_id').unique(),
   workspaceId: integer('workspace_id'),
   deletedAt: integer('deleted_at')
 })
@@ -67,7 +67,7 @@ export const bookmarks = sqliteTable('bookmarks', {
   url: text('url').notNull(),
   position: integer('position').notNull().default(0),
   addedAt: integer('added_at'),
-  remoteId: text('remote_id'),
+  remoteId: text('remote_id').unique(),
   workspaceId: integer('workspace_id'),
   // 북마크는 원래 수정 시각이 없었다. 합집합 병합에서 어느 쪽 제목·순서를 쓸지 가리는 데 쓴다
   updatedAt: integer('updated_at'),
