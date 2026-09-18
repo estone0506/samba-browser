@@ -9,6 +9,10 @@ export const MAX_TOOL_CALLS = 200
 const MIN_PANEL_WIDTH = 280
 const MAX_PANEL_WIDTH = 900
 
+// 자동 잠금 대기 시간(분) 허용 범위
+export const MIN_VAULT_AUTO_LOCK_MINUTES = 1
+export const MAX_VAULT_AUTO_LOCK_MINUTES = 1440
+
 // 사용 권한 모드: 읽기 전용(read_only) · 위험 행동 확인(guard) · 자동(full)
 export const PERMISSION_MODES = ['read_only', 'guard', 'full'] as const
 export type PermissionMode = (typeof PERMISSION_MODES)[number]
@@ -21,7 +25,9 @@ export const DEFAULT_SETTINGS = {
   dangerWords: DEFAULT_DANGER_WORDS,
   maxToolCalls: 40,
   permissionMode: 'guard' as const,
-  finalConfirm: false
+  finalConfirm: false,
+  vaultAutoLockMinutes: 15,
+  vaultRememberDevice: false
 }
 
 // 손상된 config.json 이어도 앱이 뜨도록 필드마다 catch 로 기본값으로 되돌린다
@@ -37,7 +43,16 @@ export const settingsSchema = z.object({
   dangerWords: z.array(z.string()).catch([]),
   maxToolCalls: z.number().catch(DEFAULT_SETTINGS.maxToolCalls),
   permissionMode: z.enum(PERMISSION_MODES).catch(DEFAULT_SETTINGS.permissionMode),
-  finalConfirm: z.boolean().catch(DEFAULT_SETTINGS.finalConfirm)
+  finalConfirm: z.boolean().catch(DEFAULT_SETTINGS.finalConfirm),
+  // 금고 미사용 자동 잠금(분). 손상된 값은 기본 15분으로 되돌린다
+  vaultAutoLockMinutes: z
+    .number()
+    .int()
+    .min(MIN_VAULT_AUTO_LOCK_MINUTES)
+    .max(MAX_VAULT_AUTO_LOCK_MINUTES)
+    .catch(DEFAULT_SETTINGS.vaultAutoLockMinutes),
+  // 이 PC 에서 마스터 키를 safeStorage 로 감싸 기억할지 여부
+  vaultRememberDevice: z.boolean().catch(DEFAULT_SETTINGS.vaultRememberDevice)
 })
 
 export type Settings = z.infer<typeof settingsSchema>

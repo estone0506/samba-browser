@@ -18,7 +18,22 @@ export const IPC = {
   agentEvent: 'agent:event', // main → renderer 이벤트
   agentConfirmReply: 'agent:confirmReply',
   settingsGet: 'settings:get',
-  settingsSet: 'settings:set'
+  settingsSet: 'settings:set',
+  // 금고 — vaultReveal 만이 비밀값(평문)을 돌려주는 유일한 채널이다
+  vaultState: 'vault:state',
+  vaultSetup: 'vault:setup',
+  vaultUnlock: 'vault:unlock',
+  vaultLock: 'vault:lock',
+  vaultSites: 'vault:sites',
+  vaultAccounts: 'vault:accounts',
+  vaultItems: 'vault:items',
+  vaultPutItem: 'vault:putItem',
+  vaultDeleteItem: 'vault:deleteItem',
+  vaultReveal: 'vault:reveal',
+  vaultUpsertAccount: 'vault:upsertAccount',
+  vaultStateChanged: 'vault:stateChanged', // main → renderer 이벤트
+  vaultCapturePrompt: 'vault:capturePrompt', // main → renderer 이벤트 (비밀번호 제외)
+  vaultCaptureDecision: 'vault:captureDecision' // renderer → main
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -63,3 +78,12 @@ export type AgentEvent =
 export type { Settings } from './settings'
 
 export type { PageSnapshot }
+
+export type {
+  VaultItemType,
+  SiteDto,
+  AccountDto,
+  VaultItemMeta,
+  VaultState,
+  CapturePromptDto
+} from './vault'
