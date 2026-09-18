@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { KeyRound, Lock } from 'lucide-react'
@@ -18,11 +18,17 @@ export function CapturePrompt(): React.JSX.Element | null {
   const decideCapture = useVaultStore((s) => s.decideCapture)
   const setCapture = useVaultStore((s) => s.setCapture)
   const vaultState = useVaultStore((s) => s.state)
-  const unlock = useVaultStore((s) => s.unlock)
+  // CapturePrompt 인라인 잠금 해제 전용 — settings.set(vaultRememberDevice) 를 건드리지 않는다.
+  // unlock(pw, false) 를 쓰면 "기기 기억" 설정이 false 로 영구 저장돼 이후 기기 기억 키가 삭제된다
+  const unlockOnly = useVaultStore((s) => s.unlockOnly)
   const loading = useVaultStore((s) => s.loading)
-  const [unlocking, setUnlocking] = useState(false)
-  const [pw, setPw] = useState('')
-  const [err, setErr] = useState<string | null>(null)
+  // 폼 상태는 store 레벨에서 관리한다(capture 대상이 바뀌면 store 가 알아서 초기화)
+  const unlocking = useVaultStore((s) => s.captureUnlocking)
+  const setUnlocking = useVaultStore((s) => s.setCaptureUnlocking)
+  const pw = useVaultStore((s) => s.capturePw)
+  const setPw = useVaultStore((s) => s.setCapturePw)
+  const err = useVaultStore((s) => s.captureErr)
+  const setErr = useVaultStore((s) => s.setCaptureErr)
 
   // 카드가 뜨고 60초가 지나면 자동으로 사라진다(main pendingCapture 만료와 동일 타이밍).
   // 이 경우는 결정을 보낼 필요가 없다 — main 쪽도 이미 만료돼 있다.
@@ -30,9 +36,6 @@ export function CapturePrompt(): React.JSX.Element | null {
     if (!capture) return
     const timer = setTimeout(() => {
       setCapture(null)
-      setUnlocking(false)
-      setPw('')
-      setErr(null)
     }, AUTO_DISMISS_MS)
     return () => clearTimeout(timer)
   }, [capture, setCapture])
@@ -44,20 +47,21 @@ export function CapturePrompt(): React.JSX.Element | null {
   const submitUnlock = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault()
     setErr(null)
-    const ok = await unlock(pw, false)
+    const ok = await unlockOnly(pw)
     if (!ok) {
       setErr(t('vault.unlock.failed'))
+      setPw('')
       return
     }
     decideCapture(true)
-    setUnlocking(false)
-    setPw('')
   }
 
   return (
     <div
       role="alertdialog"
-      aria-label={t('capture.title', { host: capture.host })}
+      aria-label={t(capture.isNew ? 'capture.title' : 'capture.titleUpdate', {
+        host: capture.host
+      })}
       className="mx-3 mt-3 mb-1 animate-in rounded-[14px] border border-[var(--line)] bg-white p-3 shadow-[0_8px_24px_rgba(0,0,0,.06)] fade-in-0 slide-in-from-top-1 duration-150"
     >
       <div className="flex items-start gap-2.5">
@@ -66,7 +70,7 @@ export function CapturePrompt(): React.JSX.Element | null {
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-[13px] font-semibold text-[var(--text)]">
-            {t('capture.title', { host: capture.host })}
+            {t(capture.isNew ? 'capture.title' : 'capture.titleUpdate', { host: capture.host })}
           </div>
           <p className="mt-1 break-words text-[12.5px] leading-relaxed text-[var(--text2)]">
             {t('capture.body', { host: capture.host, username: capture.username })}

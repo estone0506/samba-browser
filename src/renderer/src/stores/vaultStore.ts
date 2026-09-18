@@ -45,12 +45,22 @@ interface VaultStoreState {
   // 자동 저장 제안 카드. main 이 push 한 것을 그대로 담아둔다(비밀번호는 담기지 않음)
   capture: CapturePromptDto | null
   captureSubscribed: boolean
+  // CapturePrompt 인라인 잠금 해제 폼 상태. capture 대상(host/username)이 바뀌면 store 레벨에서 초기화한다
+  captureUnlocking: boolean
+  capturePw: string
+  captureErr: string | null
   subscribeCapture: () => void
   setCapture: (prompt: CapturePromptDto | null) => void
   decideCapture: (accept: boolean) => void
+  setCaptureUnlocking: (v: boolean) => void
+  setCapturePw: (v: string) => void
+  setCaptureErr: (v: string | null) => void
   refreshState: () => Promise<void>
   setup: (master: string, remember: boolean) => Promise<boolean>
   unlock: (master: string, remember: boolean) => Promise<boolean>
+  // CapturePrompt 인라인 잠금 해제 전용. settings.set(vaultRememberDevice) 를 호출하지 않는다 —
+  // 이걸 unlock() 처럼 remember=false 로 부르면 기기 기억 설정이 영구적으로 꺼져버린다
+  unlockOnly: (master: string) => Promise<boolean>
   lock: () => Promise<void>
   loadAccounts: () => Promise<void>
   select: (id: SelectedAccount) => void
@@ -82,20 +92,39 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
   error: null,
   capture: null,
   captureSubscribed: false,
+  captureUnlocking: false,
+  capturePw: '',
+  captureErr: null,
 
   // App 마운트 시 한 번만 구독한다(중복 구독 방지)
   subscribeCapture: () => {
     if (get().captureSubscribed) return
     set({ captureSubscribed: true })
-    window.samba.vault.onCapturePrompt((prompt) => set({ capture: prompt }))
+    window.samba.vault.onCapturePrompt((prompt) => get().setCapture(prompt))
   },
 
-  setCapture: (prompt) => set({ capture: prompt }),
+  // capture 대상(host/username)이 이전과 다르면(다른 프롬프트로 교체된 경우) 인라인 잠금
+  // 해제 폼 상태를 초기화한다. null 로 치울 때도 마찬가지로 정리한다
+  setCapture: (prompt) =>
+    set((s) => {
+      const changed =
+        !s.capture ||
+        !prompt ||
+        s.capture.host !== prompt.host ||
+        s.capture.username !== prompt.username
+      return changed
+        ? { capture: prompt, captureUnlocking: false, capturePw: '', captureErr: null }
+        : { capture: prompt }
+    }),
 
   decideCapture: (accept) => {
     window.samba.vault.captureDecision(accept)
-    set({ capture: null })
+    set({ capture: null, captureUnlocking: false, capturePw: '', captureErr: null })
   },
+
+  setCaptureUnlocking: (v) => set({ captureUnlocking: v }),
+  setCapturePw: (v) => set({ capturePw: v }),
+  setCaptureErr: (v) => set({ captureErr: v }),
 
   refreshState: async () => {
     const r = await window.samba.vault.state()
@@ -124,6 +153,22 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
   unlock: async (master, remember) => {
     set({ loading: true, error: null })
     await window.samba.settings.set({ vaultRememberDevice: remember })
+    const r = await window.samba.vault.unlock(master)
+    if (!r.ok) {
+      set({ loading: false, error: r.error })
+      return false
+    }
+    if (!r.data) {
+      set({ loading: false, error: 'invalid' })
+      return false
+    }
+    await get().refreshState()
+    set({ loading: false })
+    return true
+  },
+
+  unlockOnly: async (master) => {
+    set({ loading: true, error: null })
     const r = await window.samba.vault.unlock(master)
     if (!r.ok) {
       set({ loading: false, error: r.error })

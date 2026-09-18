@@ -55,6 +55,7 @@
   "settings": { "model": "Model", "language": "Language" },
   "capture": {
     "title": "Save your {{host}} account info?",
+    "titleUpdate": "Update the password for your {{host}} account?",
     "body": "You just signed in to {{host}} as {{username}}. Save it so it can autofill next time?",
     "skip": "Skip this time",
     "save": "Save",
@@ -64,6 +65,7 @@
     "title": "Bookmarks",
     "toolbar": "Bookmarks Bar",
     "empty": "Empty",
+    "delete": "Delete",
     "emptyAll": "No bookmarks saved yet"
   },
   "vault": {
