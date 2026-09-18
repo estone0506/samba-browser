@@ -106,3 +106,9 @@ Free, 월 500 크레딧, 추가 구매, 자동 충전. 월별 사용량 표.
 
 ### 추가 관찰 (채팅 입력창 Guard 메뉴)
 - 입력창 하단 **Guard 권한 모드**: Read only(읽기만) / Guard(위험 행동 확인) / Full access(자동) + **Final confirm** 토글(마지막 단계 확인). → 삼바 2단계 설정·채팅 입력창에 동일 개념 도입(현재는 Guard 고정).
+
+### Vault 등록·필터 UI (팝오버 실물)
+- **+ 새 항목**: Login / Password / Credit Card / Secure Note / Identity / Document / More › · 비밀번호 생성기 · Import…
+- 목록: 검색, 금고 선택(All accounts), **Suggestions**(현재 사이트 계정 자동 필터), This Week(최근 사용)
+- 상세: Personal › Personal, **Autofill 버튼**, Credentials(Username·••••), Website(로그인 URL)
+- 삼바 반영: 항목 6종 재편(로그인/비밀번호/신용카드/보안메모/신원정보/문서), + 메뉴 동일, 추천 섹션, 자동 채우기 버튼, 툴바 열쇠 팝오버 (2단계 Task 11)
