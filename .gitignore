@@ -6,3 +6,7 @@ dist/
 .superpowers/
 .claude/
 *.tsbuildinfo
+# 로컬 OCR 모델은 첫 사용 시 내려받는다(커밋 금지)
+models/
+*.onnx
+*.traineddata
