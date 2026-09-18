@@ -35,6 +35,8 @@ export const IPC = {
   vaultDeleteAccounts: 'vault:deleteAccounts',
   vaultUndoDelete: 'vault:undoDelete',
   vaultAudit: 'vault:audit',
+  // 내보내기 — 잠금 해제 + 마스터 재입력 검증을 통과해야만 실행된다(응답은 개수·경로뿐)
+  vaultExport: 'vault:export',
   // 복구 키 — recoveryCreate 응답만 평문 복구 키를 돌려준다(화면 표시 1회용)
   vaultRecoveryCreate: 'vault:recoveryCreate',
   vaultRecoveryConfirm: 'vault:recoveryConfirm',

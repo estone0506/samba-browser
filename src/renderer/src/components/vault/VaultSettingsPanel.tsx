@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@renderer/components/ui/dialog'
 import { Switch } from '@renderer/components/ui/switch'
 import { cn } from '@renderer/lib/utils'
+import { VaultExportDialog } from './VaultExportDialog'
 import type { VaultAccessPolicy } from '@shared/settings'
 
 interface Props {
@@ -48,6 +49,7 @@ export function VaultSettingsPanel({ open, onOpenChange }: Props): React.JSX.Ele
   const [autoUpdatePassword, setAutoUpdatePassword] = useState(true)
   const [rememberDevice, setRememberDevice] = useState(true)
   const [excludedHostsText, setExcludedHostsText] = useState('')
+  const [exportOpen, setExportOpen] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -92,135 +94,159 @@ export function VaultSettingsPanel({ open, onOpenChange }: Props): React.JSX.Ele
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="rounded-2xl border border-[var(--line)] bg-white sm:max-w-[460px]">
-        <DialogHeader>
-          <DialogTitle>{t('vault.settings.title')}</DialogTitle>
-        </DialogHeader>
-        <div className="flex flex-col gap-4">
-          {/* 자동 잠금 */}
-          <div>
-            <div className="mb-1.5 text-[12.5px] font-medium text-[var(--text)]">
-              {t('vault.settings.autoLock')}
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="rounded-2xl border border-[var(--line)] bg-white sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>{t('vault.settings.title')}</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            {/* 자동 잠금 */}
+            <div>
+              <div className="mb-1.5 text-[12.5px] font-medium text-[var(--text)]">
+                {t('vault.settings.autoLock')}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {AUTO_LOCK_OPTIONS.map((o) => (
+                  <button
+                    key={o.minutes}
+                    type="button"
+                    onClick={() => chooseAutoLock(o.minutes)}
+                    className={cn(
+                      'h-[28px] rounded-[8px] border px-2.5 text-[12px]',
+                      autoLockMinutes === o.minutes
+                        ? 'border-[var(--text)] bg-[var(--text)] font-medium text-white'
+                        : 'border-[var(--line)] text-[var(--text2)]'
+                    )}
+                  >
+                    {t(o.labelKey)}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {AUTO_LOCK_OPTIONS.map((o) => (
-                <button
-                  key={o.minutes}
-                  type="button"
-                  onClick={() => chooseAutoLock(o.minutes)}
-                  className={cn(
-                    'h-[28px] rounded-[8px] border px-2.5 text-[12px]',
-                    autoLockMinutes === o.minutes
-                      ? 'border-[var(--text)] bg-[var(--text)] font-medium text-white'
-                      : 'border-[var(--line)] text-[var(--text2)]'
-                  )}
-                >
-                  {t(o.labelKey)}
-                </button>
-              ))}
-            </div>
-          </div>
 
-          <div className="h-px bg-[var(--line)]" />
+            <div className="h-px bg-[var(--line)]" />
 
-          {/* AI 접근 정책 */}
-          <div>
-            <div className="mb-1.5 text-[12.5px] font-medium text-[var(--text)]">
-              {t('vault.settings.accessPolicy')}
-            </div>
-            <div className="flex flex-col gap-1">
-              {ACCESS_OPTIONS.map((o) => (
-                <label
-                  key={o.value}
-                  className={cn(
-                    'flex cursor-pointer items-start gap-2 rounded-[9px] border px-2.5 py-2',
-                    accessPolicy === o.value
-                      ? 'border-[var(--text)] bg-black/[.03]'
-                      : 'border-[var(--line)]'
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name="vault-access-policy"
-                    checked={accessPolicy === o.value}
-                    onChange={() => chooseAccessPolicy(o.value)}
-                    className="mt-0.5 h-3.5 w-3.5"
-                  />
-                  <span>
-                    <span className="block text-[12.5px] font-medium text-[var(--text)]">
-                      {t(o.labelKey)}
+            {/* AI 접근 정책 */}
+            <div>
+              <div className="mb-1.5 text-[12.5px] font-medium text-[var(--text)]">
+                {t('vault.settings.accessPolicy')}
+              </div>
+              <div className="flex flex-col gap-1">
+                {ACCESS_OPTIONS.map((o) => (
+                  <label
+                    key={o.value}
+                    className={cn(
+                      'flex cursor-pointer items-start gap-2 rounded-[9px] border px-2.5 py-2',
+                      accessPolicy === o.value
+                        ? 'border-[var(--text)] bg-black/[.03]'
+                        : 'border-[var(--line)]'
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="vault-access-policy"
+                      checked={accessPolicy === o.value}
+                      onChange={() => chooseAccessPolicy(o.value)}
+                      className="mt-0.5 h-3.5 w-3.5"
+                    />
+                    <span>
+                      <span className="block text-[12.5px] font-medium text-[var(--text)]">
+                        {t(o.labelKey)}
+                      </span>
+                      <span className="block text-[11px] leading-snug text-[var(--text2)]">
+                        {t(o.descKey)}
+                      </span>
                     </span>
-                    <span className="block text-[11px] leading-snug text-[var(--text2)]">
-                      {t(o.descKey)}
-                    </span>
-                  </span>
-                </label>
-              ))}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="h-px bg-[var(--line)]" />
+
+            {/* 자동 제출 */}
+            <div className="flex items-center justify-between">
+              <span>
+                <span className="block text-[12.5px] font-medium text-[var(--text)]">
+                  {t('vault.settings.autoSubmit')}
+                </span>
+                <span className="block text-[11px] text-[var(--text2)]">
+                  {t('vault.settings.autoSubmitDesc')}
+                </span>
+              </span>
+              <Switch checked={autoSubmit} onCheckedChange={toggleAutoSubmit} />
+            </div>
+
+            {/* 로그인 성공 감지 자동 갱신 */}
+            <div className="flex items-center justify-between">
+              <span>
+                <span className="block text-[12.5px] font-medium text-[var(--text)]">
+                  {t('vault.settings.autoUpdatePassword')}
+                </span>
+                <span className="block text-[11px] text-[var(--text2)]">
+                  {t('vault.settings.autoUpdatePasswordDesc')}
+                </span>
+              </span>
+              <Switch checked={autoUpdatePassword} onCheckedChange={toggleAutoUpdatePassword} />
+            </div>
+
+            {/* 이 PC 에서 기억 */}
+            <div className="flex items-center justify-between">
+              <span>
+                <span className="block text-[12.5px] font-medium text-[var(--text)]">
+                  {t('vault.settings.remember')}
+                </span>
+                <span className="block text-[11px] text-[var(--text2)]">
+                  {t('vault.settings.rememberDesc')}
+                </span>
+              </span>
+              <Switch checked={rememberDevice} onCheckedChange={toggleRemember} />
+            </div>
+
+            <div className="h-px bg-[var(--line)]" />
+
+            {/* 제외 도메인 */}
+            <div>
+              <div className="mb-1 text-[12.5px] font-medium text-[var(--text)]">
+                {t('vault.settings.excludedHosts')}
+              </div>
+              <p className="mb-1.5 text-[11px] text-[var(--text2)]">
+                {t('vault.settings.excludedHostsDesc')}
+              </p>
+              <input
+                value={excludedHostsText}
+                onChange={(e) => setExcludedHostsText(e.target.value)}
+                onBlur={commitExcludedHosts}
+                placeholder={t('vault.settings.excludedHostsPlaceholder')}
+                className="h-9 w-full rounded-[9px] border border-[var(--line)] bg-[var(--bg)] px-2.5 text-[13px] text-[var(--text)] outline-none"
+              />
+            </div>
+
+            <div className="h-px bg-[var(--line)]" />
+
+            {/* 내보내기 — 실제 절차(마스터 재입력·경고·저장 위치)는 전용 다이얼로그에 있다 */}
+            <div className="flex items-center justify-between gap-3">
+              <span>
+                <span className="block text-[12.5px] font-medium text-[var(--text)]">
+                  {t('vault.export.title')}
+                </span>
+                <span className="block text-[11px] leading-snug text-[var(--text2)]">
+                  {t('vault.export.settingsDesc')}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setExportOpen(true)}
+                className="h-[28px] shrink-0 rounded-[8px] border border-[var(--line)] px-2.5 text-[12px] text-[var(--text)]"
+              >
+                {t('vault.export.open')}
+              </button>
             </div>
           </div>
-
-          <div className="h-px bg-[var(--line)]" />
-
-          {/* 자동 제출 */}
-          <div className="flex items-center justify-between">
-            <span>
-              <span className="block text-[12.5px] font-medium text-[var(--text)]">
-                {t('vault.settings.autoSubmit')}
-              </span>
-              <span className="block text-[11px] text-[var(--text2)]">
-                {t('vault.settings.autoSubmitDesc')}
-              </span>
-            </span>
-            <Switch checked={autoSubmit} onCheckedChange={toggleAutoSubmit} />
-          </div>
-
-          {/* 로그인 성공 감지 자동 갱신 */}
-          <div className="flex items-center justify-between">
-            <span>
-              <span className="block text-[12.5px] font-medium text-[var(--text)]">
-                {t('vault.settings.autoUpdatePassword')}
-              </span>
-              <span className="block text-[11px] text-[var(--text2)]">
-                {t('vault.settings.autoUpdatePasswordDesc')}
-              </span>
-            </span>
-            <Switch checked={autoUpdatePassword} onCheckedChange={toggleAutoUpdatePassword} />
-          </div>
-
-          {/* 이 PC 에서 기억 */}
-          <div className="flex items-center justify-between">
-            <span>
-              <span className="block text-[12.5px] font-medium text-[var(--text)]">
-                {t('vault.settings.remember')}
-              </span>
-              <span className="block text-[11px] text-[var(--text2)]">
-                {t('vault.settings.rememberDesc')}
-              </span>
-            </span>
-            <Switch checked={rememberDevice} onCheckedChange={toggleRemember} />
-          </div>
-
-          <div className="h-px bg-[var(--line)]" />
-
-          {/* 제외 도메인 */}
-          <div>
-            <div className="mb-1 text-[12.5px] font-medium text-[var(--text)]">
-              {t('vault.settings.excludedHosts')}
-            </div>
-            <p className="mb-1.5 text-[11px] text-[var(--text2)]">
-              {t('vault.settings.excludedHostsDesc')}
-            </p>
-            <input
-              value={excludedHostsText}
-              onChange={(e) => setExcludedHostsText(e.target.value)}
-              onBlur={commitExcludedHosts}
-              placeholder={t('vault.settings.excludedHostsPlaceholder')}
-              className="h-9 w-full rounded-[9px] border border-[var(--line)] bg-[var(--bg)] px-2.5 text-[13px] text-[var(--text)] outline-none"
-            />
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+      <VaultExportDialog open={exportOpen} onOpenChange={setExportOpen} />
+    </>
   )
 }

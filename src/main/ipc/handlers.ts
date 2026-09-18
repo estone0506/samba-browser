@@ -9,6 +9,7 @@ import {
   type WebContents
 } from 'electron'
 import { join } from 'node:path'
+import { writeFile } from 'node:fs/promises'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import { defaultTabUrl } from '../../shared/settings'
 import type { TabManager } from '../browser/tab-manager'
@@ -17,6 +18,7 @@ import { setOcrEnabled } from '../agent/tools-ocr'
 import { AgentRunner } from '../agent/runner'
 import type { Db } from '../db/client'
 import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vault/service'
+import { exportVault, type ExportRequest } from '../vault/export'
 import { ImportService, type ImportDialogs } from '../import/service'
 import { VaultCaptureGate } from './vault-capture'
 import { watchLoginSuccess } from './login-watch'
@@ -228,6 +230,26 @@ export function registerIpc(
   // 사용 기록(감사 로그). accountId 를 주면 그 계정 소유 항목만, 아니면 전체를 반환한다
   handleFromRenderer(IPC.vaultAudit, (accountId?: number, limit?: number) =>
     vault.listAudit(accountId, limit)
+  )
+  // 내보내기 — 평문은 사용자가 고른 파일에만 들어가고, 응답에는 개수·경로만 담긴다
+  handleFromRenderer(IPC.vaultExport, (req: ExportRequest) =>
+    exportVault(
+      {
+        vault,
+        showSaveDialog: async (prompt) => {
+          const result = await dialog.showSaveDialog(win, {
+            defaultPath: prompt.defaultPath,
+            filters: prompt.filters,
+            message: prompt.message,
+            nameFieldLabel: prompt.nameFieldLabel
+          })
+          if (result.canceled || !result.filePath) return undefined
+          return result.filePath
+        },
+        writeFile: (filePath, content) => writeFile(filePath, content, 'utf8')
+      },
+      req
+    )
   )
   // 페이지(preload 격리 월드)가 감지한 로그인 폼 제출.
   // 검증·레이트리밋·호스트 대조는 전부 VaultCaptureGate 안에 있다(테스트 가능하도록 분리)
