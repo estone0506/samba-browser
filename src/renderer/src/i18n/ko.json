@@ -66,7 +66,48 @@
     "toolbar": "북마크 바",
     "empty": "비어 있음",
     "delete": "삭제",
-    "emptyAll": "저장된 북마크가 없어요"
+    "emptyAll": "저장된 북마크가 없어요",
+    "manage": "관리"
+  },
+  "bookmarksPage": {
+    "title": "북마크",
+    "searchPlaceholder": "제목 또는 URL 검색",
+    "toolbarFolder": "북마크 바",
+    "otherFolder": "기타 북마크",
+    "empty": "이 폴더는 비어 있어요",
+    "noSearchResults": "검색 결과가 없어요",
+    "root": "루트",
+    "url": "URL",
+    "menu": {
+      "open": "새 탭에서 열기",
+      "rename": "이름 변경",
+      "move": "이동",
+      "delete": "삭제"
+    },
+    "topMenu": {
+      "sortByName": "이름순 정렬",
+      "addBookmark": "새 북마크 추가",
+      "addFolder": "새 폴더 추가",
+      "import": "북마크 가져오기",
+      "export": "북마크 내보내기"
+    },
+    "dialog": {
+      "addBookmarkTitle": "새 북마크",
+      "addFolderTitle": "새 폴더",
+      "renameTitle": "이름 변경",
+      "moveTitle": "이동할 폴더 선택",
+      "titleLabel": "제목",
+      "urlLabel": "URL",
+      "nameLabel": "이름",
+      "cancel": "취소",
+      "save": "저장",
+      "add": "추가",
+      "move": "이동"
+    },
+    "deleteFolderConfirm": "\"{{name}}\" 폴더와 안의 모든 북마크를 삭제할까요?",
+    "exportSuccess": "내보내기 완료",
+    "exportFailed": "내보내기에 실패했어요",
+    "importSuccess": "가져오기 완료"
   },
   "vault": {
     "setup": {

@@ -9,6 +9,14 @@ interface BookmarkState {
   load: () => Promise<void>
   remove: (id: number) => Promise<void>
   toggle: (id: number) => void
+  // --- 북마크 관리자 페이지용(전부 성공 시 load() 로 트리를 새로고침한다) ---
+  createFolder: (parentId: number | null, name: string) => Promise<void>
+  createLink: (folderId: number | null, title: string, url: string) => Promise<void>
+  rename: (id: number, kind: 'folder' | 'link', name: string) => Promise<void>
+  move: (id: number, kind: 'folder' | 'link', toFolderId: number | null) => Promise<void>
+  removeFolder: (id: number) => Promise<void>
+  sort: (folderId: number | null) => Promise<void>
+  exportBookmarks: () => Promise<string | undefined>
 }
 
 export const useBookmarkStore = create<BookmarkState>((set, get) => ({
@@ -45,5 +53,34 @@ export const useBookmarkStore = create<BookmarkState>((set, get) => ({
       else next.add(id)
       return { expanded: next }
     })
+  },
+
+  createFolder: async (parentId, name) => {
+    const r = await window.samba.bookmarks.createFolder(parentId, name)
+    if (r.ok) await get().load()
+  },
+  createLink: async (folderId, title, url) => {
+    const r = await window.samba.bookmarks.createLink(folderId, title, url)
+    if (r.ok) await get().load()
+  },
+  rename: async (id, kind, name) => {
+    const r = await window.samba.bookmarks.rename(id, kind, name)
+    if (r.ok) await get().load()
+  },
+  move: async (id, kind, toFolderId) => {
+    const r = await window.samba.bookmarks.move({ id, kind, toFolderId })
+    if (r.ok) await get().load()
+  },
+  removeFolder: async (id) => {
+    const r = await window.samba.bookmarks.removeFolder(id)
+    if (r.ok) await get().load()
+  },
+  sort: async (folderId) => {
+    const r = await window.samba.bookmarks.sort(folderId)
+    if (r.ok) await get().load()
+  },
+  exportBookmarks: async () => {
+    const r = await window.samba.bookmarks.export()
+    return r.ok ? r.data : undefined
   }
 }))
