@@ -58,7 +58,11 @@ export const IPC = {
   bookmarksMove: 'bookmarks:move',
   bookmarksRemoveFolder: 'bookmarks:removeFolder',
   bookmarksSort: 'bookmarks:sort',
-  bookmarksExport: 'bookmarks:export'
+  bookmarksExport: 'bookmarks:export',
+  // --- 자체 새 탭 페이지(samba://newtab) — preload(격리 월드) → 메인 -----------
+  newTabInit: 'newtab:init', // invoke, 언어 + 북마크 바 상위 항목
+  newTabSearch: 'newtab:search', // send, 검색어/URL 을 보낸 탭에서 연다
+  newTabOpen: 'newtab:open' // send, 북마크 URL 을 보낸 탭에서 연다
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }

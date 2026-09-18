@@ -12,8 +12,8 @@
 //       상수/채널명 등 값은 ./page-constants.ts 에 복제해서 쓴다.
 //       relative import(./page-core 등)는 같은 엔트리에 인라인되므로 안전하다.
 // 회귀 방지 테스트: tests/preload-bundle.test.ts
-import { ipcRenderer } from 'electron'
-import { PAGE_IPC, PICKER_LABELS } from './page-constants'
+import { contextBridge, ipcRenderer } from 'electron'
+import { INTERNAL_PROTOCOL, PAGE_IPC, PICKER_LABELS } from './page-constants'
 import type { IpcResult, Settings } from '../shared/ipc'
 import {
   buildSnapshot,
@@ -29,6 +29,7 @@ import {
   installCaptureListener
 } from './page-core'
 import { installAutofillPicker, type PickerAccountsResponse } from './page-picker'
+import type { NewTabInitDto } from '../shared/newtab'
 
 // AI 실행기. contextIsolation 이 켜져 있으면 preload 는 격리 월드(WorldId 999)에서 실행되므로
 // contextBridge 로 메인 월드에 노출하지 않고 격리 월드 전역에만 둔다.
@@ -76,3 +77,16 @@ void ipcRenderer
       labels: PICKER_LABELS[language]
     })
   })
+
+// === 자체 새 탭 페이지 브리지 ===============================================
+// 내부 스킴(samba:) 문서에서만 메인 월드에 노출한다. 웹 페이지는 protocol 이 http(s) 라
+// 이 분기에 들어올 수 없고, 메인도 발신자 URL 을 다시 검증한다
+if (location.protocol === INTERNAL_PROTOCOL) {
+  contextBridge.exposeInMainWorld('sambaNewTab', {
+    init: (): Promise<NewTabInitDto> =>
+      ipcRenderer.invoke(PAGE_IPC.newTabInit) as Promise<NewTabInitDto>,
+    search: (input: string): void => ipcRenderer.send(PAGE_IPC.newTabSearch, input),
+    open: (url: string): void => ipcRenderer.send(PAGE_IPC.newTabOpen, url)
+  })
+}
+// === 새 탭 페이지 브리지 끝 =================================================

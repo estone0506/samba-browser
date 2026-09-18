@@ -3,7 +3,12 @@ import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { IPC } from '../src/shared/ipc'
 import { MAX_ELEMENTS } from '../src/shared/snapshot'
-import { MAX_ELEMENTS as PAGE_MAX_ELEMENTS, PAGE_IPC } from '../src/preload/page-constants'
+import {
+  MAX_ELEMENTS as PAGE_MAX_ELEMENTS,
+  PAGE_IPC,
+  INTERNAL_PROTOCOL
+} from '../src/preload/page-constants'
+import { INTERNAL_SCHEME } from '../src/shared/url'
 
 // 웹페이지 preload 는 sandbox:true 로 주입되므로 다른 파일을 require() 할 수 없다.
 // src/shared/* 의 값을 page.ts/page-core.ts 가 import 하면 renderer.ts 와 공유되어
@@ -23,6 +28,16 @@ describe('page-constants 는 shared 원본과 동기화되어야 한다', () => 
   it('자동 채움 피커 채널명이 shared/ipc 와 같다', () => {
     expect(PAGE_IPC.vaultPickerAccounts).toBe(IPC.vaultPickerAccounts)
     expect(PAGE_IPC.vaultPickerFill).toBe(IPC.vaultPickerFill)
+  })
+
+  it('새 탭 페이지 채널명이 shared/ipc 와 같다', () => {
+    expect(PAGE_IPC.newTabInit).toBe(IPC.newTabInit)
+    expect(PAGE_IPC.newTabSearch).toBe(IPC.newTabSearch)
+    expect(PAGE_IPC.newTabOpen).toBe(IPC.newTabOpen)
+  })
+
+  it('내부 스킴 상수가 shared/url 과 같다', () => {
+    expect(INTERNAL_PROTOCOL).toBe(`${INTERNAL_SCHEME}:`)
   })
 })
 

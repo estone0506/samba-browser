@@ -5,7 +5,7 @@ import i18n from '@renderer/i18n'
 import { cn } from '@renderer/lib/utils'
 import { VaultSettingsPanel } from '@renderer/components/vault/VaultSettingsPanel'
 import { Switch } from '@renderer/components/ui/switch'
-import { isHttpUrl } from '@shared/url'
+import { isHttpUrl, isInternalUrl } from '@shared/url'
 import type { NewTabUrlMode, PermissionMode, SearchEngine, Settings } from '@shared/settings'
 
 // 설정 페이지 전체에서 쓰는 애플 스타일 섹션 카드(흰 배경·얇은 선)
@@ -108,7 +108,7 @@ export function SettingsPage(): React.JSX.Element {
 
   const commitHomeUrl = (): void => {
     const value = homeUrlText.trim()
-    if (!isHttpUrl(value)) {
+    if (!isHttpUrl(value) && !isInternalUrl(value)) {
       setHomeUrlError(true)
       return
     }

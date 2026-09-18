@@ -2,7 +2,7 @@ import { BrowserWindow, WebContentsView, session, type Session, type WebContents
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type { Layout, TabInfo } from '../../shared/ipc'
-import { BLOCKED_URL_MESSAGE, isAllowedUrl } from '../../shared/url'
+import { BLOCKED_URL_MESSAGE, isAllowedUrl, NEW_TAB_URL } from '../../shared/url'
 import type { SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
 import { installDialogHandler, isAutomationActive } from './dialogs'
@@ -14,14 +14,8 @@ export interface Tab {
   mobile: boolean
 }
 
-const DEFAULT_URL = 'https://www.google.com'
-
-// === 홈 버튼 / 설정 페이지 (신규 추가분) ====================================
-// index.ts 의 첫 탭 생성 호출은 이 리터럴을 그대로 넘긴다(구버전 하드코딩 기본값).
-// index.ts 를 건드리지 않고도 첫 탭이 홈 주소를 따르게 하기 위해, create() 에서
-// 이 값과 정확히 같은 url 을 "기본값 사용" 요청으로 취급한다
-const LEGACY_DEFAULT_URL = DEFAULT_URL
-// === 신규 추가분 끝 =========================================================
+// 설정을 아직 못 읽었을 때의 기본 주소. 설정이 들어오면 setDefaultUrl 로 덮인다
+const DEFAULT_URL = NEW_TAB_URL
 
 // 렌더러가 보고한 좌표를 "현재" 창 콘텐츠 크기에 다시 투영한다.
 // 렌더러는 보고 시점의 뷰포트 크기를 함께 보내므로, 거기서 오른쪽·아래 여백을 뽑아
@@ -217,11 +211,15 @@ export class TabManager {
     return this.tabs.some((t) => t.view.webContents === wc)
   }
 
+  // IPC 발신자에 해당하는 탭(새 탭 페이지가 자기 탭을 이동시킬 때 쓴다)
+  findByWebContents(wc: WebContents): Tab | null {
+    return this.tabs.find((t) => t.view.webContents === wc) ?? null
+  }
+
   create(opts: { url?: string; profile?: string; mobile?: boolean } = {}): TabInfo {
     if (this.disposed) throw new Error('window closed')
-    // url 이 없거나(새 탭) index.ts 의 구버전 하드코딩 기본값과 같으면(첫 탭)
-    // 설정에서 계산된 기본 주소(홈 주소/빈 페이지)를 쓴다
-    const url = !opts.url || opts.url === LEGACY_DEFAULT_URL ? this.defaultUrl : opts.url
+    // url 이 없으면(새 탭 버튼·첫 탭) 설정에서 계산된 기본 주소를 쓴다
+    const url = opts.url ? opts.url : this.defaultUrl
     // 탭 생성 경로(주소창·AI new_tab·페이지의 window.open)의 공통 관문
     if (!isAllowedUrl(url)) throw new Error(`${BLOCKED_URL_MESSAGE} (${url})`)
     const profile = opts.profile ?? 'default'

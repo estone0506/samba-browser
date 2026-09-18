@@ -6,7 +6,7 @@ import type { Db } from '../db/client'
 import { bookmarkFolders, bookmarks } from '../db/schema'
 import type { BookmarkFolderNode, BookmarkTree } from '../import/bookmarks-html'
 import type { BookmarkFolderDto, BookmarkLinkDto, BookmarkTreeDto } from '../../shared/import'
-import { isAllowedUrl } from '../../shared/url'
+import { isAllowedExternalUrl } from '../../shared/url'
 
 export interface InsertTreeResult {
   folders: number
@@ -219,7 +219,8 @@ export class BookmarkRepo {
 
   createLink(folderId: number | null, title: string, url: string): number {
     // http(s)/about:blank 이외 스킴(javascript:, data: 등)은 거부한다
-    if (!isAllowedUrl(url)) throw new Error('cannot create bookmark link: URL scheme not allowed')
+    if (!isAllowedExternalUrl(url))
+      throw new Error('cannot create bookmark link: URL scheme not allowed')
     const inserted = this.d
       .insert(bookmarks)
       .values({ folderId, title, url, position: this.nextLinkPosition(folderId) })

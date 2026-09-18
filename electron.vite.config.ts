@@ -23,6 +23,15 @@ export default defineConfig({
     }
   },
   renderer: {
+    build: {
+      rollupOptions: {
+        // 다중 페이지: 앱 UI(index)와 자체 새 탭 페이지(newtab, samba:// 로 서빙)
+        input: {
+          index: resolve('src/renderer/index.html'),
+          newtab: resolve('src/renderer/newtab.html')
+        }
+      }
+    },
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer/src'),

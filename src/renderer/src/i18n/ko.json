@@ -22,6 +22,11 @@
   "tab": {
     "new": "새 탭"
   },
+  "newtab": {
+    "title": "새 탭",
+    "placeholder": "검색어 또는 URL 입력",
+    "bookmarks": "북마크"
+  },
   "chat": {
     "title": "AI",
     "placeholder": "지시를 입력하세요…",

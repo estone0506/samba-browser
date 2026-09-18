@@ -167,6 +167,27 @@ describe('new_tab URL 관문', () => {
     const r = await get(tools, 'new_tab').handler({ url: 'https://www.google.com' })
     expect(textOut(r)).toBe('ok: tab t2')
   })
+
+  it('내부 페이지(samba://newtab)는 거부하고 탭도 만들지 않는다', async () => {
+    const { tools } = build(true)
+    const r = await get(tools, 'new_tab').handler({ url: 'samba://newtab' })
+    expect(textOut(r)).toMatch(/refused/)
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('url 없이 열면 빈 페이지로 연다(기본값이 내부 페이지여도 AI 는 못 본다)', async () => {
+    const { tools } = build(true)
+    await get(tools, 'new_tab').handler({})
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ url: 'about:blank' }))
+  })
+})
+
+describe('navigate URL 관문', () => {
+  it('내부 페이지(samba://newtab)는 거부하고 이동도 하지 않는다', async () => {
+    const { tools } = build(true)
+    const r = await get(tools, 'navigate').handler({ url: 'samba://newtab' })
+    expect(textOut(r)).toMatch(/refused/)
+  })
 })
 
 describe('read_only 모드 — 조작 도구는 실행하지 않고 거부한다', () => {
