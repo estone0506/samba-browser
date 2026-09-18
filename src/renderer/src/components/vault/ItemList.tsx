@@ -26,9 +26,9 @@ const GLOBAL_TYPES = new Set<VaultItemType>(['card', 'note', 'identity', 'docume
 // 사이트 그룹 삭제 확인이 자동으로 취소되기까지의 시간(ms)
 const GROUP_DELETE_CONFIRM_MS = 2000
 
-function maskUsername(u: string): string {
-  if (u.length <= 3) return `${u[0] ?? ''}••`
-  return `${u.slice(0, 3)}…`
+// 아이디는 사용자 본인 화면이므로 크롬 비밀번호 관리자처럼 가리지 않고 그대로 보여 준다(비밀번호는 목록에 없다)
+function displayUsername(u: string): string {
+  return u
 }
 
 interface Props {
@@ -152,8 +152,8 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
           <b className="block truncate text-[13px] font-medium">{a.label}</b>
           <span className="block truncate text-[11.5px] text-[var(--text3)]">
             {options.showHost === false
-              ? maskUsername(a.username)
-              : `${a.host} · ${maskUsername(a.username)}`}
+              ? displayUsername(a.username)
+              : `${a.host} · ${displayUsername(a.username)}`}
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-1">
@@ -298,7 +298,7 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
                     <b className="block truncate text-[13px] font-medium">{group.key}</b>
                     <span className="block truncate text-[11.5px] text-[var(--text3)]">
                       {only
-                        ? maskUsername(only.username)
+                        ? displayUsername(only.username)
                         : t('vault.list.accountCount', { count: group.accounts.length })}
                     </span>
                   </span>
