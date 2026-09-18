@@ -118,6 +118,12 @@ export class AuthService {
     this.setSignedOut()
   }
 
+  /** 창이 닫힐 때 — 기다리던 구글 로그인과 루프백 서버를 정리한다 */
+  dispose(): void {
+    this.cancelPending()
+    this.listeners.clear()
+  }
+
   // --- 내부 -----------------------------------------------------------------
 
   private requireBackend(): SyncBackend {

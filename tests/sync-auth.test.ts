@@ -184,6 +184,19 @@ describe('AuthService — 구글 OAuth(루프백)', () => {
     expect(auth.state().signedIn).toBe(false)
   })
 
+  it('dispose 는 기다리던 루프백 서버를 닫는다', async () => {
+    const { auth, loop } = setup({ state: 'state-1' })
+    const pending = auth.signInGoogle()
+    await tick()
+    expect(loop.closed()).toBe(false)
+    auth.dispose()
+    expect(loop.closed()).toBe(true)
+    // 가짜 루프백은 거절을 모르므로, 콜백이 늦게 와도 상태가 바뀌지 않는지만 본다
+    loop.arrive({ error: 'cancelled', state: 'state-1' })
+    await expect(pending).rejects.toThrow('cancelled')
+    expect(auth.state().signedIn).toBe(false)
+  })
+
   it('사용자가 거부하면 그 사유로 실패하고 상태는 그대로다', async () => {
     const { auth, loop } = setup({ state: 'state-1' })
     const pending = auth.signInGoogle()

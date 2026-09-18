@@ -407,6 +407,8 @@ export function registerIpc(
     openExternal: (url) => shell.openExternal(url)
   })
   auth.onStateChanged((state) => send(IPC.authStateChanged, state))
+  // 구글 로그인을 기다리는 중에 창이 닫히면 루프백 서버가 최대 5분 남는다
+  win.once('closed', () => auth.dispose())
   // 저장된 세션이 있으면 조용히 되살린다(실패는 로그아웃으로 본다)
   void auth.restore()
 
