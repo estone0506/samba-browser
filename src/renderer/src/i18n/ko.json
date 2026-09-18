@@ -52,5 +52,96 @@
     "missing": "AI 연결이 안 됐어요. 터미널에서 claude login 을 실행하거나 설정에서 API 키를 입력하세요.",
     "limit": "AI 사용 한도에 도달했어요. 잠시 후 다시 시도하세요."
   },
-  "settings": { "model": "모델", "language": "언어" }
+  "settings": { "model": "모델", "language": "언어" },
+  "vault": {
+    "setup": {
+      "title": "개인정보 금고 설정",
+      "desc": "마스터 비밀번호로 계정·비밀번호·결제정보를 암호화해서 보관해요",
+      "password1": "마스터 비밀번호",
+      "password2": "마스터 비밀번호 확인",
+      "remember": "이 PC에서 기억",
+      "warning": "마스터 비밀번호를 분실하면 저장된 정보를 복구할 수 없어요. 안전한 곳에 따로 기록해 두세요.",
+      "submit": "금고 만들기",
+      "tooShort": "{{n}}자 이상 입력하세요",
+      "mismatch": "비밀번호가 서로 달라요",
+      "failed": "금고를 만들지 못했어요"
+    },
+    "unlock": {
+      "title": "잠금 해제",
+      "desc": "마스터 비밀번호를 입력하세요",
+      "placeholder": "마스터 비밀번호",
+      "submit": "잠금 해제",
+      "failed": "비밀번호가 올바르지 않아요"
+    },
+    "list": {
+      "searchPlaceholder": "계정·사이트 검색",
+      "chipAll": "전체",
+      "chipGlobal": "전역",
+      "add": "계정 추가",
+      "import": "가져오기",
+      "default": "기본",
+      "globalGroup": "전역 항목",
+      "empty": "저장된 항목이 없어요"
+    },
+    "detail": {
+      "openInBrowser": "브라우저에서 열기",
+      "edit": "편집",
+      "lock": "잠금",
+      "login": "로그인",
+      "username": "아이디",
+      "password": "비밀번호",
+      "loginUrl": "로그인 URL",
+      "payment": "결제",
+      "paymentPassword": "결제 비밀번호",
+      "personal": "본인정보",
+      "history": "사용 기록",
+      "noHistory": "최근 기록 없음",
+      "show": "보기",
+      "hide": "숨기기",
+      "copy": "복사",
+      "open": "열기",
+      "dangerBadge": "위험",
+      "value": "값",
+      "empty": "왼쪽에서 계정이나 항목을 선택하세요"
+    },
+    "itemType": {
+      "login_password": "로그인 비밀번호",
+      "payment_password": "결제 비밀번호",
+      "card": "카드",
+      "passport": "여권",
+      "id_card": "신분증",
+      "birth_date": "생년월일",
+      "address": "주소",
+      "phone": "연락처",
+      "custom": "기타"
+    },
+    "editor": {
+      "editTitle": "계정 편집",
+      "addTitle": "계정 추가",
+      "label": "계정 라벨",
+      "username": "아이디",
+      "host": "사이트 호스트",
+      "itemType": "항목 종류",
+      "value": "값",
+      "valuePlaceholder": "비워두면 변경하지 않아요",
+      "cancel": "취소",
+      "save": "저장"
+    },
+    "import": {
+      "title": "가져오기",
+      "passwordsButton": "비밀번호 CSV",
+      "bookmarksButton": "북마크 HTML",
+      "lockedError": "잠금을 해제한 뒤 가져올 수 있어요",
+      "failed": "가져오기에 실패했어요",
+      "passwordsSummaryTitle": "비밀번호 가져오기 결과",
+      "bookmarksSummaryTitle": "북마크 가져오기 결과",
+      "added": "추가",
+      "updated": "갱신",
+      "skipped": "건너뜀",
+      "sites": "사이트",
+      "folders": "폴더",
+      "bookmarks": "북마크",
+      "deleteCsvHint": "가져온 원본 CSV 파일은 삭제하는 것을 권장해요"
+    }
+  }
 }
