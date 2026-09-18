@@ -16,7 +16,8 @@
     "placeholder": "검색어 또는 URL 입력",
     "pc": "PC",
     "mobile": "모바일",
-    "profile": "프로필"
+    "profile": "프로필",
+    "home": "홈"
   },
   "tab": {
     "new": "새 탭"

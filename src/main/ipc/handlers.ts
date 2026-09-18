@@ -26,6 +26,15 @@ export function registerIpc(
   db: Db
 ): { settings: SettingsStore; agent: AgentRunner; db: Db; vault: VaultService } {
   const settings = new SettingsStore()
+  // === 홈 버튼 / 설정 페이지 (신규 추가분) ===================================
+  // newTabUrl(홈과 동일/빈 페이지) + homeUrl 을 조합해 tab-manager 가 쓸 최종
+  // 기본 주소를 계산한다. tab-manager 는 이 enum 을 몰라도 되게 분리했다
+  const applyBrowserDefaults = (s: Settings): void => {
+    tabs.setDefaultUrl(s.newTabUrl === 'blank' ? 'about:blank' : s.homeUrl)
+    tabs.setSearchEngine(s.searchEngine)
+  }
+  applyBrowserDefaults(settings.get())
+  // === 신규 추가분 끝 =========================================================
   // 창이 이미 파괴됐는데 send 하면 예외가 난다. 모든 main→renderer 통지는 이 관문을 거친다
   const send = (channel: string, payload: unknown): void => {
     if (win.isDestroyed() || win.webContents.isDestroyed()) return
@@ -99,7 +108,14 @@ export function registerIpc(
   )
 
   ipcMain.handle(IPC.settingsGet, () => wrap(() => settings.get()))
-  ipcMain.handle(IPC.settingsSet, (_, patch: Partial<Settings>) => wrap(() => settings.set(patch)))
+  ipcMain.handle(IPC.settingsSet, (_, patch: Partial<Settings>) =>
+    wrap(() => {
+      const s = settings.set(patch)
+      // 홈 주소·새 탭 주소·검색엔진이 바뀌면 tab-manager 도 즉시 반영한다
+      applyBrowserDefaults(s)
+      return s
+    })
+  )
 
   // --- 금고 ---------------------------------------------------------------
   // 비밀값(평문)을 돌려주는 채널은 vault:reveal 하나뿐이다. 나머지는 전부 메타/상태만 보낸다.

@@ -16,7 +16,8 @@
     "placeholder": "Search or enter URL",
     "pc": "PC",
     "mobile": "Mobile",
-    "profile": "Profile"
+    "profile": "Profile",
+    "home": "Home"
   },
   "tab": {
     "new": "New Tab"
