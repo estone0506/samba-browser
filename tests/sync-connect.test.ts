@@ -87,7 +87,10 @@ describe('SyncConnection', () => {
       vault,
       settings,
       bookmarks,
-      workspace: () => ({ localId: activeWorkspaceId, remoteId: workspaceRemoteId(db, activeWorkspaceId) }),
+      workspace: () => ({
+        localId: activeWorkspaceId,
+        remoteId: workspaceRemoteId(db, activeWorkspaceId)
+      }),
       device: {
         hostname: () => '내-PC',
         osLabel: () => 'Windows_NT 10.0.26200',

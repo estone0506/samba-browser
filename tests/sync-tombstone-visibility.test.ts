@@ -62,7 +62,11 @@ describe('tombstone 가 화면에 남지 않는다', () => {
     expect(vault.listItems(account.id)).toHaveLength(1)
     expect(vault.getSecretForFill(account.id, 'login')).toBe('p@ss')
 
-    db.drizzle.update(vaultItems).set({ deletedAt: Date.now() }).where(eq(vaultItems.id, item.id)).run()
+    db.drizzle
+      .update(vaultItems)
+      .set({ deletedAt: Date.now() })
+      .where(eq(vaultItems.id, item.id))
+      .run()
 
     expect(vault.listItems(account.id)).toHaveLength(0)
     expect(vault.getSecretForFill(account.id, 'login')).toBeNull()
