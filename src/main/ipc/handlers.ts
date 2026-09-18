@@ -12,7 +12,7 @@ import { VaultCaptureGate } from './vault-capture'
 import { watchLoginSuccess } from './login-watch'
 import { VaultPickerGate } from './vault-picker'
 import { autofillAccount, type AutofillDeps } from '../vault/autofill'
-import { assertFromRenderer, isFromRenderer } from './sender'
+import { assertFromRenderer, isFromRenderer, settingsForSender } from './sender'
 import { normalizeHost } from '../../shared/host'
 import { isAllowedExternalUrl, isInternalUrl } from '../../shared/url'
 import { toolbarBookmarks } from '../bookmarks/newtab'
@@ -144,7 +144,11 @@ export function registerIpc(
     agent.resolveConfirm(requestId, approved)
   )
 
-  ipcMain.handle(IPC.settingsGet, () => wrap(() => settings.get()))
+  // 렌더러 창(메인 UI)에는 전체 설정을, 탭 안의 페이지 preload(언어 표기용)에는
+  // language 하나만 돌려준다. 분기 로직 자체는 sender.ts 의 순수 함수(settingsForSender)에 있다
+  ipcMain.handle(IPC.settingsGet, (e) =>
+    wrap(() => settingsForSender(settings.get(), win, e.sender))
+  )
   handleFromRenderer(IPC.settingsSet, (patch: Partial<Settings>) => {
     const s = settings.set(patch)
     // 홈 주소·새 탭 주소·검색엔진이 바뀌면 tab-manager 도 즉시 반영한다

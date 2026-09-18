@@ -1,7 +1,12 @@
 // 렌더러 전용 IPC 채널의 발신자 검증(handlers.ts 가 모든 UI 채널에 적용한다)
 
 import { describe, it, expect } from 'vitest'
-import { assertFromRenderer, isFromRenderer, type RendererWindowLike } from '../src/main/ipc/sender'
+import {
+  assertFromRenderer,
+  isFromRenderer,
+  settingsForSender,
+  type RendererWindowLike
+} from '../src/main/ipc/sender'
 
 function win(over: Partial<{ destroyed: boolean; wcDestroyed: boolean }> = {}): RendererWindowLike {
   return {
@@ -36,5 +41,21 @@ describe('assertFromRenderer', () => {
 
   it('페이지 발신자에게는 거부 오류를 던진다', () => {
     expect(() => assertFromRenderer(win(), { id: 7 })).toThrow(/renderer-only/)
+  })
+})
+
+describe('settingsForSender', () => {
+  const full = { language: 'en' as const, ocrEnabled: true }
+
+  it('렌더러 창에는 전체 설정을 돌려준다', () => {
+    expect(settingsForSender(full, win(), { id: 1 })).toEqual(full)
+  })
+
+  it('페이지(탭) 발신자에게는 language 만 돌려준다', () => {
+    expect(settingsForSender(full, win(), { id: 7 })).toEqual({ language: 'en' })
+  })
+
+  it('발신자를 알 수 없으면 language 만 돌려준다', () => {
+    expect(settingsForSender(full, win(), null)).toEqual({ language: 'en' })
   })
 })
