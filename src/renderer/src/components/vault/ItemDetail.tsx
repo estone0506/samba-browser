@@ -7,11 +7,14 @@ import { Button } from '@renderer/components/ui/button'
 import type { AuditLogDto, VaultItemMeta } from '@shared/ipc'
 
 const USAGE_HISTORY_LIMIT = 10
+// '보기' 로 화면에 드러낸 값을 자동으로 다시 가리는 시간(ms)
+const REVEAL_AUTO_HIDE_MS = 30_000
 // 값을 클립보드에 복사한 뒤 이 시간(ms)이 지나면, 복사 당시와 값이 같을 때만 비운다
 const CLIPBOARD_CLEAR_MS = 30_000
 
 // 클립보드에 값을 복사하고, 일정 시간 뒤에도 여전히 같은 값이면 비운다.
-// readText 권한이 없는 환경(권한 거부 등)에서는 안전 쪽으로 그냥 비운다
+// readText 가 실패하면(권한 거부 등) 아무 것도 하지 않는다 — 그 사이 사용자가 복사한
+// 다른 내용을 우리가 지워버리는 편이 더 나쁜 결과다
 async function copyWithAutoClear(value: string): Promise<void> {
   await navigator.clipboard.writeText(value)
   setTimeout(() => {
@@ -21,7 +24,9 @@ async function copyWithAutoClear(value: string): Promise<void> {
         if (current === value) return navigator.clipboard.writeText('')
         return undefined
       })
-      .catch(() => navigator.clipboard.writeText('').catch(() => {}))
+      .catch(() => {
+        // no-op
+      })
   }, CLIPBOARD_CLEAR_MS)
 }
 
@@ -52,6 +57,13 @@ function RevealRow({
   const [busy, setBusy] = useState(false)
 
   useEffect(() => () => setValue(null), [item.id])
+
+  // 드러낸 값은 30초 뒤 자동으로 다시 가린다(자리를 비운 사이 화면에 남지 않게)
+  useEffect(() => {
+    if (value === null) return
+    const timer = setTimeout(() => setValue(null), REVEAL_AUTO_HIDE_MS)
+    return () => clearTimeout(timer)
+  }, [value])
 
   const toggle = async (): Promise<void> => {
     if (value !== null) {

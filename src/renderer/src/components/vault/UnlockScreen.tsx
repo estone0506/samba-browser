@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Lock } from 'lucide-react'
@@ -10,15 +10,34 @@ import { useVaultStore } from '@renderer/stores/vaultStore'
 export function UnlockScreen(): React.JSX.Element {
   const { t } = useTranslation()
   const unlock = useVaultStore((s) => s.unlock)
+  // 체크박스를 건드리지 않았으면 설정을 저장하지 않는 경로(기존 값 유지)
+  const unlockOnly = useVaultStore((s) => s.unlockOnly)
   const loading = useVaultStore((s) => s.loading)
   const [pw, setPw] = useState('')
-  const [remember, setRemember] = useState(false)
+  // 저장된 설정을 읽어 오기 전까지는 기본값(true)을 보여주고, 읽어 온 뒤 실제 값으로 맞춘다.
+  // 예전에는 항상 false 로 시작해서, 잠금 해제만 해도 "이 PC 에서 기억" 이 꺼져버렸다
+  const [remember, setRemember] = useState(true)
+  const [savedRemember, setSavedRemember] = useState<boolean | null>(null)
   const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void window.samba.settings.get().then((r) => {
+      if (cancelled || !r.ok) return
+      setRemember(r.data.vaultRememberDevice)
+      setSavedRemember(r.data.vaultRememberDevice)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault()
     setErr(null)
-    const ok = await unlock(pw, remember)
+    // 체크 상태가 그대로면 settings 를 건드리지 않는다
+    const changed = savedRemember !== null && remember !== savedRemember
+    const ok = changed ? await unlock(pw, remember) : await unlockOnly(pw)
     if (!ok) setErr(t('vault.unlock.failed'))
   }
 
