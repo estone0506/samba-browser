@@ -15,12 +15,22 @@ const READ_ONLY_REFUSAL = 'refused: read-only mode'
 const CONTINUE_INSTRUCTION = 'user asked to continue; do not finish yet'
 // 금고가 잠겨 있을 때 돌려주는 문자열(모델이 사용자에게 해제를 요청하도록 유도)
 const VAULT_LOCKED = 'locked: ask the user to unlock 개인정보'
+// 금고를 아직 설정하지 않았을 때(state === 'uninitialized') 돌려주는 문자열
+const VAULT_NOT_SET_UP = 'not set up: ask the user to set up 개인정보 first'
+// 현재 탭의 호스트를 알 수 없을 때(정규화 실패·활성 탭 없음) 돌려주는 문자열.
+// 전체 계정으로 폴백하지 않기 위해 명시적으로 거부한다
+const HOST_UNKNOWN = 'host unknown: navigate to the site first'
 // 계정을 특정하지 못했을 때 돌려주는 문자열
 const ACCOUNT_NOT_FOUND = 'account not found: use list_accounts'
 // guard 모드에서 추가 확인을 받아야 하는 민감 항목
 const CONFIRM_ITEM_TYPES: VaultItemType[] = ['payment_password', 'card']
+// fill_secret 대상 요소가 실제로 비밀 입력칸(type=password)이어야 하는 항목 종류
+const SECRET_TARGET_ITEM_TYPES: VaultItemType[] = ['login_password', 'payment_password', 'card']
+// 대상 요소가 비밀 입력칸이 아닐 때 돌려주는 문자열
+const NOT_A_SECRET_FIELD = 'refused: target is not a secret input'
 
-// 금고에 저장된 항목 종류(도구 스키마용). shared/vault 의 VaultItemType 과 같은 집합이어야 한다
+// 금고에 저장된 항목 종류(도구 스키마용). shared/vault 의 VaultItemType 과 단일 소스로 유지한다.
+// `satisfies` 는 초과/오타 항목을 잡고, 아래 완전성 체크는 누락 항목을 컴파일 타임에 잡는다
 const ITEM_TYPES = [
   'login_password',
   'payment_password',
@@ -31,7 +41,12 @@ const ITEM_TYPES = [
   'address',
   'phone',
   'custom'
-] as const
+] as const satisfies readonly VaultItemType[]
+
+// 타입 레벨 완전성 체크 — VaultItemType 에 값이 추가되고 ITEM_TYPES 갱신을 잊으면 컴파일 에러가 난다
+type ItemTypesComplete = [VaultItemType] extends [(typeof ITEM_TYPES)[number]] ? true : never
+const _itemTypesComplete: ItemTypesComplete = true
+void _itemTypesComplete
 
 /** 사용자명 마스킹 — 앞 2글자만 남기고 `***` 를 붙인다 */
 export function maskUsername(username: string): string {
@@ -97,7 +112,10 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     try {
       const r = await fn()
       const s = typeof r === 'string' ? r : JSON.stringify(r)
-      ctx.onStep(resolveLabel(), !/not found|refused|denied|error|locked/i.test(s))
+      ctx.onStep(
+        resolveLabel(),
+        !/not found|not set up|host unknown|refused|denied|error|locked|fail/i.test(s)
+      )
       return text(s)
     } catch (e) {
       ctx.onStep(resolveLabel(), false)
@@ -105,14 +123,18 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     }
   }
 
-  // 잠금 해제된 금고만 돌려준다(미주입·잠금은 null)
-  const unlockedVault = (): VaultService | null => {
+  // 실행 가능하면 잠금 해제된 금고를, 아니면 사용자에게 보여 줄 안내 문자열을 돌려준다.
+  // 미주입은 기존 호출부·테스트 호환을 위해 "잠금"으로 취급한다
+  const vaultGate = (): VaultService | string => {
     const v = ctx.vault
-    if (!v || v.state() !== 'unlocked') return null
+    if (!v) return VAULT_LOCKED
+    const state = v.state()
+    if (state === 'uninitialized') return VAULT_NOT_SET_UP
+    if (state !== 'unlocked') return VAULT_LOCKED
     return v
   }
 
-  // 현재 탭의 호스트(정규화). 탭이 없으면 빈 문자열
+  // 현재 탭의 호스트(정규화). 탭이 없거나 정규화에 실패하면 빈 문자열
   const currentHost = (): string => {
     const tab = activeOr(ctx)
     return tab ? normalizeHost(tab.view.webContents.getURL()) : ''
@@ -255,14 +277,22 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
       guard('계정 목록', async () => {
         const v = ctx.vault
         if (!v) return JSON.stringify({ vaultLocked: true, accounts: [] })
+        // host 인자도 없고 현재 탭 호스트도 알 수 없으면 전체 계정으로 폴백하지 않는다
+        if (!host && !currentHost()) {
+          return JSON.stringify({ accounts: [], note: 'host unknown' })
+        }
         const target = host ?? currentHost()
+        const state = v.state()
+        if (state === 'uninitialized') {
+          return JSON.stringify({ accounts: [], note: VAULT_NOT_SET_UP })
+        }
         // 사용자명은 비밀값이 아니므로 잠겨 있어도 목록 자체는 보여 준다
         const accounts = v.listAccounts(target || undefined).map((a) => ({
           label: a.label,
           username: maskUsername(a.username),
           types: a.itemTypes
         }))
-        if (v.state() !== 'unlocked') return JSON.stringify({ vaultLocked: true, accounts })
+        if (state !== 'unlocked') return JSON.stringify({ vaultLocked: true, accounts })
         return JSON.stringify(accounts)
       })
   )
@@ -278,21 +308,31 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     ({ elementId, itemType, accountLabel }) =>
       guard(`입력: ${itemType} (#${elementId})`, async () => {
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
-        const v = unlockedVault()
-        if (!v) return VAULT_LOCKED
+        const gate = vaultGate()
+        if (typeof gate === 'string') return gate
+        const v = gate
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
+        const host = currentHost()
+        if (!host) return HOST_UNKNOWN
+        // 비밀번호류는 대상 요소가 실제 비밀 입력칸(type=password)일 때만 채운다.
+        // 최신 스냅샷을 신뢰하지 않고, 매번 페이지에서 직접 확인한다
+        if (SECRET_TARGET_ITEM_TYPES.includes(itemType)) {
+          const isSecret = await pageBridge.isSecretField(tab, elementId)
+          if (!isSecret) return NOT_A_SECRET_FIELD
+        }
         // guard 모드에서 결제 비밀번호·카드는 사용자 확인을 한 번 더 받는다
         if (ctx.mode === 'guard' && CONFIRM_ITEM_TYPES.includes(itemType)) {
           const ok = await ctx.confirm(`개인정보 입력: ${itemType}`, 'danger')
           if (!ok) return 'denied by user'
         }
-        const account = resolveAccount(v.listAccounts(currentHost() || undefined), accountLabel)
+        const account = resolveAccount(v.listAccounts(host), accountLabel)
         if (!account) return ACCOUNT_NOT_FOUND
         const value = v.getSecretForFill(account.id, itemType, ctx.jobId)
         if (value === null) return `not found: no ${itemType} saved for this account`
         // 평문은 여기서만 존재하고 반환값·step 라벨·로그 어디에도 남기지 않는다
-        await pageBridge.fillValue(tab, elementId, value)
+        const filled = await pageBridge.fillValue(tab, elementId, value)
+        if (filled !== 'ok') return filled
         return 'ok'
       })
   )
@@ -307,27 +347,32 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
         () => label,
         async () => {
           if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
-          const v = unlockedVault()
-          if (!v) return VAULT_LOCKED
+          const gate = vaultGate()
+          if (typeof gate === 'string') return gate
+          const v = gate
           const tab = activeOr(ctx)
           if (!tab) return 'no active tab'
           const host = currentHost()
+          if (!host) return HOST_UNKNOWN
           label = `로그인: ${host}`
           const fields = await pageBridge.findLoginFields(tab)
           if (fields.password === undefined) {
             return 'fields not found: navigate to the login page first'
           }
-          const account = resolveAccount(v.listAccounts(host || undefined), accountLabel)
+          const account = resolveAccount(v.listAccounts(host), accountLabel)
           if (!account) return ACCOUNT_NOT_FOUND
           label = `로그인: ${host} (${account.label})`
           const password = v.getSecretForFill(account.id, 'login_password', ctx.jobId)
           if (password === null) return 'not found: no login password saved for this account'
-          // 사용자명은 비밀값이 아니므로 평문 그대로 채운다
+          // 사용자명은 비밀값이 아니므로 평문 그대로 채운다. 실패해도 전파한다
           if (fields.username !== undefined) {
-            await pageBridge.fillValue(tab, fields.username, account.username)
+            const userFilled = await pageBridge.fillValue(tab, fields.username, account.username)
+            if (userFilled !== 'ok') return userFilled
           }
-          await pageBridge.fillValue(tab, fields.password, password)
-          await pageBridge.submitForm(tab, fields.submit ?? fields.password)
+          const pwFilled = await pageBridge.fillValue(tab, fields.password, password)
+          if (pwFilled !== 'ok') return pwFilled
+          const submitted = await pageBridge.submitForm(tab, fields.submit ?? fields.password)
+          if (submitted !== 'ok') return submitted
           await pageBridge.waitForLoad(tab)
           return 'submitted: check the page for success or captcha/2FA'
         }

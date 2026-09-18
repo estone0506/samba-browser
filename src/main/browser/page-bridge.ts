@@ -28,6 +28,9 @@ const snapshotSchema = z.object({
 // 행동 도구(click/type/select/scroll/textOf)는 결과가 항상 문자열이어야 한다
 const resultSchema = z.string()
 
+// isSecretField 결과는 boolean
+const boolSchema = z.boolean()
+
 // findLoginFields 결과 — 못 찾은 필드는 없음(undefined)
 const loginFieldsSchema = z.object({
   username: z.number().int().optional(),
@@ -90,6 +93,9 @@ export const pageBridge = {
     call(tab.view.webContents, '__samba.findLoginFields()', loginFieldsSchema),
   submitForm: (tab: Tab, id: number): Promise<string> =>
     call(tab.view.webContents, `__samba.submitForm(${id})`, resultSchema),
+  // 최신 스냅샷 기준 요소가 비밀 입력칸(type=password)인지 확인(fill_secret 대상 검증용)
+  isSecretField: (tab: Tab, id: number): Promise<boolean> =>
+    call(tab.view.webContents, `__samba.isSecretField(${id})`, boolSchema),
   waitForLoad: (tab: Tab, timeoutMs = 10000): Promise<void> =>
     new Promise<void>((resolve) => {
       const wc = tab.view.webContents

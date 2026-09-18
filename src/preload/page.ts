@@ -10,6 +10,7 @@ import {
   fillValue,
   findLoginFields,
   submitForm,
+  isSecretField,
   installCaptureListener
 } from './page-core'
 
@@ -28,7 +29,9 @@ const api = {
   // SECRET 허용 — 메인 프로세스만 호출(AI 텍스트 도구 경로가 아님)
   fillValue: (id: number, value: string) => fillValue(id, value),
   findLoginFields: () => findLoginFields(),
-  submitForm: (id: number) => submitForm(id)
+  submitForm: (id: number) => submitForm(id),
+  // 최신 스냅샷 기준으로 요소가 비밀 입력칸(type=password)인지 확인(fill_secret 대상 검증용)
+  isSecretField: (id: number) => isSecretField(id)
 }
 
 export type SambaPageApi = typeof api

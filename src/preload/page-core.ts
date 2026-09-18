@@ -90,6 +90,14 @@ function get(id: number): HTMLElement | null {
   return registry[id - 1] ?? null
 }
 
+// 등록된 요소가 비밀 입력칸(type=password)인지 여부. 최신 스냅샷 기준으로 판단하며,
+// registry 에 없는 id 는 false(비밀 입력칸 아님으로 간주 → 호출부가 거부한다)
+export function isSecretField(id: number): boolean {
+  const el = get(id)
+  if (!el) return false
+  return el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'password'
+}
+
 // 등록된 요소의 실제 페이지 텍스트. 위험 행동 판정의 근거(AI 가 준 label 은 신뢰하지 않음)
 export function textOf(id: number): string {
   const el = get(id)
