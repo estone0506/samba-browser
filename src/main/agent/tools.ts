@@ -6,8 +6,9 @@ import { serializeSnapshot } from '../../shared/snapshot'
 import { isDangerous } from '../../shared/danger'
 import type { PermissionMode, VaultAccessPolicy } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
-import type { AccountDto, VaultItemType } from '../../shared/vault'
+import type { AccountDto, AgentAccess, VaultItemType } from '../../shared/vault'
 import { normalizeHost } from '../../shared/host'
+import { DEFAULT_FIELD_KEY } from '../vault/fields'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -25,9 +26,10 @@ const HOST_MISMATCH = 'refused: host must match the current tab'
 // 계정을 특정하지 못했을 때 돌려주는 문자열
 const ACCOUNT_NOT_FOUND = 'account not found: use list_accounts'
 // guard 모드에서 추가 확인을 받아야 하는 민감 항목
-const CONFIRM_ITEM_TYPES: VaultItemType[] = ['payment_password', 'card']
-// fill_secret 대상 요소가 실제로 비밀 입력칸(type=password)이어야 하는 항목 종류
-const SECRET_TARGET_ITEM_TYPES: VaultItemType[] = ['login_password', 'payment_password', 'card']
+const CONFIRM_ITEM_TYPES: VaultItemType[] = ['password', 'card']
+// fill_secret 대상 요소가 실제로 비밀 입력칸(type=password)이어야 하는 항목 종류.
+// 카드·신원정보는 번호칸이 평문 input 인 경우가 흔해 이 검사에서 제외한다
+const SECRET_TARGET_ITEM_TYPES: VaultItemType[] = ['login', 'password']
 // 대상 요소가 비밀 입력칸이 아닐 때 돌려주는 문자열
 const NOT_A_SECRET_FIELD = 'refused: target is not a secret input'
 // 접근 정책이 never 일 때 돌려주는 문자열
@@ -60,15 +62,12 @@ export function isSecurePageUrl(url: string): boolean {
 // 금고에 저장된 항목 종류(도구 스키마용). shared/vault 의 VaultItemType 과 단일 소스로 유지한다.
 // `satisfies` 는 초과/오타 항목을 잡고, 아래 완전성 체크는 누락 항목을 컴파일 타임에 잡는다
 const ITEM_TYPES = [
-  'login_password',
-  'payment_password',
+  'login',
+  'password',
   'card',
-  'passport',
-  'id_card',
-  'birth_date',
-  'address',
-  'phone',
-  'custom'
+  'note',
+  'identity',
+  'document'
 ] as const satisfies readonly VaultItemType[]
 
 // 타입 레벨 완전성 체크 — VaultItemType 에 값이 추가되고 ITEM_TYPES 갱신을 잊으면 컴파일 에러가 난다
@@ -82,14 +81,35 @@ export function maskUsername(username: string): string {
 }
 
 /**
- * 계정 선택 규칙 — 라벨 지정 > 기본 계정 > 유일한 계정.
+ * 계정 선택 규칙 — 라벨 지정 > 탭 프로필과 같은 라벨 > 기본 계정 > 유일한 계정.
+ * 탭 프로필을 같이 넘기면 계정 순회(계정별 새 탭)에서 라벨 없이도 그 탭의 계정을 고른다.
  * 특정하지 못하면 null 을 돌려준다(도구는 ACCOUNT_NOT_FOUND 를 반환).
  */
-export function resolveAccount(accounts: AccountDto[], label?: string): AccountDto | null {
+export function resolveAccount(
+  accounts: AccountDto[],
+  label?: string,
+  tabProfile?: string
+): AccountDto | null {
   if (label) return accounts.find((a) => a.label === label) ?? null
+  if (tabProfile) {
+    const byProfile = accounts.find((a) => a.label === tabProfile)
+    if (byProfile) return byProfile
+  }
   const preferred = accounts.find((a) => a.isDefault)
   if (preferred) return preferred
   return accounts.length === 1 ? accounts[0] : null
+}
+
+/**
+ * 계정별 접근 정책과 전역 정책을 합쳐 실제 적용할 정책을 고른다.
+ * 계정이 'inherit' 이면 전역 정책을, 아니면 계정 설정이 전역을 override 한다.
+ */
+export function effectiveAccess(
+  accountAccess: AgentAccess | undefined,
+  globalPolicy: VaultAccessPolicy
+): VaultAccessPolicy {
+  if (!accountAccess || accountAccess === 'inherit') return globalPolicy
+  return accountAccess
 }
 
 export interface ToolContext {
@@ -173,15 +193,25 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     return excluded.some((h) => (normalizeHost(h) || h) === host)
   }
 
-  // 실행 가능하면 잠금 해제된 금고를, 아니면 사용자에게 보여 줄 안내 문자열을 돌려준다.
-  // 미주입은 기존 호출부·테스트 호환을 위해 "잠금"으로 취급한다.
-  // 접근 정책 never 는 즉시 거부하고, always 는 잠겨 있을 때 기기 키로 자동 해제를 시도한다
-  const vaultGate = async (): Promise<VaultService | string> => {
+  // 전역 접근 정책(계정이 'inherit' 일 때 적용된다)
+  const globalPolicy = (): VaultAccessPolicy => ctx.vaultAccessPolicy ?? 'while_unlocked'
+
+  // 금고 인스턴스가 있고 설정도 끝났는지만 본다(정책 판정 전 단계).
+  // 미주입은 기존 호출부·테스트 호환을 위해 "잠금"으로 취급한다
+  const vaultAvailable = (): VaultService | string => {
     const v = ctx.vault
     if (!v) return VAULT_LOCKED
-    const policy = ctx.vaultAccessPolicy ?? 'while_unlocked'
-    if (policy === 'never') return VAULT_ACCESS_NEVER
     if (v.state() === 'uninitialized') return VAULT_NOT_SET_UP
+    return v
+  }
+
+  // 정해진 정책으로 실제 사용 가능 여부를 판정한다.
+  // never 는 즉시 거부하고, always 는 잠겨 있을 때 기기 키로 자동 해제를 시도한다
+  const applyPolicy = async (
+    v: VaultService,
+    policy: VaultAccessPolicy
+  ): Promise<VaultService | string> => {
+    if (policy === 'never') return VAULT_ACCESS_NEVER
     if (policy === 'always' && v.state() !== 'unlocked') {
       await v.ensureUnlockedByDevice()
     }
@@ -190,6 +220,8 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     if (state !== 'unlocked') return VAULT_LOCKED
     return v
   }
+
+  // 계정을 특정하지 않는 경로(현재는 없음)를 위한 전역 정책 게이트
 
   const getPage = tool(
     'get_page',
@@ -339,8 +371,7 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
           return JSON.stringify({ accounts: [], note: HOST_MISMATCH })
         }
         // 접근 정책 never·제외 도메인은 vaultGate 와 같은 기준으로 즉시 거부한다(계정 열거 자체를 막는다)
-        const policy = ctx.vaultAccessPolicy ?? 'while_unlocked'
-        if (policy === 'never') return VAULT_ACCESS_NEVER
+        if (globalPolicy() === 'never') return VAULT_ACCESS_NEVER
         if (isHostExcluded(target)) return LIST_ACCOUNTS_HOST_EXCLUDED
         const state = v.state()
         if (state === 'uninitialized') {
@@ -350,7 +381,8 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
         const accounts = v.listAccounts(target).map((a) => ({
           label: a.label,
           username: maskUsername(a.username),
-          types: a.itemTypes
+          types: a.itemTypes,
+          tags: a.tags
         }))
         if (state !== 'unlocked') return JSON.stringify({ vaultLocked: true, accounts })
         return JSON.stringify(accounts)
@@ -359,14 +391,15 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
 
   const fillSecret = tool(
     'fill_secret',
-    'Fill a saved secret (password, card, ...) into input [n] without ever revealing its value.',
+    'Fill a saved secret (password, card number, ...) into input [n] without ever revealing its value. Use field for a specific field such as "card.number".',
     {
       elementId: z.number().int(),
       itemType: z.enum(ITEM_TYPES),
+      field: z.string().optional(),
       accountLabel: z.string().optional()
     },
-    ({ elementId, itemType, accountLabel }) =>
-      guard(`입력: ${itemType} (#${elementId})`, async () => {
+    ({ elementId, itemType, field, accountLabel }) =>
+      guard(`입력: ${itemType}${field ? `.${field}` : ''} (#${elementId})`, async () => {
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
@@ -375,7 +408,17 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
         // 평문(http) 페이지에는 비밀값을 절대 채우지 않는다(네트워크 도청·다운그레이드 방어)
         if (!isSecurePageUrl(currentUrl())) return INSECURE_PAGE
         if (isHostExcluded(host)) return VAULT_HOST_EXCLUDED
-        const gate = await vaultGate()
+        const available = vaultAvailable()
+        if (typeof available === 'string') return available
+        // 계정을 먼저 특정해야 계정별 접근 정책을 적용할 수 있다.
+        // 계정 목록 조회는 값(비밀번호)을 건드리지 않으므로 잠금 상태에서도 안전하다
+        const account = resolveAccount(available.listAccounts(host), accountLabel, tab.profile)
+        if (!account) return ACCOUNT_NOT_FOUND
+        // 항목별 agentAccess 가 전역 정책을 override 한다
+        const gate = await applyPolicy(
+          available,
+          effectiveAccess(account.agentAccess, globalPolicy())
+        )
         if (typeof gate === 'string') return gate
         const v = gate
         // 비밀번호류는 대상 요소가 실제 비밀 입력칸(type=password)일 때만 채운다.
@@ -389,10 +432,9 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
           const ok = await ctx.confirm(`키마스터 입력: ${itemType}`, 'danger')
           if (!ok) return 'denied by user'
         }
-        const account = resolveAccount(v.listAccounts(host), accountLabel)
-        if (!account) return ACCOUNT_NOT_FOUND
-        const value = v.getSecretForFill(account.id, itemType, ctx.jobId)
-        if (value === null) return `not found: no ${itemType} saved for this account`
+        const fieldKey = field ?? DEFAULT_FIELD_KEY
+        const value = v.getSecretForFill(account.id, itemType, fieldKey, ctx.jobId)
+        if (value === null) return `not found: no ${itemType}.${fieldKey} saved for this account`
         // 평문은 여기서만 존재하고 반환값·step 라벨·로그 어디에도 남기지 않는다
         const filled = await pageBridge.fillValue(tab, elementId, value)
         if (filled !== 'ok') return filled
@@ -417,18 +459,24 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
           // 평문(http) 로그인 페이지에는 비밀번호를 채우지 않는다
           if (!isSecurePageUrl(currentUrl())) return INSECURE_PAGE
           if (isHostExcluded(host)) return VAULT_HOST_EXCLUDED
-          const gate = await vaultGate()
-          if (typeof gate === 'string') return gate
-          const v = gate
+          const available = vaultAvailable()
+          if (typeof available === 'string') return available
           label = `로그인: ${host}`
           const fields = await pageBridge.findLoginFields(tab)
           if (fields.password === undefined) {
             return 'fields not found: navigate to the login page first'
           }
-          const account = resolveAccount(v.listAccounts(host), accountLabel)
+          // 라벨을 안 주면 탭 프로필과 같은 라벨의 계정을 자동으로 고른다(계정 순회 지원)
+          const account = resolveAccount(available.listAccounts(host), accountLabel, tab.profile)
           if (!account) return ACCOUNT_NOT_FOUND
+          const gate = await applyPolicy(
+            available,
+            effectiveAccess(account.agentAccess, globalPolicy())
+          )
+          if (typeof gate === 'string') return gate
+          const v = gate
           label = `로그인: ${host} (${account.label})`
-          const password = v.getSecretForFill(account.id, 'login_password', ctx.jobId)
+          const password = v.getSecretForFill(account.id, 'login', DEFAULT_FIELD_KEY, ctx.jobId)
           if (password === null) return 'not found: no login password saved for this account'
           // 사용자명은 비밀값이 아니므로 평문 그대로 채운다. 실패해도 전파한다
           if (fields.username !== undefined) {

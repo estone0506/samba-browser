@@ -6,13 +6,25 @@
 // - 목록/메타 반환값에는 ciphertext·iv·평문 필드가 아예 존재하지 않는다
 //
 // AAD 전략
-// - 항목 암호문의 AAD 는 `String(item.id)` 다. id 는 INSERT 시점에 정해지므로
-//   "빈 암호문으로 행을 먼저 만들고(id 확보) → 같은 트랜잭션에서 암호문을 UPDATE" 하는 방식을 쓴다.
-//   (per-item 랜덤 aadToken 컬럼을 추가하는 대안 대신, 스키마 변경이 없는 이 방식을 선택했다)
+// - v2 부터 필드 암호문의 AAD 는 `${item.id}:${field.key}` 다. id 는 INSERT 시점에 정해지므로
+//   "빈 fields 로 행을 먼저 만들고(id 확보) → 같은 트랜잭션에서 fields 를 UPDATE" 하는 방식을 쓴다.
+// - v1 에서 옮겨 온 값은 재암호화하지 않으므로 AAD 가 `String(item.id)` 다.
+//   그 값은 저장된 field.aad 에 기록돼 있고, fields.aadFor() 가 이를 그대로 사용한다
 
 import { timingSafeEqual } from 'node:crypto'
 import type { Db } from '../db/client'
 import { VaultRepo, type AuditRow } from './repo'
+import {
+  DEFAULT_FIELD_KEY,
+  DEFAULT_SECTION_KEY,
+  aadFor,
+  findField,
+  isSecretField,
+  newAad,
+  upsertField,
+  type StoredField,
+  type StoredSection
+} from './fields'
 import {
   randomBytes,
   deriveKey,
@@ -29,7 +41,10 @@ import {
 } from './crypto'
 import type {
   AccountDto,
+  AgentAccess,
   CapturePromptDto,
+  FieldKind,
+  PickerAccountDto,
   SiteDto,
   VaultItemMeta,
   VaultItemType,
@@ -54,13 +69,31 @@ export interface VaultServiceOptions {
   safeStorage?: SafeStorageLike
 }
 
+// 저장 요청의 필드 한 개. secret 필드의 value 는 평문이며 메인에서 곧바로 암호화된다.
+// value 를 생략하면 기존에 저장된 값을 그대로 둔다(편집 화면에서 "비워두면 유지")
+export interface PutFieldInput {
+  key: string
+  label: string
+  kind: FieldKind
+  value?: string
+}
+
+export interface PutSectionInput {
+  key: string
+  label: string
+  fields: PutFieldInput[]
+}
+
 export interface PutItemInput {
   // 편집 대상 항목 id. 주면 그 항목을 그대로 갱신한다(라벨·종류 변경 포함)
   id?: number
   accountId: number | null
   type: VaultItemType
   label: string
-  value: string
+  // 하위 호환 경로: 단일 secret 값 하나만 넣는다(섹션 'main' > 필드 'value')
+  value?: string
+  // 신규 경로: 섹션>필드 전체를 교체한다(값을 생략한 secret 필드는 기존 암호문을 유지)
+  sections?: PutSectionInput[]
 }
 
 export interface UpsertAccountInput {
@@ -73,6 +106,10 @@ export interface UpsertAccountInput {
   isDefault?: boolean
   siteName?: string
   loginUrl?: string
+  // 생략하면 기존 값을 유지한다
+  urls?: string[]
+  agentAccess?: AgentAccess
+  tags?: string[]
 }
 
 // 저장 제안으로 잡아 둔 자격정보. password 는 메인 메모리에만 60초 머문다
@@ -371,7 +408,43 @@ export class VaultService {
       label: a.label,
       username: a.username,
       isDefault: a.isDefault,
-      itemTypes: types.get(a.id) ?? []
+      itemTypes: types.get(a.id) ?? [],
+      urls: a.urls,
+      agentAccess: a.agentAccess,
+      tags: a.tags
+    }))
+  }
+
+  /** 계정 하나를 DTO 로 조회한다(없으면 null) */
+  getAccount(id: number): AccountDto | null {
+    const row = this.repo.getAccount(id)
+    if (!row) return null
+    const types = this.repo.itemTypesByAccount()
+    return {
+      id: row.id,
+      siteId: row.siteId,
+      host: row.host,
+      label: row.label,
+      username: row.username,
+      isDefault: row.isDefault,
+      itemTypes: types.get(row.id) ?? [],
+      urls: row.urls,
+      agentAccess: row.agentAccess,
+      tags: row.tags
+    }
+  }
+
+  /**
+   * 페이지 내 자동 채움 피커에 내려보낼 최소 목록.
+   * 값(비밀번호)은 담기지 않으며, 로그인 항목이 있는 계정만 고른다
+   */
+  listPickerAccounts(host: string): PickerAccountDto[] {
+    const normalized = normalizeHost(host) || host
+    if (!normalized) return []
+    return this.listAccounts(normalized).map((a) => ({
+      id: a.id,
+      label: a.label,
+      username: a.username
     }))
   }
 
@@ -404,16 +477,18 @@ export class VaultService {
       label: row.label,
       username: row.username,
       isDefault: row.isDefault,
-      itemTypes: types.get(row.id) ?? []
+      itemTypes: types.get(row.id) ?? [],
+      urls: row.urls,
+      agentAccess: row.agentAccess,
+      tags: row.tags
     }
   }
 
   // 기존 항목이 있으면 덮어쓰고, 없으면 새로 만든다.
   // - input.id 를 주면 그 항목을 갱신한다(편집)
-  // - 계정 항목은 (accountId, type) 이 키다(계정당 로그인 비밀번호 1개)
+  // - 계정 항목은 (accountId, type) 이 키다(계정당 로그인 항목 1개)
   // - 전역 항목은 (type, label) 이 키다 — 같은 종류라도 라벨이 다르면 별개 항목이다
-  //   (예전에는 type 만으로 upsert 해서 '기타' 항목 두 개가 서로를 덮어썼다)
-  // 새로 만들 때는 id 를 AAD 로 쓰기 위해 placeholder insert → 암호문 update 순서를 한 트랜잭션에서 수행한다
+  // 새로 만들 때는 id 를 AAD 로 쓰기 위해 placeholder insert → fields update 순서를 한 트랜잭션에서 수행한다
   putItem(input: PutItemInput): VaultItemMeta {
     const key = this.requireKey()
     const now = Date.now()
@@ -423,8 +498,9 @@ export class VaultService {
       const id =
         existing?.id ??
         this.repo.insertItemPlaceholder(input.accountId, input.type, input.label, now)
-      const blob = encrypt(key, input.value, String(id))
-      this.repo.updateItemSecret(id, blob.ciphertext, blob.iv, input.label, input.type, now)
+      const base = existing?.sections ?? []
+      const sections = this.buildSections(key, id, input, base)
+      this.repo.updateItemFields(id, sections, input.label, input.type, now)
       this.repo.insertAudit({
         itemId: id,
         accountId: input.accountId,
@@ -438,8 +514,71 @@ export class VaultService {
     return meta
   }
 
+  /**
+   * 저장 요청을 DB 에 넣을 섹션 구조로 바꾼다.
+   * - sections 를 주면 그것으로 전체를 교체한다(값 없는 secret 필드는 기존 암호문 유지)
+   * - value 만 주면 기본 섹션의 'value' 필드 하나만 upsert 한다(v1 호환 경로)
+   */
+  private buildSections(
+    key: Buffer,
+    id: number,
+    input: PutItemInput,
+    base: StoredSection[]
+  ): StoredSection[] {
+    if (!input.sections) {
+      if (input.value === undefined) return base
+      return upsertField(
+        base,
+        DEFAULT_SECTION_KEY,
+        input.label,
+        this.encryptField(key, id, {
+          key: DEFAULT_FIELD_KEY,
+          label: input.label,
+          kind: 'secret',
+          value: input.value
+        }) ?? { key: DEFAULT_FIELD_KEY, label: input.label, kind: 'text' }
+      )
+    }
+    return input.sections.map((section) => ({
+      key: section.key,
+      label: section.label,
+      fields: section.fields.map((field): StoredField => {
+        if (field.kind !== 'secret') {
+          return {
+            key: field.key,
+            label: field.label,
+            kind: field.kind,
+            ...(field.value === undefined ? {} : { value: field.value })
+          }
+        }
+        const encrypted = this.encryptField(key, id, field)
+        if (encrypted) return encrypted
+        // 값을 생략했으면 기존 암호문을 그대로 유지한다
+        const previous = findField(base, field.key)
+        if (previous && isSecretField(previous)) {
+          return { ...previous, label: field.label }
+        }
+        // 기존 값도 없으면 값 없는 필드로 둔다(암호화할 평문이 없다)
+        return { key: field.key, label: field.label, kind: 'text' }
+      })
+    }))
+  }
+
+  // value 가 있으면 필드별 AES-256-GCM 으로 암호화한다. 값이 없으면 null
+  private encryptField(key: Buffer, id: number, field: PutFieldInput): StoredField | null {
+    if (field.value === undefined) return null
+    const blob = encrypt(key, field.value, newAad(id, field.key))
+    return {
+      key: field.key,
+      label: field.label,
+      kind: 'secret',
+      ciphertext: blob.ciphertext.toString('base64'),
+      iv: blob.iv.toString('base64')
+    }
+  }
+
   // putItem 이 덮어쓸 기존 항목을 찾는다(없으면 null → 새 항목을 만든다)
-  private findExistingItem(input: PutItemInput): { id: number } | null {
+  private findExistingItem(input: PutItemInput): { id: number; sections: StoredSection[] } | null {
     if (input.id !== undefined) {
       const row = this.repo.getItemRow(input.id)
       if (!row) throw new Error('항목을 찾을 수 없습니다')
@@ -464,12 +603,20 @@ export class VaultService {
     this.touch()
   }
 
-  // 사용자가 "보기" 를 눌렀을 때만 호출된다. 평문을 돌려주는 유일한 사용자 경로
-  reveal(id: number): string {
+  // 사용자가 "보기" 를 눌렀을 때만 호출된다. 평문을 돌려주는 유일한 사용자 경로.
+  // fieldKey 를 생략하면 단일 값 항목의 기본 필드('value')를 본다
+  reveal(id: number, fieldKey: string = DEFAULT_FIELD_KEY): string {
     const key = this.requireKey()
     const row = this.repo.getItemRow(id)
     if (!row) throw new Error('항목을 찾을 수 없습니다')
-    const plain = decrypt(key, row.ciphertext, row.iv, String(row.id))
+    const field = findField(row.sections, fieldKey)
+    if (!field || !isSecretField(field)) throw new Error('비밀 필드를 찾을 수 없습니다')
+    const plain = decrypt(
+      key,
+      Buffer.from(field.ciphertext, 'base64'),
+      Buffer.from(field.iv, 'base64'),
+      aadFor(row.id, field)
+    )
     this.repo.insertAudit({
       itemId: id,
       accountId: row.accountId,
@@ -483,18 +630,33 @@ export class VaultService {
   /**
    * 자동 채움용 평문 조회 — **메인 프로세스 내부에서만** 호출한다.
    * IPC 로 노출하지 않으며, 반환값은 격리 월드 인자로만 전달된다.
+   * fieldKey 로 항목 안의 개별 필드(예: 'card.number')를 지정한다.
+   * source 는 감사 로그에 남길 주체다('ai' | 'user') — 사용자가 누른 자동 채우기는 'user'
    */
-  getSecretForFill(accountId: number, type: VaultItemType, jobId?: string): string | null {
+  getSecretForFill(
+    accountId: number,
+    type: VaultItemType,
+    fieldKey: string = DEFAULT_FIELD_KEY,
+    jobId?: string,
+    source: 'ai' | 'user' = 'ai'
+  ): string | null {
     if (!this.key) return null
     const row = this.repo.findItemRow(accountId, type)
     if (!row) return null
+    const field = findField(row.sections, fieldKey)
+    if (!field || !isSecretField(field)) return null
     try {
-      const plain = decrypt(this.key, row.ciphertext, row.iv, String(row.id))
+      const plain = decrypt(
+        this.key,
+        Buffer.from(field.ciphertext, 'base64'),
+        Buffer.from(field.iv, 'base64'),
+        aadFor(row.id, field)
+      )
       this.repo.insertAudit({
         itemId: row.id,
         accountId: row.accountId,
         action: 'fill',
-        source: 'ai',
+        source,
         jobId
       })
       this.touch()
@@ -513,10 +675,17 @@ export class VaultService {
     const normalized = normalizeHost(host) || host
     const account = this.repo.listAccounts(normalized).find((a) => a.username === username)
     if (!account) return false
-    const row = this.repo.findItemRow(account.id, 'login_password')
+    const row = this.repo.findItemRow(account.id, 'login')
     if (!row) return false
+    const field = findField(row.sections, DEFAULT_FIELD_KEY)
+    if (!field || !isSecretField(field)) return false
     try {
-      const stored = decrypt(this.key, row.ciphertext, row.iv, String(row.id))
+      const stored = decrypt(
+        this.key,
+        Buffer.from(field.ciphertext, 'base64'),
+        Buffer.from(field.iv, 'base64'),
+        aadFor(row.id, field)
+      )
       // 타이밍 오라클 방지: 길이가 다르면 즉시 false, 같으면 상수 시간 비교
       const a = Buffer.from(stored, 'utf8')
       const b = Buffer.from(password, 'utf8')

@@ -4,7 +4,9 @@
 import { eq, and, or, isNull, desc } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { sites, accounts, vaultItems, vaultMeta, auditLog } from '../db/schema'
-import type { SiteDto, VaultItemMeta, VaultItemType } from '../../shared/vault'
+import type { AgentAccess, SiteDto, VaultItemMeta, VaultItemType } from '../../shared/vault'
+import { normalizeAgentAccess, normalizeItemType } from '../../shared/vault'
+import { parseFields, serializeFields, toMetaSections, type StoredSection } from './fields'
 
 // 암호문을 포함한 내부 행. 이 타입은 메인 프로세스 밖으로 나가지 않는다
 export interface VaultItemRow {
@@ -12,8 +14,8 @@ export interface VaultItemRow {
   accountId: number | null
   type: VaultItemType
   label: string
-  ciphertext: Buffer
-  iv: Buffer
+  // 섹션>필드 구조. secret 필드의 암호문이 여기 들어 있다
+  sections: StoredSection[]
   updatedAt: number
 }
 
@@ -24,6 +26,9 @@ export interface AccountRow {
   label: string
   username: string
   isDefault: boolean
+  urls: string[]
+  agentAccess: AgentAccess
+  tags: string[]
 }
 
 export interface AuditRow {
@@ -47,6 +52,10 @@ export interface UpsertAccountInput {
   isDefault?: boolean
   siteName?: string
   loginUrl?: string
+  // 아래 셋은 생략하면 기존 값을 유지한다(자동 저장·가져오기가 사용자 설정을 지우지 않게)
+  urls?: string[]
+  agentAccess?: AgentAccess
+  tags?: string[]
 }
 
 const AUDIT_LIST_LIMIT = 200
@@ -54,6 +63,18 @@ const AUDIT_LIST_LIMIT = 200
 // sql.js 는 BLOB 을 Uint8Array 로 돌려준다. 항상 Buffer 로 맞춰 준다
 function toBuffer(value: Buffer | Uint8Array): Buffer {
   return Buffer.isBuffer(value) ? value : Buffer.from(value)
+}
+
+// JSON 으로 저장된 string[] 컬럼(urls/tags)을 읽는다. 깨져 있으면 빈 배열
+function parseStringArray(raw: string | null): string[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((v): v is string => typeof v === 'string')
+  } catch {
+    return []
+  }
 }
 
 export class VaultRepo {
@@ -136,12 +157,15 @@ export class VaultRepo {
         host: sites.host,
         label: accounts.label,
         username: accounts.username,
-        isDefault: accounts.isDefault
+        isDefault: accounts.isDefault,
+        urls: accounts.urls,
+        agentAccess: accounts.agentAccess,
+        tags: accounts.tags
       })
       .from(accounts)
       .innerJoin(sites, eq(accounts.siteId, sites.id))
     const rows = host ? base.where(eq(sites.host, host)).all() : base.all()
-    return rows
+    return rows.map(toAccountRow)
   }
 
   getAccount(id: number): AccountRow | null {
@@ -152,13 +176,17 @@ export class VaultRepo {
         host: sites.host,
         label: accounts.label,
         username: accounts.username,
-        isDefault: accounts.isDefault
+        isDefault: accounts.isDefault,
+        urls: accounts.urls,
+        agentAccess: accounts.agentAccess,
+        tags: accounts.tags
       })
       .from(accounts)
       .innerJoin(sites, eq(accounts.siteId, sites.id))
       .where(eq(accounts.id, id))
       .all()
-    return rows[0] ?? null
+    const row = rows[0]
+    return row ? toAccountRow(row) : null
   }
 
   upsertAccount(input: UpsertAccountInput): AccountRow {
@@ -184,6 +212,9 @@ export class VaultRepo {
           label: input.label ?? existing.label,
           username: input.username,
           isDefault: input.isDefault ?? existing.isDefault,
+          urls: input.urls ? JSON.stringify(input.urls) : existing.urls,
+          agentAccess: input.agentAccess ?? existing.agentAccess,
+          tags: input.tags ? JSON.stringify(input.tags) : existing.tags,
           updatedAt: now
         })
         .where(eq(accounts.id, existing.id))
@@ -202,6 +233,10 @@ export class VaultRepo {
         label: input.label || input.username || input.host,
         username: input.username,
         isDefault: input.isDefault ?? false,
+        // 신규 계정은 loginUrl 이 있으면 첫 URL 로 담아 둔다
+        urls: JSON.stringify(input.urls ?? (input.loginUrl ? [input.loginUrl] : [])),
+        agentAccess: input.agentAccess ?? 'inherit',
+        tags: JSON.stringify(input.tags ?? []),
         createdAt: now,
         updatedAt: now
       })
@@ -223,7 +258,7 @@ export class VaultRepo {
     for (const row of rows) {
       if (row.accountId === null) continue
       const list = map.get(row.accountId) ?? []
-      const type = row.type as VaultItemType
+      const type = normalizeItemType(row.type)
       if (!list.includes(type)) list.push(type)
       map.set(row.accountId, list)
     }
@@ -232,7 +267,7 @@ export class VaultRepo {
 
   // --- vault_items ------------------------------------------------------
 
-  // 값(ciphertext/iv)을 제외한 메타만 돌려준다
+  // 값(암호문)을 제외한 메타만 돌려준다 — secret 필드는 {key,label,kind} 만 담긴다
   listItems(accountId: number | null): VaultItemMeta[] {
     const rows = this.d
       .select({
@@ -240,6 +275,7 @@ export class VaultRepo {
         accountId: vaultItems.accountId,
         type: vaultItems.type,
         label: vaultItems.label,
+        fields: vaultItems.fields,
         updatedAt: vaultItems.updatedAt
       })
       .from(vaultItems)
@@ -247,31 +283,16 @@ export class VaultRepo {
         accountId === null ? isNull(vaultItems.accountId) : eq(vaultItems.accountId, accountId)
       )
       .all()
-    return rows.map((r) => ({
-      id: r.id,
-      accountId: r.accountId,
-      type: r.type as VaultItemType,
-      label: r.label,
-      updatedAt: r.updatedAt
-    }))
+    return rows.map(toItemMeta)
   }
 
   getItemRow(id: number): VaultItemRow | null {
     const row = this.d.select().from(vaultItems).where(eq(vaultItems.id, id)).get()
-    if (!row) return null
-    return {
-      id: row.id,
-      accountId: row.accountId,
-      type: row.type as VaultItemType,
-      label: row.label,
-      ciphertext: toBuffer(row.ciphertext),
-      iv: toBuffer(row.iv),
-      updatedAt: row.updatedAt
-    }
+    return row ? toItemRow(row) : null
   }
 
   // 전역 항목(accountId = null)은 (type, label) 조합으로 찾는다 — 같은 type 이라도
-  // 라벨이 다르면 별개 항목이다(예: '기타' 항목 여러 개)
+  // 라벨이 다르면 별개 항목이다(예: '메모' 항목 여러 개)
   findGlobalItemRow(type: VaultItemType, label: string): VaultItemRow | null {
     const rows = this.d
       .select()
@@ -281,16 +302,7 @@ export class VaultRepo {
       )
       .all()
     const row = rows[0]
-    if (!row) return null
-    return {
-      id: row.id,
-      accountId: row.accountId,
-      type: row.type as VaultItemType,
-      label: row.label,
-      ciphertext: toBuffer(row.ciphertext),
-      iv: toBuffer(row.iv),
-      updatedAt: row.updatedAt
-    }
+    return row ? toItemRow(row) : null
   }
 
   findItemRow(accountId: number | null, type: VaultItemType): VaultItemRow | null {
@@ -305,19 +317,11 @@ export class VaultRepo {
       )
       .all()
     const row = rows[0]
-    if (!row) return null
-    return {
-      id: row.id,
-      accountId: row.accountId,
-      type: row.type as VaultItemType,
-      label: row.label,
-      ciphertext: toBuffer(row.ciphertext),
-      iv: toBuffer(row.iv),
-      updatedAt: row.updatedAt
-    }
+    return row ? toItemRow(row) : null
   }
 
-  // AAD 로 쓸 id 를 먼저 얻기 위해 빈 암호문으로 행을 만든다(곧바로 updateItemSecret 로 채운다)
+  // AAD 로 쓸 id 를 먼저 얻기 위해 빈 fields 로 행을 만든다(곧바로 updateItemFields 로 채운다).
+  // ciphertext/iv 는 v1 스키마의 NOT NULL 잔재라 빈 버퍼를 넣는다
   insertItemPlaceholder(
     accountId: number | null,
     type: VaultItemType,
@@ -330,6 +334,7 @@ export class VaultRepo {
         accountId,
         type,
         label,
+        fields: serializeFields([]),
         ciphertext: Buffer.alloc(0),
         iv: Buffer.alloc(0),
         updatedAt
@@ -339,17 +344,16 @@ export class VaultRepo {
     return inserted[0].id
   }
 
-  updateItemSecret(
+  updateItemFields(
     id: number,
-    ciphertext: Buffer,
-    iv: Buffer,
+    sections: StoredSection[],
     label: string,
     type: VaultItemType,
     updatedAt: number
   ): void {
     this.d
       .update(vaultItems)
-      .set({ ciphertext, iv, label, type, updatedAt })
+      .set({ fields: serializeFields(sections), label, type, updatedAt })
       .where(eq(vaultItems.id, id))
       .run()
     this.db.scheduleSave()
@@ -367,20 +371,14 @@ export class VaultRepo {
         accountId: vaultItems.accountId,
         type: vaultItems.type,
         label: vaultItems.label,
+        fields: vaultItems.fields,
         updatedAt: vaultItems.updatedAt
       })
       .from(vaultItems)
       .where(eq(vaultItems.id, id))
       .all()
     const r = rows[0]
-    if (!r) return null
-    return {
-      id: r.id,
-      accountId: r.accountId,
-      type: r.type as VaultItemType,
-      label: r.label,
-      updatedAt: r.updatedAt
-    }
+    return r ? toItemMeta(r) : null
   }
 
   // --- audit_log --------------------------------------------------------
@@ -434,5 +432,64 @@ export class VaultRepo {
   // 여러 쓰기를 한 트랜잭션으로 묶는다(항목 생성: placeholder insert → 암호문 update)
   transaction<T>(fn: () => T): T {
     return this.d.transaction(() => fn())
+  }
+}
+
+// --- 행 → 도메인 객체 변환 -------------------------------------------------
+
+interface RawAccountRow {
+  id: number
+  siteId: number
+  host: string
+  label: string
+  username: string
+  isDefault: boolean
+  urls: string | null
+  agentAccess: string
+  tags: string | null
+}
+
+function toAccountRow(r: RawAccountRow): AccountRow {
+  return {
+    id: r.id,
+    siteId: r.siteId,
+    host: r.host,
+    label: r.label,
+    username: r.username,
+    isDefault: r.isDefault,
+    urls: parseStringArray(r.urls),
+    agentAccess: normalizeAgentAccess(r.agentAccess),
+    tags: parseStringArray(r.tags)
+  }
+}
+
+interface RawItemMetaRow {
+  id: number
+  accountId: number | null
+  type: string
+  label: string
+  fields: string | null
+  updatedAt: number
+}
+
+function toItemMeta(r: RawItemMetaRow): VaultItemMeta {
+  return {
+    id: r.id,
+    accountId: r.accountId,
+    type: normalizeItemType(r.type),
+    label: r.label,
+    sections: toMetaSections(parseFields(r.fields)),
+    updatedAt: r.updatedAt
+  }
+}
+
+function toItemRow(r: RawItemMetaRow): VaultItemRow {
+  return {
+    id: r.id,
+    accountId: r.accountId,
+    type: normalizeItemType(r.type),
+    label: r.label,
+    sections: parseFields(r.fields),
+    updatedAt: r.updatedAt
   }
 }

@@ -80,7 +80,7 @@ describe('ImportService', () => {
       const accounts = vault.listAccounts('example.com')
       expect(accounts).toHaveLength(1)
       expect(accounts[0].username).toBe('user1')
-      expect(accounts[0].itemTypes).toContain('login_password')
+      expect(accounts[0].itemTypes).toContain('login')
     })
 
     it('같은 CSV 를 다시 가져오면 전부 updated, added 는 0이다', async () => {

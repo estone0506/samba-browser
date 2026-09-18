@@ -104,7 +104,7 @@ describe('VaultService', () => {
     })
     const meta = vault.putItem({
       accountId: account.id,
-      type: 'login_password',
+      type: 'login',
       label: '로그인 비밀번호',
       value: SECRET
     })
@@ -112,11 +112,16 @@ describe('VaultService', () => {
     const items = vault.listItems(account.id)
     expect(items).toHaveLength(1)
     expect(items[0].id).toBe(meta.id)
-    expect(items[0].type).toBe('login_password')
-    // 메타에는 값 관련 필드 자체가 없어야 한다
+    expect(items[0].type).toBe('login')
+    // 메타에는 값 관련 필드 자체가 없어야 한다(sections 는 secret 필드의 key/label/kind 만 담는다)
     expect(Object.keys(items[0]).sort()).toEqual(
-      ['accountId', 'id', 'label', 'type', 'updatedAt'].sort()
+      ['accountId', 'id', 'label', 'sections', 'type', 'updatedAt'].sort()
     )
+    const secretFields = items[0].sections.flatMap((s) =>
+      s.fields.filter((f) => f.kind === 'secret')
+    )
+    expect(secretFields).toHaveLength(1)
+    expect(secretFields[0].value).toBeUndefined()
   })
 
   it('공개 목록·메타 어디에도 비밀값 문자열이 직렬화되지 않는다', async () => {
@@ -129,7 +134,7 @@ describe('VaultService', () => {
     })
     vault.putItem({
       accountId: account.id,
-      type: 'login_password',
+      type: 'login',
       label: '로그인 비밀번호',
       value: SECRET
     })
@@ -157,7 +162,7 @@ describe('VaultService', () => {
     })
     const meta = vault.putItem({
       accountId: account.id,
-      type: 'login_password',
+      type: 'login',
       label: '로그인 비밀번호',
       value: SECRET
     })
@@ -178,16 +183,16 @@ describe('VaultService', () => {
     })
     vault.putItem({
       accountId: account.id,
-      type: 'login_password',
+      type: 'login',
       label: '로그인 비밀번호',
       value: SECRET
     })
 
-    expect(vault.getSecretForFill(account.id, 'login_password', 'job-1')).toBe(SECRET)
+    expect(vault.getSecretForFill(account.id, 'login', 'value', 'job-1')).toBe(SECRET)
     expect(vault.getSecretForFill(account.id, 'card')).toBeNull()
 
     vault.lock()
-    expect(vault.getSecretForFill(account.id, 'login_password')).toBeNull()
+    expect(vault.getSecretForFill(account.id, 'login')).toBeNull()
   })
 
   it('reveal/fill 은 감사 로그를 남긴다', async () => {
@@ -200,13 +205,13 @@ describe('VaultService', () => {
     })
     const meta = vault.putItem({
       accountId: account.id,
-      type: 'login_password',
+      type: 'login',
       label: '로그인 비밀번호',
       value: SECRET
     })
 
     vault.reveal(meta.id)
-    vault.getSecretForFill(account.id, 'login_password', 'job-9')
+    vault.getSecretForFill(account.id, 'login', 'value', 'job-9')
 
     const log = vault.listAudit()
     const reveal = log.find((r) => r.action === 'reveal')
@@ -231,7 +236,7 @@ describe('VaultService', () => {
     })
     const meta = vault.putItem({
       accountId: account.id,
-      type: 'login_password',
+      type: 'login',
       label: '로그인 비밀번호',
       value: SECRET
     })
@@ -249,7 +254,7 @@ describe('VaultService', () => {
     })
     vault.putItem({
       accountId: account.id,
-      type: 'login_password',
+      type: 'login',
       label: '로그인 비밀번호',
       value: SECRET
     })
@@ -262,7 +267,7 @@ describe('VaultService', () => {
 
     const accounts = vault.listAccounts('example.com')
     expect(accounts).toHaveLength(1)
-    expect(accounts[0].itemTypes.sort()).toEqual(['card', 'login_password'])
+    expect(accounts[0].itemTypes.sort()).toEqual(['card', 'login'])
     expect(vault.listSites().map((s) => s.host)).toEqual(['example.com'])
   })
 
@@ -475,13 +480,13 @@ describe('VaultService', () => {
       })
       const first = vault.putItem({
         accountId: account.id,
-        type: 'login_password',
+        type: 'login',
         label: '로그인 비밀번호',
         value: 'old-secret'
       })
       const second = vault.putItem({
         accountId: account.id,
-        type: 'login_password',
+        type: 'login',
         label: '로그인 비밀번호',
         value: 'new-secret'
       })
@@ -503,7 +508,7 @@ describe('VaultService', () => {
       })
       const meta = vault.putItem({
         accountId: account.id,
-        type: 'login_password',
+        type: 'login',
         label: '로그인 비밀번호',
         value: SECRET
       })
@@ -589,17 +594,17 @@ describe('VaultService', () => {
   })
 
   describe('전역 항목 키', () => {
-    it("라벨이 다른 전역 'custom' 항목 두 개가 서로를 덮어쓰지 않는다", async () => {
+    it("라벨이 다른 전역 'note' 항목 두 개가 서로를 덮어쓰지 않는다", async () => {
       await vault.setup('master-pw')
       const first = vault.putItem({
         accountId: null,
-        type: 'custom',
+        type: 'note',
         label: '와이파이 비번',
         value: 'wifi-1234'
       })
       const second = vault.putItem({
         accountId: null,
-        type: 'custom',
+        type: 'note',
         label: '금고 번호',
         value: 'safe-5678'
       })
@@ -614,13 +619,13 @@ describe('VaultService', () => {
       await vault.setup('master-pw')
       const first = vault.putItem({
         accountId: null,
-        type: 'custom',
+        type: 'note',
         label: '와이파이 비번',
         value: 'wifi-1234'
       })
       const updated = vault.putItem({
         accountId: null,
-        type: 'custom',
+        type: 'note',
         label: '와이파이 비번',
         value: 'wifi-9999'
       })
@@ -633,14 +638,14 @@ describe('VaultService', () => {
       await vault.setup('master-pw')
       const created = vault.putItem({
         accountId: null,
-        type: 'custom',
+        type: 'note',
         label: '와이파이 비번',
         value: 'wifi-1234'
       })
       const renamed = vault.putItem({
         id: created.id,
         accountId: null,
-        type: 'custom',
+        type: 'note',
         label: '집 와이파이',
         value: 'wifi-1234'
       })
@@ -659,7 +664,7 @@ describe('VaultService', () => {
       })
       const meta = vault.putItem({
         accountId: account.id,
-        type: 'login_password',
+        type: 'login',
         label: '로그인 비밀번호',
         value: SECRET
       })
@@ -683,13 +688,13 @@ describe('VaultService', () => {
       const b = vault.upsertAccount({ host: 'b.example', label: 'B', username: 'bob' })
       const itemA = vault.putItem({
         accountId: a.id,
-        type: 'login_password',
+        type: 'login',
         label: '로그인 비밀번호',
         value: SECRET
       })
       vault.putItem({
         accountId: b.id,
-        type: 'login_password',
+        type: 'login',
         label: '로그인 비밀번호',
         value: SECRET
       })
@@ -697,6 +702,123 @@ describe('VaultService', () => {
 
       const logsB = vault.listAudit(b.id)
       expect(logsB.every((r) => r.action !== 'delete')).toBe(true)
+    })
+  })
+  // --- v2 필드 구조 ---------------------------------------------------------
+
+  describe('섹션>필드 구조(v2)', () => {
+    it('secret 필드만 암호화되고 평문 필드는 메타에 그대로 내려간다', async () => {
+      await vault.setup('master-pw')
+      const meta = vault.putItem({
+        accountId: null,
+        type: 'card',
+        label: '신한카드',
+        sections: [
+          {
+            key: 'card',
+            label: '카드 정보',
+            fields: [
+              { key: 'card.holder', label: '소유자', kind: 'text', value: '홍길동' },
+              { key: 'card.number', label: '번호', kind: 'secret', value: '4111111111111111' },
+              { key: 'card.cvc', label: 'CVC', kind: 'secret', value: '123' }
+            ]
+          }
+        ]
+      })
+
+      const fields = meta.sections[0].fields
+      expect(fields.map((f) => f.kind)).toEqual(['text', 'secret', 'secret'])
+      // 평문 필드는 값이 그대로, secret 필드는 값이 아예 없다
+      expect(fields[0].value).toBe('홍길동')
+      expect(fields[1].value).toBeUndefined()
+      expect(fields[2].value).toBeUndefined()
+      // 직렬화 결과 어디에도 비밀값이 없어야 한다
+      expect(JSON.stringify(vault.listItems(null))).not.toContain('4111111111111111')
+    })
+
+    it('필드별로 reveal·getSecretForFill 왕복이 된다', async () => {
+      await vault.setup('master-pw')
+      const account = vault.upsertAccount({ host: 'pay.example', label: '결제', username: 'me' })
+      const meta = vault.putItem({
+        accountId: account.id,
+        type: 'card',
+        label: '신한카드',
+        sections: [
+          {
+            key: 'card',
+            label: '카드 정보',
+            fields: [
+              { key: 'card.number', label: '번호', kind: 'secret', value: '4111111111111111' },
+              { key: 'card.cvc', label: 'CVC', kind: 'secret', value: '123' }
+            ]
+          }
+        ]
+      })
+
+      expect(vault.reveal(meta.id, 'card.number')).toBe('4111111111111111')
+      expect(vault.reveal(meta.id, 'card.cvc')).toBe('123')
+      expect(vault.getSecretForFill(account.id, 'card', 'card.number')).toBe('4111111111111111')
+      // 없는 필드는 null(도구가 not found 로 답한다)
+      expect(vault.getSecretForFill(account.id, 'card', 'card.expiry')).toBeNull()
+    })
+
+    it('값을 생략한 secret 필드는 기존 암호문을 유지한다', async () => {
+      await vault.setup('master-pw')
+      const first = vault.putItem({
+        accountId: null,
+        type: 'card',
+        label: '카드',
+        sections: [
+          {
+            key: 'card',
+            label: '카드 정보',
+            fields: [{ key: 'card.number', label: '번호', kind: 'secret', value: '4111' }]
+          }
+        ]
+      })
+      vault.putItem({
+        id: first.id,
+        accountId: null,
+        type: 'card',
+        label: '카드(수정)',
+        sections: [
+          {
+            key: 'card',
+            label: '카드 정보',
+            fields: [{ key: 'card.number', label: '번호', kind: 'secret' }]
+          }
+        ]
+      })
+      expect(vault.reveal(first.id, 'card.number')).toBe('4111')
+    })
+
+    it('upsertAccount 가 urls/tags/agentAccess 를 patch 한다', async () => {
+      await vault.setup('master-pw')
+      const created = vault.upsertAccount({
+        host: 'example.com',
+        label: '메인',
+        username: 'me',
+        urls: ['https://example.com/login'],
+        tags: ['쇼핑'],
+        agentAccess: 'never'
+      })
+      expect(created.urls).toEqual(['https://example.com/login'])
+      expect(created.tags).toEqual(['쇼핑'])
+      expect(created.agentAccess).toBe('never')
+
+      // 생략한 항목은 기존 값을 유지한다(자동 저장이 사용자 설정을 지우지 않게)
+      const patched = vault.upsertAccount({ id: created.id, host: 'example.com', username: 'me' })
+      expect(patched.urls).toEqual(['https://example.com/login'])
+      expect(patched.tags).toEqual(['쇼핑'])
+      expect(patched.agentAccess).toBe('never')
+    })
+
+    it('listPickerAccounts 는 id/label/username 만 돌려준다', async () => {
+      await vault.setup('master-pw')
+      vault.upsertAccount({ host: 'shop.example', label: '메인', username: 'me' })
+      const picker = vault.listPickerAccounts('https://shop.example/login')
+      expect(picker).toHaveLength(1)
+      expect(Object.keys(picker[0]).sort()).toEqual(['id', 'label', 'username'])
     })
   })
 })
