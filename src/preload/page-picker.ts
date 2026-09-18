@@ -244,8 +244,17 @@ export function installAutofillPicker(deps: AutofillPickerDeps): void {
   document.addEventListener(
     'mousedown',
     (e) => {
-      if (e.target === host) return
+      // 피커 자체나 현재 대상 입력칸을 누른 경우는 닫지 않는다
+      if (e.target === host || e.target === target) return
       closeMenu()
+    },
+    true
+  )
+  // 이미 포커스된 입력칸을 다시 누르면(포커스 이벤트 없음) 목록을 다시 연다
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (e.target === target && target && !menu) void renderMenu()
     },
     true
   )
