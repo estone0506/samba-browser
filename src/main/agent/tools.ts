@@ -20,6 +20,8 @@ const VAULT_NOT_SET_UP = 'not set up: ask the user to set up 키마스터 first'
 // 현재 탭의 호스트를 알 수 없을 때(정규화 실패·활성 탭 없음) 돌려주는 문자열.
 // 전체 계정으로 폴백하지 않기 위해 명시적으로 거부한다
 const HOST_UNKNOWN = 'host unknown: navigate to the site first'
+// list_accounts 의 host 인자가 현재 탭 호스트와 다를 때 돌려주는 문자열
+const HOST_MISMATCH = 'refused: host must match the current tab'
 // 계정을 특정하지 못했을 때 돌려주는 문자열
 const ACCOUNT_NOT_FOUND = 'account not found: use list_accounts'
 // guard 모드에서 추가 확인을 받아야 하는 민감 항목
@@ -34,6 +36,26 @@ const VAULT_ACCESS_NEVER = 'refused: KeyMaster access policy is Never'
 const VAULT_HOST_EXCLUDED = 'refused: host is excluded from KeyMaster'
 // 접근 정책 always 에서 기기 자동 해제를 시도하는 횟수
 const AUTO_UNLOCK_ATTEMPTS = 3
+// 평문(http)으로 열린 페이지에 비밀값을 채우려 할 때 돌려주는 문자열
+const INSECURE_PAGE = 'refused: insecure page (https required)'
+// http 라도 비밀값 입력을 허용하는 로컬 개발 호스트
+const LOCAL_HOSTNAMES = ['localhost', '127.0.0.1', '[::1]', '::1']
+
+/**
+ * 비밀값을 채워도 되는 페이지인지 판정한다.
+ * https 만 허용하고, 로컬 개발 서버(http://localhost 등)만 예외로 둔다.
+ * 파싱이 안 되는 URL(about:blank 등)도 거부한다.
+ */
+export function isSecurePageUrl(url: string): boolean {
+  try {
+    const u = new URL(url)
+    if (u.protocol === 'https:') return true
+    if (u.protocol === 'http:') return LOCAL_HOSTNAMES.includes(u.hostname)
+    return false
+  } catch {
+    return false
+  }
+}
 
 // 금고에 저장된 항목 종류(도구 스키마용). shared/vault 의 VaultItemType 과 단일 소스로 유지한다.
 // `satisfies` 는 초과/오타 항목을 잡고, 아래 완전성 체크는 누락 항목을 컴파일 타임에 잡는다
@@ -135,11 +157,14 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     }
   }
 
-  // 현재 탭의 호스트(정규화). 탭이 없거나 정규화에 실패하면 빈 문자열
-  const currentHost = (): string => {
+  // 현재 탭의 URL. 탭이 없으면 빈 문자열
+  const currentUrl = (): string => {
     const tab = activeOr(ctx)
-    return tab ? normalizeHost(tab.view.webContents.getURL()) : ''
+    return tab ? tab.view.webContents.getURL() : ''
   }
+
+  // 현재 탭의 호스트(정규화). 탭이 없거나 정규화에 실패하면 빈 문자열
+  const currentHost = (): string => normalizeHost(currentUrl())
 
   // 현재 호스트가 제외 도메인 목록에 있는지 확인한다(양쪽 다 normalizeHost 를 거쳐 비교)
   const isHostExcluded = (host: string): boolean => {
@@ -305,17 +330,22 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
       guard('계정 목록', async () => {
         const v = ctx.vault
         if (!v) return JSON.stringify({ vaultLocked: true, accounts: [] })
-        // host 인자도 없고 현재 탭 호스트도 알 수 없으면 전체 계정으로 폴백하지 않는다
-        if (!host && !currentHost()) {
+        // 현재 탭 호스트를 모르면 전체 계정으로 폴백하지 않는다
+        const target = currentHost()
+        if (!target) {
           return JSON.stringify({ accounts: [], note: 'host unknown' })
         }
-        const target = host ?? currentHost()
+        // host 인자는 현재 탭 호스트로만 제한한다 — 모델이 임의 호스트를 넣어
+        // 저장된 계정 전체를 훑는 것(열거)을 막는다
+        if (host && normalizeHost(host) !== target) {
+          return JSON.stringify({ accounts: [], note: HOST_MISMATCH })
+        }
         const state = v.state()
         if (state === 'uninitialized') {
           return JSON.stringify({ accounts: [], note: VAULT_NOT_SET_UP })
         }
         // 사용자명은 비밀값이 아니므로 잠겨 있어도 목록 자체는 보여 준다
-        const accounts = v.listAccounts(target || undefined).map((a) => ({
+        const accounts = v.listAccounts(target).map((a) => ({
           label: a.label,
           username: maskUsername(a.username),
           types: a.itemTypes
@@ -340,6 +370,8 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
         if (!tab) return 'no active tab'
         const host = currentHost()
         if (!host) return HOST_UNKNOWN
+        // 평문(http) 페이지에는 비밀값을 절대 채우지 않는다(네트워크 도청·다운그레이드 방어)
+        if (!isSecurePageUrl(currentUrl())) return INSECURE_PAGE
         if (isHostExcluded(host)) return VAULT_HOST_EXCLUDED
         const gate = await vaultGate()
         if (typeof gate === 'string') return gate
@@ -380,6 +412,8 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
           if (!tab) return 'no active tab'
           const host = currentHost()
           if (!host) return HOST_UNKNOWN
+          // 평문(http) 로그인 페이지에는 비밀번호를 채우지 않는다
+          if (!isSecurePageUrl(currentUrl())) return INSECURE_PAGE
           if (isHostExcluded(host)) return VAULT_HOST_EXCLUDED
           const gate = await vaultGate()
           if (typeof gate === 'string') return gate

@@ -32,7 +32,7 @@ const { pageBridge } = vi.hoisted(() => ({
 }))
 vi.mock('../src/main/browser/page-bridge', () => ({ pageBridge }))
 
-const { createSambaTools } = await import('../src/main/agent/tools')
+const { createSambaTools, isSecurePageUrl } = await import('../src/main/agent/tools')
 const { DEFAULT_DANGER_WORDS } = await import('../src/shared/danger')
 
 const PASSWORD = 'sup3r-secret-pw!'
@@ -279,14 +279,24 @@ describe('금고 AI 도구', () => {
     expect(raw).not.toContain('hongildong')
   })
 
-  it('list_accounts 는 host 인자를 우선하고 잠금 상태를 알린다', async () => {
+  it('list_accounts 는 현재 호스트와 같은 host 인자를 받아들이고 잠금 상태를 알린다', async () => {
     const b = build({ state: 'locked' })
-    const raw = await callTool(b, 'list_accounts', { host: 'other.example' })
-    expect(b.listAccounts).toHaveBeenCalledWith('other.example')
+    const raw = await callTool(b, 'list_accounts', { host: 'www.shop.example' })
+    expect(b.listAccounts).toHaveBeenCalledWith('shop.example')
     expect(JSON.parse(raw)).toEqual({
       vaultLocked: true,
       accounts: [{ label: '메인', username: 'ho***', types: ['login_password'] }]
     })
+  })
+
+  it('list_accounts 는 현재 탭과 다른 host 인자를 거부한다(계정 열거 방지)', async () => {
+    const b = build()
+    const raw = await callTool(b, 'list_accounts', { host: 'other.example' })
+    expect(JSON.parse(raw)).toEqual({
+      accounts: [],
+      note: 'refused: host must match the current tab'
+    })
+    expect(b.listAccounts).not.toHaveBeenCalled()
   })
 
   it('저장된 항목이 없으면 값 없이 not found 를 돌려준다', async () => {
@@ -433,5 +443,43 @@ describe('금고 AI 도구', () => {
     expect(await callTool(b, 'login', {})).toBe(EXCLUDED)
     expect(b.listAccounts).not.toHaveBeenCalled()
     expect(b.getSecretForFill).not.toHaveBeenCalled()
+  })
+  it('http:// 페이지에서는 fill_secret·login 을 거부한다', async () => {
+    const INSECURE = 'refused: insecure page (https required)'
+
+    const fill = build({ tabUrl: 'http://shop.example/login' })
+    pageBridge.fillValue.mockClear()
+    expect(await callTool(fill, 'fill_secret', { elementId: 5, itemType: 'login_password' })).toBe(
+      INSECURE
+    )
+    expect(fill.getSecretForFill).not.toHaveBeenCalled()
+    expect(pageBridge.fillValue).not.toHaveBeenCalled()
+
+    pageBridge.findLoginFields.mockClear()
+    const login = build({ tabUrl: 'http://shop.example/login' })
+    expect(await callTool(login, 'login', {})).toBe(INSECURE)
+    expect(login.getSecretForFill).not.toHaveBeenCalled()
+    expect(pageBridge.findLoginFields).not.toHaveBeenCalled()
+  })
+
+  it('http://localhost 는 개발 편의를 위해 허용한다', async () => {
+    pageBridge.isSecretField.mockReset()
+    pageBridge.isSecretField.mockImplementation(async () => true)
+    const b = build({ tabUrl: 'http://localhost:5173/login' })
+    expect(await callTool(b, 'fill_secret', { elementId: 5, itemType: 'login_password' })).toBe(
+      'ok'
+    )
+  })
+})
+
+describe('isSecurePageUrl', () => {
+  it('https 와 로컬 http 만 허용한다', () => {
+    expect(isSecurePageUrl('https://shop.example/login')).toBe(true)
+    expect(isSecurePageUrl('http://localhost:3000/')).toBe(true)
+    expect(isSecurePageUrl('http://127.0.0.1/')).toBe(true)
+    expect(isSecurePageUrl('http://shop.example/login')).toBe(false)
+    expect(isSecurePageUrl('file:///c:/tmp/login.html')).toBe(false)
+    expect(isSecurePageUrl('about:blank')).toBe(false)
+    expect(isSecurePageUrl('')).toBe(false)
   })
 })
