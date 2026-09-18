@@ -7,6 +7,7 @@ import { VaultService } from '../src/main/vault/service'
 import { vaultMeta } from '../src/main/db/schema'
 import { DEFAULT_SETTINGS, type Settings } from '../src/shared/settings'
 import { randomBytes } from '../src/main/vault/crypto'
+import { SyncOutbox, createOutboxRecorder } from '../src/main/sync/outbox'
 import {
   RECOVERY_ALPHABET,
   RECOVERY_KEY_CHARS,
@@ -119,6 +120,19 @@ describe('VaultService 복구 키', () => {
     expect(await vault.confirmRecoveryKey(key)).toBe(true)
     expect(metaValue('recovery_wrapped_key')).not.toBeNull()
     expect(metaValue('recovery_salt')).not.toBeNull()
+  })
+
+  it('복구 키는 기기 로컬이라 변경 로그에 아무것도 남기지 않는다', async () => {
+    // 2b 결정: recovery_wrapped_key 는 이 기기에만 둔다(다른 PC 복구는 2c).
+    // 예전에는 outbox 에 기록했지만 푸시 화이트리스트 밖이라 조용히 드롭됐다
+    const outbox = new SyncOutbox(db)
+    vault.setOutboxRecorder(createOutboxRecorder(db, outbox))
+    const key = vault.createRecoveryKey()
+
+    expect(await vault.confirmRecoveryKey(key)).toBe(true)
+
+    expect(outbox.pendingFor('settings')).toHaveLength(0)
+    expect(outbox.count()).toBe(0)
   })
 
   it('재입력이 틀리면 false 를 돌려주고 아무것도 저장하지 않는다', async () => {

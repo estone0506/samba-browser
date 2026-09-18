@@ -240,6 +240,8 @@ async function pushSettings(
     for (const entry of entries) {
       const key = entry.rowId
       if (!isSyncedSettingKey(key)) {
+        // 조용히 사라지면 "왜 안 올라가지" 를 추적할 수 없다. 키 이름만 남긴다(값은 없다)
+        console.warn('동기화 대상이 아닌 설정 키라 변경 로그에서 버립니다', key)
         droppable.push(entry.id)
         continue
       }
