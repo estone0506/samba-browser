@@ -49,10 +49,18 @@ export function Sidebar({ width }: { width: number }): React.JSX.Element {
       </div>
       {/* 북마크 섹션만 스크롤되어야 아래 설정 푸터가 항상 보인다 */}
       <BookmarkTree />
-      <div className="mt-auto flex items-center gap-2 border-t border-black/5 px-2 pt-2 text-[var(--text2)]">
+      {/* 설정 페이지 진입점 (신규 추가분) */}
+      <button
+        type="button"
+        onClick={() => setView('settings')}
+        className={cn(
+          'mt-auto flex items-center gap-2 border-t border-black/5 px-2 pt-2 text-left text-[var(--text2)] hover:text-[var(--text)]',
+          view === 'settings' && 'font-medium text-[var(--text)]'
+        )}
+      >
         <Settings className="h-4 w-4" />
         {t('sidebar.settings')}
-      </div>
+      </button>
     </aside>
   )
 }

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { DEFAULT_DANGER_WORDS, mergeDangerWords } from './danger'
+import { isHttpUrl } from './url'
 
 // 도구 호출 상한 허용 범위
 export const MIN_TOOL_CALLS = 1
@@ -21,6 +22,16 @@ export type VaultAccessPolicy = (typeof VAULT_ACCESS_POLICIES)[number]
 export const PERMISSION_MODES = ['read_only', 'guard', 'full'] as const
 export type PermissionMode = (typeof PERMISSION_MODES)[number]
 
+// === 홈/새 탭/검색엔진 설정 (신규 추가분) ==================================
+// 새 탭 주소: 'home' 이면 홈 주소를 따르고, 'blank' 면 빈 페이지로 연다
+export const NEW_TAB_URL_MODES = ['home', 'blank'] as const
+export type NewTabUrlMode = (typeof NEW_TAB_URL_MODES)[number]
+
+// 기본 검색엔진 — 주소창에 검색어를 입력했을 때 사용
+export const SEARCH_ENGINES = ['google', 'naver'] as const
+export type SearchEngine = (typeof SEARCH_ENGINES)[number]
+// === 신규 추가분 끝 =========================================================
+
 export const DEFAULT_SETTINGS = {
   model: 'sonnet' as const,
   language: 'ko' as const,
@@ -35,7 +46,12 @@ export const DEFAULT_SETTINGS = {
   vaultRememberDevice: true,
   vaultAccessPolicy: 'while_unlocked' as const,
   vaultAutoSubmit: true,
-  vaultExcludedHosts: [] as string[]
+  vaultExcludedHosts: [] as string[],
+  // === 홈/새 탭/검색엔진 기본값 (신규 추가분) ===============================
+  homeUrl: 'https://www.google.com',
+  newTabUrl: 'home' as const,
+  searchEngine: 'google' as const
+  // === 신규 추가분 끝 =======================================================
 }
 
 // 손상된 config.json 이어도 앱이 뜨도록 필드마다 catch 로 기본값으로 되돌린다
@@ -66,7 +82,16 @@ export const settingsSchema = z.object({
   // 자동 채움 후 자동 제출 여부
   vaultAutoSubmit: z.boolean().catch(DEFAULT_SETTINGS.vaultAutoSubmit),
   // 제외 도메인(정규화된 host 문자열 목록). 손상된 값은 빈 배열로 되돌린다
-  vaultExcludedHosts: z.array(z.string()).catch(DEFAULT_SETTINGS.vaultExcludedHosts)
+  vaultExcludedHosts: z.array(z.string()).catch(DEFAULT_SETTINGS.vaultExcludedHosts),
+  // === 홈/새 탭/검색엔진 (신규 추가분) =======================================
+  // 홈 주소. http/https 가 아니면(about:blank·javascript: 등) 기본값으로 되돌린다
+  homeUrl: z
+    .string()
+    .refine((v) => isHttpUrl(v))
+    .catch(DEFAULT_SETTINGS.homeUrl),
+  newTabUrl: z.enum(NEW_TAB_URL_MODES).catch(DEFAULT_SETTINGS.newTabUrl),
+  searchEngine: z.enum(SEARCH_ENGINES).catch(DEFAULT_SETTINGS.searchEngine)
+  // === 신규 추가분 끝 =========================================================
 })
 
 export type Settings = z.infer<typeof settingsSchema>

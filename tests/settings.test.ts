@@ -145,3 +145,26 @@ describe('parseSettings — vaultAccessPolicy / vaultAutoSubmit / vaultExcludedH
     expect(parseSettings({ vaultExcludedHosts: [1, 2] }).vaultExcludedHosts).toEqual([])
   })
 })
+
+// === 홈 주소 / 새 탭 주소 / 검색엔진 (신규 추가분) ============================
+describe('parseSettings — homeUrl / newTabUrl / searchEngine', () => {
+  it('기본값: 구글 홈, 새 탭은 홈과 동일, 검색엔진은 구글', () => {
+    const s = parseSettings({})
+    expect(s.homeUrl).toBe(DEFAULT_SETTINGS.homeUrl)
+    expect(s.newTabUrl).toBe('home')
+    expect(s.searchEngine).toBe('google')
+  })
+  it('http/https 홈 주소는 그대로 반영된다', () => {
+    expect(parseSettings({ homeUrl: 'https://naver.com' }).homeUrl).toBe('https://naver.com')
+  })
+  it('http/https 가 아닌 홈 주소는 기본값으로 되돌아간다', () => {
+    expect(parseSettings({ homeUrl: 'javascript:alert(1)' }).homeUrl).toBe(DEFAULT_SETTINGS.homeUrl)
+    expect(parseSettings({ homeUrl: 'about:blank' }).homeUrl).toBe(DEFAULT_SETTINGS.homeUrl)
+    expect(parseSettings({ homeUrl: '' }).homeUrl).toBe(DEFAULT_SETTINGS.homeUrl)
+  })
+  it('newTabUrl/searchEngine 잘못된 값은 기본값으로 되돌아간다', () => {
+    expect(parseSettings({ newTabUrl: 'weird' }).newTabUrl).toBe('home')
+    expect(parseSettings({ searchEngine: 'bing' }).searchEngine).toBe('google')
+  })
+})
+// === 신규 추가분 끝 ============================================================

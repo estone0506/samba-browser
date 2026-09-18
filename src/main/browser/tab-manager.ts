@@ -3,6 +3,7 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type { Layout, TabInfo } from '../../shared/ipc'
 import { BLOCKED_URL_MESSAGE, isAllowedUrl } from '../../shared/url'
+import type { SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
 
 export interface Tab {
@@ -13,6 +14,13 @@ export interface Tab {
 }
 
 const DEFAULT_URL = 'https://www.google.com'
+
+// === 홈 버튼 / 설정 페이지 (신규 추가분) ====================================
+// index.ts 의 첫 탭 생성 호출은 이 리터럴을 그대로 넘긴다(구버전 하드코딩 기본값).
+// index.ts 를 건드리지 않고도 첫 탭이 홈 주소를 따르게 하기 위해, create() 에서
+// 이 값과 정확히 같은 url 을 "기본값 사용" 요청으로 취급한다
+const LEGACY_DEFAULT_URL = DEFAULT_URL
+// === 신규 추가분 끝 =========================================================
 
 // 렌더러가 보고한 좌표를 "현재" 창 콘텐츠 크기에 다시 투영한다.
 // 렌더러는 보고 시점의 뷰포트 크기를 함께 보내므로, 거기서 오른쪽·아래 여백을 뽑아
@@ -107,6 +115,12 @@ export class TabManager {
   }
   private listeners: Array<(tabs: TabInfo[]) => void> = []
   private disposed = false
+  // === 홈 버튼 / 설정 페이지 (신규 추가분) ==================================
+  // url 없이 탭을 생성할 때 쓸 기본 주소(설정의 홈 주소/새 탭 주소로부터 계산되어 들어온다)
+  private defaultUrl = DEFAULT_URL
+  // 주소창 검색어 → URL 변환에 쓸 기본 검색엔진
+  private searchEngine: SearchEngine = 'google'
+  // === 신규 추가분 끝 ========================================================
 
   constructor(private win: BrowserWindow) {
     // 창이 닫히면 남은 리스너·탭을 정리해 파괴된 창에 접근하지 않게 한다
@@ -124,6 +138,18 @@ export class TabManager {
   onChange(cb: (tabs: TabInfo[]) => void): void {
     this.listeners.push(cb)
   }
+
+  // === 홈 버튼 / 설정 페이지 (신규 추가분) ==================================
+  // handlers.ts 가 설정 로드/변경 시 호출한다. tab-manager 는 newTabUrl·homeUrl
+  // 조합 로직을 모르고, 이미 계산된 최종 URL 문자열만 받는다
+  setDefaultUrl(url: string): void {
+    this.defaultUrl = url
+  }
+
+  setSearchEngine(engine: SearchEngine): void {
+    this.searchEngine = engine
+  }
+  // === 신규 추가분 끝 ========================================================
 
   private emit(): void {
     if (this.disposed) return
@@ -169,7 +195,9 @@ export class TabManager {
 
   create(opts: { url?: string; profile?: string; mobile?: boolean } = {}): TabInfo {
     if (this.disposed) throw new Error('window closed')
-    const url = opts.url ?? DEFAULT_URL
+    // url 이 없거나(새 탭) index.ts 의 구버전 하드코딩 기본값과 같으면(첫 탭)
+    // 설정에서 계산된 기본 주소(홈 주소/빈 페이지)를 쓴다
+    const url = !opts.url || opts.url === LEGACY_DEFAULT_URL ? this.defaultUrl : opts.url
     // 탭 생성 경로(주소창·AI new_tab·페이지의 window.open)의 공통 관문
     if (!isAllowedUrl(url)) throw new Error(`${BLOCKED_URL_MESSAGE} (${url})`)
     const profile = opts.profile ?? 'default'
@@ -243,7 +271,7 @@ export class TabManager {
   async navigate(id: string, input: string): Promise<void> {
     const tab = this.get(id)
     if (!tab) throw new Error('tab not found')
-    const url = toUrl(input)
+    const url = toUrl(input, this.searchEngine)
     if (!isAllowedUrl(url)) throw new Error(`${BLOCKED_URL_MESSAGE} (${url})`)
     await tab.view.webContents.loadURL(url)
   }
@@ -289,10 +317,14 @@ export class TabManager {
   }
 }
 
-// 주소창 입력 → URL. 도메인 형태면 https 붙이고, 아니면 구글 검색
-export function toUrl(input: string): string {
+// 주소창 입력 → URL. 도메인 형태면 https 붙이고, 아니면 검색엔진(기본 구글) 검색
+export function toUrl(input: string, engine: SearchEngine = 'google'): string {
   const s = input.trim()
   if (/^https?:\/\//i.test(s)) return s
   if (/^[\w-]+(\.[\w-]+)+(\/.*)?$/.test(s)) return `https://${s}`
+  // === 검색엔진 설정 (신규 추가분) ==========================================
+  if (engine === 'naver')
+    return `https://search.naver.com/search.naver?query=${encodeURIComponent(s)}`
+  // === 신규 추가분 끝 =========================================================
   return `https://www.google.com/search?q=${encodeURIComponent(s)}`
 }
