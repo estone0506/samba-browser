@@ -8,6 +8,7 @@
 
 import { z } from 'zod'
 import { normalizeHost } from '../../shared/host'
+import { isHostExcluded } from '../vault/access-gate'
 import type { PickerAccountDto, VaultState } from '../../shared/vault'
 
 export const pickerHostSchema = z.string().min(1).max(512)
@@ -95,8 +96,8 @@ export class VaultPickerGate {
       const claimed = normalizeHost(parsed.data) || parsed.data
       if (claimed !== frameHost) return { outcome: 'host-mismatch' }
     }
-    const excluded = this.deps.excludedHosts()
-    if (excluded.some((h) => (normalizeHost(h) || h) === frameHost)) {
+    // 제외 도메인은 채움 게이트와 같은 기준(같은 등록 도메인이면 제외)으로 판정한다
+    if (isHostExcluded(frameHost, this.deps.excludedHosts())) {
       return { outcome: 'excluded' }
     }
     return { outcome: 'ok', host: frameHost }

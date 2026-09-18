@@ -229,14 +229,15 @@ ${raw}`
     }
   }
 
-  // 현재 탭의 URL. 탭이 없으면 빈 문자열
-  const currentUrl = (): string => {
-    const tab = activeOr(ctx)
+  // 대상 탭의 URL. 탭을 넘기면 그 탭(도구 진입 시 잡은 탭)을, 아니면 활성 탭을 본다.
+  // 비밀 채움 경로는 반드시 진입 시 탭을 넘겨서 "검사한 탭 ≠ 채우는 탭" 이 되지 않게 한다
+  const currentUrl = (target?: Tab): string => {
+    const tab = target ?? activeOr(ctx)
     return tab ? tab.view.webContents.getURL() : ''
   }
 
-  // 현재 탭의 호스트(정규화). 탭이 없거나 정규화에 실패하면 빈 문자열
-  const currentHost = (): string => normalizeHost(currentUrl())
+  // 대상 탭의 호스트(정규화). 탭이 없거나 정규화에 실패하면 빈 문자열
+  const currentHost = (target?: Tab): string => normalizeHost(currentUrl(target))
 
   // 현재 호스트가 제외 도메인 목록에 있는지(같은 등록 도메인이면 제외로 본다)
   const isHostExcluded = (host: string): boolean =>
@@ -284,9 +285,9 @@ ${raw}`
    * https 여야 하고, 제외 도메인이 아니어야 하며, 현재 호스트가 계정 호스트와 같은
    * 등록 도메인(eTLD+1)이어야 한다. 통과하면 null, 막히면 안내 문자열을 돌려준다
    */
-  const verifyFillTarget = (account: AccountDto): string | null => {
+  const verifyFillTarget = (account: AccountDto, target?: Tab): string | null => {
     const reason = checkFillGate({
-      url: currentUrl(),
+      url: currentUrl(target),
       excludedHosts: ctx.vaultExcludedHosts ?? [],
       accountHost: account.host
     })
@@ -538,9 +539,9 @@ ${raw}`
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
-        const host = currentHost()
+        const host = currentHost(tab)
         // 평문(http) 페이지에는 비밀값을 절대 채우지 않는다(네트워크 도청·다운그레이드 방어)
-        const blocked = gateRefusal(currentUrl())
+        const blocked = gateRefusal(currentUrl(tab))
         if (blocked) return blocked
         const available = vaultAvailable()
         if (typeof available === 'string') return available
@@ -570,7 +571,7 @@ ${raw}`
         const value = v.getSecretForFill(account.id, itemType, fieldKey, ctx.jobId)
         if (value === null) return `not found: no ${itemType}.${fieldKey} saved for this account`
         // 확인 대기 사이에 페이지가 옮겨 갔을 수 있어 채우기 직전에 다시 검증한다
-        const moved = verifyFillTarget(account)
+        const moved = verifyFillTarget(account, tab)
         if (moved) return moved
         // 평문은 여기서만 존재하고 반환값·step 라벨·로그 어디에도 남기지 않는다
         const filled = await pageBridge.fillValue(tab, elementId, value)
@@ -591,9 +592,9 @@ ${raw}`
           if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
           const tab = activeOr(ctx)
           if (!tab) return 'no active tab'
-          const host = currentHost()
+          const host = currentHost(tab)
           // 평문(http) 로그인 페이지에는 비밀번호를 채우지 않는다
-          const blocked = gateRefusal(currentUrl())
+          const blocked = gateRefusal(currentUrl(tab))
           if (blocked) return blocked
           const available = vaultAvailable()
           if (typeof available === 'string') return available
@@ -606,8 +607,8 @@ ${raw}`
           // 폴백(알려진 로그인 URL 이동·로그인 링크 클릭)으로 평문 페이지나 다른 도메인에
           // 내려섰을 수 있다. 29cm → musinsa 통합 로그인처럼 다른 등록 도메인으로 넘어가는
           // 정상 흐름이 있으므로, 막는 대신 "옮겨 간 도메인의 계정"으로 다시 조회한다
-          const loginHost = currentHost()
-          const movedBlocked = gateRefusal(currentUrl())
+          const loginHost = currentHost(tab)
+          const movedBlocked = gateRefusal(currentUrl(tab))
           if (movedBlocked) return movedBlocked
           label = `로그인: ${loginHost}`
           // 라벨을 안 주면 탭 프로필과 같은 라벨의 계정을 자동으로 고른다(계정 순회 지원)
@@ -635,7 +636,7 @@ ${raw}`
             if (idSubmitted !== 'ok') return idSubmitted
             await pageBridge.waitForLoad(tab)
             // 아이디 제출로 페이지가 옮겨 갔을 수 있어 https·등록 도메인을 다시 확인한다
-            const moved = verifyFillTarget(account)
+            const moved = verifyFillTarget(account, tab)
             if (moved) return moved
             fields = await pageBridge.findLoginFields(tab)
           }
@@ -650,7 +651,7 @@ ${raw}`
             if (userFilled !== 'ok') return userFilled
           }
           // 비밀번호를 넣기 직전 마지막 재검증 — 이 사이에 페이지가 바뀌었을 수 있다
-          const beforeFill = verifyFillTarget(account)
+          const beforeFill = verifyFillTarget(account, tab)
           if (beforeFill) return beforeFill
           const pwFilled = await pageBridge.fillValue(tab, fields.password, password)
           if (pwFilled !== 'ok') return pwFilled

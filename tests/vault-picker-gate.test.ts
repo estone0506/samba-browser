@@ -79,6 +79,13 @@ describe('VaultPickerGate.accounts', () => {
     expect(result.accounts).toEqual([])
   })
 
+  it('제외 도메인의 서브도메인(login.shop.example)도 목록을 내보내지 않는다', () => {
+    const b = build({ excludedHosts: ['shop.example'] })
+    const frame = { ...FRAME, frameUrl: 'https://login.shop.example/signin' }
+    const result = b.gate.accounts({}, frame, 'login.shop.example')
+    expect(result.outcome).toBe('excluded')
+  })
+
   it('잠겨 있으면 빈 목록과 locked 를 돌려준다(드롭다운이 안내 문구를 띄운다)', () => {
     const b = build({ state: 'locked' })
     const result = b.gate.accounts({}, FRAME, 'shop.example')

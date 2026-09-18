@@ -35,7 +35,32 @@ const MULTI_PART_SUFFIXES = new Set([
   'net.cn',
   'org.cn',
   'gov.cn',
-  'co.id'
+  'co.id',
+  // 사용자마다 서브도메인을 나눠 쓰는 공유 호스팅. 이걸 빼면 attacker.vercel.app 이
+  // victim.vercel.app 과 같은 등록 도메인으로 묶여 계정이 새기 때문에 반드시 분리한다
+  'github.io',
+  'gitlab.io',
+  'vercel.app',
+  'netlify.app',
+  'pages.dev',
+  'workers.dev',
+  'web.app',
+  'firebaseapp.com',
+  'herokuapp.com',
+  'onrender.com',
+  'fly.dev',
+  'glitch.me',
+  'surge.sh',
+  'azurewebsites.net',
+  'amazonaws.com',
+  'cloudfront.net',
+  'blogspot.com',
+  'wordpress.com',
+  'tistory.com',
+  'cafe24.com',
+  'imweb.me',
+  'wixsite.com',
+  'notion.site'
 ])
 
 // IPv4 주소인지(점으로 나뉜 숫자 4개). 주소는 도메인으로 접지 않는다
