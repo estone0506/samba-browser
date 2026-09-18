@@ -75,6 +75,7 @@
     "toolbar": "Bookmarks Bar",
     "empty": "Empty",
     "delete": "Delete",
+    "deleteFolder": "Delete folder",
     "emptyAll": "No bookmarks saved yet",
     "manage": "Manage"
   },

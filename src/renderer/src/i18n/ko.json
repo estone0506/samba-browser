@@ -75,6 +75,7 @@
     "toolbar": "북마크 바",
     "empty": "비어 있음",
     "delete": "삭제",
+    "deleteFolder": "폴더 삭제",
     "emptyAll": "저장된 북마크가 없어요",
     "manage": "관리"
   },
