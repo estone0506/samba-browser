@@ -9,6 +9,7 @@ import { parsePasswordCsv } from './passwords-csv'
 import { parseNetscapeBookmarks } from './bookmarks-html'
 import { toNetscapeHtml } from './bookmarks-export'
 import { normalizeHost } from '../../shared/host'
+import { correctLoginUrl } from '../../shared/site-rules'
 import type { ImportPasswordsResult, ImportBookmarksResult } from '../../shared/import'
 
 // dialog.showOpenDialog/showSaveDialog 를 감싼 최소 인터페이스 — 테스트에서 파일 선택을 흉내낼 수 있게 주입한다.
@@ -36,6 +37,15 @@ const BOM = '﻿'
 
 function stripBom(text: string): string {
   return text.startsWith(BOM) ? text.slice(1) : text
+}
+
+/** 빈 값을 걸러 내고 순서를 유지한 채 중복을 없앤 URL 목록 */
+function uniqueUrls(urls: (string | undefined)[]): string[] {
+  const seen = new Set<string>()
+  for (const url of urls) {
+    if (url) seen.add(url)
+  }
+  return Array.from(seen)
 }
 
 export class ImportService {
@@ -89,13 +99,19 @@ export class ImportService {
 
       const existing = this.vault.listAccounts(host).find((a) => a.username === row.username)
 
+      // CSV 의 URL 은 로그인 페이지가 아닌 경우가 많다(마이페이지·가입폼 등).
+      // 알려진 로그인 URL 이 있으면 그쪽으로 바꾸되, 원본 URL 은 urls 배열에 남겨 둔다
+      const loginUrl = correctLoginUrl(host, row.url)
+      const urls = uniqueUrls([loginUrl, row.url, ...(existing?.urls ?? [])])
+
       const account = this.vault.upsertAccount({
         id: existing?.id,
         host,
         label: existing?.label ?? row.username,
         username: row.username,
         siteName: row.name || host,
-        ...(row.url ? { loginUrl: row.url } : {})
+        ...(loginUrl ? { loginUrl } : {}),
+        ...(urls.length > 0 ? { urls } : {})
       })
 
       this.vault.putItem({
