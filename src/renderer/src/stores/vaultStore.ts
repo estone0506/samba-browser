@@ -4,6 +4,7 @@ import type {
   CapturePromptDto,
   ImportBookmarksResult,
   ImportPasswordsResult,
+  PasswordUpdatedDto,
   SiteDto,
   VaultItemMeta,
   VaultItemType,
@@ -48,6 +49,9 @@ interface VaultStoreState {
   // 자동 저장 제안 카드. main 이 push 한 것을 그대로 담아둔다(비밀번호는 담기지 않음)
   capture: CapturePromptDto | null
   captureSubscribed: boolean
+  // 로그인 성공 감지로 비밀번호가 자동 갱신됐을 때의 토스트. main 이 push 한 것을 그대로 담아둔다
+  passwordUpdated: PasswordUpdatedDto | null
+  passwordUpdatedSubscribed: boolean
   // CapturePrompt 인라인 잠금 해제 폼 상태. capture 대상(host/username)이 바뀌면 store 레벨에서 초기화한다
   captureUnlocking: boolean
   capturePw: string
@@ -55,6 +59,10 @@ interface VaultStoreState {
   subscribeCapture: () => void
   setCapture: (prompt: CapturePromptDto | null) => void
   decideCapture: (accept: boolean) => void
+  // 자동 갱신 토스트 구독·상태·되돌리기
+  subscribePasswordUpdated: () => void
+  setPasswordUpdated: (dto: PasswordUpdatedDto | null) => void
+  undoPasswordUpdate: () => void
   setCaptureUnlocking: (v: boolean) => void
   setCapturePw: (v: string) => void
   setCaptureErr: (v: string | null) => void
@@ -98,6 +106,8 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
   captureUnlocking: false,
   capturePw: '',
   captureErr: null,
+  passwordUpdated: null,
+  passwordUpdatedSubscribed: false,
 
   // App 마운트 시 한 번만 구독한다(중복 구독 방지)
   subscribeCapture: () => {
@@ -134,6 +144,22 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
   setCaptureUnlocking: (v) => set({ captureUnlocking: v }),
   setCapturePw: (v) => set({ capturePw: v }),
   setCaptureErr: (v) => set({ captureErr: v }),
+
+  // App 마운트 시 한 번만 구독한다(중복 구독 방지)
+  subscribePasswordUpdated: () => {
+    if (get().passwordUpdatedSubscribed) return
+    set({ passwordUpdatedSubscribed: true })
+    window.samba.vault.onPasswordUpdated((dto) => get().setPasswordUpdated(dto))
+  },
+
+  setPasswordUpdated: (dto) => set({ passwordUpdated: dto }),
+
+  undoPasswordUpdate: () => {
+    const dto = get().passwordUpdated
+    if (!dto) return
+    window.samba.vault.undoPasswordUpdate(dto.undoToken)
+    set({ passwordUpdated: null })
+  },
 
   refreshState: async () => {
     const r = await window.samba.vault.state()

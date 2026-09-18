@@ -23,7 +23,9 @@ function build(
     state?: VaultState
     excludedHosts?: string[]
     sameSecret?: boolean
-    accounts?: { username: string }[]
+    accounts?: { id?: number; username: string }[]
+    autoUpdateEnabled?: boolean
+    onPendingUpdate?: ReturnType<typeof vi.fn>
   } = {}
 ): Built {
   let clock = 1_000_000
@@ -38,7 +40,9 @@ function build(
   const gate = new VaultCaptureGate({
     vault,
     excludedHosts: () => opts.excludedHosts ?? [],
-    now: () => clock
+    now: () => clock,
+    autoUpdateEnabled: () => opts.autoUpdateEnabled ?? false,
+    onPendingUpdate: opts.onPendingUpdate
   })
   return {
     gate,
@@ -134,6 +138,31 @@ describe('VaultCaptureGate', () => {
       expect.objectContaining({ isNew: true, locked: true })
     )
     expect(b.hasSameSecret).not.toHaveBeenCalled()
+  })
+
+  it('기존 계정 + 다른 값 + 자동 갱신 켜짐이면 저장 제안 없이 보류 상태(pending-update)로 넘긴다', () => {
+    const onPendingUpdate = vi.fn()
+    const b = build({
+      accounts: [{ id: 7, username: 'alice' }],
+      autoUpdateEnabled: true,
+      onPendingUpdate
+    })
+    const senderKey = {}
+    expect(b.gate.handle(senderKey, FRAME, PAYLOAD)).toBe('pending-update')
+    // 저장 제안 카드는 뜨지 않는다 — navigation 을 지켜본 뒤에만 조용히 갱신한다
+    expect(b.setPendingCapture).not.toHaveBeenCalled()
+    expect(onPendingUpdate).toHaveBeenCalledWith(
+      { host: 'shop.example', username: 'alice', password: PASSWORD, accountId: 7 },
+      senderKey
+    )
+  })
+
+  it('자동 갱신이 꺼져 있으면 기존처럼 저장 제안(accepted)을 띄운다', () => {
+    const b = build({ accounts: [{ id: 7, username: 'alice' }], autoUpdateEnabled: false })
+    expect(b.gate.handle({}, FRAME, PAYLOAD)).toBe('accepted')
+    expect(b.setPendingCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ isNew: false, locked: false })
+    )
   })
 
   it('반환값에는 비밀번호가 담기지 않는다', () => {

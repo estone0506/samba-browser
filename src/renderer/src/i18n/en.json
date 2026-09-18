@@ -69,7 +69,9 @@
     "skip": "Skip this time",
     "save": "Save",
     "unlockToSave": "Unlock to save",
-    "lockedNotice": "KeyMaster is locked. Unlock it to save."
+    "lockedNotice": "KeyMaster is locked. Unlock it to save.",
+    "updated": "Your {{host}} password was updated",
+    "undo": "Undo"
   },
   "bookmark": {
     "title": "Bookmarks",
@@ -170,6 +172,8 @@
       "accessNeverDesc": "AI can never fill KeyMaster values",
       "autoSubmit": "Auto-submit after autofill",
       "autoSubmitDesc": "When off, fields are filled but you press the login button yourself",
+      "autoUpdatePassword": "Auto-update password on successful sign-in",
+      "autoUpdatePasswordDesc": "If you sign in with a different value, it's updated right away without asking (undo available)",
       "remember": "Remember on this PC",
       "rememberDesc": "Turning this off deletes the stored device key immediately",
       "excludedHosts": "Excluded domains",

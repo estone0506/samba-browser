@@ -69,7 +69,9 @@
     "skip": "이번만 건너뛰기",
     "save": "저장",
     "unlockToSave": "잠금 해제 후 저장",
-    "lockedNotice": "금고가 잠겨 있어요. 잠금을 풀면 저장할 수 있어요"
+    "lockedNotice": "금고가 잠겨 있어요. 잠금을 풀면 저장할 수 있어요",
+    "updated": "{{host}} 비밀번호가 갱신됐어요",
+    "undo": "되돌리기"
   },
   "bookmark": {
     "title": "북마크",
@@ -170,6 +172,8 @@
       "accessNeverDesc": "AI 는 키마스터 값을 채울 수 없어요",
       "autoSubmit": "자동 채움 후 자동 제출",
       "autoSubmitDesc": "꺼두면 채우기만 하고 로그인 버튼은 직접 눌러요",
+      "autoUpdatePassword": "로그인 성공 시 비밀번호 자동 갱신",
+      "autoUpdatePasswordDesc": "다른 값으로 로그인에 성공하면 묻지 않고 바로 갱신해요(되돌리기 제공)",
       "remember": "이 PC에서 기억",
       "rememberDesc": "끄면 저장된 기기 키를 즉시 삭제해요",
       "excludedHosts": "제외 도메인",

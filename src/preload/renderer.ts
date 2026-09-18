@@ -9,6 +9,7 @@ import {
   type TabInfo,
   type AccountDto,
   type CapturePromptDto,
+  type PasswordUpdatedDto,
   type SiteDto,
   type VaultItemMeta,
   type VaultItemType,
@@ -128,6 +129,15 @@ const api = {
     },
     captureDecision: (accept: boolean): void => {
       ipcRenderer.send(IPC.vaultCaptureDecision, accept)
+    },
+    // 로그인 성공 감지로 비밀번호가 자동 갱신됐을 때(묻지 않음). 토스트로 알리고 되돌리기를 제공한다
+    onPasswordUpdated: (cb: (dto: PasswordUpdatedDto) => void): (() => void) => {
+      const h = (_: unknown, dto: PasswordUpdatedDto): void => cb(dto)
+      ipcRenderer.on(IPC.vaultPasswordUpdated, h)
+      return () => ipcRenderer.off(IPC.vaultPasswordUpdated, h)
+    },
+    undoPasswordUpdate: (undoToken: string): void => {
+      ipcRenderer.send(IPC.vaultUndoPasswordUpdate, undoToken)
     }
   },
   // 가져오기 — filePath 생략 시 메인이 파일 선택 다이얼로그를 연다

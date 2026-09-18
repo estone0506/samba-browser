@@ -736,4 +736,67 @@ describe('VaultService', () => {
       expect(logsB.every((r) => r.action !== 'delete')).toBe(true)
     })
   })
+
+  describe('로그인 성공 감지 자동 갱신', () => {
+    it('applyAutoPasswordUpdate 는 값을 조용히 바꾸고 되돌리기 토큰을 준다', async () => {
+      await vault.setup('master-pw')
+      const account = vault.upsertAccount({
+        host: 'shop.example',
+        label: '쇼핑몰',
+        username: 'alice'
+      })
+      vault.putItem({
+        accountId: account.id,
+        type: 'login_password',
+        label: '로그인 비밀번호',
+        value: SECRET
+      })
+
+      const { undoToken } = vault.applyAutoPasswordUpdate({
+        accountId: account.id,
+        username: 'alice',
+        value: 'new-pw-1!'
+      })
+      expect(undoToken).toBeTruthy()
+
+      const items = vault.listItems(account.id)
+      expect(items).toHaveLength(1) // 새 항목을 만들지 않고 기존 항목을 갱신한다
+      expect(vault.reveal(items[0].id)).toBe('new-pw-1!')
+
+      // 감사 로그에 'save' 로 남는다(자동 갱신도 저장 취급)
+      const logs = vault.listAudit(account.id)
+      expect(logs.some((r) => r.action === 'save')).toBe(true)
+      expect(JSON.stringify(logs)).not.toContain('new-pw-1!')
+    })
+
+    it('undoAutoPasswordUpdate 는 60초 이내면 갱신 전 값으로 되돌린다', async () => {
+      await vault.setup('master-pw')
+      const account = vault.upsertAccount({
+        host: 'shop.example',
+        label: '쇼핑몰',
+        username: 'alice'
+      })
+      vault.putItem({
+        accountId: account.id,
+        type: 'login_password',
+        label: '로그인 비밀번호',
+        value: SECRET
+      })
+
+      const { undoToken } = vault.applyAutoPasswordUpdate({
+        accountId: account.id,
+        username: 'alice',
+        value: 'new-pw-1!'
+      })
+
+      const ok = vault.undoAutoPasswordUpdate(undoToken)
+      expect(ok).toBe(true)
+
+      const items = vault.listItems(account.id)
+      expect(vault.reveal(items[0].id)).toBe(SECRET)
+
+      // 이미 소비한 토큰은 다시 쓸 수 없다
+      expect(vault.undoAutoPasswordUpdate(undoToken)).toBe(false)
+    })
+  })
 })

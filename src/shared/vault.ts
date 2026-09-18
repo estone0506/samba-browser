@@ -51,6 +51,14 @@ export interface CapturePromptDto {
   locked: boolean
 }
 
+// 로그인 성공 감지로 비밀번호가 자동 갱신됐을 때 렌더러에 보내는 토스트용 정보.
+// 값(비밀번호)은 담지 않는다. undoToken 은 60초간만 유효하다
+export interface PasswordUpdatedDto {
+  host: string
+  username: string
+  undoToken: string
+}
+
 // 사용 기록(감사 로그) 한 줄. 값(평문)은 절대 포함하지 않는다
 export interface AuditLogDto {
   id: number

@@ -1,4 +1,4 @@
-import { dialog, ipcMain, safeStorage, type BrowserWindow } from 'electron'
+import { dialog, ipcMain, safeStorage, type BrowserWindow, type WebContents } from 'electron'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import type { TabManager } from '../browser/tab-manager'
 import { SettingsStore } from '../settings/store'
@@ -7,6 +7,7 @@ import type { Db } from '../db/client'
 import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vault/service'
 import { ImportService, type ImportDialogs } from '../import/service'
 import { VaultCaptureGate } from './vault-capture'
+import { watchLoginSuccess } from './login-watch'
 import { normalizeHost } from '../../shared/host'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
@@ -74,6 +75,7 @@ export function registerIpc(
     ipcMain.removeAllListeners(IPC.agentConfirmReply)
     ipcMain.removeAllListeners(IPC.vaultCaptureDecision)
     ipcMain.removeAllListeners(IPC.vaultCapture)
+    ipcMain.removeAllListeners(IPC.vaultUndoPasswordUpdate)
     vault.dispose()
   })
 
@@ -156,7 +158,16 @@ export function registerIpc(
   // 검증·레이트리밋·호스트 대조는 전부 VaultCaptureGate 안에 있다(테스트 가능하도록 분리)
   const captureGate = new VaultCaptureGate({
     vault,
-    excludedHosts: () => settings.get().vaultExcludedHosts
+    excludedHosts: () => settings.get().vaultExcludedHosts,
+    // 기존 계정 + 다른 값으로 로그인 폼이 제출되면(자동 갱신이 켜져 있을 때) 저장 제안 없이
+    // navigation 을 지켜보다가 로그인 성공을 감지했을 때만 조용히 갱신한다
+    autoUpdateEnabled: () => settings.get().vaultAutoUpdatePassword,
+    onPendingUpdate: (payload, senderKey) => {
+      const wc = senderKey as WebContents
+      watchLoginSuccess(wc, wc.getURL(), payload, vault, (result) =>
+        send(IPC.vaultPasswordUpdated, result)
+      )
+    }
   })
   ipcMain.on(IPC.vaultCapture, (e, raw: unknown) => {
     captureGate.handle(
@@ -164,6 +175,15 @@ export function registerIpc(
       { trusted: tabs.hasWebContents(e.sender), frameUrl: e.senderFrame?.url ?? '' },
       raw
     )
+  })
+
+  // 자동 갱신 되돌리기(60초 이내). 실패해도 조용히 무시한다(토큰 만료 등)
+  ipcMain.on(IPC.vaultUndoPasswordUpdate, (_, token: string) => {
+    try {
+      vault.undoAutoPasswordUpdate(token)
+    } catch (e: unknown) {
+      console.error('비밀번호 되돌리기 실패', e instanceof Error ? e.message : String(e))
+    }
   })
 
   // 저장 제안 수락/거절. 거절이면 보관 중이던 비밀번호를 그냥 버린다
