@@ -59,7 +59,9 @@ app
       const outFile = process.env.SAMBA_E2E_OUT ?? 'docs/검수/e2e-login-results.md'
       await vault.ensureUnlockedByDevice()
       if (vault.state() !== 'unlocked') {
-        console.error('[e2e] vault locked')
+        // 기기 키(DPAPI)는 Chromium 의 OSCrypt 키에 묶여 있어, DB 뿐 아니라 userData 의
+        // "Local State" 파일까지 함께 복사해야 복사본에서도 자동 해제가 된다
+        console.error('[e2e] vault locked — data.db 와 함께 "Local State" 도 복사했는지 확인')
         writeVaultLocked(outFile)
         app.quit()
         return

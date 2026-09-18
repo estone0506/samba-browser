@@ -198,17 +198,61 @@ function attachDialogHandler(tab: Tab, onMessage: (message: string) => void): ()
   }
 }
 
-/** 로그인 링크·버튼을 텍스트로 찾아 한 번 눌러 본다. 눌렀으면 true */
+// 로그인 진입점으로 보이는 요소의 텍스트(정확 일치 우선)와 링크 주소 패턴
+const LOGIN_TEXT_RE = /^(로그인|로그인하기|login|log in|sign\s?in|signin)$/i
+const LOGIN_HREF_RE = /login|signin|sign-in|logon/i
+
+/** 로그인 링크·버튼을 텍스트 또는 링크 주소로 찾아 한 번 눌러 본다. 눌렀으면 true */
 async function clickLoginLink(tab: Tab): Promise<boolean> {
   const snapshot = await pageBridge.snapshot(tab)
-  const target = snapshot.elements.find((el) =>
-    /^(로그인|로그인하기|login|sign\s?in)$/i.test(el.text.trim())
-  )
+  const target =
+    snapshot.elements.find((el) => LOGIN_TEXT_RE.test(el.text.trim())) ??
+    snapshot.elements.find((el) => el.href !== undefined && LOGIN_HREF_RE.test(el.href)) ??
+    snapshot.elements.find((el) => /로그인|login|sign in/i.test(el.text))
   if (!target) return false
   await pageBridge.click(tab, target.id)
   await pageBridge.waitForLoad(tab, 15_000)
   await sleep(1500)
   return true
+}
+
+/** 로그인 폼(비밀번호 칸)이 보일 때까지 단계적으로 시도한다: 링크 클릭 → 홈에서 다시 링크 클릭 */
+async function findFormWithFallback(
+  deps: LoginHarnessDeps,
+  tab: Tab,
+  host: string
+): Promise<{ username?: number; password?: number; submit?: number }> {
+  let fields = await pageBridge.findLoginFields(tab)
+  if (fields.password !== undefined) return fields
+
+  // 1) 현재 페이지의 로그인 링크를 한 번 눌러 본다
+  if (await clickLoginLink(tab)) {
+    fields = await pageBridge.findLoginFields(tab)
+    if (fields.password !== undefined) return fields
+  }
+
+  // 2) 금고의 loginUrl 이 로그인 페이지가 아닌 경우가 많아, 홈에서 로그인 링크를 다시 찾는다
+  try {
+    await deps.tabs.navigate(tab.id, `https://${host}/`)
+    await pageBridge.waitForLoad(tab, 15_000)
+    await sleep(1500)
+    fields = await pageBridge.findLoginFields(tab)
+    if (fields.password !== undefined) return fields
+    if (await clickLoginLink(tab)) fields = await pageBridge.findLoginFields(tab)
+  } catch {
+    // 홈 이동 실패는 무시하고 마지막 탐지 결과를 그대로 돌려준다
+  }
+  return fields
+}
+
+/** 결과 비고에 남길 최종 위치(쿼리 문자열은 토큰이 섞일 수 있어 버린다) */
+function safeLocation(url: string): string {
+  try {
+    const u = new URL(url)
+    return `${u.origin}${u.pathname}`
+  } catch {
+    return ''
+  }
 }
 
 /** 세션 파티션의 저장 데이터를 비운다(디스크 사용량 억제) */
@@ -246,15 +290,11 @@ async function driveLogin(
   shotDir: string
 ): Promise<void> {
   await pageBridge.waitForLoad(tab, 15_000)
-  let fields = await pageBridge.findLoginFields(tab)
-
-  // 비밀번호 칸이 안 보이면 로그인 링크를 한 번 눌러 보고 다시 탐지한다
-  if (fields.password === undefined && (await clickLoginLink(tab))) {
-    fields = await pageBridge.findLoginFields(tab)
-  }
+  await sleep(1000)
+  const fields = await findFormWithFallback(deps, tab, result.host)
   if (fields.password === undefined) {
     result.result = 'no_form'
-    result.note = '로그인 폼을 찾지 못함'
+    result.note = `로그인 폼을 찾지 못함 (최종 ${safeLocation(tab.view.webContents.getURL())})`
     await capture(tab, shotDir, result.host)
     return
   }
@@ -299,7 +339,8 @@ async function driveLogin(
 
   const snapshot = await pageBridge.snapshot(tab)
   result.result = classifyLoginOutcome(prevUrl, snapshot.url, `${snapshot.title} ${snapshot.text}`)
-  if (!(await capture(tab, shotDir, result.host))) result.note = '스크린샷 실패'
+  result.note = `최종 ${safeLocation(snapshot.url)}`
+  if (!(await capture(tab, shotDir, result.host))) result.note += ' / 스크린샷 실패'
 }
 
 /** 사이트 한 곳을 검증한다. 탭 생성·정리·대화상자 처리는 모두 여기서 책임진다 */
@@ -327,7 +368,10 @@ async function runSite(
     result.note = '저장된 계정 없음'
     return result
   }
-  result.account = `${account.label} (${maskUsername(account.username)})`
+  // 라벨에 사용자명(이메일 등)이 그대로 들어간 계정이 많아, 라벨 안의 사용자명도 마스킹한다
+  const masked = maskUsername(account.username)
+  const label = account.label.split(account.username).join(masked).replace(/\|/g, '/')
+  result.account = `${label} (${masked})`
 
   const profile = `e2e-${host}`
   const startUrl = site.loginUrl && isHttpUrl(site.loginUrl) ? site.loginUrl : `https://${host}/`
