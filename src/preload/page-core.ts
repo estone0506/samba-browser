@@ -90,6 +90,21 @@ function get(id: number): HTMLElement | null {
   return registry[id - 1] ?? null
 }
 
+// 등록된 요소의 실제 페이지 텍스트. 위험 행동 판정의 근거(AI 가 준 label 은 신뢰하지 않음)
+export function textOf(id: number): string {
+  const el = get(id)
+  if (!el) return ''
+  const parts = [labelOf(el)]
+  // 입력칸은 라벨이 비는 경우가 많아 name/placeholder 도 함께 본다
+  if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+    const name = el.getAttribute('name')
+    const ph = el.getAttribute('placeholder')
+    if (name) parts.push(name.trim())
+    if (ph) parts.push(ph.trim())
+  }
+  return parts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
+}
+
 export function performClick(id: number): string {
   const el = get(id)
   if (!el) return `element ${id} not found (call get_page again)`

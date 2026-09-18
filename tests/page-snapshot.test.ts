@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
-import { buildSnapshot, performClick, performType } from '../src/preload/page-core'
+import { buildSnapshot, performClick, performType, textOf } from '../src/preload/page-core'
 
 beforeEach(() => {
   document.body.innerHTML = `
@@ -49,5 +49,20 @@ describe('performClick / performType', () => {
   it('없는 id는 오류', () => {
     buildSnapshot()
     expect(performClick(99)).toMatch(/not found/)
+  })
+})
+
+describe('textOf', () => {
+  it('등록된 요소의 실제 페이지 텍스트 반환', () => {
+    buildSnapshot()
+    expect(textOf(1)).toBe('로그인')
+  })
+  it('입력칸은 name·placeholder 를 함께 반환', () => {
+    buildSnapshot()
+    expect(textOf(2)).toBe('q 검색')
+  })
+  it('없는 id 는 빈 문자열', () => {
+    buildSnapshot()
+    expect(textOf(99)).toBe('')
   })
 })

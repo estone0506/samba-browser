@@ -10,6 +10,9 @@ async function call<T>(wc: WebContents, expr: string): Promise<T> {
 export const pageBridge = {
   snapshot: (tab: Tab): Promise<PageSnapshot> =>
     call<PageSnapshot>(tab.view.webContents, 'window.__samba.snapshot()'),
+  // 요소 [id] 의 실제 페이지 텍스트. 없으면 빈 문자열
+  textOf: (tab: Tab, id: number): Promise<string> =>
+    call<string>(tab.view.webContents, `window.__samba.textOf(${id})`),
   click: (tab: Tab, id: number): Promise<string> =>
     call<string>(tab.view.webContents, `window.__samba.click(${id})`),
   type: (tab: Tab, id: number, text: string, submit: boolean): Promise<string> =>
