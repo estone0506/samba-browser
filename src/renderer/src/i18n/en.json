@@ -53,6 +53,19 @@
     "limit": "You've reached the AI usage limit. Please try again later."
   },
   "settings": { "model": "Model", "language": "Language" },
+  "capture": {
+    "title": "Save your {{host}} account info?",
+    "body": "You just signed in to {{host}} as {{username}}. Save it so it can autofill next time?",
+    "skip": "Skip this time",
+    "save": "Save",
+    "unlockToSave": "Unlock to save"
+  },
+  "bookmark": {
+    "title": "Bookmarks",
+    "toolbar": "Bookmarks Bar",
+    "empty": "Empty",
+    "emptyAll": "No bookmarks saved yet"
+  },
   "vault": {
     "setup": {
       "title": "Set up personal info vault",
