@@ -4,6 +4,8 @@
 //   - MAX_ELEMENTS      ← src/shared/snapshot.ts 의 MAX_ELEMENTS
 //   - PAGE_IPC.vaultCapture ← src/shared/ipc.ts 의 IPC.vaultCapture
 //   - PAGE_IPC.vaultPickerAccounts/vaultPickerFill ← 같은 파일의 IPC 동명 채널
+//   - PAGE_IPC.newTabInit/newTabSearch/newTabOpen ← 같은 파일의 IPC 동명 채널
+//   - INTERNAL_PROTOCOL ← src/shared/url.ts 의 INTERNAL_SCHEME + ':'
 //
 // 왜 복제하는가:
 // page.ts 는 sandbox:true 로 주입되는 preload 라 다른 파일을 require() 할 수 없다.
@@ -21,5 +23,11 @@ export const MAX_ELEMENTS = 150
 export const PAGE_IPC = {
   vaultCapture: 'vault:capture',
   vaultPickerAccounts: 'vault:pickerAccounts',
-  vaultPickerFill: 'vault:pickerFill'
+  vaultPickerFill: 'vault:pickerFill',
+  newTabInit: 'newtab:init',
+  newTabSearch: 'newtab:search',
+  newTabOpen: 'newtab:open'
 } as const
+
+// 내부 페이지 스킴(location.protocol 형태). 새 탭 페이지에서만 브리지를 노출하는 조건이다
+export const INTERNAL_PROTOCOL = 'samba:'
