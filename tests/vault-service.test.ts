@@ -916,10 +916,23 @@ describe('VaultService', () => {
 
     it('listPickerAccounts 는 id/label/username 만 돌려준다', async () => {
       await vault.setup('master-pw')
-      vault.upsertAccount({ host: 'shop.example', label: '메인', username: 'me' })
+      const account = vault.upsertAccount({ host: 'shop.example', label: '메인', username: 'me' })
+      vault.putItem({
+        accountId: account.id,
+        type: 'login',
+        label: '로그인 비밀번호',
+        value: 'pw'
+      })
       const picker = vault.listPickerAccounts('https://shop.example/login')
       expect(picker).toHaveLength(1)
       expect(Object.keys(picker[0]).sort()).toEqual(['id', 'label', 'username'])
+    })
+
+    it('listPickerAccounts 는 로그인 항목이 없는 계정을 빼놓는다(자동 채울 값이 없다)', async () => {
+      await vault.setup('master-pw')
+      const account = vault.upsertAccount({ host: 'shop.example', label: '메모만', username: 'me' })
+      vault.putItem({ accountId: account.id, type: 'note', label: '메모', value: '내용' })
+      expect(vault.listPickerAccounts('shop.example')).toEqual([])
     })
   })
   // --- 계정 삭제·되돌리기 ----------------------------------------------------

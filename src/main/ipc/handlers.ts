@@ -86,7 +86,6 @@ export function registerIpc(
     ipcMain.removeAllListeners(IPC.vaultCaptureDecision)
     ipcMain.removeAllListeners(IPC.vaultCapture)
     ipcMain.removeAllListeners(IPC.vaultUndoPasswordUpdate)
-    ipcMain.removeAllListeners(IPC.vaultPickerFill)
     vault.dispose()
   })
 
@@ -230,17 +229,30 @@ export function registerIpc(
     )
     return { outcome: result.outcome, accounts: result.accounts }
   })
-  ipcMain.on(IPC.vaultPickerFill, (e, raw: unknown) => {
+  // 피커 채우기는 활성 탭이 아니라 "요청을 보낸 탭"에, 게이트가 검증한 호스트로만 채운다.
+  // 결과는 호출한 페이지(격리 월드)로 돌려줘 실패를 조용히 삼키지 않는다
+  ipcMain.handle(IPC.vaultPickerFill, async (e, raw: unknown) => {
     const result = pickerGate.fill(
       e.sender,
       { trusted: tabs.hasWebContents(e.sender), frameUrl: e.senderFrame?.url ?? '' },
       raw
     )
-    if (result.outcome !== 'ok' || result.accountId === undefined) return
-    void autofillAccount(autofillDeps, result.accountId).catch((err: unknown) => {
+    if (result.outcome !== 'ok' || result.accountId === undefined || result.host === undefined) {
+      return { outcome: result.outcome }
+    }
+    const tab = tabs.findByWebContents(e.sender)
+    if (!tab) return { outcome: 'untrusted-sender' }
+    try {
+      const filled = await autofillAccount(autofillDeps, result.accountId, {
+        tab,
+        host: result.host
+      })
+      return { outcome: filled }
+    } catch (err: unknown) {
       // 실패 사유만 남긴다 — 값은 절대 로그에 넣지 않는다
       console.error('피커 자동 채움 실패', err instanceof Error ? err.message : String(err))
-    })
+      return { outcome: 'fill-failed' }
+    }
   })
 
   // 저장 제안 수락/거절. 거절이면 보관 중이던 비밀번호를 그냥 버린다

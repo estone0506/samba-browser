@@ -23,11 +23,16 @@ export interface PickerAccountsResponse {
   accounts: PickerAccount[]
 }
 
+// 채우기 결과(값은 담기지 않는다). 실패해도 메인 로그에만 남지 않도록 페이지로 돌려준다
+export interface PickerFillResponse {
+  outcome: PickerOutcome
+}
+
 export interface AutofillPickerDeps {
   // 메인에 계정 목록을 요청한다(vault:pickerAccounts)
   listAccounts: (host: string) => Promise<PickerAccountsResponse>
-  // 선택한 계정으로 채우기를 요청한다(vault:pickerFill)
-  fill: (accountId: number) => void
+  // 선택한 계정으로 채우기를 요청한다(vault:pickerFill). 결과 문자열만 돌아온다
+  fill: (accountId: number) => Promise<PickerFillResponse>
   // 잠금 등 상태 문구(호출부에서 번역된 문자열을 넘긴다)
   labels: { locked: string; empty: string; title: string }
 }
@@ -196,7 +201,8 @@ export function installAutofillPicker(deps: AutofillPickerDeps): void {
       button.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
-        deps.fill(acc.id)
+        // 실패 사유는 페이지 UI 에 노출하지 않고(피싱 힌트가 될 수 있다) 조용히 무시한다
+        void deps.fill(acc.id).catch(() => undefined)
         hideIcon()
       })
       menu.appendChild(button)
@@ -235,8 +241,9 @@ export function installAutofillPicker(deps: AutofillPickerDeps): void {
       const el = e.target
       if (!(el instanceof Element) || !isPickerTarget(el)) return
       showIcon(el)
-      // Aside 처럼 포커스만으로 계정 목록을 바로 연다(이미 열려 있으면 그대로 둔다)
-      if (!menu) void renderMenu()
+      // 사용자가 직접 포커스한 경우에만 목록을 자동으로 연다 — 페이지 스크립트가
+      // el.focus() 로 합성 이벤트를 만들어 계정 목록을 훔쳐보게 두지 않는다
+      if (!menu && e.isTrusted) void renderMenu()
     },
     true
   )

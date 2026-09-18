@@ -466,11 +466,13 @@ export class VaultService {
   listPickerAccounts(host: string): PickerAccountDto[] {
     const normalized = normalizeHost(host) || host
     if (!normalized) return []
-    return this.listAccounts(normalized).map((a) => ({
-      id: a.id,
-      label: a.label,
-      username: a.username
-    }))
+    return this.listAccounts(normalized)
+      .filter((a) => a.itemTypes.includes('login'))
+      .map((a) => ({
+        id: a.id,
+        label: a.label,
+        username: a.username
+      }))
   }
 
   // host 로 정확히 일치하는 계정을 우선 반환하고, 같은 등록 도메인(eTLD+1)의 계정을 이어 붙인다.

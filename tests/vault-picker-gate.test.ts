@@ -93,6 +93,8 @@ describe('VaultPickerGate.accounts', () => {
       expect(b.gate.accounts(sender, FRAME, 'shop.example').outcome).toBe('ok')
     }
     expect(b.gate.accounts(sender, FRAME, 'shop.example').outcome).toBe('rate-limited')
+    // 피커는 입력칸을 누를 때마다 열려 30초/60회로 넉넉히 잡는다(정상 사용이 막히면 안 된다)
+    expect(PICKER_MAX_PER_WINDOW).toBe(60)
     b.tick(PICKER_WINDOW_MS + 1)
     expect(b.gate.accounts(sender, FRAME, 'shop.example').outcome).toBe('ok')
   })

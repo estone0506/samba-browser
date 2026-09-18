@@ -28,7 +28,11 @@ import {
   isSecretField,
   installCaptureListener
 } from './page-core'
-import { installAutofillPicker, type PickerAccountsResponse } from './page-picker'
+import {
+  installAutofillPicker,
+  type PickerAccountsResponse,
+  type PickerFillResponse
+} from './page-picker'
 import type { NewTabInitDto } from '../shared/newtab'
 
 // AI 실행기. contextIsolation 이 켜져 있으면 preload 는 격리 월드(WorldId 999)에서 실행되므로
@@ -73,7 +77,8 @@ void ipcRenderer
     installAutofillPicker({
       listAccounts: (host) =>
         ipcRenderer.invoke(PAGE_IPC.vaultPickerAccounts, host) as Promise<PickerAccountsResponse>,
-      fill: (accountId) => ipcRenderer.send(PAGE_IPC.vaultPickerFill, { accountId }),
+      fill: (accountId) =>
+        ipcRenderer.invoke(PAGE_IPC.vaultPickerFill, { accountId }) as Promise<PickerFillResponse>,
       labels: PICKER_LABELS[language]
     })
   })
