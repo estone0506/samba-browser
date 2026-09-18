@@ -47,5 +47,27 @@ export const migrations: Migration[] = [
       'ALTER TABLE `vault_items` ADD `fields` text;'
     ],
     aliases: ['0004_vault_v2']
+  },
+  {
+    // 2b 동기화 — 작업공간·변경 로그·동기화 상태 표와, 기존 표의 원격 id/작업공간/삭제 표식
+    tag: '0005_sync_workspaces',
+    sql: [
+      'CREATE TABLE `workspaces` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`remote_id` text,\n\t`name` text NOT NULL,\n\t`color` text,\n\t`position` integer DEFAULT 0 NOT NULL,\n\t`is_active` integer DEFAULT false NOT NULL,\n\t`updated_at` integer NOT NULL,\n\t`deleted_at` integer\n);',
+      'CREATE UNIQUE INDEX `workspaces_remote_id_unique` ON `workspaces` (`remote_id`);',
+      'CREATE TABLE `sync_outbox` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`table` text NOT NULL,\n\t`row_id` text NOT NULL,\n\t`op` text NOT NULL,\n\t`payload` text,\n\t`created_at` integer NOT NULL,\n\t`tried_at` integer,\n\t`error` text\n);',
+      'CREATE INDEX `sync_outbox_table_row_idx` ON `sync_outbox` (`table`, `row_id`);',
+      'CREATE TABLE `sync_state` (\n\t`key` text PRIMARY KEY NOT NULL,\n\t`value` text NOT NULL\n);',
+      'ALTER TABLE `accounts` ADD `remote_id` text;',
+      'ALTER TABLE `accounts` ADD `workspace_id` integer;',
+      'ALTER TABLE `accounts` ADD `deleted_at` integer;',
+      'ALTER TABLE `vault_items` ADD `remote_id` text;',
+      'ALTER TABLE `vault_items` ADD `workspace_id` integer;',
+      'ALTER TABLE `vault_items` ADD `deleted_at` integer;',
+      'ALTER TABLE `bookmarks` ADD `remote_id` text;',
+      'ALTER TABLE `bookmarks` ADD `workspace_id` integer;',
+      'ALTER TABLE `bookmarks` ADD `updated_at` integer;',
+      'ALTER TABLE `bookmarks` ADD `deleted_at` integer;'
+    ],
+    aliases: ['0005_stage2b_sync']
   }
 ]

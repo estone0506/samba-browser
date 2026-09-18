@@ -4,8 +4,8 @@ import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDatabase, type Db } from '../src/main/db/client'
-import { sites } from '../src/main/db/schema'
-import { eq } from 'drizzle-orm'
+import { sites, workspaces, syncOutbox, syncState } from '../src/main/db/schema'
+import { eq, sql } from 'drizzle-orm'
 
 describe('openDatabase(:memory:)', () => {
   let db: Db | undefined
@@ -112,5 +112,102 @@ describe('openDatabase(파일 경로)', () => {
     expect(() => db!.save()).not.toThrow()
     expect(() => db!.scheduleSave()).not.toThrow()
     db = undefined
+  })
+})
+
+// 2b 동기화 스키마(0005) — 작업공간·변경 로그·동기화 상태 표와 기존 표의 동기화 컬럼
+describe('0005 동기화 스키마', () => {
+  let dir: string | undefined
+  let db: Db | undefined
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'samba-db-0005-'))
+  })
+
+  afterEach(async () => {
+    db?.close()
+    db = undefined
+    if (dir) await rm(dir, { recursive: true, force: true })
+    dir = undefined
+  })
+
+  it('workspaces insert/select 왕복', async () => {
+    db = await openDatabase(':memory:')
+
+    await db.drizzle.insert(workspaces).values({
+      name: '개인',
+      color: '#111111',
+      position: 1,
+      isActive: true,
+      updatedAt: 1000
+    })
+
+    const rows = await db.drizzle.select().from(workspaces).where(eq(workspaces.name, '개인'))
+    expect(rows).toHaveLength(1)
+    expect(rows[0].isActive).toBe(true)
+    expect(rows[0].position).toBe(1)
+    expect(rows[0].remoteId).toBeNull()
+    expect(rows[0].deletedAt).toBeNull()
+  })
+
+  it('sync_outbox 에 쌓은 변경 로그를 op 로 조회한다', async () => {
+    db = await openDatabase(':memory:')
+
+    await db.drizzle.insert(syncOutbox).values([
+      { table: 'bookmarks', rowId: '1', op: 'upsert', createdAt: 10 },
+      { table: 'settings', rowId: 'theme', op: 'delete', createdAt: 20 }
+    ])
+
+    const rows = await db.drizzle.select().from(syncOutbox).where(eq(syncOutbox.op, 'upsert'))
+    expect(rows).toHaveLength(1)
+    expect(rows[0].table).toBe('bookmarks')
+    expect(rows[0].rowId).toBe('1')
+    expect(rows[0].payload).toBeNull()
+    expect(rows[0].triedAt).toBeNull()
+  })
+
+  it('sync_state 는 키-값 왕복이 된다', async () => {
+    db = await openDatabase(':memory:')
+
+    await db.drizzle.insert(syncState).values({ key: 'lastPulledAt', value: '1234' })
+    const rows = await db.drizzle.select().from(syncState)
+    expect(rows).toEqual([{ key: 'lastPulledAt', value: '1234' }])
+  })
+
+  it('기존 표에 remote_id/workspace_id/deleted_at 컬럼이 생긴다', async () => {
+    db = await openDatabase(':memory:')
+
+    const columnsOf = (table: string): string[] => {
+      const rows = db!.drizzle.all<{ name: string }>(sql.raw(`PRAGMA table_info(${table})`))
+      return rows.map((row) => row.name)
+    }
+
+    for (const table of ['accounts', 'vault_items', 'bookmarks']) {
+      const columns = columnsOf(table)
+      expect(columns).toContain('remote_id')
+      expect(columns).toContain('workspace_id')
+      expect(columns).toContain('deleted_at')
+    }
+    // 북마크는 LWW 비교를 위해 updated_at 도 필요하다
+    expect(columnsOf('bookmarks')).toContain('updated_at')
+  })
+
+  it('같은 파일 DB 를 두 번 열어도 0005 가 중복 적용되지 않는다', async () => {
+    const path = join(dir!, 'samba.db')
+
+    db = await openDatabase(path)
+    db.drizzle.insert(workspaces).values({ name: '업무', updatedAt: 1 }).run()
+    db.save()
+    db.close()
+
+    const reopened = await openDatabase(path)
+    db = reopened
+    const rows = reopened.drizzle.select().from(workspaces).all()
+    expect(rows).toHaveLength(1)
+
+    const tags = reopened.drizzle
+      .all<{ tag: string }>(sql`SELECT tag FROM __migrations WHERE tag LIKE '0005%'`)
+      .map((row) => row.tag)
+    expect(tags).toEqual(['0005_sync_workspaces'])
   })
 })
