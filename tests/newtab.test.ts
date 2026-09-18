@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { toolbarBookmarks } from '../src/main/bookmarks/newtab'
+import { toolbarBookmarks, type FaviconLookup } from '../src/main/bookmarks/newtab'
 import { NEW_TAB_BOOKMARK_LIMIT } from '../src/shared/newtab'
 import { DEFAULT_SETTINGS, defaultTabUrl, parseSettings } from '../src/shared/settings'
 import { NEW_TAB_URL } from '../src/shared/url'
@@ -65,6 +65,38 @@ describe('toolbarBookmarks — 새 탭에 보여 줄 북마크', () => {
   it('제목이 비면 호스트를 대신 쓴다', () => {
     const tree: BookmarkTreeDto = { folders: [], links: [link(1, '', 'https://a.example/x')] }
     expect(toolbarBookmarks(tree)[0].title).toBe('a.example')
+  })
+})
+
+describe('toolbarBookmarks — 파비콘 채움', () => {
+  function lookup(known: Record<string, string>): FaviconLookup & { asked: string[] } {
+    const asked: string[] = []
+    return {
+      asked,
+      peek: (host) => known[host] ?? null,
+      prefetch: (host) => {
+        asked.push(host)
+      }
+    }
+  }
+
+  const tree: BookmarkTreeDto = {
+    folders: [],
+    links: [link(1, '네이버', 'https://www.naver.com'), link(2, '예시', 'https://example.com')]
+  }
+
+  it('캐시에 있는 파비콘을 dataUrl 로 채운다', () => {
+    const favicons = lookup({ 'www.naver.com': 'data:image/png;base64,AAA' })
+    const items = toolbarBookmarks(tree, favicons)
+    expect(items[0].favicon).toBe('data:image/png;base64,AAA')
+    // 캐시에 없는 것만 미리 받아 둔다
+    expect(items[1].favicon).toBeUndefined()
+    expect(favicons.asked).toEqual(['example.com'])
+  })
+
+  it('파비콘 서비스가 없으면 favicon 없이 그대로 돌려준다', () => {
+    const items = toolbarBookmarks(tree, null)
+    expect(items.every((i) => i.favicon === undefined)).toBe(true)
   })
 })
 

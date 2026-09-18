@@ -24,25 +24,16 @@ const MESSAGES: Record<NewTabInitDto['language'], NewTabMessages> = {
   en: en.newtab
 }
 
-// 구글 파비콘 서비스(gstatic 직접 호출). www.google.com/s2 는 301 리다이렉트라 CSP 에 막힌다
-function faviconUrl(host: string): string {
-  const url = encodeURIComponent(`https://${host}`)
-  return `https://t0.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${url}&size=32`
-}
-
-// 파비콘. 먼저 첫 글자 폴백(검정 원)을 그리고 이미지가 로드되면 그 위를 덮는다
+// 파비콘. 메인이 사이트 자체에서 받아 캐시해 둔 data: URL 만 쓴다(제3자 전송 없음).
+// 캐시에 없으면 첫 글자 폴백(검정 원)을 그대로 두고, 메인이 받아 두면 다음 새 탭에서 보인다
 function iconOf(item: NewTabBookmarkDto): HTMLElement {
   const box = document.createElement('span')
   box.className = 'icon'
   box.textContent = (item.host || item.title || '?').slice(0, 1).toUpperCase()
-  if (!item.host) return box
+  if (!item.favicon) return box
   const img = document.createElement('img')
   img.alt = ''
-  img.hidden = true
-  img.addEventListener('load', () => {
-    img.hidden = false
-  })
-  img.src = faviconUrl(item.host)
+  img.src = item.favicon
   box.appendChild(img)
   return box
 }
