@@ -88,12 +88,62 @@ export const KNOWN_LOGIN_URLS: Record<string, string> = {
   'yes24.com': 'https://www.yes24.com/Templates/FTLogIn.aspx',
   'ohou.se': 'https://ohou.se/users/sign_in',
   'nike.com': 'https://www.nike.com/kr/login',
+  'fashionplus.co.kr': 'https://www.fashionplus.co.kr/auth/login',
+  // GS SHOP 은 WAF 가 봇 요청을 일괄 405 로 막아 응답으로 확인하지 못했다.
+  // 틀려도 login 도구가 페이지 내 로그인 링크 클릭으로 되짚으므로 후보로만 둔다
+  'gsshop.com': 'https://with.gsshop.com/login/loginForm.gs',
+  // --- 자사 서비스 ---
+  'samba-wave.co.kr': 'https://samba-wave.co.kr/samba/login',
+  'samba-wave.vercel.app': 'https://samba-wave.vercel.app/samba/login',
   // --- 해외 ---
   'taobao.com': 'https://login.taobao.com/member/login.jhtml',
   'aliexpress.com': 'https://login.aliexpress.com/',
   'amazon.com': 'https://www.amazon.com/ap/signin',
+  'ebay.com': 'https://signin.ebay.com/ws/eBayISAPI.dll?SignIn',
   'google.com': 'https://accounts.google.com/signin',
   'github.com': 'https://github.com/login'
+}
+
+// --- 로그인 URL 판정 --------------------------------------------------------
+// CSV 로 가져온 계정의 loginUrl 은 로그인 페이지가 아닌 경우가 많다(마이페이지·가입폼 등).
+// 아래 판정으로 "로그인 페이지로 보이지 않는" URL 을 걸러 KNOWN_LOGIN_URLS 로 대체한다.
+
+// 로그인 페이지로 보이는 조각. auth 는 author 같은 단어에 걸리지 않게 앞뒤를 끊는다
+const LOGIN_URL_RE =
+  /login|log-?in|sign-?in|sign_in|signin|logon|nidlogin|(^|[^a-z])auth([^a-z]|$)|session\/new/i
+// 가입 페이지 — 로그인 조각을 품고 있어도(예: /auth/signup) 로그인 페이지가 아니다
+const SIGNUP_URL_RE = /sign-?up|sign_up|signup|\/join|regist(er)?|create-?account|new-?member/i
+// 회원정보 수정·본인 재확인 등 로그인 이후에만 열리는 페이지
+const PROFILE_URL_RE = /reconfirm|withdraw|my-?info|\/edit(\/|$|\?)/i
+
+/**
+ * 로그인 페이지로 보이는 URL 인지 판정한다(호스트 + 경로 기준).
+ * 가입·회원정보 수정 경로는 로그인 조각이 섞여 있어도 false 로 본다.
+ */
+export function isLikelyLoginUrl(url: string): boolean {
+  let target: string
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+    target = `${u.hostname}${u.pathname}${u.search}`
+  } catch {
+    // 스킴이 없는 값(예: 'www.example.com/login')도 판정할 수 있게 원문 그대로 본다
+    if (!url.trim()) return false
+    target = url.trim()
+  }
+  if (SIGNUP_URL_RE.test(target)) return false
+  if (PROFILE_URL_RE.test(target)) return false
+  return LOGIN_URL_RE.test(target)
+}
+
+/**
+ * 저장할 loginUrl 을 보정한다.
+ * 로그인 페이지로 보이지 않고 알려진 로그인 URL 이 있으면 그쪽으로 바꾼다.
+ * 바꿀 이유가 없으면 원본을 그대로 돌려준다(원본 보존은 호출부가 urls 배열로 처리).
+ */
+export function correctLoginUrl(host: string, url: string): string {
+  if (isLikelyLoginUrl(url)) return url
+  return knownLoginUrl(host) ?? url
 }
 
 // 호스트에 대응하는 로그인 페이지 URL(모르면 undefined)

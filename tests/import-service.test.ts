@@ -116,6 +116,33 @@ describe('ImportService', () => {
       expect(vault.listAccounts('merge.example.com')).toHaveLength(1)
     })
 
+    it('로그인 페이지가 아닌 URL 은 알려진 로그인 URL 로 바꾸고 원본은 urls 에 남긴다', async () => {
+      await vault.setup(MASTER)
+      const csv = [
+        'name,url,username,password',
+        // 실제 CSV 에서 자주 나오는 형태 — 마이페이지·가입폼 주소가 loginUrl 로 들어온다
+        '무신사,https://www.musinsa.com/member/join,mu-user,pw1',
+        '29CM,https://www.29cm.co.kr/mypage/edit/reconfirm,cm-user,pw2',
+        // 이미 로그인 페이지면 그대로 둔다
+        'KREAM,https://kream.co.kr/login,kr-user,pw3',
+        // 규칙이 없는 사이트는 원본을 유지한다
+        '기타,https://shop.invalid/mypage,et-user,pw4'
+      ].join('\n')
+      const service = new ImportService(db, vault, makeDialogs(), { readFile: async () => csv })
+      await service.importPasswords('logins.csv')
+
+      const musinsa = vault.listAccounts('musinsa.com')[0]
+      expect(musinsa.urls[0]).toBe('https://www.musinsa.com/auth/login')
+      expect(musinsa.urls).toContain('https://www.musinsa.com/member/join')
+
+      const cm = vault.listAccounts('29cm.co.kr')[0]
+      expect(cm.urls[0]).toBe('https://www.29cm.co.kr/mypage/login')
+      expect(cm.urls).toContain('https://www.29cm.co.kr/mypage/edit/reconfirm')
+
+      expect(vault.listAccounts('kream.co.kr')[0].urls).toEqual(['https://kream.co.kr/login'])
+      expect(vault.listAccounts('shop.invalid')[0].urls).toEqual(['https://shop.invalid/mypage'])
+    })
+
     it('filePath 를 생략하고 다이얼로그가 취소되면 cancelled 에러를 던진다', async () => {
       await vault.setup(MASTER)
       const service = new ImportService(db, vault, makeDialogs(undefined), {

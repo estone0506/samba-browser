@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { TabManager } from '../src/main/browser/tab-manager'
 import type { ToolContext } from '../src/main/agent/tools'
 import type { VaultService } from '../src/main/vault/service'
@@ -72,6 +72,7 @@ interface Built {
   getSecretForFill: ReturnType<typeof vi.fn>
   listAccounts: ReturnType<typeof vi.fn>
   ensureUnlockedByDevice: ReturnType<typeof vi.fn>
+  navigate: ReturnType<typeof vi.fn>
 }
 
 function build(
@@ -112,12 +113,13 @@ function build(
     ...(opts.tabProfile === undefined ? {} : { profile: opts.tabProfile }),
     ...(opts.tabUrl === undefined ? {} : { view: { webContents: { getURL: () => opts.tabUrl! } } })
   }
+  const navigate = vi.fn(async () => {})
   const tabs = {
     active: () => tab,
     create: vi.fn(),
     activate: vi.fn(),
     list: () => [],
-    navigate: vi.fn(async () => {})
+    navigate
   } as unknown as TabManager
   const ctx: ToolContext = {
     tabs,
@@ -140,7 +142,8 @@ function build(
     steps,
     getSecretForFill,
     listAccounts,
-    ensureUnlockedByDevice
+    ensureUnlockedByDevice,
+    navigate
   }
 }
 
@@ -166,6 +169,16 @@ function assertNoSecretLeak(b: Built, result: string, secretPattern: RegExp = /s
   expect(emitted).not.toMatch(secretPattern)
   expect(emitted).not.toContain(PASSWORD)
 }
+
+// 폴백 경로 검증이 mock 호출 순서를 보므로 페이지 관련 mock 은 테스트마다 기본값으로 되돌린다
+beforeEach(() => {
+  pageBridge.findLoginFields.mockReset()
+  pageBridge.findLoginFields.mockResolvedValue({ username: 1, password: 2, submit: 3 })
+  pageBridge.snapshot.mockReset()
+  pageBridge.click.mockClear()
+  pageBridge.fillValue.mockClear()
+  pageBridge.submitForm.mockClear()
+})
 
 describe('금고 AI 도구', () => {
   it('등록된다', () => {
@@ -259,6 +272,61 @@ describe('금고 AI 도구', () => {
     expect(await callTool(b, 'login', {})).toBe(
       'fields not found: navigate to the login page first'
     )
+  })
+
+  describe('로그인 폼 폴백', () => {
+    const FORM = { username: 1, password: 2, submit: 3, stage: 'single' }
+    const NO_FORM = { stage: 'none' }
+
+    it('폼이 없으면 알려진 로그인 URL 로 옮겨 가 다시 찾는다', async () => {
+      pageBridge.findLoginFields.mockResolvedValueOnce(NO_FORM).mockResolvedValueOnce(FORM)
+      const b = build({
+        tabUrl: 'https://www.musinsa.com/member/join',
+        accounts: [account({ host: 'musinsa.com' })]
+      })
+
+      expect(await callTool(b, 'login', {})).toBe(
+        'submitted: check the page for success or captcha/2FA'
+      )
+      expect(b.navigate).toHaveBeenCalledWith('t1', 'https://www.musinsa.com/auth/login')
+      expect(pageBridge.click).not.toHaveBeenCalled()
+    })
+
+    it('알려진 URL 이 없으면 페이지의 로그인 링크를 눌러 다시 찾는다', async () => {
+      pageBridge.findLoginFields.mockResolvedValueOnce(NO_FORM).mockResolvedValueOnce(FORM)
+      pageBridge.snapshot.mockResolvedValueOnce({
+        url: 'https://www.shop.example/',
+        title: '',
+        text: '',
+        elements: [
+          { id: 4, tag: 'a', role: 'link', text: '고객센터', isSecret: false },
+          { id: 9, tag: 'a', role: 'link', text: '로그인', href: '/member/login', isSecret: false }
+        ]
+      })
+      const b = build({ tabUrl: 'https://www.shop.example/' })
+
+      expect(await callTool(b, 'login', {})).toBe(
+        'submitted: check the page for success or captcha/2FA'
+      )
+      expect(b.navigate).not.toHaveBeenCalled()
+      expect(pageBridge.click).toHaveBeenCalledWith(expect.anything(), 9)
+    })
+
+    it('폴백을 모두 시도해도 못 찾으면 안내를 돌려준다', async () => {
+      pageBridge.findLoginFields.mockResolvedValue(NO_FORM)
+      pageBridge.snapshot.mockResolvedValue({
+        url: 'https://www.shop.example/',
+        title: '',
+        text: '',
+        elements: []
+      })
+      const b = build({ tabUrl: 'https://www.shop.example/' })
+
+      expect(await callTool(b, 'login', {})).toBe(
+        'fields not found: navigate to the login page first'
+      )
+      expect(pageBridge.fillValue).not.toHaveBeenCalled()
+    })
   })
 
   it('계정 선택: 라벨 > 기본 > 유일, 모호하면 안내', async () => {
