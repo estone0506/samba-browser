@@ -241,7 +241,104 @@ export type VaultState = 'uninitialized' | 'locked' | 'unlocked'
 
 ---
 
+### Task 11: Aside 식 키마스터 등록·필터 UI
+
+**근거:** `docs/reference/aside-검토.md` "Vault 등록·필터 UI(팝오버 실물)" 관찰 6개(+ 메뉴/추천/자동 채우기 버튼/새 로그인 폼/새 카드 폼/사용자 정의 필드·태그/항목별 Agent access). 현재 `VaultItemType` 은 9종(`login_password|payment_password|card|passport|id_card|birth_date|address|phone|custom`)이고 값은 항목당 단일 `ciphertext`뿐이라 Aside 의 "섹션+필드" 구조·계정당 여러 URL·항목별 접근 정책을 표현할 수 없다. 이 Task 에서 6종+필드 스키마로 재편한다.
+
+**Files:** Modify `src/shared/vault.ts`(타입 재편), `src/main/db/schema.ts`(`fields` 컬럼, `accounts.urls/agentAccess/tags`), Create `drizzle/000X_vault_v2.sql` + `src/main/db/migrate-vault-v2.ts`(수동 데이터 마이그레이션, drizzle-kit generate 는 컬럼만), Modify `src/main/vault/{service,repo}.ts`, `src/main/agent/tools.ts`(fill_secret/login/list_accounts), `src/preload/renderer.ts`, `src/renderer/src/types/samba.d.ts`; Create `src/renderer/src/components/vault/{AddItemMenu,PasswordGenerator,VaultPopover}.tsx`; Modify `components/vault/{ItemList,ItemDetail,ItemEditor}.tsx`, `pages/PersonalInfoPage.tsx`, `components/layout/Toolbar.tsx`(열쇠 아이콘), i18n ko/en(`vault.*` 추가); Test `tests/vault-fields-migration.test.ts`, `tests/vault-service.test.ts`(확장), `tests/agent-vault-tools.test.ts`(확장)
+
+**Interfaces (shared/vault.ts 재편):**
+```ts
+export type VaultItemType = 'login' | 'password' | 'card' | 'note' | 'identity' | 'document'
+// 9종 → 6종 매핑표(마이그레이션 기준)
+//   login_password → login          payment_password → password
+//   card           → card           passport|id_card|birth_date|address|phone → identity
+//   custom         → note
+export type FieldKind = 'text' | 'secret' | 'url' | 'date' | 'select'
+export interface VaultField {
+  key: string        // 'card.number' 처럼 점 구분 — fill_secret 대상 지정에 쓴다
+  label: string
+  kind: FieldKind
+  value?: string      // kind!=='secret' 일 때만 평문으로 내려간다(예: url, select)
+}
+export interface VaultSection {
+  key: string
+  label: string
+  fields: VaultField[]
+}
+// 목록/상세 메타 — secret 필드는 value 를 절대 포함하지 않는다(reveal 로만)
+export interface VaultItemMeta {
+  id: number
+  accountId: number | null
+  type: VaultItemType
+  label: string
+  sections: VaultSection[]  // secret 필드는 {key,label,kind:'secret'} 만
+  updatedAt: number
+}
+export type AgentAccess = 'inherit' | 'always' | 'while_unlocked' | 'never'
+export interface AccountDto {
+  id: number
+  siteId: number
+  host: string
+  label: string
+  username: string
+  isDefault: boolean
+  itemTypes: VaultItemType[]
+  urls: string[]           // login_urls 이월(계정당 여러 URL)
+  agentAccess: AgentAccess // 'inherit' = 전역 정책(현재 vaultAutoLockMinutes 기반) 따름
+  tags: string[]
+}
+```
+
+- [ ] Step 1: 스키마 확장 — `schema.ts` 의 `vaultItems` 에 `fields: text('fields')`(JSON 문자열, `VaultSection[]` 중 secret 아닌 필드만 평문 저장, secret 필드는 `{key,label,kind,ciphertext,iv}` 형태로 같은 JSON 안에 base64 로 보관 — 필드별 개별 AES-256-GCM, AAD = `${itemId}:${fieldKey}`). `accounts` 에 `urls: text('urls')`(JSON string[]), `agentAccess: text('agent_access').notNull().default('inherit')`, `tags: text('tags')`(JSON string[]). 기존 `ciphertext`/`iv` 컬럼은 남겨 두되 신규 코드는 쓰지 않음(롤백 여유, T-next 정리 예정).
+- [ ] Step 2: 마이그레이션 스크립트 `migrate-vault-v2.ts` — 앱 시작 시 1회, `vault_meta['schema_v2_done']` 없으면 실행: 각 `vault_items` 행을 타입 매핑표로 `type` 변환, 기존 단일 `ciphertext/iv` 를 `fields=[{key:'value',label:항목별 기본 라벨,kind:'secret',ciphertext,iv}]` 로 그대로 옮겨 담음(재암호화 없음, AAD 는 여전히 `String(id)`라 `field:'value'` 전용 decrypt 경로 유지). `sites.loginUrl` 을 해당 계정들의 `accounts.urls=[loginUrl]` 로 복사. 완료 후 메타 플래그 기록. 실패 시 롤백(트랜잭션 하나로 묶음) 후 앱은 v1 스키마로 계속 동작(기능 저하, 크래시 금지).
+```ts
+// 예시: 9종 → 6종 매핑표
+const TYPE_MAP: Record<string, VaultItemType> = {
+  login_password: 'login',
+  payment_password: 'password',
+  card: 'card',
+  passport: 'identity',
+  id_card: 'identity',
+  birth_date: 'identity',
+  address: 'identity',
+  phone: 'identity',
+  custom: 'note'
+}
+```
+- [ ] Step 3: `repo.ts`/`service.ts` — `putItem`/`itemMeta`/`listItems` 를 `fields` JSON 기준으로 재작성. `getSecretForFill(accountId, type, fieldKey, jobId)` 로 시그니처 확장(기본 `fieldKey='value'`, 카드번호는 `'card.number'` 처럼). `reveal(id, fieldKey)` 도 동일 확장. `encrypt/decrypt` 는 Task2 순수 함수 그대로 재사용, AAD 만 `${id}:${fieldKey}`. `upsertAccount` 에 `urls/agentAccess/tags` patch 반영.
+- [ ] Step 4: 테스트(`vault-fields-migration.test.ts`) — 합성 v1 DB(login_password/card/custom 각 1건, `sites.loginUrl` 1건) 로 마이그레이션 실행 → 타입 변환 확인, `fields[0].kind==='secret'`, decrypt 왕복 성공, `accounts.urls` 에 옛 loginUrl 포함, 재실행해도 중복 변환 안 됨(idempotent).
+- [ ] Step 5: `agent/tools.ts` — `ITEM_TYPES` 를 6종으로 축소, `fill_secret` 파라미터를 `{ elementId, itemType, field?: string, accountLabel? }`(기본 `field='value'`, 카드 예: `{itemType:'card', field:'card.number'}`)로 확장. 계정 판정 순서를 **항목 `agentAccess` > 전역 정책**으로 변경: `agentAccess==='never'` 면 거부, `'always'` 면 잠김이어도 `ensureUnlockedByDevice()` 시도 후 실패 시 거부 메시지, `'while_unlocked'`/`'inherit'` 은 기존 `vaultGate()` 그대로. `login` 도구는 `type='login'`, `field='value'` 고정 호출로 내부 위임(공개 시그니처 불변). `list_accounts` 응답에 `tags` 추가.
+```ts
+const fillSecret = tool(
+  'fill_secret',
+  'Fill a saved secret (password, card field, ...) into input [n] without ever revealing its value.',
+  {
+    elementId: z.number().int(),
+    itemType: z.enum(ITEM_TYPES), // 'login'|'password'|'card'|'note'|'identity'|'document'
+    field: z.string().optional(),
+    accountLabel: z.string().optional()
+  },
+  ({ elementId, itemType, field, accountLabel }) =>
+    guard(`입력: ${itemType}${field ? '.' + field : ''} (#${elementId})`, async () => {
+      // ... 기존 가드 + account.agentAccess 우선 판정 후 v.getSecretForFill(account.id, itemType, field ?? 'value', ctx.jobId)
+    })
+)
+```
+- [ ] Step 6: `components/vault/AddItemMenu.tsx` — `ItemList` 상단 `+` 버튼 드롭다운: 로그인/비밀번호/신용카드/보안 메모/신원정보/문서(비활성, "2단계 이후 지원" 툴팁) + 구분선 + 비밀번호 생성기 + 가져오기…(`ImportPanel` 오픈). `PasswordGenerator.tsx`: 길이 슬라이더(8~32) + 기호 포함 체크 + 생성 버튼(`crypto.getRandomValues` 기반 순수 함수 `generatePassword(opts)`, 클립보드 복사).
+- [ ] Step 7: `ItemList.tsx` 에 **Suggestions** 섹션(현재 탭 host 로 `vault:accounts`를 필터해 최상단 표시, 탭 없으면 숨김) + 최근 사용(감사 로그 `action='fill'|'reveal'` 최근 5건) + 필터 바(태그 멀티셀렉트, 유형 셀렉트) + 정렬 토글(이름/최근 수정). 계정 행에 태그 칩 표시.
+- [ ] Step 8: `ItemDetail.tsx` — 헤더에 `자동 채우기` 버튼(현재 탭에 `findLoginFields` 실행 후 `fillValue`, AI 도구 경유 없이 렌더러→main IPC 직접 호출: 신규 `vault:autofill(accountId)`) + `Agent access` 셀렉트(4값, 변경 시 `vault:upsertAccount` patch) + Website 목록(각 URL 삭제 가능 + `+ URL 추가` 입력) + 태그 입력(칩+엔터로 추가).
+- [ ] Step 9: `ItemEditor.tsx` — 로그인 폼: 열릴 때 현재 탭 host/URL 자동 입력(신규 계정일 때만), 비밀번호 필드 옆 생성 버튼(`PasswordGenerator` 팝오버). 카드 폼: 섹션 "카드 정보"(소유자·카드사/종류·번호·유효기간·CVC) + 섹션 "결제"(결제 비밀번호, secret). 신원정보 폼: 이름·생년월일·주소·연락처·여권번호·신분증번호(여권/신분증만 secret). 모든 폼에 `+ 사용자 정의 필드`(key/label/kind 선택) 지원.
+- [ ] Step 10: `VaultPopover.tsx` + `Toolbar.tsx` 열쇠 아이콘 — 클릭 시 **오른쪽 AI 패널 상단 슬롯**에 렌더(검색·Suggestions·최근·+ 메뉴 축소판). 웹뷰 위에 겹치는 팝오버 대신 패널 슬롯을 쓰는 이유: 네이티브 `WebContentsView` 는 항상 최상단이라 HTML 팝오버가 가려지므로, 웹뷰 bounds 를 건드리지 않고 기존 오른쪽 패널(항상 웹뷰 밖)에 그린다. 패널이 닫혀 있으면 자동으로 펼침.
+- [ ] Step 11: `tests/agent-vault-tools.test.ts` 확장 — ① `field` 기본값 'value' 동작 ② 카드 `field:'card.number'` 채움 후 반환 문자열에 카드번호 미포함 ③ `agentAccess:'never'` 계정은 잠김 여부와 무관하게 거부 ④ `agentAccess:'always'` + 기기 기억 있음 → 잠김 상태에서도 자동 해제 후 채움 성공. `tests/vault-service.test.ts` 확장 — 필드별 암호화 왕복, `upsertAccount` urls/tags patch.
+- [ ] Step 12: 수동 확인 — 가져온 CSV 계정이 `login` 유형으로 보임 · 카드 항목 추가 후 실제 결제 폼에 `자동 채우기` 동작 · 현재 탭과 같은 host 계정만 Suggestions 에 표시 · 열쇠 아이콘 → AI 패널 슬롯에 팝오버 렌더(웹뷰 안 가려짐) 확인. `pnpm test && pnpm lint && pnpm build` → 커밋.
+
+**완료 기준:** (1) 가져온 CSV 로그인 항목이 `login` 유형·`fields=[{key:'value',kind:'secret'}]` 로 저장·조회됨. (2) 카드 항목을 추가하고 실제 결제 폼에서 `자동 채우기` 버튼 또는 `fill_secret(itemType:'card', field:'card.number')` 로 값이 채워짐(반환값·로그에 카드번호 없음). (3) Suggestions 섹션이 현재 탭 host 와 일치하는 계정만 보여줌(다른 host 로 전환 시 목록 갱신). (4) `agentAccess` 가 항목별로 전역 정책을 override 함을 테스트로 확인.
+
+---
+
 ## 자체 점검
-- 스펙 커버리지: DB(T1) · 암호화/잠금(T2,T3) · 가져오기(T4,T5) · 자동 채움·로그인 도구(T6,T7) · 개인정보 화면(T8) · 자동 저장 제안·북마크(T9) · 검증·문서(T10). 2b 제외 항목(Supabase·AI 설정·Recorder) 없음 확인.
-- 비밀값 경로: 값이 흐르는 곳 = `vault:capture`(preload→main), `getSecretForFill`(main 내부), `fillValue` code 인자(main→격리 월드), `vault:reveal`(main→renderer, 사용자 클릭). 그 외 채널·이벤트·로그 금지 — T3/T6/T7 테스트로 단언.
-- 타입 일관성: `AccountDto.itemTypes` ↔ `list_accounts.types`; `VaultItemType` 공용; IPC 채널명 `src/shared/ipc.ts` 한 곳.
+- 스펙 커버리지: DB(T1) · 암호화/잠금(T2,T3) · 가져오기(T4,T5) · 자동 채움·로그인 도구(T6,T7) · 개인정보 화면(T8) · 자동 저장 제안·북마크(T9) · 검증·문서(T10) · Aside 식 등록·필터 UI 및 6종+필드 스키마(T11). 2b 제외 항목(Supabase·AI 설정·Recorder·문서 첨부 업로드) 없음 확인.
+- 비밀값 경로: 값이 흐르는 곳 = `vault:capture`(preload→main), `getSecretForFill`(main 내부, T11 에서 `field` 인자 추가), `fillValue` code 인자(main→격리 월드), `vault:reveal`(main→renderer, 사용자 클릭, T11 에서 `field` 인자 추가). `vault:autofill`(T11 신규, main 내부에서 findLoginFields+fillValue 만 오가고 값은 IPC 로 나가지 않음)도 동일 규칙. 그 외 채널·이벤트·로그 금지 — T3/T6/T7/T11 테스트로 단언.
+- 타입 일관성: `AccountDto.itemTypes` ↔ `list_accounts.types`; `VaultItemType`(T11 부터 6종) 공용; `VaultItemMeta.sections`(T11) 은 secret 필드 값을 포함하지 않음; IPC 채널명 `src/shared/ipc.ts` 한 곳.
+- 마이그레이션 안전성: T11 Step 2 는 트랜잭션 하나로 묶여 실패 시 v1 스키마로 폴백(크래시 금지), 기존 `ciphertext/iv` 컬럼 보존으로 되돌릴 여지 확보.
