@@ -6,6 +6,12 @@ import { TabManager } from './browser/tab-manager'
 import { registerIpc } from './ipc/handlers'
 import { openDatabase, type Db } from './db/client'
 import type { VaultService } from './vault/service'
+import { runLoginHarness, writeVaultLocked } from './e2e/login-harness'
+
+// E2E 하네스용 userData 분리 — 실행 중인 사용자 앱의 DB 를 건드리지 않기 위해 복사본을 쓴다.
+// app.whenReady() 이전에 지정해야 하므로 모듈 최상단에서 처리한다
+const userDataOverride = process.env.SAMBA_USER_DATA
+if (userDataOverride) app.setPath('userData', userDataOverride)
 
 // 어디서도 잡지 못한 Promise 거부는 조용히 사라지지 않게 기록한다
 process.on('unhandledRejection', (reason) => {
@@ -47,6 +53,30 @@ app
     db = await openDatabase(join(app.getPath('userData'), 'data.db'))
     const ipc = registerIpc(win, tabs, db)
     vault = ipc.vault
+    // 하네스 모드: 저장된 사이트를 순회하며 자동 로그인을 검증하고 끝나면 앱을 종료한다
+    const e2eTarget = process.env.SAMBA_E2E_LOGIN
+    if (e2eTarget) {
+      const outFile = process.env.SAMBA_E2E_OUT ?? 'docs/검수/e2e-login-results.md'
+      await vault.ensureUnlockedByDevice()
+      if (vault.state() !== 'unlocked') {
+        console.error('[e2e] vault locked')
+        writeVaultLocked(outFile)
+        app.quit()
+        return
+      }
+      const limit = Number(process.env.SAMBA_E2E_LIMIT ?? '0')
+      await runLoginHarness(
+        { tabs, vault },
+        {
+          hosts: e2eTarget === 'all' ? 'all' : e2eTarget.split(',').map((h) => h.trim()),
+          outFile,
+          limit: Number.isFinite(limit) ? limit : 0,
+          resume: process.env.SAMBA_E2E_RESUME === '1'
+        }
+      )
+      app.quit()
+      return
+    }
     tabs.create({ url: 'https://www.google.com' })
     // macOS 의 activate 재생성은 1단계(Windows 전용) 범위 밖이라 배선하지 않는다
   })

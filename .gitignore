@@ -6,3 +6,7 @@ dist/
 .superpowers/
 .claude/
 *.tsbuildinfo
+
+# E2E 자동 로그인 산출물
+docs/검수/e2e-login/
+docs/검수/2026-09-18-전체사이트-자동로그인.md
