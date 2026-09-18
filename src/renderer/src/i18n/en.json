@@ -4,7 +4,7 @@
     "browser": "Browser",
     "tasks": "Tasks",
     "automation": "Automation",
-    "accounts": "Personal Info",
+    "accounts": "KeyMaster",
     "phones": "Phones",
     "logs": "Logs",
     "settings": "Settings",
@@ -70,7 +70,7 @@
   },
   "vault": {
     "setup": {
-      "title": "Set up personal info vault",
+      "title": "Set up KeyMaster vault",
       "desc": "Encrypt and store accounts, passwords, and payment info with a master password",
       "password1": "Master password",
       "password2": "Confirm master password",

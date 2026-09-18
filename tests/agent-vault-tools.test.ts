@@ -164,7 +164,7 @@ describe('금고 AI 도구', () => {
 
   it('잠겨 있으면 잠금 안내를 돌려준다', async () => {
     const b = build({ state: 'locked' })
-    const expected = 'locked: ask the user to unlock 개인정보'
+    const expected = 'locked: ask the user to unlock 키마스터'
     expect(await callTool(b, 'fill_secret', { elementId: 5, itemType: 'card' })).toBe(expected)
     expect(await callTool(b, 'login', {})).toBe(expected)
     expect(b.getSecretForFill).not.toHaveBeenCalled()
@@ -174,7 +174,7 @@ describe('금고 AI 도구', () => {
     const ok = build()
     const result = await callTool(ok, 'fill_secret', { elementId: 12, itemType: 'card' })
     expect(result).toBe('ok')
-    expect(ok.confirm).toHaveBeenCalledWith('개인정보 입력: card', 'danger')
+    expect(ok.confirm).toHaveBeenCalledWith('키마스터 입력: card', 'danger')
     expect(ok.steps).toContainEqual({ label: '입력: card (#12)', ok: true })
     assertNoSecretLeak(ok, result)
 
@@ -352,7 +352,7 @@ describe('금고 AI 도구', () => {
   })
 
   it('금고가 설정되지 않았으면(uninitialized) 설정 안내를 돌려준다', async () => {
-    const NOT_SET_UP = 'not set up: ask the user to set up 개인정보 first'
+    const NOT_SET_UP = 'not set up: ask the user to set up 키마스터 first'
 
     const fillSecret = build({ state: 'uninitialized' })
     expect(await callTool(fillSecret, 'fill_secret', { elementId: 5, itemType: 'card' })).toBe(

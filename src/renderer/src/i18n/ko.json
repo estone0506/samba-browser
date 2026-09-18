@@ -4,7 +4,7 @@
     "browser": "브라우저",
     "tasks": "작업",
     "automation": "자동화",
-    "accounts": "개인정보",
+    "accounts": "키마스터",
     "phones": "폰",
     "logs": "로그",
     "settings": "설정",
@@ -70,7 +70,7 @@
   },
   "vault": {
     "setup": {
-      "title": "개인정보 금고 설정",
+      "title": "키마스터 설정",
       "desc": "마스터 비밀번호로 계정·비밀번호·결제정보를 암호화해서 보관해요",
       "password1": "마스터 비밀번호",
       "password2": "마스터 비밀번호 확인",

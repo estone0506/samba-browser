@@ -14,9 +14,9 @@ const READ_ONLY_REFUSAL = 'refused: read-only mode'
 // finalConfirm 이 거부됐을 때 모델이 계속 작업하도록 돌려주는 문자열
 const CONTINUE_INSTRUCTION = 'user asked to continue; do not finish yet'
 // 금고가 잠겨 있을 때 돌려주는 문자열(모델이 사용자에게 해제를 요청하도록 유도)
-const VAULT_LOCKED = 'locked: ask the user to unlock 개인정보'
+const VAULT_LOCKED = 'locked: ask the user to unlock 키마스터'
 // 금고를 아직 설정하지 않았을 때(state === 'uninitialized') 돌려주는 문자열
-const VAULT_NOT_SET_UP = 'not set up: ask the user to set up 개인정보 first'
+const VAULT_NOT_SET_UP = 'not set up: ask the user to set up 키마스터 first'
 // 현재 탭의 호스트를 알 수 없을 때(정규화 실패·활성 탭 없음) 돌려주는 문자열.
 // 전체 계정으로 폴백하지 않기 위해 명시적으로 거부한다
 const HOST_UNKNOWN = 'host unknown: navigate to the site first'
@@ -76,7 +76,7 @@ export interface ToolContext {
   // 호출 카운터. 상한 넘으면 문자열 반환
   tick: () => string | null
   onStep: (label: string, ok: boolean) => void
-  // 개인정보 금고. 주입되지 않은 실행(구버전 호출부·테스트)에서는 금고 도구가 잠금으로 동작한다
+  // 키마스터. 주입되지 않은 실행(구버전 호출부·테스트)에서는 금고 도구가 잠금으로 동작한다
   vault?: VaultService
   // 감사 로그에 남길 작업 식별자(실행 1건 = jobId 1개)
   jobId?: string
@@ -323,7 +323,7 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
         }
         // guard 모드에서 결제 비밀번호·카드는 사용자 확인을 한 번 더 받는다
         if (ctx.mode === 'guard' && CONFIRM_ITEM_TYPES.includes(itemType)) {
-          const ok = await ctx.confirm(`개인정보 입력: ${itemType}`, 'danger')
+          const ok = await ctx.confirm(`키마스터 입력: ${itemType}`, 'danger')
           if (!ok) return 'denied by user'
         }
         const account = resolveAccount(v.listAccounts(host), accountLabel)
