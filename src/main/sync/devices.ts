@@ -64,9 +64,13 @@ export class DeviceService {
     return id
   }
 
-  /** 설정 화면의 기기 목록. 최근에 본 기기가 위로 온다 */
+  /**
+   * 설정 화면의 기기 목록. 최근에 본 기기가 위로 온다.
+   * 등록은 하지 않는다 — ensureRegistered 는 취소 표식을 지우므로, 목록을 여는 것만으로
+   * 원격 로그아웃이 풀려서는 안 된다(등록은 로그인 직후 connect 가 한 번 한다)
+   */
   async list(): Promise<DeviceDto[]> {
-    const current = this.currentId() ?? (await this.ensureRegistered())
+    const current = this.currentId()
     const rows = await this.deps.backend.selectAll(DEVICES_TABLE)
     return rows.map((row) => toDeviceDto(row, current)).sort((a, b) => b.lastSeenAt - a.lastSeenAt)
   }
