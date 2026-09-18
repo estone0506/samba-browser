@@ -3,6 +3,7 @@ import { openDatabase, type Db } from '../src/main/db/client'
 import { workspaces } from '../src/main/db/schema'
 import { WorkspaceService, MAX_WORKSPACES } from '../src/main/workspace/service'
 import { DEFAULT_SETTINGS, type Settings } from '../src/shared/settings'
+import { workspaceShortcutIndex } from '../src/main/workspace/shortcut'
 import type { WorkspaceDto } from '../src/shared/sync'
 
 // SettingsStore 는 electron app 에 의존하므로 테스트에서는 최소 인터페이스만 흉내낸다
@@ -131,5 +132,32 @@ describe('WorkspaceService', () => {
     const base = svc.ensureDefault()
     settings.set({ activeWorkspaceId: 999 })
     expect(svc.active().id).toBe(base.id)
+  })
+
+  it('scope 는 첫 번째 작업공간에서만 isDefault 가 참이다', () => {
+    const base = svc.ensureDefault()
+    expect(svc.scope()).toEqual({ id: base.id, isDefault: true })
+    const made = svc.create('업무')
+    svc.switchTo(made.id)
+    expect(svc.scope()).toEqual({ id: made.id, isDefault: false })
+  })
+})
+
+describe('workspaceShortcutIndex', () => {
+  const base = { type: 'keyDown', key: '1', control: true, alt: true, shift: false, meta: false }
+
+  it('Ctrl+Alt+1~9 는 번호를 돌려준다', () => {
+    expect(workspaceShortcutIndex(base)).toBe(1)
+    expect(workspaceShortcutIndex({ ...base, key: '9' })).toBe(9)
+  })
+
+  it('keyUp·다른 조합키·숫자가 아닌 키는 받지 않는다', () => {
+    expect(workspaceShortcutIndex({ ...base, type: 'keyUp' })).toBeNull()
+    expect(workspaceShortcutIndex({ ...base, shift: true })).toBeNull()
+    expect(workspaceShortcutIndex({ ...base, meta: true })).toBeNull()
+    expect(workspaceShortcutIndex({ ...base, alt: false })).toBeNull()
+    expect(workspaceShortcutIndex({ ...base, control: false })).toBeNull()
+    expect(workspaceShortcutIndex({ ...base, key: '0' })).toBeNull()
+    expect(workspaceShortcutIndex({ ...base, key: 'a' })).toBeNull()
   })
 })

@@ -6,7 +6,7 @@ import { asc, eq, isNull } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { workspaces } from '../db/schema'
 import type { Settings } from '../../shared/settings'
-import type { WorkspaceDto } from '../../shared/sync'
+import type { WorkspaceDto, WorkspaceScope } from '../../shared/sync'
 
 /** Ctrl+Alt+1~9 로 고를 수 있는 최대 개수 */
 export const MAX_WORKSPACES = 9
@@ -108,9 +108,19 @@ export class WorkspaceService {
     return this.ensureDefault()
   }
 
-  /** 활성 작업공간 id 만 필요한 호출부(금고·북마크 범위 필터)를 위한 지름길 */
+  /** 활성 작업공간 id 만 필요한 호출부를 위한 지름길 */
   activeId(): number {
     return this.active().id
+  }
+
+  /**
+   * 저장소(금고·북마크)에 넘길 조회 범위.
+   * 첫 번째(기본) 작업공간에서만 작업공간 미지정(NULL) 행이 함께 보인다
+   */
+  scope(): WorkspaceScope {
+    const current = this.active()
+    const first = this.rows()[0]
+    return { id: current.id, isDefault: first !== undefined && first.id === current.id }
   }
 
   private insert(name: string, color: string | null, position: number): WorkspaceRow {
