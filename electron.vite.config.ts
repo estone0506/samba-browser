@@ -5,6 +5,8 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   main: {
+    // .env 의 SAMBA_* 값(Supabase URL·anon 키)을 메인 번들에 주입한다
+    envPrefix: ['MAIN_VITE_', 'SAMBA_'],
     build: {
       rollupOptions: {
         // 네이티브 바이너리(.node/.dll)를 품고 있어 번들할 수 없다 — 런타임 require 로 남긴다
