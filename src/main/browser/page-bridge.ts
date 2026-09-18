@@ -31,12 +31,18 @@ const resultSchema = z.string()
 // isSecretField 결과는 boolean
 const boolSchema = z.boolean()
 
-// findLoginFields 결과 — 못 찾은 필드는 없음(undefined)
+// findLoginFields 결과 — 못 찾은 필드는 없음(undefined).
+// stage 는 2단계 로그인(아이디 화면 → 비밀번호 화면) 흐름을 호출부가 구분하기 위한 값
 const loginFieldsSchema = z.object({
   username: z.number().int().optional(),
   password: z.number().int().optional(),
-  submit: z.number().int().optional()
+  submit: z.number().int().optional(),
+  stage: z.enum(['single', 'username-only', 'password-only', 'none']),
+  confidence: z.number(),
+  iframe: z.boolean()
 })
+
+export type LoginFieldsResult = z.infer<typeof loginFieldsSchema>
 
 // 탭 안 preload(격리 월드의 __samba)를 호출하고 결과를 스키마로 검증한다
 async function call<T>(wc: WebContents, expr: string, schema: z.ZodType<T>): Promise<T> {
@@ -89,7 +95,7 @@ export const pageBridge = {
       return 'fill failed'
     }
   },
-  findLoginFields: (tab: Tab): Promise<{ username?: number; password?: number; submit?: number }> =>
+  findLoginFields: (tab: Tab): Promise<LoginFieldsResult> =>
     call(tab.view.webContents, '__samba.findLoginFields()', loginFieldsSchema),
   submitForm: (tab: Tab, id: number): Promise<string> =>
     call(tab.view.webContents, `__samba.submitForm(${id})`, resultSchema),

@@ -8,6 +8,7 @@ import type { PermissionMode, VaultAccessPolicy } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
 import type { AccountDto, VaultItemType } from '../../shared/vault'
 import { normalizeHost, registrableDomain } from '../../shared/host'
+import { knownLoginUrl } from '../../shared/site-rules'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -481,13 +482,32 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
           if (typeof gate === 'string') return gate
           const v = gate
           label = `로그인: ${host}`
-          const fields = await pageBridge.findLoginFields(tab)
-          if (fields.password === undefined) {
-            return 'fields not found: navigate to the login page first'
+          let fields = await pageBridge.findLoginFields(tab)
+          if (fields.stage === 'none') {
+            // 알려진 로그인 URL 이 있으면 모델이 바로 이동할 수 있게 알려준다
+            const hint = knownLoginUrl(host)
+            return hint
+              ? `fields not found: navigate to ${hint} first`
+              : 'fields not found: navigate to the login page first'
           }
           const account = resolveAccount(v.listAccounts(host), accountLabel)
           if (!account) return ACCOUNT_NOT_FOUND
           label = `로그인: ${host} (${account.label})`
+          // 2단계 로그인 1단계(아이디 화면): 아이디만 채워 제출한 뒤 비밀번호 화면을 다시 탐지한다
+          if (fields.stage === 'username-only' && fields.username !== undefined) {
+            const idFilled = await pageBridge.fillValue(tab, fields.username, account.username)
+            if (idFilled !== 'ok') return idFilled
+            if (ctx.vaultAutoSubmit === false) {
+              return 'filled: submit is disabled by setting; ask the user to press login'
+            }
+            const idSubmitted = await pageBridge.submitForm(tab, fields.submit ?? fields.username)
+            if (idSubmitted !== 'ok') return idSubmitted
+            await pageBridge.waitForLoad(tab)
+            fields = await pageBridge.findLoginFields(tab)
+          }
+          if (fields.password === undefined) {
+            return 'fields not found: navigate to the login page first'
+          }
           const password = v.getSecretForFill(account.id, 'login_password', ctx.jobId)
           if (password === null) return 'not found: no login password saved for this account'
           // 사용자명은 비밀값이 아니므로 평문 그대로 채운다. 실패해도 전파한다
