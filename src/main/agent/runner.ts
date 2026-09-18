@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import type { TabManager } from '../browser/tab-manager'
 import type { SettingsStore } from '../settings/store'
 import type { AgentEvent } from '../../shared/ipc'
+import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
 import { buildSystemPrompt } from './prompt'
 import { runQuery, classifyAuthError, isFatalApiError } from './provider'
@@ -27,8 +28,37 @@ export class AgentRunner {
   constructor(
     private tabs: TabManager,
     private settings: SettingsStore,
-    private emit: (e: AgentEvent) => void
+    private emit: (e: AgentEvent) => void,
+    // 개인정보 금고. 없으면 금고 도구는 잠금으로 동작한다
+    private vault?: VaultService
   ) {}
+
+  /** 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다) */
+  isRunning(): boolean {
+    return this.abort !== null
+  }
+
+  /**
+   * 사용자 확인 카드를 띄우고 응답을 기다린다(AI 도구·페이지 대화상자 공용).
+   * 응답이 없으면 상한 시간 뒤 거부로 처리한다
+   */
+  requestConfirm(
+    action: string,
+    kind: 'danger' | 'finish' = 'danger',
+    emit: (e: AgentEvent) => void = this.emit
+  ): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const id = randomUUID()
+      const timer = setTimeout(() => {
+        // 응답이 없으면 거부 처리
+        if (this.pending.delete(id)) resolve(false)
+      }, CONFIRM_TIMEOUT_MS)
+      // 대기 타이머가 앱 종료를 막지 않도록 한다
+      timer.unref?.()
+      this.pending.set(id, { resolve, timer })
+      emit({ type: 'confirm', requestId: id, action, kind })
+    })
+  }
 
   resolveConfirm(id: string, approved: boolean): void {
     const p = this.pending.get(id)
@@ -84,25 +114,21 @@ export class AgentRunner {
     let apiError = ''
     // 종료 상태를 이미 보냈는지. SDK 는 오류 result 를 내보낸 뒤 throw 까지 하므로 중복 방지
     let settled = false
+    // 이번 실행의 감사 로그 식별자(금고 fill 기록에 남는다)
+    const jobId = randomUUID()
     const server = createSambaTools({
       tabs: this.tabs,
+      vault: this.vault,
+      jobId,
       dangerWords: s.dangerWords,
       mode: s.permissionMode,
       finalConfirm: s.finalConfirm,
+      vaultAccessPolicy: s.vaultAccessPolicy,
+      vaultAutoSubmit: s.vaultAutoSubmit,
+      vaultExcludedHosts: s.vaultExcludedHosts,
       tick: counter.tick,
       onStep: (label, ok) => emit({ type: 'step', label, ok }),
-      confirm: (action, kind = 'danger') =>
-        new Promise<boolean>((resolve) => {
-          const id = randomUUID()
-          const timer = setTimeout(() => {
-            // 응답이 없으면 거부 처리
-            if (this.pending.delete(id)) resolve(false)
-          }, CONFIRM_TIMEOUT_MS)
-          // 대기 타이머가 앱 종료를 막지 않도록 한다
-          timer.unref?.()
-          this.pending.set(id, { resolve, timer })
-          emit({ type: 'confirm', requestId: id, action, kind })
-        })
+      confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit)
     })
     emit({ type: 'status', state: 'running', toolCalls: 0 })
     try {

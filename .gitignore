@@ -4,3 +4,13 @@ dist/
 .env
 *.log
 .superpowers/
+.claude/
+*.tsbuildinfo
+# 로컬 OCR 모델은 첫 사용 시 내려받는다(커밋 금지)
+models/
+*.onnx
+*.traineddata
+
+# E2E 자동 로그인 산출물
+docs/검수/e2e-login/
+docs/검수/2026-09-18-전체사이트-자동로그인.md

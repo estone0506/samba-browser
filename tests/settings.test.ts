@@ -86,3 +86,85 @@ describe('parseSettings — permissionMode / finalConfirm', () => {
     expect(parseSettings({ finalConfirm: 'yes' }).finalConfirm).toBe(false)
   })
 })
+
+describe('parseSettings — vaultAutoLockMinutes / vaultRememberDevice', () => {
+  it('기본값은 1주(10080분), 기기 기억은 켜짐(Aside 방식)', () => {
+    const s = parseSettings({})
+    expect(s.vaultAutoLockMinutes).toBe(10080)
+    expect(s.vaultRememberDevice).toBe(true)
+  })
+  it('유효한 값은 그대로 반영된다', () => {
+    expect(parseSettings({ vaultAutoLockMinutes: 30 }).vaultAutoLockMinutes).toBe(30)
+    expect(parseSettings({ vaultRememberDevice: false }).vaultRememberDevice).toBe(false)
+  })
+  it('범위를 벗어난 자동 잠금 시간은 기본값(1주)으로 되돌아간다', () => {
+    expect(parseSettings({ vaultAutoLockMinutes: 0 }).vaultAutoLockMinutes).toBe(
+      DEFAULT_SETTINGS.vaultAutoLockMinutes
+    )
+    expect(parseSettings({ vaultAutoLockMinutes: -5 }).vaultAutoLockMinutes).toBe(
+      DEFAULT_SETTINGS.vaultAutoLockMinutes
+    )
+    expect(parseSettings({ vaultAutoLockMinutes: 43201 }).vaultAutoLockMinutes).toBe(
+      DEFAULT_SETTINGS.vaultAutoLockMinutes
+    )
+    expect(parseSettings({ vaultAutoLockMinutes: 10.5 }).vaultAutoLockMinutes).toBe(
+      DEFAULT_SETTINGS.vaultAutoLockMinutes
+    )
+  })
+  it('43200분(안 함)은 그대로 허용된다', () => {
+    expect(parseSettings({ vaultAutoLockMinutes: 43200 }).vaultAutoLockMinutes).toBe(43200)
+  })
+  it('문자열 등 잘못된 타입의 기기 기억 값은 기본값(true)으로 되돌아간다', () => {
+    expect(parseSettings({ vaultRememberDevice: '켜짐' }).vaultRememberDevice).toBe(true)
+    expect(parseSettings({ vaultRememberDevice: 1 }).vaultRememberDevice).toBe(true)
+    expect(parseSettings({ vaultAutoLockMinutes: '많이' }).vaultAutoLockMinutes).toBe(
+      DEFAULT_SETTINGS.vaultAutoLockMinutes
+    )
+  })
+})
+
+describe('parseSettings — vaultAccessPolicy / vaultAutoSubmit / vaultExcludedHosts', () => {
+  it('기본값: while_unlocked · 자동 제출 켬 · 제외 도메인 없음', () => {
+    const s = parseSettings({})
+    expect(s.vaultAccessPolicy).toBe('while_unlocked')
+    expect(s.vaultAutoSubmit).toBe(true)
+    expect(s.vaultExcludedHosts).toEqual([])
+  })
+  it('유효한 값은 그대로 반영된다', () => {
+    expect(parseSettings({ vaultAccessPolicy: 'always' }).vaultAccessPolicy).toBe('always')
+    expect(parseSettings({ vaultAccessPolicy: 'never' }).vaultAccessPolicy).toBe('never')
+    expect(parseSettings({ vaultAutoSubmit: false }).vaultAutoSubmit).toBe(false)
+    expect(parseSettings({ vaultExcludedHosts: ['example.com'] }).vaultExcludedHosts).toEqual([
+      'example.com'
+    ])
+  })
+  it('잘못된 값은 기본값으로 되돌아간다', () => {
+    expect(parseSettings({ vaultAccessPolicy: 'admin' }).vaultAccessPolicy).toBe('while_unlocked')
+    expect(parseSettings({ vaultAutoSubmit: 'yes' }).vaultAutoSubmit).toBe(true)
+    expect(parseSettings({ vaultExcludedHosts: 'example.com' }).vaultExcludedHosts).toEqual([])
+    expect(parseSettings({ vaultExcludedHosts: [1, 2] }).vaultExcludedHosts).toEqual([])
+  })
+})
+
+// === 홈 주소 / 새 탭 주소 / 검색엔진 (신규 추가분) ============================
+describe('parseSettings — homeUrl / newTabUrl / searchEngine', () => {
+  it('기본값: 구글 홈, 새 탭은 홈과 동일, 검색엔진은 구글', () => {
+    const s = parseSettings({})
+    expect(s.homeUrl).toBe(DEFAULT_SETTINGS.homeUrl)
+    expect(s.newTabUrl).toBe('home')
+    expect(s.searchEngine).toBe('google')
+  })
+  it('http/https 홈 주소는 그대로 반영된다', () => {
+    expect(parseSettings({ homeUrl: 'https://naver.com' }).homeUrl).toBe('https://naver.com')
+  })
+  it('http/https 가 아닌 홈 주소는 기본값으로 되돌아간다', () => {
+    expect(parseSettings({ homeUrl: 'javascript:alert(1)' }).homeUrl).toBe(DEFAULT_SETTINGS.homeUrl)
+    expect(parseSettings({ homeUrl: 'about:blank' }).homeUrl).toBe(DEFAULT_SETTINGS.homeUrl)
+    expect(parseSettings({ homeUrl: '' }).homeUrl).toBe(DEFAULT_SETTINGS.homeUrl)
+  })
+  it('newTabUrl/searchEngine 잘못된 값은 기본값으로 되돌아간다', () => {
+    expect(parseSettings({ newTabUrl: 'weird' }).newTabUrl).toBe('home')
+    expect(parseSettings({ searchEngine: 'bing' }).searchEngine).toBe('google')
+  })
+})
+// === 신규 추가분 끝 ============================================================

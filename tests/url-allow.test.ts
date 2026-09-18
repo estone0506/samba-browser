@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { isAllowedUrl, isHttpUrl, BLOCKED_URL_MESSAGE } from '../src/shared/url'
+import {
+  isAllowedUrl,
+  isHttpUrl,
+  isInternalUrl,
+  isAllowedExternalUrl,
+  BLOCKED_URL_MESSAGE,
+  NEW_TAB_URL
+} from '../src/shared/url'
 import { toUrl } from '../src/main/browser/tab-manager'
 
 describe('isAllowedUrl', () => {
@@ -32,6 +39,32 @@ describe('isAllowedUrl', () => {
   it('앞뒤 공백은 무시한다', () => {
     expect(isAllowedUrl('  https://a.com  ')).toBe(true)
     expect(isAllowedUrl('  file:///a  ')).toBe(false)
+  })
+})
+
+describe('내부 페이지(samba://newtab)', () => {
+  it('새 탭 페이지는 사용자 탐색 관문을 통과한다', () => {
+    expect(isAllowedUrl(NEW_TAB_URL)).toBe(true)
+    expect(isAllowedUrl('SAMBA://NEWTAB')).toBe(true)
+    expect(isAllowedUrl('samba://newtab/')).toBe(true)
+  })
+  it('허용 목록에 없는 samba: 주소는 거부', () => {
+    expect(isAllowedUrl('samba://settings')).toBe(false)
+    expect(isAllowedUrl('samba://newtab/../../etc')).toBe(false)
+    expect(isInternalUrl('samba://newtabx')).toBe(false)
+  })
+  it('내부 페이지는 외부용 관문(AI 도구·북마크 저장)에서는 거부', () => {
+    expect(isAllowedExternalUrl(NEW_TAB_URL)).toBe(false)
+    expect(isAllowedExternalUrl('https://a.com')).toBe(true)
+    expect(isAllowedExternalUrl('about:blank')).toBe(true)
+    expect(isAllowedExternalUrl('file:///a')).toBe(false)
+  })
+  it('내부 페이지는 외부 브라우저로 열 대상이 아니다', () => {
+    expect(isHttpUrl(NEW_TAB_URL)).toBe(false)
+  })
+  it('주소창에 samba://newtab 을 치면 그대로 연다(크롬의 chrome://newtab 과 같은 방식)', () => {
+    expect(toUrl(NEW_TAB_URL)).toBe(NEW_TAB_URL)
+    expect(isInternalUrl(toUrl(NEW_TAB_URL))).toBe(true)
   })
 })
 

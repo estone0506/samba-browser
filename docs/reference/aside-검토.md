@@ -106,3 +106,52 @@ Free, 월 500 크레딧, 추가 구매, 자동 충전. 월별 사용량 표.
 
 ### 추가 관찰 (채팅 입력창 Guard 메뉴)
 - 입력창 하단 **Guard 권한 모드**: Read only(읽기만) / Guard(위험 행동 확인) / Full access(자동) + **Final confirm** 토글(마지막 단계 확인). → 삼바 2단계 설정·채팅 입력창에 동일 개념 도입(현재는 Guard 고정).
+
+### Vault 등록·필터 UI (팝오버 실물)
+- **+ 새 항목**: Login / Password / Credit Card / Secure Note / Identity / Document / More › · 비밀번호 생성기 · Import…
+- 목록: 검색, 금고 선택(All accounts), **Suggestions**(현재 사이트 계정 자동 필터), This Week(최근 사용)
+- 상세: Personal › Personal, **Autofill 버튼**, Credentials(Username·••••), Website(로그인 URL)
+- 삼바 반영: 항목 6종 재편(로그인/비밀번호/신용카드/보안메모/신원정보/문서), + 메뉴 동일, 추천 섹션, 자동 채우기 버튼, 툴바 열쇠 팝오버 (2단계 Task 11)
+- **New Login 폼**: 금고 선택(Personal) · Cancel/Save · 제목 New Login + 부제 **현재 사이트 호스트 자동** · Credentials(Username, Password + 생성 버튼 ↻) · Website(**현재 URL 자동 입력** + 도메인/전체URL 전환 ⇄ + **URL 추가**로 여러 URL) → 삼바 Task 11: 로그인 추가 시 현재 탭 호스트/URL 자동, 비밀번호 생성, 계정당 URL 여러 개(sites.loginUrl → login_urls 목록)
+- **New Credit Card 폼**: 섹션(Section 이름) 단위 필드 그룹, 드래그 핸들(≡)로 필드 순서 변경, 필드: cardholder name · type(선택) · card number · CVC · (만료 등). 1Password 식 "섹션+필드" 스키마 → 삼바 Task 11: 카드 항목 필드(소유자·카드사/종류·번호·유효기간·CVC·결제비밀번호), 필드 단위 암호화(값별 ciphertext) 고려
+- **New Password 폼**: Section · password(생성 ↻) · website(https://) · **+ Add custom field**(사용자 정의 필드) · **Tags**(태그 입력) → 삼바 Task 11: 모든 항목에 사용자 정의 필드·태그 지원(태그로 KR/CN/JP·계정군 필터), 필드 스키마 = 섹션[ ] > 필드{label,type(text|password|url|date|select),value}
+- **항목 상세 하단 "Agent access: While unlocked"** — 항목별 AI 접근 정책 override(전역 정책 기본, 항목마다 Always/While unlocked/Never) → 삼바 Task 11: `accounts.agentAccess` 컬럼(null=전역 따름) + 상세 화면 선택. 도구는 항목 정책 > 전역 정책 순으로 판정
+
+### Vault 저장·잠금 방식(문서 기준)
+
+Aside Password 설정 화면 기준 요약:
+- **잠금 해제**: 마스터 비밀번호 + OS 인증(Windows Hello). 자동 잠금 기본 **1주**
+- **에이전트 접근 정책**: 3단계 — Always allow / While unlocked / Never, 항목별 예외 가능
+- **자동 채움**: 채운 뒤 자동 제출 옵션(끄면 채우기만)
+- **도메인 매칭**: 저장 시 도메인 매칭 + **제외 도메인** 목록(은행·정부 사이트 등 자동화 자체를 막음)
+- **시크릿 탭**: AI 접근 불가(별도 세션)
+
+우리(키마스터) 반영 표:
+
+| 항목 | Aside | 삼바 반영(2단계) |
+|---|---|---|
+| 자동 잠금 기본값 | 1주 | `vaultAutoLockMinutes` 기본 **10080**(1주). 설정 패널에서 15분/1시간/1일/1주/안 함(43200) 선택 |
+| 이 PC 기억 | 기본 켬(OS 인증으로 잠금 해제) | `vaultRememberDevice` 기본 **true**. safeStorage 로 마스터 키를 감싸 저장, 끄면 즉시 기기 키 삭제 |
+| 에이전트 접근 정책 | Always / While unlocked / Never (항목별 예외) | `vaultAccessPolicy` 3단계 전역 설정(항목별 예외는 추후). `never` 는 도구 즉시 거부, `always` 는 잠겨 있어도 기기 키로 자동 해제(`VaultService.ensureUnlockedByDevice()`) 시도 후 진행, `while_unlocked` 은 기존 동작 |
+| 자동 제출 | 채운 뒤 자동 제출 옵션 | `vaultAutoSubmit` 기본 true. 꺼두면 `login` 도구가 채우기만 하고 제출은 사용자에게 맡김 |
+| 제외 도메인 | 도메인별 저장 제외 | `vaultExcludedHosts` — `fill_secret`/`login`/저장 제안(`vault:capture`) 모두 건너뜀 |
+| 시크릿 탭 | AI 접근 불가 | 추후(시크릿/프로필 개념 도입 시 함께 설계)
+
+### 북마크 관리자 페이지 (실물)
+- 크롬 북마크 관리자와 동일 구조: 왼쪽 트리(북마크바 / 기타 북마크), 가운데 폴더·링크 목록(행마다 ⋮ 메뉴), 상단 검색, 우상단 ⋮ 메뉴: **이름순 정렬 · 새 북마크 추가 · 새 폴더 추가 · 북마크 가져오기 · 북마크 내보내기 · 고객센터**
+- 삼바 반영(Task 11 또는 2b): 사이드바 트리 외에 **북마크 관리자 탭 페이지**(검색·폴더 트리·행 메뉴(열기/이름 변경/이동/삭제)·정렬·추가·가져오기·**내보내기(Netscape HTML)**). 가져오기 파서와 대칭인 내보내기 필요.
+
+### 로고 메뉴 › Extensions (실물)
+- Manage all extensions · **Import extensions**(크롬에서 확장 가져오기) · Installed: **Aside Vault 자체가 확장으로 구현됨**(핀 아이콘), 샵백 캐시백 확장
+- 시사점: Aside 는 비밀번호 관리자를 크롬 확장(MV3) 형태로 만들어 자동 채움을 처리. 삼바는 preload 격리 월드 방식(동일 효과). 확장 가져오기/관리는 2b(Electron `session.extensions.loadExtension`, MV3 제한 확인).
+
+### 설정 전 화면 재확인 (2026-09-18 저녁, 9장) — 기존 기록과 일치. 추가 관찰:
+- **Memory 에피소드 실제 내용**(2026-09-17.md): 에이전트가 무신사머니 인출 중 만난 사실을 시각·근거(sessions.get id)와 함께 기록 — 예: "NICE ePAY 결제비밀번호 창이 **별도 창(m.niceepay.com:7006/epay/pinCert.do)** 으로 열림", "키패드 스냅샷에는 숫자 버튼·입력완료가 보이지만 **몇 자리 입력됐는지는 스크린샷으로만 확인 가능(값은 알 수 없음)**", "사용자 직접 실행과 에이전트 시도의 인과를 구분해 기록". → 3단계 결제/인증 설계 참고: ① 결제창은 팝업(별도 WebContents) 이므로 팝업 탭도 스냅샷·조작 대상에 포함 ② 보안 키패드는 입력 자리수 표시(●)로 진행 확인 ③ 메모리 항목은 "사실 + 근거 세션 + 주의" 구조.
+- Account › Sync: "Browser data recovery" 토글(클라우드 복구) — 2b 동기화 설계에 복구 옵션 포함.
+- **Memory › Configure**: 메모리 생성 켜기/끄기, 에피소드 보관 기간(Never forget 등) → 삼바 4단계 메모리 설정 2항목.
+- **Password 설정 하단 추가 확인**: "Connect external password manager"(외부 관리자 연동), Export CSV/JSON, "Disable in incognito", URL matching strategy(Domain). → 이미 정책 변경에 반영(자동잠금 1주·접근정책·자동제출·도메인 매칭). 내보내기 CSV/JSON 은 Task 11 에 추가.
+- **Routines**: Free 3개 제한 배너 + Upgrade, 루틴 토글·주기, Create, Suggestions "Scan"(히스토리에서 반복 작업 찾기) — 이미 기록.
+- **Developers**: Aside CLI(Codex/Claude Code 에서 `/aside-browser` 스킬로 웹 작업 실행), Aside Skills 추가, **Aside MCP 서버 토글**, Remote Control(Pro) — 2차 로드맵(삼바 MCP 서버 노출) 유지.
+- **Profiles 메뉴(로고 클릭)**: 프로필 여러 개(예: "박가명 (직장)", "Profile 1"), 단축키 Ctrl+Alt+1/2 로 전환, 프로필별 아바타·⋯ 메뉴, New profile. 프로필 = 크롬식 완전 분리(북마크·볼트·세션). → 삼바: 현재 "탭별 파티션(계정=프로필)" 은 유지하고, 상위 개념 **브라우저 프로필(작업공간)** 은 2b 에서 Supabase 계정 하위로 설계(북마크·키마스터 금고·설정 세트 분리, Ctrl+Alt+숫자 전환).
+- **로그인 화면(새 프로필/최초 실행)**: 중앙 로고 + "Sign in to Aside" · 이메일 입력 → Continue(매직 링크/코드 방식 추정, 비밀번호 칸 없음) · "I don't have an account" · 구분선 · **Sign in with Google**. 창 자체가 로그인 전용(사이드바 없음). → 삼바 2b 로그인 화면 동일 구성: 이메일 OTP(Supabase magic link/OTP) + 구글, 로그인 전엔 앱 본체 미표시(단, 오프라인·게스트 모드는 로컬 전용으로 허용 검토).
+- **페이지 내 자동 채움 피커(실물, 네이버 로그인)**: 아이디 입력칸 오른쪽 끝에 **열쇠 아이콘**, 클릭/포커스 시 입력칸 아래 드롭다운 — 현재 호스트의 저장 계정 목록(사이트 아이콘·호스트·아이디, 스크롤, ⋯ 더보기, Close 툴팁). 항목 클릭 → 아이디·비밀번호 채움. → 삼바 Task 11: preload 격리 월드에서 Shadow DOM 오버레이(열쇠 아이콘 + 드롭다운) 주입, 계정 목록은 메인에서 `{label, username}` 만 전달(값 없음), 선택 시 메인이 fillValue 로 채움. 사람이 직접 쓸 때도 AI 없이 동작.

@@ -9,8 +9,12 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  # 로컬 OCR 네이티브 바이너리는 Windows x64 만 싣는다(전 플랫폼 포함 시 수백 MB)
+  - '!node_modules/onnxruntime-node/bin/napi-v6/{darwin,linux}/**'
+  - '!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**'
 asarUnpack:
   - resources/**
+  - node_modules/onnxruntime-node/**
 win:
   executableName: SAMBA Browser
 nsis:

@@ -1,5 +1,13 @@
+// [규칙] 이 파일은 page.ts 와 함께 sandbox preload 로 번들된다.
+// src/shared/* 에서 **값(value)** 을 import 하지 말 것 — Rollup 청크 분리로 require() 가 생겨
+// preload 로드가 실패한다. 타입은 `import type` 만 사용(번들에 남지 않음), 값은 ./page-constants 에서.
 import type { PageElement, PageSnapshot } from '../shared/snapshot'
-import { MAX_ELEMENTS } from '../shared/snapshot'
+import { MAX_ELEMENTS } from './page-constants'
+import {
+  detectLoginFields,
+  usernameElementFor as detectUsernameElementFor,
+  type LoginFields
+} from './login-detect'
 
 // 스냅샷 id → 실제 DOM 요소 매핑 (스냅샷마다 갱신)
 let registry: HTMLElement[] = []
@@ -90,6 +98,14 @@ function get(id: number): HTMLElement | null {
   return registry[id - 1] ?? null
 }
 
+// 등록된 요소가 비밀 입력칸(type=password)인지 여부. 최신 스냅샷 기준으로 판단하며,
+// registry 에 없는 id 는 false(비밀 입력칸 아님으로 간주 → 호출부가 거부한다)
+export function isSecretField(id: number): boolean {
+  const el = get(id)
+  if (!el) return false
+  return el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'password'
+}
+
 // 등록된 요소의 실제 페이지 텍스트. 위험 행동 판정의 근거(AI 가 준 label 은 신뢰하지 않음)
 export function textOf(id: number): string {
   const el = get(id)
@@ -147,4 +163,164 @@ export function performSelect(id: number, value: string): string {
 export function performScroll(dir: 'up' | 'down'): string {
   window.scrollBy({ top: dir === 'down' ? window.innerHeight * 0.8 : -window.innerHeight * 0.8 })
   return 'ok'
+}
+
+// --- 값 주입(SECRET 허용) ------------------------------------------------
+// 격리 월드에서 메인 프로세스만 호출한다(AI 텍스트 도구인 performType 과 달리 password 를 막지 않음)
+export function fillValue(id: number, value: string): string {
+  const el = get(id)
+  if (!el) return `element ${id} not found (call get_page again)`
+  const input = el as HTMLInputElement
+  el.focus()
+  const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set
+  if (setter) setter.call(el, value)
+  else input.value = value
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  el.dispatchEvent(new Event('change', { bubbles: true }))
+  return 'ok'
+}
+
+// --- 로그인 필드 탐지 -----------------------------------------------------
+
+type FormOwner = HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement
+
+function formOf(el: HTMLElement): HTMLFormElement | null {
+  if (
+    el instanceof HTMLInputElement ||
+    el instanceof HTMLButtonElement ||
+    el instanceof HTMLSelectElement ||
+    el instanceof HTMLTextAreaElement
+  ) {
+    return (el as FormOwner).form
+  }
+  return null
+}
+
+// username 후보 선택은 login-detect 모듈(Chromium/Bitwarden 규칙 이식)에 위임한다
+function usernameElementFor(passwordEl: HTMLInputElement): HTMLInputElement | undefined {
+  return detectUsernameElementFor(passwordEl)
+}
+
+function isSubmitLike(el: HTMLElement): boolean {
+  if (el.tagName === 'INPUT') return (el as HTMLInputElement).type === 'submit'
+  if (el.tagName === 'BUTTON') return (el as HTMLButtonElement).type !== 'button'
+  return false
+}
+
+function isButtonish(el: HTMLElement): boolean {
+  return (
+    el.tagName === 'BUTTON' ||
+    (el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'submit')
+  )
+}
+
+const LOGIN_TEXT = /로그인하기|로그인|login|sign in/i
+
+// 로그인 필드 탐지. 호출할 때마다 스냅샷을 새로 구성한다 — SPA 는 클라이언트 라우팅으로 화면이
+// 바뀌어도 문서를 새로 만들지 않아 이전 registry 가 낡은 채 남기 때문(E2E 하네스에서 확인된 버그).
+// 실제 판정은 login-detect 모듈(Chromium/Bitwarden 규칙 이식)이 담당한다
+export function findLoginFields(): LoginFields {
+  buildSnapshot()
+  return detectLoginFields(registry)
+}
+
+// 요소의 form 이 있으면 requestSubmit, 없으면 click 으로 제출(둘 다 실제 제출 동작을 유발)
+export function submitForm(id: number): string {
+  const el = get(id)
+  if (!el) return `element ${id} not found (call get_page again)`
+  const form = formOf(el)
+  if (form && typeof form.requestSubmit === 'function') form.requestSubmit()
+  else el.click()
+  return 'ok'
+}
+
+// --- 폼 제출 감지(저장 제안) -----------------------------------------------
+
+export interface InstallCaptureListenerOptions {
+  // 테스트 전용: jsdom 의 dispatchEvent 는 isTrusted=false 이므로 합성 이벤트도 허용한다.
+  // 실제 page.ts 는 이 옵션 없이(옵션 생략 = 신뢰된 이벤트만) 호출해야 한다.
+  allowUntrusted?: boolean
+}
+
+const CAPTURE_WINDOW_MS = 30_000
+const CAPTURE_MAX_PER_WINDOW = 3
+
+// ipcRenderer.send 등 실제 전송 함수는 주입받는다(테스트에서 스텁 가능하도록)
+export function installCaptureListener(
+  send: (payload: { host: string; username: string; password: string }) => void,
+  options: InstallCaptureListenerOptions = {}
+): void {
+  const allowUntrusted = options.allowUntrusted === true
+
+  // 같은 제출이 submit 과 click 양쪽에서 잡혀 중복 전송되는 것을 짧게 막는다
+  let lastSignature = ''
+  let lastSentAt = 0
+
+  // 시그니처와 무관하게, 적대 페이지가 서로 다른 값을 반복 주입/제출해 플러딩하는 것을 막는다
+  // (호스트당 30초 최대 3회)
+  const sentTimestamps: number[] = []
+  const withinRateLimit = (now: number): boolean => {
+    while (sentTimestamps.length > 0 && now - sentTimestamps[0] >= CAPTURE_WINDOW_MS) {
+      sentTimestamps.shift()
+    }
+    return sentTimestamps.length < CAPTURE_MAX_PER_WINDOW
+  }
+
+  const attempt = (): void => {
+    const pwEls = Array.from(
+      document.querySelectorAll<HTMLInputElement>('input[type="password"]')
+    ).filter(isVisible)
+    const pw = pwEls[0]
+    if (!pw || !pw.value) return // 값이 없으면 저장 제안을 띄우지 않는다
+    const userEl = usernameElementFor(pw)
+    const username = userEl?.value ?? ''
+    const signature = `${username}:${pw.value}`
+    const now = Date.now()
+    if (signature === lastSignature && now - lastSentAt < 1000) return
+    if (!withinRateLimit(now)) return
+    lastSignature = signature
+    lastSentAt = now
+    sentTimestamps.push(now)
+    send({ host: location.host, username, password: pw.value })
+  }
+
+  // click 이 감지된 password 와 관련된 제출 액션인지 판정한다.
+  // - password 가 form 안에 있으면: 그 form 소속의 submit 성격 버튼일 때만
+  // - password 가 form 밖이면: findSubmit() 이 로그인 텍스트로 고르는 것과 같은 기준(같은 요소)일 때만
+  function isRelevantSubmitClick(clicked: HTMLElement, pw: HTMLInputElement): boolean {
+    const pwForm = formOf(pw)
+    if (pwForm) {
+      return isSubmitLike(clicked) && formOf(clicked) === pwForm
+    }
+    return isButtonish(clicked) && LOGIN_TEXT.test(labelOf(clicked))
+  }
+
+  // 일반적인 폼 제출(캡처 단계 — 페이지 핸들러의 preventDefault 와 무관하게 이벤트는 도달한다)
+  document.addEventListener(
+    'submit',
+    (ev) => {
+      if (!allowUntrusted && ev.isTrusted !== true) return
+      attempt()
+    },
+    true
+  )
+  // SPA 대비: 페이지가 submit 을 아예 막고 클릭만으로 처리하는 경우도 감지
+  document.addEventListener(
+    'click',
+    (ev) => {
+      if (!allowUntrusted && ev.isTrusted !== true) return
+      const target = ev.target
+      if (!(target instanceof HTMLElement)) return
+      const clicked = target.closest('button, input[type="submit"]')
+      if (!(clicked instanceof HTMLElement)) return
+      const pwEls = Array.from(
+        document.querySelectorAll<HTMLInputElement>('input[type="password"]')
+      ).filter(isVisible)
+      const pw = pwEls[0]
+      if (!pw) return
+      if (!isRelevantSubmitClick(clicked, pw)) return
+      attempt()
+    },
+    true
+  )
 }

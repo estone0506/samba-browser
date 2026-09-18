@@ -1,10 +1,12 @@
 {
-  "app": { "name": "SAMBA Browser" },
+  "app": {
+    "name": "SAMBA Browser"
+  },
   "sidebar": {
     "browser": "Browser",
     "tasks": "Tasks",
     "automation": "Automation",
-    "accounts": "Personal Info",
+    "accounts": "KeyMaster",
     "phones": "Phones",
     "logs": "Logs",
     "settings": "Settings",
@@ -14,9 +16,17 @@
     "placeholder": "Search or enter URL",
     "pc": "PC",
     "mobile": "Mobile",
-    "profile": "Profile"
+    "profile": "Profile",
+    "home": "Home"
   },
-  "tab": { "new": "New Tab" },
+  "tab": {
+    "new": "New Tab"
+  },
+  "newtab": {
+    "title": "New Tab",
+    "placeholder": "Search or enter URL",
+    "bookmarks": "Bookmarks"
+  },
   "chat": {
     "title": "AI",
     "placeholder": "Type an instruction…",
@@ -52,5 +62,358 @@
     "missing": "AI is not connected. Run claude login in a terminal or add an API key in Settings.",
     "limit": "You've reached the AI usage limit. Please try again later."
   },
-  "settings": { "model": "Model", "language": "Language" }
+  "settings": {
+    "model": "Model",
+    "language": "Language"
+  },
+  "capture": {
+    "title": "Save your {{host}} account info?",
+    "titleUpdate": "Update the password for your {{host}} account?",
+    "titleLocked": "Save your sign-in for {{host}}?",
+    "body": "You just signed in to {{host}} as {{username}}. Save it so it can autofill next time?",
+    "skip": "Skip this time",
+    "save": "Save",
+    "unlockToSave": "Unlock to save",
+    "lockedNotice": "KeyMaster is locked. Unlock it to save.",
+    "updated": "Your {{host}} password was updated",
+    "undo": "Undo"
+  },
+  "bookmark": {
+    "title": "Bookmarks",
+    "toolbar": "Bookmarks Bar",
+    "empty": "Empty",
+    "delete": "Delete",
+    "deleteFolder": "Delete folder",
+    "emptyAll": "No bookmarks saved yet",
+    "manage": "Manage"
+  },
+  "bookmarksPage": {
+    "title": "Bookmarks",
+    "searchPlaceholder": "Search title or URL",
+    "toolbarFolder": "Bookmarks Bar",
+    "otherFolder": "Other Bookmarks",
+    "empty": "This folder is empty",
+    "noSearchResults": "No results found",
+    "root": "Root",
+    "url": "URL",
+    "menu": {
+      "open": "Open in new tab",
+      "rename": "Rename",
+      "move": "Move",
+      "delete": "Delete"
+    },
+    "topMenu": {
+      "sortByName": "Sort by name",
+      "addBookmark": "Add bookmark",
+      "addFolder": "Add folder",
+      "import": "Import bookmarks",
+      "export": "Export bookmarks"
+    },
+    "dialog": {
+      "addBookmarkTitle": "New bookmark",
+      "addFolderTitle": "New folder",
+      "renameTitle": "Rename",
+      "moveTitle": "Choose a folder to move to",
+      "titleLabel": "Title",
+      "urlLabel": "URL",
+      "nameLabel": "Name",
+      "cancel": "Cancel",
+      "save": "Save",
+      "add": "Add",
+      "move": "Move"
+    },
+    "deleteFolderConfirm": "Delete the folder \"{{name}}\" and everything inside it?",
+    "exportSuccess": "Export complete",
+    "exportFailed": "Export failed",
+    "importSuccess": "Import complete"
+  },
+  "vault": {
+    "setup": {
+      "title": "Set up KeyMaster",
+      "desc": "Encrypt and store accounts, passwords, and payment info with a master password",
+      "password1": "Master password",
+      "password2": "Confirm master password",
+      "remember": "Remember on this PC",
+      "rememberDesc": "Auto-unlock with Windows sign-in (recommended)",
+      "warning": "If you lose your master password, stored data cannot be recovered. Keep it somewhere safe.",
+      "submit": "Create KeyMaster",
+      "tooShort": "Enter at least {{n}} characters",
+      "mismatch": "Passwords don't match",
+      "failed": "Couldn't create KeyMaster"
+    },
+    "unlock": {
+      "title": "Unlock",
+      "desc": "Enter your master password",
+      "placeholder": "Master password",
+      "submit": "Unlock",
+      "failed": "Incorrect password"
+    },
+    "list": {
+      "searchPlaceholder": "Search accounts or sites",
+      "chipAll": "All",
+      "chipGlobal": "Global",
+      "add": "Add account",
+      "addGlobal": "Add global item",
+      "import": "Import",
+      "default": "Default",
+      "globalGroup": "Global items",
+      "empty": "No items saved yet",
+      "settingsBtn": "KeyMaster settings",
+      "suggestions": "Suggestions",
+      "recent": "Recently used",
+      "filterType": "Type",
+      "filterAll": "All",
+      "filterTags": "Tags",
+      "sortName": "Name",
+      "sortRecent": "Recent",
+      "sortLabel": "Sort",
+      "noSuggestions": "No account matches the current tab",
+      "collapseAll": "Collapse all",
+      "expandAll": "Expand all",
+      "accountCount": "{{count}} accounts",
+      "deleteAccount": "Delete account",
+      "deleteSite": "Delete all accounts for this site",
+      "deleteConfirm": "Delete {{count}} accounts?",
+      "deleted": "Deleted",
+      "undo": "Undo"
+    },
+    "settings": {
+      "title": "KeyMaster settings",
+      "autoLock": "Auto-lock",
+      "autoLock15m": "15 minutes",
+      "autoLock1h": "1 hour",
+      "autoLock1d": "1 day",
+      "autoLock1w": "1 week",
+      "autoLockNever": "Never",
+      "accessPolicy": "AI access policy",
+      "accessAlways": "Always allow",
+      "accessAlwaysDesc": "Auto-unlock with this PC's remembered key even when locked",
+      "accessWhileUnlocked": "While unlocked",
+      "accessWhileUnlockedDesc": "AI can only fill values while the vault is unlocked",
+      "accessNever": "Never allow",
+      "accessNeverDesc": "AI can never fill KeyMaster values",
+      "autoSubmit": "Auto-submit after autofill",
+      "autoSubmitDesc": "When off, fields are filled but you press the login button yourself",
+      "autoUpdatePassword": "Auto-update password on successful sign-in",
+      "autoUpdatePasswordDesc": "If you sign in with a different value, it's updated right away without asking (undo available)",
+      "remember": "Remember on this PC",
+      "rememberDesc": "Turning this off deletes the stored device key immediately",
+      "excludedHosts": "Excluded domains",
+      "excludedHostsDesc": "Comma-separated list (e.g. bank.example.com, gov.example.com)",
+      "excludedHostsPlaceholder": "example.com, another.com"
+    },
+    "detail": {
+      "openInBrowser": "Open in browser",
+      "edit": "Edit",
+      "lock": "Lock",
+      "login": "Login",
+      "username": "Username",
+      "password": "Password",
+      "loginUrl": "Login URL",
+      "payment": "Payment",
+      "paymentPassword": "Payment password",
+      "personal": "Personal info",
+      "history": "Usage history",
+      "noHistory": "No recent activity",
+      "show": "Show",
+      "hide": "Hide",
+      "copy": "Copy",
+      "copyClearHint": "Cleared from clipboard after 30 seconds",
+      "open": "Open",
+      "dangerBadge": "Sensitive",
+      "value": "Value",
+      "empty": "Select an account or item on the left",
+      "auditAction": {
+        "fill": "Auto-filled",
+        "reveal": "Value shown",
+        "save": "Saved",
+        "import": "Imported",
+        "delete": "Deleted"
+      },
+      "auditSource": {
+        "ai": "AI",
+        "user": "User"
+      }
+    },
+    "itemType": {
+      "login": "Login",
+      "password": "Password",
+      "card": "Credit card",
+      "note": "Secure note",
+      "identity": "Identity",
+      "document": "Document"
+    },
+    "editor": {
+      "editTitle": "Edit account",
+      "addTitle": "Add account",
+      "editGlobalTitle": "Edit global item",
+      "addGlobalTitle": "Add global item",
+      "label": "Account label",
+      "itemLabel": "Label",
+      "username": "Username",
+      "host": "Site host",
+      "itemType": "Item type",
+      "value": "Value",
+      "valuePlaceholder": "Leave blank to keep unchanged",
+      "cancel": "Cancel",
+      "save": "Save",
+      "newTitle": "New {{type}}",
+      "editItemTitle": "Edit {{type}}",
+      "generate": "Generate",
+      "keepHint": "Leave empty to keep the saved value"
+    },
+    "import": {
+      "title": "Import",
+      "passwordsButton": "Password CSV",
+      "bookmarksButton": "Bookmark HTML",
+      "lockedError": "Unlock KeyMaster before importing",
+      "failed": "Import failed",
+      "passwordsSummaryTitle": "Password import result",
+      "bookmarksSummaryTitle": "Bookmark import result",
+      "added": "Added",
+      "updated": "Updated",
+      "skipped": "Skipped",
+      "sites": "Sites",
+      "folders": "Folders",
+      "bookmarks": "Bookmarks",
+      "deleteCsvHint": "We recommend deleting the original CSV file",
+      "guide": {
+        "passwordsTitle": "Password CSV format",
+        "passwordsExportSteps": "Chrome·Whale·Edge: Settings › Password Manager › Export (CSV)",
+        "passwordsHeadersLabel": "Supported headers",
+        "passwordsHeadersExample": "name,url,username,password,note",
+        "passwordsSupports": "Bitwarden (login_uri…), Firefox, Safari/Keeper formats auto-detected",
+        "passwordsWarning": "⚠️ We strongly recommend deleting the original CSV file after import to prevent plaintext password exposure",
+        "bookmarksTitle": "Bookmark HTML format",
+        "bookmarksExportSteps": "Chrome·Whale·Edge·Aside: Bookmark Manager › ⋮ › Export Bookmarks (HTML)",
+        "bookmarksSupports": "Netscape format auto-detected"
+      }
+    },
+    "add": {
+      "menu": "Add",
+      "login": "Login",
+      "password": "Password",
+      "card": "Credit card",
+      "note": "Secure note",
+      "identity": "Identity",
+      "document": "Document",
+      "documentDisabled": "Coming after stage 2",
+      "generator": "Password generator",
+      "import": "Import…"
+    },
+    "generator": {
+      "title": "Password generator",
+      "length": "Length",
+      "symbols": "Include symbols",
+      "digits": "Include digits",
+      "generate": "Generate",
+      "copy": "Copy",
+      "use": "Use",
+      "copied": "Copied"
+    },
+    "agentAccess": {
+      "label": "Agent access",
+      "inherit": "Follow global setting",
+      "always": "Always allow",
+      "while_unlocked": "Only while unlocked",
+      "never": "Never allow"
+    },
+    "websites": {
+      "label": "Website",
+      "add": "+ Add URL",
+      "placeholder": "https://example.com/login",
+      "remove": "Remove"
+    },
+    "tags": {
+      "label": "Tags",
+      "add": "Add tag",
+      "placeholder": "Press Enter to add"
+    },
+    "autofill": {
+      "button": "Autofill",
+      "ok": "Filled in the current tab",
+      "fieldsNotFound": "No login form found",
+      "locked": "Unlock KeyMaster first",
+      "hostMismatch": "The current tab is not this account’s site",
+      "insecure": "Only https pages can be filled",
+      "excluded": "This host is excluded",
+      "failed": "Could not fill"
+    },
+    "fields": {
+      "add": "+ Custom field",
+      "key": "Field key",
+      "fieldLabel": "Display name",
+      "kind": "Kind",
+      "remove": "Remove",
+      "kindText": "Text",
+      "kindSecret": "Secret",
+      "kindUrl": "URL",
+      "kindDate": "Date",
+      "kindSelect": "Select"
+    },
+    "sections": {
+      "login": "Login",
+      "card": "Card details",
+      "payment": "Payment",
+      "identity": "Identity",
+      "note": "Note",
+      "custom": "Additional"
+    },
+    "popover": {
+      "title": "KeyMaster",
+      "open": "Open KeyMaster",
+      "close": "Close",
+      "manage": "Manage all"
+    },
+    "fieldNames": {
+      "password": "Password",
+      "holder": "Cardholder",
+      "brand": "Card brand / type",
+      "number": "Card number",
+      "expiry": "Expiry",
+      "cvc": "CVC",
+      "cardPassword": "Payment password",
+      "name": "Name",
+      "birth": "Date of birth",
+      "address": "Address",
+      "phone": "Phone",
+      "passport": "Passport number",
+      "idCard": "ID card number",
+      "note": "Note"
+    }
+  },
+  "settingsPage": {
+    "title": "Settings",
+    "browser": {
+      "title": "Browser",
+      "homeUrl": "Home address",
+      "homeUrlError": "Only http:// or https:// addresses are allowed",
+      "save": "Save",
+      "newTabUrl": "New tab address",
+      "newTabUrlHome": "Same as home",
+      "newTabUrlBlank": "Blank page",
+      "searchEngine": "Default search engine",
+      "searchEngineGoogle": "Google",
+      "searchEngineNaver": "Naver",
+      "language": "Language",
+      "languageKo": "한국어",
+      "languageEn": "English"
+    },
+    "ai": {
+      "title": "AI",
+      "model": "Model",
+      "permissionMode": "Default permission mode",
+      "permissionReadOnly": "Read only",
+      "permissionGuard": "Confirm risky actions",
+      "permissionFull": "Automatic",
+      "ocrEnabled": "Local OCR (read text in images)",
+      "ocrEnabledDesc": "Reads text in captchas, receipts, and SMS codes with a local model (downloads ~18MB on first use)"
+    },
+    "vault": {
+      "title": "KeyMaster",
+      "description": "KeyMaster save/lock policy",
+      "descriptionDetail": "Configure auto-lock, AI access policy, auto-submit, and more",
+      "open": "Open KeyMaster settings"
+    }
+  }
 }
