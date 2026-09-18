@@ -5,8 +5,8 @@
 // 세션(파티션)마다 확장을 따로 걸어야 하므로, 이 관리자는 "호스트" 목록을 들고 있다.
 // 첫 호스트는 기본 세션이고, 작업공간 전환으로 새 파티션 세션이 생기면 attachHost 로 붙인다.
 
-import { existsSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { join, sep } from 'node:path'
 import type { Settings } from '../../shared/settings'
 import type { ExtensionDto, ExtensionError } from '../../shared/extensions'
 
@@ -62,20 +62,45 @@ export function parseManifest(raw: unknown): ExtensionManifest {
 }
 
 /**
+ * 확장 폴더 경로를 실제 경로(realpath)로 바꾸고 안전한지 확인한다.
+ *
+ * ext:load 는 렌더러가 경로 문자열을 줄 수 있으므로, 사용자가 다이얼로그로 고른 경로든
+ * 설정에 저장된 경로든 여기를 반드시 지난다. 확인하는 것은 세 가지다.
+ * - 실제로 존재하는 디렉터리인가(.crx 파일·없는 경로 거부)
+ * - 그 안에 manifest.json 이 있는가
+ * - manifest.json 이 심볼릭 링크로 폴더 밖을 가리키지 않는가(링크 이탈 방지)
+ *
+ * 돌려주는 값은 심볼릭 링크를 모두 푼 절대 경로다 — 세션에는 이 경로만 넘긴다
+ */
+export function resolveExtensionFolder(folder: string): string {
+  if (!folder.trim()) throw new Error('확장 폴더 경로가 비어 있어요')
+  if (!existsSync(folder)) throw new Error('확장 폴더를 찾을 수 없어요')
+  const resolved = realpathSync(folder)
+  if (!statSync(resolved).isDirectory()) {
+    throw new Error('압축 해제된 확장 폴더를 선택해 주세요 (.crx 파일은 지원하지 않아요)')
+  }
+  const manifestPath = join(resolved, 'manifest.json')
+  if (!existsSync(manifestPath)) throw new Error('폴더 안에 manifest.json 이 없어요')
+  // 링크를 푼 뒤에도 폴더 안이어야 한다 — 밖을 가리키는 manifest 는 받지 않는다
+  const realManifest = realpathSync(manifestPath)
+  if (
+    realManifest !== join(resolved, 'manifest.json') &&
+    !realManifest.startsWith(resolved + sep)
+  ) {
+    throw new Error('manifest.json 이 확장 폴더 밖을 가리켜요')
+  }
+  return resolved
+}
+
+/**
  * 폴더가 실제로 존재하는 디렉터리인지, manifest.json 이 읽히는지 확인하고 내용을 돌려준다.
  * 압축 해제된 확장 폴더만 받는다(.crx 파일은 지원하지 않는다)
  */
 export function readExtensionFolder(folder: string): ExtensionManifest {
-  if (!folder.trim()) throw new Error('확장 폴더 경로가 비어 있어요')
-  if (!existsSync(folder)) throw new Error('확장 폴더를 찾을 수 없어요')
-  if (!statSync(folder).isDirectory()) {
-    throw new Error('압축 해제된 확장 폴더를 선택해 주세요 (.crx 파일은 지원하지 않아요)')
-  }
-  const manifestPath = join(folder, 'manifest.json')
-  if (!existsSync(manifestPath)) throw new Error('폴더 안에 manifest.json 이 없어요')
+  const resolved = resolveExtensionFolder(folder)
   let raw: unknown
   try {
-    raw = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    raw = JSON.parse(readFileSync(join(resolved, 'manifest.json'), 'utf8'))
   } catch {
     throw new Error('manifest.json 을 읽을 수 없어요 (JSON 형식 오류)')
   }
@@ -171,13 +196,15 @@ export class ExtensionManager {
 
   /** 폴더를 검증한 뒤 한 세션에 로드한다. 세션이 돌려준 이름·버전을 우선 쓴다 */
   private async loadInto(host: ExtensionHost, path: string): Promise<ExtensionDto> {
-    const manifest = readExtensionFolder(path)
-    const loaded = await host.loadExtension(path)
+    // 검증을 통과한 실제 경로만 세션에 넘기고 설정에도 그 경로를 적는다
+    const resolved = resolveExtensionFolder(path)
+    const manifest = readExtensionFolder(resolved)
+    const loaded = await host.loadExtension(resolved)
     return {
       id: loaded.id,
       name: loaded.name?.trim() || manifest.name,
       version: loaded.version?.trim() || manifest.version,
-      path
+      path: resolved
     }
   }
 
@@ -186,17 +213,19 @@ export class ExtensionManager {
    * 검증·로드 어느 쪽이든 실패하면 throw 하고 설정은 건드리지 않는다
    */
   async add(path: string): Promise<ExtensionDto> {
-    const existing = this.entries.find((e) => e.path === path)
+    // 검증·링크 해석을 먼저 한다 — 통과하지 못하면 목록도 설정도 건드리지 않는다
+    const resolved = resolveExtensionFolder(path)
+    const existing = this.entries.find((e) => e.path === resolved)
     if (existing) return existing
-    const dto = await this.loadInto(this.hosts[0], path)
+    const dto = await this.loadInto(this.hosts[0], resolved)
     this.entries.push(dto)
     this.persist()
     // 다른 파티션 세션에도 같은 확장을 걸어 준다(실패해도 전체를 되돌리지는 않는다)
     for (const host of this.hosts.slice(1)) {
       try {
-        await host.loadExtension(path)
+        await host.loadExtension(dto.path)
       } catch (e: unknown) {
-        this.failures.push({ path, error: messageOf(e) })
+        this.failures.push({ path: dto.path, error: messageOf(e) })
       }
     }
     return dto

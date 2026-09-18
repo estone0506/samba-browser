@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -246,6 +246,47 @@ describe('ExtensionManager', () => {
       version: '1.0.0',
       manifestVersion: 3
     })
+  })
+
+  it('없는 경로·파일 경로는 거부한다', () => {
+    expect(() => readExtensionFolder(join(root, '없는-폴더'))).toThrow()
+    const file = join(root, 'not-a-folder.crx')
+    writeFileSync(file, 'x', 'utf8')
+    expect(() => readExtensionFolder(file)).toThrow()
+  })
+
+  it('manifest.json 이 없으면 거부한다', () => {
+    expect(() => readExtensionFolder(makeFolder('no-manifest'))).toThrow()
+  })
+
+  it('manifest.json 이 폴더 밖을 가리키는 심볼릭 링크면 거부한다', () => {
+    const outside = join(root, 'outside.json')
+    writeFileSync(outside, JSON.stringify(validManifest('밖')), 'utf8')
+    const dir = makeFolder('escape')
+    try {
+      symlinkSync(outside, join(dir, 'manifest.json'), 'file')
+    } catch {
+      // Windows 는 개발자 모드·관리자 권한이 없으면 심볼릭 링크를 만들 수 없다
+      return
+    }
+    expect(() => readExtensionFolder(dir)).toThrow('확장 폴더 밖')
+  })
+
+  it('심볼릭 링크로 준 폴더 경로는 실제 경로로 정규화해 저장한다', async () => {
+    const real = makeFolder('real', validManifest('정규화'))
+    const link = join(root, 'link')
+    try {
+      symlinkSync(real, link, 'junction')
+    } catch {
+      return
+    }
+    const host = makeHost()
+    const mgr = new ExtensionManager(host, settings)
+
+    const dto = await mgr.add(link)
+
+    expect(dto.path).toBe(realpathSync(real))
+    expect(host.loaded).toEqual([realpathSync(real)])
   })
 
   it('extensionPaths 는 동기화 대상이 아니다(기기 로컬 설정)', async () => {
