@@ -47,11 +47,48 @@ export function ImportPanel({ open, onOpenChange }: Props): React.JSX.Element {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="rounded-2xl sm:max-w-[440px]">
+      <DialogContent className="rounded-2xl sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>{t('vault.import.title')}</DialogTitle>
         </DialogHeader>
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 overflow-y-auto max-h-[80vh]">
+          {/* 가이드 섹션 */}
+          <div className="space-y-5">
+            {/* 비밀번호 CSV 가이드 */}
+            <div className="space-y-2.5">
+              <p className="text-[12.5px] font-medium">{t('vault.import.guide.passwordsTitle')}</p>
+              <p className="text-[11.5px] text-[var(--text2)]">
+                {t('vault.import.guide.passwordsExportSteps')}
+              </p>
+              <div>
+                <p className="text-[11.5px] text-[var(--text2)] mb-1.5">
+                  {t('vault.import.guide.passwordsHeadersLabel')}
+                </p>
+                <code className="block bg-[rgba(0,0,0,.04)] dark:bg-[rgba(255,255,255,.04)] rounded-[8px] p-2 text-[11px] font-mono text-[var(--text)] overflow-x-auto">
+                  {t('vault.import.guide.passwordsHeadersExample')}
+                </code>
+              </div>
+              <p className="text-[11.5px] text-[var(--text2)]">
+                {t('vault.import.guide.passwordsSupports')}
+              </p>
+              <p className="text-[11.5px] text-[var(--text2)]">
+                {t('vault.import.guide.passwordsWarning')}
+              </p>
+            </div>
+
+            {/* 북마크 HTML 가이드 */}
+            <div className="space-y-2.5">
+              <p className="text-[12.5px] font-medium">{t('vault.import.guide.bookmarksTitle')}</p>
+              <p className="text-[11.5px] text-[var(--text2)]">
+                {t('vault.import.guide.bookmarksExportSteps')}
+              </p>
+              <p className="text-[11.5px] text-[var(--text2)]">
+                {t('vault.import.guide.bookmarksSupports')}
+              </p>
+            </div>
+          </div>
+
+          {/* 버튼 섹션 */}
           <div className="flex gap-2">
             <Button
               type="button"
@@ -72,6 +109,8 @@ export function ImportPanel({ open, onOpenChange }: Props): React.JSX.Element {
               {t('vault.import.bookmarksButton')}
             </Button>
           </div>
+
+          {/* 오류 및 결과 섹션 */}
           {err && <p className="text-[12px] text-[#b91c1c]">{err}</p>}
           {passwordResult && (
             <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] px-3.5 py-3 text-[12.5px]">

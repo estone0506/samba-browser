@@ -247,7 +247,18 @@
       "sites": "사이트",
       "folders": "폴더",
       "bookmarks": "북마크",
-      "deleteCsvHint": "가져온 원본 CSV 파일은 삭제하는 것을 권장해요"
+      "deleteCsvHint": "가져온 원본 CSV 파일은 삭제하는 것을 권장해요",
+      "guide": {
+        "passwordsTitle": "비밀번호 CSV 형식",
+        "passwordsExportSteps": "크롬·웨일·엣지: 설정 › 비밀번호 관리자 › 내보내기(CSV)",
+        "passwordsHeadersLabel": "지원되는 헤더",
+        "passwordsHeadersExample": "name,url,username,password,note",
+        "passwordsSupports": "Bitwarden(login_uri…), Firefox, Safari/Keeper 형식도 자동 인식",
+        "passwordsWarning": "⚠️ 가져온 뒤 원본 CSV 파일은 평문 비밀번호 노출 위험으로 인해 삭제할 것을 강력히 권장합니다",
+        "bookmarksTitle": "북마크 HTML 형식",
+        "bookmarksExportSteps": "크롬·웨일·엣지·Aside: 북마크 관리자 › ⋮ › 북마크 내보내기(HTML)",
+        "bookmarksSupports": "Netscape 형식 자동 인식"
+      }
     }
   }
 }

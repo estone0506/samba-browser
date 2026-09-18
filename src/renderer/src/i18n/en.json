@@ -247,7 +247,18 @@
       "sites": "Sites",
       "folders": "Folders",
       "bookmarks": "Bookmarks",
-      "deleteCsvHint": "We recommend deleting the original CSV file"
+      "deleteCsvHint": "We recommend deleting the original CSV file",
+      "guide": {
+        "passwordsTitle": "Password CSV format",
+        "passwordsExportSteps": "Chrome·Whale·Edge: Settings › Password Manager › Export (CSV)",
+        "passwordsHeadersLabel": "Supported headers",
+        "passwordsHeadersExample": "name,url,username,password,note",
+        "passwordsSupports": "Bitwarden (login_uri…), Firefox, Safari/Keeper formats auto-detected",
+        "passwordsWarning": "⚠️ We strongly recommend deleting the original CSV file after import to prevent plaintext password exposure",
+        "bookmarksTitle": "Bookmark HTML format",
+        "bookmarksExportSteps": "Chrome·Whale·Edge·Aside: Bookmark Manager › ⋮ › Export Bookmarks (HTML)",
+        "bookmarksSupports": "Netscape format auto-detected"
+      }
     }
   }
 }
