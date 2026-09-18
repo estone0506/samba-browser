@@ -12,6 +12,7 @@ import { DEFAULT_FIELD_KEY } from '../vault/fields'
 import { formatDialogNote } from '../browser/dialogs'
 import { createOcrTool } from './tools-ocr'
 import { knownLoginUrl } from '../../shared/site-rules'
+import { BLOCKED_URL_MESSAGE, isInternalUrl } from '../../shared/url'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -308,6 +309,8 @@ ${raw}`
     { url: z.string() },
     ({ url }) =>
       guard(`이동: ${url}`, async () => {
+        // 내부 페이지(samba://…)는 AI 도구로 열 수 없다 — 사용자 탐색 전용이다
+        if (isInternalUrl(url)) return `${BLOCKED_URL_MESSAGE} (${url})`
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
         await ctx.tabs.navigate(tab.id, url)
@@ -400,7 +403,10 @@ ${raw}`
     (o) =>
       guard(`새 탭 ${o.profile ?? ''}`, async () => {
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
-        const t = ctx.tabs.create(o)
+        // 내부 페이지(samba://…)는 AI 도구로 열 수 없다
+        if (o.url && isInternalUrl(o.url)) return `${BLOCKED_URL_MESSAGE} (${o.url})`
+        // url 을 안 주면 빈 페이지로 연다(기본값이 내부 페이지일 수 있어 AI 경로는 분리한다)
+        const t = ctx.tabs.create({ ...o, url: o.url ?? 'about:blank' })
         return `ok: tab ${t.id}`
       })
   )

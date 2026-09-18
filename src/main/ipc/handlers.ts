@@ -1,5 +1,6 @@
 import { dialog, ipcMain, safeStorage, type BrowserWindow, type WebContents } from 'electron'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
+import { defaultTabUrl } from '../../shared/settings'
 import type { TabManager } from '../browser/tab-manager'
 import { SettingsStore } from '../settings/store'
 import { setOcrEnabled } from '../agent/tools-ocr'
@@ -12,6 +13,9 @@ import { watchLoginSuccess } from './login-watch'
 import { VaultPickerGate } from './vault-picker'
 import { autofillAccount, type AutofillDeps } from '../vault/autofill'
 import { normalizeHost } from '../../shared/host'
+import { isAllowedExternalUrl, isInternalUrl } from '../../shared/url'
+import { toolbarBookmarks } from '../bookmarks/newtab'
+import type { NewTabInitDto } from '../../shared/newtab'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -34,7 +38,7 @@ export function registerIpc(
   // newTabUrl(홈과 동일/빈 페이지) + homeUrl 을 조합해 tab-manager 가 쓸 최종
   // 기본 주소를 계산한다. tab-manager 는 이 enum 을 몰라도 되게 분리했다
   const applyBrowserDefaults = (s: Settings): void => {
-    tabs.setDefaultUrl(s.newTabUrl === 'blank' ? 'about:blank' : s.homeUrl)
+    tabs.setDefaultUrl(defaultTabUrl(s))
     tabs.setSearchEngine(s.searchEngine)
   }
   applyBrowserDefaults(settings.get())
@@ -311,6 +315,41 @@ export function registerIpc(
   )
   ipcMain.handle(IPC.bookmarksExport, () => wrap(() => importService.exportBookmarks()))
   // === 북마크 관리자 페이지 끝 ===========================================================
+
+  // === 자체 새 탭 페이지(samba://newtab) ================================================
+  // 발신자는 반드시 관리 중인 탭이면서 내부 페이지여야 한다(웹 페이지의 위조 호출 차단)
+  const newTabSender = (sender: WebContents): { tabId: string } | null => {
+    const tab = tabs.findByWebContents(sender)
+    if (!tab) return null
+    if (!isInternalUrl(sender.getURL())) return null
+    return { tabId: tab.id }
+  }
+
+  ipcMain.handle(IPC.newTabInit, (e): NewTabInitDto => {
+    if (!newTabSender(e.sender)) return { language: settings.get().language, bookmarks: [] }
+    return {
+      language: settings.get().language,
+      bookmarks: toolbarBookmarks(importService.tree())
+    }
+  })
+
+  ipcMain.on(IPC.newTabSearch, (e, input: unknown) => {
+    const from = newTabSender(e.sender)
+    if (!from || typeof input !== 'string' || !input.trim()) return
+    // 검색어 → URL 변환과 허용 판정은 주소창과 완전히 같은 경로를 쓴다
+    void tabs.navigate(from.tabId, input).catch((err: unknown) => {
+      console.warn('새 탭 검색 실패', err instanceof Error ? err.message : String(err))
+    })
+  })
+
+  ipcMain.on(IPC.newTabOpen, (e, url: unknown) => {
+    const from = newTabSender(e.sender)
+    if (!from || typeof url !== 'string' || !isAllowedExternalUrl(url)) return
+    void tabs.navigate(from.tabId, url).catch((err: unknown) => {
+      console.warn('새 탭 북마크 열기 실패', err instanceof Error ? err.message : String(err))
+    })
+  })
+  // === 자체 새 탭 페이지 끝 =============================================================
 
   return { settings, agent, db, vault }
 }
