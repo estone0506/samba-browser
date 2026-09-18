@@ -86,3 +86,36 @@ describe('parseSettings — permissionMode / finalConfirm', () => {
     expect(parseSettings({ finalConfirm: 'yes' }).finalConfirm).toBe(false)
   })
 })
+
+describe('parseSettings — vaultAutoLockMinutes / vaultRememberDevice', () => {
+  it('기본값은 15분, 기기 기억은 꺼짐', () => {
+    const s = parseSettings({})
+    expect(s.vaultAutoLockMinutes).toBe(DEFAULT_SETTINGS.vaultAutoLockMinutes)
+    expect(s.vaultRememberDevice).toBe(DEFAULT_SETTINGS.vaultRememberDevice)
+  })
+  it('유효한 값은 그대로 반영된다', () => {
+    expect(parseSettings({ vaultAutoLockMinutes: 30 }).vaultAutoLockMinutes).toBe(30)
+    expect(parseSettings({ vaultRememberDevice: true }).vaultRememberDevice).toBe(true)
+  })
+  it('범위를 벗어난 자동 잠금 시간은 기본값(15분)으로 되돌아간다', () => {
+    expect(parseSettings({ vaultAutoLockMinutes: 0 }).vaultAutoLockMinutes).toBe(
+      DEFAULT_SETTINGS.vaultAutoLockMinutes
+    )
+    expect(parseSettings({ vaultAutoLockMinutes: -5 }).vaultAutoLockMinutes).toBe(
+      DEFAULT_SETTINGS.vaultAutoLockMinutes
+    )
+    expect(parseSettings({ vaultAutoLockMinutes: 1441 }).vaultAutoLockMinutes).toBe(
+      DEFAULT_SETTINGS.vaultAutoLockMinutes
+    )
+    expect(parseSettings({ vaultAutoLockMinutes: 10.5 }).vaultAutoLockMinutes).toBe(
+      DEFAULT_SETTINGS.vaultAutoLockMinutes
+    )
+  })
+  it('문자열 등 잘못된 타입의 기기 기억 값은 false 로 되돌아간다', () => {
+    expect(parseSettings({ vaultRememberDevice: '켜짐' }).vaultRememberDevice).toBe(false)
+    expect(parseSettings({ vaultRememberDevice: 1 }).vaultRememberDevice).toBe(false)
+    expect(parseSettings({ vaultAutoLockMinutes: '많이' }).vaultAutoLockMinutes).toBe(
+      DEFAULT_SETTINGS.vaultAutoLockMinutes
+    )
+  })
+})
