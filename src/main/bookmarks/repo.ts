@@ -362,6 +362,18 @@ export class BookmarkRepo {
     }
     collect(id)
 
+    // 삭제 표식(tombstone)은 행이 남아 있을 때만 뜰 수 있다 — 지우기 전에 링크 id 를 모은다.
+    // 이 기록이 없으면 다른 PC 가 다음 풀에서 같은 북마크를 되살린다(좀비 북마크)
+    const linkIds = idsToRemove.flatMap((folderId) =>
+      this.d
+        .select({ id: bookmarks.id })
+        .from(bookmarks)
+        .where(eq(bookmarks.folderId, folderId))
+        .all()
+        .map((r) => r.id)
+    )
+    for (const linkId of linkIds) this.record(linkId, 'delete')
+
     this.d.transaction(() => {
       for (const folderId of idsToRemove) {
         this.d.delete(bookmarks).where(eq(bookmarks.folderId, folderId)).run()
