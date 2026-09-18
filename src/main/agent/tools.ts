@@ -25,12 +25,21 @@ function activeOr(ctx: ToolContext): ReturnType<TabManager['active']> {
 }
 
 export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkMcpServer> {
+  // 상한 도달 알림은 1회만 보낸다
+  let limitNotified = false
+
   const guard = async <T>(
     label: string,
     fn: () => Promise<T>
   ): Promise<ReturnType<typeof text>> => {
     const over = ctx.tick()
-    if (over) return text(over)
+    if (over) {
+      if (!limitNotified) {
+        limitNotified = true
+        ctx.onStep('도구 호출 상한 도달', false)
+      }
+      return text(over)
+    }
     try {
       const r = await fn()
       const s = typeof r === 'string' ? r : JSON.stringify(r)
@@ -77,8 +86,10 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
       guard(`클릭: ${label} (#${id})`, async () => {
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
-        if (isDangerous(label, ctx.dangerWords)) {
-          const ok = await ctx.confirm(`클릭: ${label}`)
+        // 위험 판정 근거는 페이지의 실제 텍스트. AI 가 준 label 은 기록용일 뿐 신뢰하지 않는다
+        const pageText = await pageBridge.textOf(tab, id)
+        if (isDangerous(`${pageText} ${label}`, ctx.dangerWords)) {
+          const ok = await ctx.confirm(`클릭: ${pageText || label}`)
           if (!ok) return 'denied by user'
         }
         const r = await pageBridge.click(tab, id)
@@ -95,8 +106,10 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
       guard(`입력: "${t.slice(0, 30)}" (#${id})`, async () => {
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
-        if (isDangerous(t, ctx.dangerWords)) {
-          const ok = await ctx.confirm(`입력: ${t}`)
+        // 입력값 자체와 대상 입력칸의 실제 텍스트를 함께 판정
+        const pageText = await pageBridge.textOf(tab, id)
+        if (isDangerous(`${pageText} ${t}`, ctx.dangerWords)) {
+          const ok = await ctx.confirm(`입력: ${t}${pageText ? ` → ${pageText}` : ''}`)
           if (!ok) return 'denied by user'
         }
         const r = await pageBridge.type(tab, id, t, submit)
