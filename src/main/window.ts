@@ -5,6 +5,7 @@ import { is } from '@electron-toolkit/utils'
 // 메인 창 생성. 렌더러(React UI)가 전체를 덮고, 웹뷰는 그 위에 겹쳐 배치
 export function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
+    title: 'SAMBA Browser',
     width: 1440,
     height: 900,
     minWidth: 1000,

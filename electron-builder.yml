@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: samba_browser_tmp
+appId: com.samba.browser
+productName: SAMBA Browser
 directories:
   buildResources: build
 files:
@@ -12,7 +12,7 @@ files:
 asarUnpack:
   - resources/**
 win:
-  executableName: samba_browser_tmp
+  executableName: SAMBA Browser
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}

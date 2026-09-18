@@ -1,10 +1,10 @@
 {
-  "app": { "name": "삼바브라우저" },
+  "app": { "name": "SAMBA Browser" },
   "sidebar": {
     "browser": "브라우저",
     "tasks": "작업",
     "automation": "자동화",
-    "accounts": "계정 · Vault",
+    "accounts": "개인정보",
     "phones": "폰",
     "logs": "로그",
     "settings": "설정",

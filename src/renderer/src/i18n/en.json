@@ -1,10 +1,10 @@
 {
-  "app": { "name": "Samba Browser" },
+  "app": { "name": "SAMBA Browser" },
   "sidebar": {
     "browser": "Browser",
     "tasks": "Tasks",
     "automation": "Automation",
-    "accounts": "Accounts · Vault",
+    "accounts": "Personal Info",
     "phones": "Phones",
     "logs": "Logs",
     "settings": "Settings",

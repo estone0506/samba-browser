@@ -2,6 +2,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Globe, ListChecks, Repeat, KeyRound, Smartphone, ScrollText, Settings } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
+import logo from '@renderer/assets/logo.svg'
 
 const ITEMS = [
   { key: 'browser', icon: Globe },
@@ -20,7 +21,7 @@ export function Sidebar({ width }: { width: number }): React.JSX.Element {
       className="flex shrink-0 flex-col border-r border-[var(--line)] bg-[#f6f6f8]/90 p-2.5 pt-10 backdrop-blur"
     >
       <div className="flex items-center gap-2 px-2 pb-3 text-[14px] font-semibold">
-        <span className="h-[22px] w-[22px] rounded-[7px] bg-[var(--text)]" />
+        <img src={logo} alt="" className="h-[22px] w-[22px] rounded-[7px]" />
         {t('app.name')}
       </div>
       {ITEMS.map(({ key, icon: Icon }) => (
