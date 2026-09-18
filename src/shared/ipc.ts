@@ -33,7 +33,12 @@ export const IPC = {
   vaultUpsertAccount: 'vault:upsertAccount',
   vaultStateChanged: 'vault:stateChanged', // main → renderer 이벤트
   vaultCapturePrompt: 'vault:capturePrompt', // main → renderer 이벤트 (비밀번호 제외)
-  vaultCaptureDecision: 'vault:captureDecision' // renderer → main
+  vaultCaptureDecision: 'vault:captureDecision', // renderer → main
+  // 가져오기 — filePath 생략 시 메인에서 dialog.showOpenDialog 를 연다
+  importPasswords: 'import:passwords',
+  importBookmarks: 'import:bookmarks',
+  bookmarksTree: 'bookmarks:tree',
+  bookmarksRemove: 'bookmarks:remove'
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -87,3 +92,11 @@ export type {
   VaultState,
   CapturePromptDto
 } from './vault'
+
+export type {
+  ImportPasswordsResult,
+  ImportBookmarksResult,
+  BookmarkTreeDto,
+  BookmarkFolderDto,
+  BookmarkLinkDto
+} from './import'

@@ -341,6 +341,11 @@ export class VaultService {
     return this.repo.listAudit(limit)
   }
 
+  // 특정 항목에 매이지 않는 감사 로그 한 줄을 남긴다(예: 가져오기 완료). 값은 절대 넣지 않는다
+  logAudit(action: string, source: string): void {
+    this.repo.insertAudit({ itemId: null, action, source })
+  }
+
   // --- 쓰기 -------------------------------------------------------------
 
   upsertAccount(input: UpsertAccountInput): AccountDto {
