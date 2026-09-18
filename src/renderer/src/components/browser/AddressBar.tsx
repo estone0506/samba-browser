@@ -1,8 +1,18 @@
 import { useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, RotateCw, Home, Lock, Monitor, Smartphone } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  RotateCw,
+  Home,
+  Lock,
+  Monitor,
+  Smartphone,
+  KeyRound
+} from 'lucide-react'
 import { useBrowserStore } from '@renderer/stores/browserStore'
+import { useUiStore } from '@renderer/stores/uiStore'
 import { cn } from '@renderer/lib/utils'
 
 // 이펙트에서 setState 하면 리렌더가 겹치므로, 렌더 도중 활성 탭 URL 변화를 감지해 상태를 맞춤
@@ -29,6 +39,8 @@ function AddressBarButton({
 export function AddressBar(): React.JSX.Element {
   const { t } = useTranslation()
   const { activeTab, navigate, back, forward, reload, setMobile } = useBrowserStore()
+  const vaultPanelOpen = useUiStore((s) => s.vaultPanelOpen)
+  const toggleVaultPanel = useUiStore((s) => s.toggleVaultPanel)
   const [value, setValue] = useState(activeTab?.url ?? '')
   const [syncedUrl, setSyncedUrl] = useState(activeTab?.url)
   if (activeTab?.url !== syncedUrl) {
@@ -74,6 +86,9 @@ export function AddressBar(): React.JSX.Element {
           className="flex-1 bg-transparent text-[12.5px] outline-none"
         />
       </form>
+      <AddressBarButton onClick={toggleVaultPanel} title={t('vault.popover.open')}>
+        <KeyRound className={cn('h-4 w-4', vaultPanelOpen && 'text-[var(--text)]')} />
+      </AddressBarButton>
       <div className="flex rounded-[9px] bg-black/5 p-0.5">
         {[
           { m: false, icon: Monitor, label: t('address.pc') },

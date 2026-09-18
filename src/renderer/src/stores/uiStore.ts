@@ -8,14 +8,23 @@ interface UiState {
   sidebarWidth: number
   panelWidth: number
   view: MainView
+  // 툴바 열쇠 아이콘으로 여는 키마스터 패널(오른쪽 AI 패널 상단 슬롯).
+  // 네이티브 WebContentsView 는 항상 최상단이라 웹뷰 위 팝오버가 가려지므로,
+  // 웹뷰 밖인 오른쪽 패널에 그린다
+  vaultPanelOpen: boolean
   setPanelWidth: (w: number) => void
   setView: (v: MainView) => void
+  toggleVaultPanel: () => void
+  closeVaultPanel: () => void
 }
 
 export const useUiStore = create<UiState>((set) => ({
   sidebarWidth: 232,
   panelWidth: 380,
   view: 'browser',
+  vaultPanelOpen: false,
   setPanelWidth: (w) => set({ panelWidth: Math.max(280, Math.min(600, w)) }),
-  setView: (v) => set({ view: v })
+  setView: (v) => set({ view: v }),
+  toggleVaultPanel: () => set((s) => ({ vaultPanelOpen: !s.vaultPanelOpen })),
+  closeVaultPanel: () => set({ vaultPanelOpen: false })
 }))
