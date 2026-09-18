@@ -593,7 +593,11 @@ export function registerIpc(
     vault,
     settings,
     bookmarks: importService,
-    workspaceRemoteId: () => workspaceRemoteId(db, workspace.activeId()),
+    // 주기마다 다시 불린다 — 작업공간을 바꿔도 다음 주기부터 새 uuid 로 올라간다
+    workspace: () => {
+      const localId = workspace.activeId()
+      return { localId, remoteId: workspaceRemoteId(db, localId) }
+    },
     device: {
       hostname: () => os.hostname(),
       osLabel: () => `${os.type()} ${os.release()}`,

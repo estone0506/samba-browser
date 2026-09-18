@@ -20,7 +20,7 @@ import { DeviceService } from './devices'
 import { SyncEngine, SyncEngineHolder } from './engine'
 import { SyncLocal } from './local'
 import { createOutboxRecorder, SyncOutbox } from './outbox'
-import type { SettingsAccess, VaultAccess } from './push'
+import type { SettingsAccess, VaultAccess, WorkspaceRef } from './push'
 
 /** 변경 로그 훅을 받아 주는 저장소(금고·설정·북마크가 모두 이 모양이다) */
 export interface OutboxTarget {
@@ -42,8 +42,8 @@ export interface SyncConnectionDeps {
   settings: SyncSettingsTarget
   /** 북마크 저장소(ImportService 가 위임한다) */
   bookmarks: OutboxTarget
-  /** 지금 작업공간의 원격 uuid */
-  workspaceRemoteId: () => string
+  /** 지금 활성 작업공간(로컬 id + 원격 uuid). 주기마다 다시 불린다 */
+  workspace: () => WorkspaceRef
   /** 기기 표시 정보 — 테스트에서는 주입한다 */
   device: { hostname: () => string; osLabel: () => string; appVersion: () => string }
 }
@@ -122,7 +122,8 @@ export class SyncConnection {
         vault: this.deps.vault,
         settings: this.deps.settings,
         userId: user.userId,
-        workspaceRemoteId: this.deps.workspaceRemoteId(),
+        // 값이 아니라 함수로 넘긴다 — 작업공간을 바꿔도 엔진을 다시 세울 필요가 없다
+        workspace: this.deps.workspace,
         // 주기마다 이 PC 가 아직 살아 있다고 알리고, 원격 로그아웃 여부를 확인한다
         onCycleStart: async () => {
           await devices.heartbeat()

@@ -42,6 +42,17 @@ export interface VaultAccess {
   useMasterKey: <T>(fn: (key: Buffer) => T) => T | null
 }
 
+/**
+ * 지금 활성 작업공간. 전환될 수 있으므로 엔진을 다시 세우지 않고 **매 주기 평가**한다 —
+ * 예전에는 엔진 생성 시 한 번만 읽어, B 작업공간의 변경이 A 의 uuid 로 올라갔다
+ */
+export interface WorkspaceRef {
+  /** 로컬 DB 의 workspaces.id. 풀로 내려받은 행에 채워 넣는다 */
+  localId: number
+  /** 원격 uuid. 푸시 payload 와 풀 필터에 쓴다 */
+  remoteId: string
+}
+
 export interface PushDeps {
   db: Db
   backend: SyncBackend
@@ -49,7 +60,8 @@ export interface PushDeps {
   vault: VaultAccess
   settings: SettingsAccess
   userId: string
-  workspaceRemoteId: string
+  /** 매 주기 불린다(작업공간 전환을 그대로 따라간다) */
+  workspace: () => WorkspaceRef
 }
 
 export interface PushResult {
@@ -64,7 +76,7 @@ const PUSH_ORDER: SyncTable[] = ['accounts', 'vault_items', 'bookmarks', 'settin
 export async function pushAll(deps: PushDeps): Promise<PushResult> {
   const result: PushResult = { sent: 0, failed: 0, skipped: 0 }
   const local = new SyncLocal(deps.db)
-  const ctx: MapCtx = { userId: deps.userId, workspaceRemoteId: deps.workspaceRemoteId }
+  const ctx: MapCtx = { userId: deps.userId, workspaceRemoteId: deps.workspace().remoteId }
 
   for (const table of PUSH_ORDER) {
     const entries = deps.outbox.pendingFor(table)

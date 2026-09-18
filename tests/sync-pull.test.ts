@@ -91,7 +91,7 @@ describe('pullAll', () => {
       vault,
       settings,
       userId: FAKE_USER_ID,
-      workspaceRemoteId: WORKSPACE
+      workspace: () => ({ localId: 1, remoteId: WORKSPACE })
     }
   })
 
