@@ -104,15 +104,81 @@ function walkDl(dl: HTMLElement, dedupe: boolean, seenUrls: Set<string>): Bookma
 }
 
 /**
+ * <DT>/<P> 마커 태그를 "태그 밖(따옴표 안이 아닌 위치)"에서만 제거한다.
+ * 단순 전역 정규식(`/<DT>/gi`)은 HREF 등 속성값 문자열 안에 우연히 포함된
+ * "<dt>"·"<p>" 같은 문자열까지 지워버려 URL/제목이 손상되는 버그가 있었다.
+ * node-html-parser 는 HTML5 의 "DT 는 다음 DT/DL 에서 암묵적으로 닫힌다" 규칙을
+ * 구현하지 않아 DOM 구조가 브라우저와 달라지므로, DOM 파싱 전에 문자 단위로
+ * 스캔하며 "태그 여는/닫는 위치" 와 "속성값 따옴표 안" 을 추적해 따옴표 밖에서만
+ * 이 두 마커 태그를 제거하는 방식을 선택했다.
+ */
+function stripStructuralMarkersOutsideQuotes(html: string): string {
+  let result = ''
+  let i = 0
+  let inTag = false
+  let quoteChar: '"' | "'" | null = null
+
+  while (i < html.length) {
+    const ch = html[i]
+
+    if (quoteChar) {
+      // 속성값 따옴표 안: 무조건 그대로 복사, <dt>/<p> 매칭 시도조차 하지 않는다
+      result += ch
+      if (ch === quoteChar) quoteChar = null
+      i++
+      continue
+    }
+
+    if (inTag) {
+      if (ch === '"' || ch === "'") {
+        quoteChar = ch
+      } else if (ch === '>') {
+        inTag = false
+      }
+      result += ch
+      i++
+      continue
+    }
+
+    // 태그 밖(따옴표 안도 아님): 여기서만 <DT>/<P> 마커를 제거 대상으로 본다
+    if (ch === '<') {
+      const lower = html.slice(i, i + 5).toLowerCase()
+      if (lower.startsWith('<dt>')) {
+        i += 4
+        continue
+      }
+      if (lower.startsWith('</dt>')) {
+        i += 5
+        continue
+      }
+      if (lower.startsWith('<p>')) {
+        i += 3
+        continue
+      }
+      if (lower.startsWith('</p>')) {
+        i += 4
+        continue
+      }
+      inTag = true
+    }
+
+    result += ch
+    i++
+  }
+
+  return result
+}
+
+/**
  * Netscape 북마크 HTML 문자열을 파싱해 폴더/링크 트리로 변환한다.
  * <DT> 는 구조상 의미 없는 마커 태그이고 <p> 도 레이아웃용이라, DOM 파싱 전에 제거해
- * <DL>/<H3>/<A> 만 남긴 뒤 순회한다.
+ * <DL>/<H3>/<A> 만 남긴 뒤 순회한다. 제거는 속성값 따옴표 밖에서만 수행한다.
  */
 export function parseNetscapeBookmarks(
   html: string,
   opts: { dedupeUrls?: boolean } = {}
 ): BookmarkTree {
-  const cleaned = html.replace(/<DT>/gi, '').replace(/<\/?p>/gi, '')
+  const cleaned = stripStructuralMarkersOutsideQuotes(html)
   const root = parse(cleaned)
   const rootDl = root.querySelector('dl')
   if (!rootDl) return { folders: [], links: [] }

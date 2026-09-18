@@ -28,5 +28,9 @@ export function normalizeHost(urlOrHost: string): string {
   if (host.startsWith('www.')) {
     host = host.slice('www.'.length)
   }
+  // FQDN 끝의 "." (예: "example.com.") 은 DNS 루트 표기일 뿐 동일 호스트이므로 제거한다
+  if (host.endsWith('.')) {
+    host = host.slice(0, -1)
+  }
   return host
 }

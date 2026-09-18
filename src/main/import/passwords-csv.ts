@@ -14,9 +14,10 @@ export interface ParsedLogin {
 }
 
 // 필드별 헤더 별칭(소문자 기준, 우선순위 순서)
+// 키퍼(Keeper) export 는 Title/Login/Website Address/Notes 헤더를 쓴다
 const NAME_KEYS = ['name', 'title']
-const URL_KEYS = ['url', 'login_uri']
-const USERNAME_KEYS = ['username', 'login_username']
+const URL_KEYS = ['url', 'login_uri', 'website address']
+const USERNAME_KEYS = ['username', 'login_username', 'login']
 const PASSWORD_KEYS = ['password', 'login_password']
 const NOTE_KEYS = ['note', 'notes']
 
@@ -32,7 +33,7 @@ function buildKeyMap(fields: string[]): Map<string, string> {
   return map
 }
 
-/** candidates 순서대로 헤더 별칭을 찾아 값을 반환한다. 없으면 빈 문자열 */
+/** candidates 순서대로 헤더 별칭을 찾아 값을 반환한다(먼저 존재하는 컬럼이 우선). 없으면 빈 문자열 */
 function pickField(
   row: Record<string, string>,
   keyMap: Map<string, string>,

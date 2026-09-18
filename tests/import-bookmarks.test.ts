@@ -83,4 +83,23 @@ describe('parseNetscapeBookmarks', () => {
     const tree = parseNetscapeBookmarks(SAMPLE_HTML)
     expect(tree.links).toEqual([])
   })
+
+  it('HREF 속성값 안에 <dt>/<p> 문자열이 있어도 URL 이 손상되지 않는다', () => {
+    const html = `<DL><p>
+      <DT><A HREF="https://example.com/<dt>path/<p>more">링크</A>
+    </DL><p>
+    `
+    const tree = parseNetscapeBookmarks(html)
+    expect(tree.links).toHaveLength(1)
+    expect(tree.links[0].url).toBe('https://example.com/<dt>path/<p>more')
+  })
+
+  it('제목의 &lt;p&gt; 엔티티는 그대로 보존된다', () => {
+    const html = `<DL><p>
+      <DT><A HREF="https://example.com">제목 안 &lt;p&gt; 태그</A>
+    </DL><p>
+    `
+    const tree = parseNetscapeBookmarks(html)
+    expect(tree.links[0].title).toBe('제목 안 <p> 태그')
+  })
 })
