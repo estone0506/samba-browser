@@ -167,16 +167,14 @@ export class BookmarkRepo {
   private bookmarkRows(): BookmarkRow[] {
     const where = this.scopeWhere()
     const base = this.d.select().from(bookmarks)
-    return (where ? base.where(where) : base)
-      .all()
-      .map((r) => ({
-        id: r.id,
-        folderId: r.folderId,
-        title: r.title,
-        url: r.url,
-        position: r.position,
-        addedAt: r.addedAt
-      }))
+    return (where ? base.where(where) : base).all().map((r) => ({
+      id: r.id,
+      folderId: r.folderId,
+      title: r.title,
+      url: r.url,
+      position: r.position,
+      addedAt: r.addedAt
+    }))
   }
 
   private buildTree(

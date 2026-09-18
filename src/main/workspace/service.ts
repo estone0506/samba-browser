@@ -166,11 +166,7 @@ export class WorkspaceService {
     const rows = this.rows()
     const row = rows.find((r) => r.id === id)
     if (!row) throw new Error('작업공간을 찾을 수 없습니다')
-    this.d
-      .update(workspaces)
-      .set({ name: trimmed, updatedAt: Date.now() })
-      .where(eqId(id))
-      .run()
+    this.d.update(workspaces).set({ name: trimmed, updatedAt: Date.now() }).where(eqId(id)).run()
     this.db.scheduleSave()
     const next = { ...row, name: trimmed }
     const activeId = this.resolveActiveId(rows)

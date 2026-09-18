@@ -5,6 +5,7 @@ import { cn } from '@renderer/lib/utils'
 import logo from '@renderer/assets/logo.png'
 import { useUiStore, type MainView } from '@renderer/stores/uiStore'
 import { BookmarkTree } from './BookmarkTree'
+import { WorkspaceSwitcher } from '@renderer/components/workspace/WorkspaceSwitcher'
 
 // 사이드바 항목 중 아직 뷰가 없는 항목(작업·자동화·폰·로그)은 클릭해도 아무 일도 하지 않는다
 const ITEMS = [
@@ -28,6 +29,8 @@ export function Sidebar({ width }: { width: number }): React.JSX.Element {
         <img src={logo} alt="" className="h-[22px] w-[22px] rounded-[7px]" />
         {t('app.name')}
       </div>
+      {/* 작업공간 전환기 (신규 추가분) */}
+      <WorkspaceSwitcher />
       {ITEMS.map(({ key, icon: Icon, view: itemView }) => (
         <button
           key={key}

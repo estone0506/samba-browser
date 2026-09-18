@@ -12,6 +12,17 @@
     "settings": "설정",
     "chats": "채팅"
   },
+  "workspace": {
+    "title": "작업공간",
+    "add": "새 작업공간",
+    "namePlaceholder": "작업공간 이름",
+    "rename": "이름 변경",
+    "delete": "삭제",
+    "cancel": "취소",
+    "save": "저장",
+    "shortcutHint": "Ctrl+Alt+1~9 로 전환",
+    "switchedNotice": "작업공간을 바꿨습니다. 이미 열려 있는 탭은 이전 세션을 그대로 쓰고, 새로 여는 탭부터 새 세션을 씁니다."
+  },
   "address": {
     "placeholder": "검색어 또는 URL 입력",
     "pc": "PC",

@@ -12,6 +12,17 @@
     "settings": "Settings",
     "chats": "Chats"
   },
+  "workspace": {
+    "title": "Workspace",
+    "add": "New workspace",
+    "namePlaceholder": "Workspace name",
+    "rename": "Rename",
+    "delete": "Delete",
+    "cancel": "Cancel",
+    "save": "Save",
+    "shortcutHint": "Ctrl+Alt+1–9 to switch",
+    "switchedNotice": "Switched workspace. Already open tabs keep their old session; new tabs use the new one."
+  },
   "address": {
     "placeholder": "Search or enter URL",
     "pc": "PC",
