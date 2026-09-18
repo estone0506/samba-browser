@@ -59,7 +59,7 @@ const CAPTCHA_RE = /captcha|보안문자|자동입력 방지|recaptcha|hcaptcha/
 const TWO_FACTOR_RE = /인증번호|otp|2단계|verification code|본인 확인|본인확인/i
 // 아이디·비밀번호 불일치
 const WRONG_PASSWORD_RE =
-  /비밀번호가 일치|틀렸|틀린|incorrect|invalid (password|id|login)|잘못|등록되지 않은/i
+  /비밀번호가 일치|틀렸|틀린|incorrect|invalid (password|id|login)|잘못|등록되지 않은|(아이디|비밀번호|패스워드)[^.!]{0,12}(확인하|다시 입력)/i
 // 로그인 성공 뒤에만 보이는 문구
 const SUCCESS_RE = /로그아웃|logout|마이페이지|my page|장바구니|내 정보|회원정보/i
 // 아직 로그인 폼이 남아 있음을 시사하는 문구
@@ -117,6 +117,10 @@ export function sanitizeNote(note: string, secrets: string[]): string {
 // --- 유틸 -------------------------------------------------------------------
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+// 사이트 1곳의 하드 타임아웃. 폼 탐지를 여러 단계(링크 클릭·홈 이동)로 재시도하므로
+// 45초로는 느린 SPA 가 자주 잘려 나가 70초로 둔다
+const SITE_TIMEOUT_MS = 70_000
 
 /** 주어진 시간 안에 끝나지 않으면 거부한다(고아가 된 작업의 거부는 여기서 흡수된다) */
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -198,7 +202,10 @@ function attachDialogHandler(tab: Tab, onMessage: (message: string) => void): ()
   }
 }
 
-// 로그인 진입점으로 보이는 요소의 텍스트(정확 일치 우선)와 링크 주소 패턴
+// 로그인 진입점으로 보이는 요소의 텍스트(정확 일치 우선)와 링크 주소 패턴.
+// 크림처럼 소셜 로그인 버튼만 보이고 이메일 로그인은 한 번 더 눌러야 나오는 사이트가 있어
+// "이메일로 로그인" 류를 가장 먼저 찾는다
+const EMAIL_LOGIN_TEXT_RE = /이메일(로| )?\s?로그인|email.*(login|sign in)|아이디로 로그인/i
 const LOGIN_TEXT_RE = /^(로그인|로그인하기|login|log in|sign\s?in|signin)$/i
 const LOGIN_HREF_RE = /login|signin|sign-in|logon/i
 
@@ -206,6 +213,7 @@ const LOGIN_HREF_RE = /login|signin|sign-in|logon/i
 async function clickLoginLink(tab: Tab): Promise<boolean> {
   const snapshot = await pageBridge.snapshot(tab)
   const target =
+    snapshot.elements.find((el) => EMAIL_LOGIN_TEXT_RE.test(el.text)) ??
     snapshot.elements.find((el) => LOGIN_TEXT_RE.test(el.text.trim())) ??
     snapshot.elements.find((el) => el.href !== undefined && LOGIN_HREF_RE.test(el.href)) ??
     snapshot.elements.find((el) => /로그인|login|sign in/i.test(el.text))
@@ -216,18 +224,37 @@ async function clickLoginLink(tab: Tab): Promise<boolean> {
   return true
 }
 
+/**
+ * 로그인 폼 탐지를 잠시 기다리며 여러 번 시도한다.
+ * SPA(29CM·크림 등)는 로딩이 끝난 뒤에야 입력칸을 그리므로 1회 탐지로는 놓친다.
+ */
+async function detectFields(
+  tab: Tab,
+  attempts = 5
+): Promise<{ username?: number; password?: number; submit?: number }> {
+  // findLoginFields 는 마지막 스냅샷의 요소 목록(registry)을 재사용한다. SPA 의 클라이언트
+  // 라우팅은 문서를 새로 만들지 않아 registry 가 낡은 채로 남으므로, 매번 스냅샷을 새로 뜬다
+  for (let i = 0; i < attempts; i += 1) {
+    if (i > 0) await sleep(1200)
+    await pageBridge.snapshot(tab)
+    const fields = await pageBridge.findLoginFields(tab)
+    if (fields.password !== undefined) return fields
+  }
+  return {}
+}
+
 /** 로그인 폼(비밀번호 칸)이 보일 때까지 단계적으로 시도한다: 링크 클릭 → 홈에서 다시 링크 클릭 */
 async function findFormWithFallback(
   deps: LoginHarnessDeps,
   tab: Tab,
   host: string
 ): Promise<{ username?: number; password?: number; submit?: number }> {
-  let fields = await pageBridge.findLoginFields(tab)
+  let fields = await detectFields(tab)
   if (fields.password !== undefined) return fields
 
   // 1) 현재 페이지의 로그인 링크를 한 번 눌러 본다
   if (await clickLoginLink(tab)) {
-    fields = await pageBridge.findLoginFields(tab)
+    fields = await detectFields(tab)
     if (fields.password !== undefined) return fields
   }
 
@@ -236,9 +263,9 @@ async function findFormWithFallback(
     await deps.tabs.navigate(tab.id, `https://${host}/`)
     await pageBridge.waitForLoad(tab, 15_000)
     await sleep(1500)
-    fields = await pageBridge.findLoginFields(tab)
+    fields = await detectFields(tab)
     if (fields.password !== undefined) return fields
-    if (await clickLoginLink(tab)) fields = await pageBridge.findLoginFields(tab)
+    if (await clickLoginLink(tab)) fields = await detectFields(tab)
   } catch {
     // 홈 이동 실패는 무시하고 마지막 탐지 결과를 그대로 돌려준다
   }
@@ -287,14 +314,18 @@ async function driveLogin(
   tab: Tab,
   account: AccountDto,
   result: SiteResult,
-  shotDir: string
+  shotDir: string,
+  dialogs: string[]
 ): Promise<void> {
   await pageBridge.waitForLoad(tab, 15_000)
   await sleep(1000)
   const fields = await findFormWithFallback(deps, tab, result.host)
   if (fields.password === undefined) {
-    result.result = 'no_form'
-    result.note = `로그인 폼을 찾지 못함 (최종 ${safeLocation(tab.view.webContents.getURL())})`
+    // 폼이 없는 이유가 차단·캡차라면 그쪽이 더 정확한 원인이므로 그대로 기록한다
+    const snap = await pageBridge.snapshot(tab)
+    const blocked = classifyLoginOutcome(snap.url, snap.url, `${snap.title} ${snap.text}`)
+    result.result = blocked === 'blocked' || blocked === 'captcha' ? blocked : 'no_form'
+    result.note = `로그인 폼을 찾지 못함 (최종 ${safeLocation(snap.url)})`
     await capture(tab, shotDir, result.host)
     return
   }
@@ -338,7 +369,9 @@ async function driveLogin(
   await sleep(2500)
 
   const snapshot = await pageBridge.snapshot(tab)
-  result.result = classifyLoginOutcome(prevUrl, snapshot.url, `${snapshot.title} ${snapshot.text}`)
+  // 실패 사유를 alert 로만 알려 주는 사이트가 많아, 대화상자 메시지도 판정 근거에 포함한다
+  const evidence = `${snapshot.title} ${snapshot.text} ${dialogs.join(' ')}`
+  result.result = classifyLoginOutcome(prevUrl, snapshot.url, evidence)
   result.note = `최종 ${safeLocation(snapshot.url)}`
   if (!(await capture(tab, shotDir, result.host))) result.note += ' / 스크린샷 실패'
 }
@@ -384,7 +417,11 @@ async function runSite(
     if (!tab) throw new Error('탭 생성 실패')
     const detach = attachDialogHandler(tab, (m) => dialogs.push(m))
     try {
-      await withTimeout(driveLogin(deps, tab, account, result, shotDir), 45_000, host)
+      await withTimeout(
+        driveLogin(deps, tab, account, result, shotDir, dialogs),
+        SITE_TIMEOUT_MS,
+        host
+      )
     } finally {
       detach()
     }

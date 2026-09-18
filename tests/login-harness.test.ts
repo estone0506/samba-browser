@@ -42,6 +42,16 @@ describe('classifyLoginOutcome', () => {
     ).toBe('wrong_password')
   })
 
+  it('alert 로만 알려 주는 "확인하세요" 문구도 비밀번호 오류로 본다', () => {
+    expect(
+      classifyLoginOutcome(
+        'https://example.com/login',
+        'https://example.com/login',
+        '아이디 또는 패스워드를 확인하세요.'
+      )
+    ).toBe('wrong_password')
+  })
+
   it('외부 SSO 제공자로 넘어가면 sso_redirect', () => {
     expect(
       classifyLoginOutcome('https://shop.co.kr/login', 'https://accounts.google.com/signin', '계속')
