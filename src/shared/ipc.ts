@@ -68,7 +68,14 @@ export const IPC = {
   // --- 자체 새 탭 페이지(samba://newtab) — preload(격리 월드) → 메인 -----------
   newTabInit: 'newtab:init', // invoke, 언어 + 북마크 바 상위 항목
   newTabSearch: 'newtab:search', // send, 검색어/URL 을 보낸 탭에서 연다
-  newTabOpen: 'newtab:open' // send, 북마크 URL 을 보낸 탭에서 연다
+  newTabOpen: 'newtab:open', // send, 북마크 URL 을 보낸 탭에서 연다
+  // --- 계정 인증(2b) — 토큰·비밀번호는 어느 방향으로도 돌려주지 않는다 --------
+  authState: 'auth:state',
+  authSignUp: 'auth:signUp',
+  authSignIn: 'auth:signIn',
+  authSignInGoogle: 'auth:signInGoogle', // 브라우저를 열고 루프백 콜백까지 기다린다
+  authSignOut: 'auth:signOut',
+  authStateChanged: 'auth:stateChanged' // main → renderer 이벤트
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }

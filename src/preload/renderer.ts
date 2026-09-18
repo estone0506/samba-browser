@@ -21,6 +21,7 @@ import {
   type ImportBookmarksResult,
   type BookmarkTreeDto
 } from '../shared/ipc'
+import type { AuthState } from '../shared/sync'
 
 // 북마크 관리자 페이지용 요청 입력 타입
 interface BookmarkMoveInput {
@@ -198,6 +199,22 @@ const api = {
     sort: (folderId: number | null): Promise<IpcResult<void>> =>
       invoke(IPC.bookmarksSort, { folderId, by: 'name' }),
     export: (): Promise<IpcResult<string | undefined>> => invoke(IPC.bookmarksExport)
+  },
+  // 계정 — 응답은 언제나 AuthState 뿐이다(토큰·비밀번호는 메인에 남는다)
+  auth: {
+    state: (): Promise<IpcResult<AuthState>> => invoke(IPC.authState),
+    signUp: (email: string, password: string): Promise<IpcResult<AuthState>> =>
+      invoke(IPC.authSignUp, email, password),
+    signIn: (email: string, password: string): Promise<IpcResult<AuthState>> =>
+      invoke(IPC.authSignIn, email, password),
+    // 기본 브라우저가 열리고, 사용자가 구글 로그인을 마쳐야 응답이 온다(최대 5분)
+    signInGoogle: (): Promise<IpcResult<AuthState>> => invoke(IPC.authSignInGoogle),
+    signOut: (): Promise<IpcResult<AuthState>> => invoke(IPC.authSignOut),
+    onStateChanged: (cb: (state: AuthState) => void): (() => void) => {
+      const h = (_: unknown, state: AuthState): void => cb(state)
+      ipcRenderer.on(IPC.authStateChanged, h)
+      return () => ipcRenderer.off(IPC.authStateChanged, h)
+    }
   },
   // 파비콘 — 메인이 사이트 자체에서 받아 온 dataUrl. 호스트는 제3자로 나가지 않는다
   favicon: {

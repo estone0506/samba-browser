@@ -1,4 +1,13 @@
-import { dialog, ipcMain, safeStorage, type BrowserWindow, type WebContents } from 'electron'
+import {
+  app,
+  dialog,
+  ipcMain,
+  safeStorage,
+  shell,
+  type BrowserWindow,
+  type WebContents
+} from 'electron'
+import { join } from 'node:path'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import { defaultTabUrl } from '../../shared/settings'
 import type { TabManager } from '../browser/tab-manager'
@@ -17,6 +26,10 @@ import { normalizeHost } from '../../shared/host'
 import { isAllowedExternalUrl, isInternalUrl } from '../../shared/url'
 import { toolbarBookmarks } from '../bookmarks/newtab'
 import type { NewTabInitDto } from '../../shared/newtab'
+import { AuthService } from '../sync/auth'
+import { hasSupabaseEnv } from '../sync/env'
+import { createSessionStore } from '../sync/session-store'
+import { createSupabaseBackend } from '../sync/supabase-backend'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -33,7 +46,7 @@ export function registerIpc(
   win: BrowserWindow,
   tabs: TabManager,
   db: Db
-): { settings: SettingsStore; agent: AgentRunner; db: Db; vault: VaultService } {
+): { settings: SettingsStore; agent: AgentRunner; db: Db; vault: VaultService; auth: AuthService } {
   const settings = new SettingsStore()
   // === 홈 버튼 / 설정 페이지 (신규 추가분) ===================================
   // newTabUrl(홈과 동일/빈 페이지) + homeUrl 을 조합해 tab-manager 가 쓸 최종
@@ -380,5 +393,34 @@ export function registerIpc(
   })
   // === 자체 새 탭 페이지 끝 =============================================================
 
-  return { settings, agent, db, vault }
+  // === 계정 인증(2b) ===================================================================
+  // .env 가 비어 있으면 백엔드를 아예 만들지 않는다(설정 전에도 앱은 그대로 돈다).
+  // refresh token 은 safeStorage 로 감싼 파일에만 남고 렌더러로는 나가지 않는다
+  const syncConfigured = hasSupabaseEnv()
+  const sessionStore = createSessionStore(
+    join(app.getPath('userData'), 'sync-session.bin'),
+    safeStorage
+  )
+  const auth = new AuthService({
+    backend: syncConfigured ? createSupabaseBackend(sessionStore) : null,
+    configured: syncConfigured,
+    openExternal: (url) => shell.openExternal(url)
+  })
+  auth.onStateChanged((state) => send(IPC.authStateChanged, state))
+  // 저장된 세션이 있으면 조용히 되살린다(실패는 로그아웃으로 본다)
+  void auth.restore()
+
+  handleFromRenderer(IPC.authState, () => auth.state())
+  handleFromRenderer(IPC.authSignUp, (email: string, password: string) =>
+    auth.signUp(email, password)
+  )
+  handleFromRenderer(IPC.authSignIn, (email: string, password: string) =>
+    auth.signIn(email, password)
+  )
+  // 브라우저에서 구글 로그인을 마칠 때까지(최대 5분) 응답이 늦게 온다
+  handleFromRenderer(IPC.authSignInGoogle, () => auth.signInGoogle())
+  handleFromRenderer(IPC.authSignOut, () => auth.signOut())
+  // === 계정 인증 끝 ====================================================================
+
+  return { settings, agent, db, vault, auth }
 }
