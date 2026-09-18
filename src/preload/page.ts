@@ -1,10 +1,16 @@
+import { ipcRenderer } from 'electron'
+import { IPC } from '../shared/ipc'
 import {
   buildSnapshot,
   textOf,
   performClick,
   performType,
   performSelect,
-  performScroll
+  performScroll,
+  fillValue,
+  findLoginFields,
+  submitForm,
+  installCaptureListener
 } from './page-core'
 
 // AI 실행기. contextIsolation 이 켜져 있으면 preload 는 격리 월드(WorldId 999)에서 실행되므로
@@ -18,10 +24,18 @@ const api = {
   click: (id: number) => performClick(id),
   type: (id: number, text: string, submit: boolean) => performType(id, text, submit),
   select: (id: number, value: string) => performSelect(id, value),
-  scroll: (dir: 'up' | 'down') => performScroll(dir)
+  scroll: (dir: 'up' | 'down') => performScroll(dir),
+  // SECRET 허용 — 메인 프로세스만 호출(AI 텍스트 도구 경로가 아님)
+  fillValue: (id: number, value: string) => fillValue(id, value),
+  findLoginFields: () => findLoginFields(),
+  submitForm: (id: number) => submitForm(id)
 }
 
 export type SambaPageApi = typeof api
 
 // globalThis 에 직접 대입(any 없이 타입 안전하게)
 Object.assign(globalThis, { __samba: api })
+
+// 폼 제출 감지 → 메인의 vault:capture 로 전달(비밀번호는 이 채널로만, pendingCapture 에만 잠깐 머문다)
+// 격리 월드 preload 는 contextIsolation 하에서도 ipcRenderer 를 직접 사용할 수 있다
+installCaptureListener((payload) => ipcRenderer.send(IPC.vaultCapture, payload))

@@ -148,3 +148,176 @@ export function performScroll(dir: 'up' | 'down'): string {
   window.scrollBy({ top: dir === 'down' ? window.innerHeight * 0.8 : -window.innerHeight * 0.8 })
   return 'ok'
 }
+
+// --- 값 주입(SECRET 허용) ------------------------------------------------
+// 격리 월드에서 메인 프로세스만 호출한다(AI 텍스트 도구인 performType 과 달리 password 를 막지 않음)
+export function fillValue(id: number, value: string): string {
+  const el = get(id)
+  if (!el) return `element ${id} not found (call get_page again)`
+  const input = el as HTMLInputElement
+  el.focus()
+  const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set
+  if (setter) setter.call(el, value)
+  else input.value = value
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  el.dispatchEvent(new Event('change', { bubbles: true }))
+  return 'ok'
+}
+
+// --- 로그인 필드 탐지 -----------------------------------------------------
+
+type FormOwner = HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement
+
+function formOf(el: HTMLElement): HTMLFormElement | null {
+  if (
+    el instanceof HTMLInputElement ||
+    el instanceof HTMLButtonElement ||
+    el instanceof HTMLSelectElement ||
+    el instanceof HTMLTextAreaElement
+  ) {
+    return (el as FormOwner).form
+  }
+  return null
+}
+
+const USERNAME_HINT = /id|user|email|login|phone|아이디|이메일/i
+
+function isUsernameCandidate(el: HTMLInputElement): boolean {
+  const auto = (el.getAttribute('autocomplete') || '').toLowerCase()
+  if (auto === 'username' || auto === 'email') return true
+  const hay = `${el.name} ${el.id} ${el.getAttribute('placeholder') || ''}`
+  return USERNAME_HINT.test(hay)
+}
+
+function isTextishInput(el: HTMLInputElement): boolean {
+  return el.type === 'text' || el.type === 'email' || el.type === 'tel'
+}
+
+// password 입력칸보다 문서 순서상 앞에 있는, 보이는 text/email/tel 입력을 문서 순서대로 모은다
+function textCandidatesBefore(passwordEl: HTMLInputElement): HTMLInputElement[] {
+  const all = Array.from(document.querySelectorAll<HTMLInputElement>('input'))
+  const pwPos = all.indexOf(passwordEl)
+  if (pwPos === -1) return []
+  const candidates: HTMLInputElement[] = []
+  for (let i = 0; i < pwPos; i++) {
+    const el = all[i]
+    if (isVisible(el) && isTextishInput(el)) candidates.push(el)
+  }
+  return candidates
+}
+
+// username 후보: 자동완성/이름 힌트가 맞는 입력 우선, 없으면 password 바로 앞 텍스트 입력
+function usernameElementFor(passwordEl: HTMLInputElement): HTMLInputElement | undefined {
+  const candidates = textCandidatesBefore(passwordEl)
+  const matched = candidates.find(isUsernameCandidate)
+  return matched ?? candidates[candidates.length - 1]
+}
+
+function isSubmitLike(el: HTMLElement): boolean {
+  if (el.tagName === 'INPUT') return (el as HTMLInputElement).type === 'submit'
+  if (el.tagName === 'BUTTON') return (el as HTMLButtonElement).type !== 'button'
+  return false
+}
+
+function isButtonish(el: HTMLElement): boolean {
+  return (
+    el.tagName === 'BUTTON' ||
+    (el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'submit')
+  )
+}
+
+const LOGIN_TEXT = /로그인하기|로그인|login|sign in/i
+
+// registry(현재 스냅샷) 안에서 submit 버튼의 id 를 찾는다
+function findSubmit(passwordEl: HTMLInputElement): number | undefined {
+  const form = formOf(passwordEl)
+  if (form) {
+    for (let i = 0; i < registry.length; i++) {
+      const el = registry[i]
+      if (formOf(el) !== form) continue
+      if (isSubmitLike(el)) return i + 1
+    }
+    return undefined
+  }
+  for (let i = 0; i < registry.length; i++) {
+    const el = registry[i]
+    if (!isButtonish(el)) continue
+    if (LOGIN_TEXT.test(labelOf(el))) return i + 1
+  }
+  return undefined
+}
+
+// 로그인 필드 탐지. registry 가 비어 있으면(스냅샷을 아직 안 찍었으면) buildSnapshot 을 먼저 호출한다
+export function findLoginFields(): { username?: number; password?: number; submit?: number } {
+  if (registry.length === 0) buildSnapshot()
+
+  const pwEl = registry.find(
+    (el) => el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'password'
+  ) as HTMLInputElement | undefined
+  if (!pwEl) return {}
+
+  const result: { username?: number; password?: number; submit?: number } = {
+    password: registry.indexOf(pwEl) + 1
+  }
+
+  const userEl = usernameElementFor(pwEl)
+  if (userEl) {
+    const idx = registry.indexOf(userEl)
+    if (idx !== -1) result.username = idx + 1
+  }
+
+  const submitId = findSubmit(pwEl)
+  if (submitId !== undefined) result.submit = submitId
+
+  return result
+}
+
+// 요소의 form 이 있으면 requestSubmit, 없으면 click 으로 제출(둘 다 실제 제출 동작을 유발)
+export function submitForm(id: number): string {
+  const el = get(id)
+  if (!el) return `element ${id} not found (call get_page again)`
+  const form = formOf(el)
+  if (form && typeof form.requestSubmit === 'function') form.requestSubmit()
+  else el.click()
+  return 'ok'
+}
+
+// --- 폼 제출 감지(저장 제안) -----------------------------------------------
+// ipcRenderer.send 등 실제 전송 함수는 주입받는다(테스트에서 스텁 가능하도록)
+export function installCaptureListener(
+  send: (payload: { host: string; username: string; password: string }) => void
+): void {
+  // 같은 제출이 submit 과 click 양쪽에서 잡혀 중복 전송되는 것을 짧게 막는다
+  let lastSignature = ''
+  let lastSentAt = 0
+
+  const attempt = (): void => {
+    const pwEls = Array.from(
+      document.querySelectorAll<HTMLInputElement>('input[type="password"]')
+    ).filter(isVisible)
+    const pw = pwEls[0]
+    if (!pw || !pw.value) return // 값이 없으면 저장 제안을 띄우지 않는다
+    const userEl = usernameElementFor(pw)
+    const username = userEl?.value ?? ''
+    const signature = `${username}:${pw.value}`
+    const now = Date.now()
+    if (signature === lastSignature && now - lastSentAt < 1000) return
+    lastSignature = signature
+    lastSentAt = now
+    send({ host: location.host, username, password: pw.value })
+  }
+
+  // 일반적인 폼 제출(캡처 단계 — 페이지 핸들러의 preventDefault 와 무관하게 이벤트는 도달한다)
+  document.addEventListener('submit', attempt, true)
+  // SPA 대비: 페이지가 submit 을 아예 막고 클릭만으로 처리하는 경우도 감지
+  document.addEventListener(
+    'click',
+    (ev) => {
+      const target = ev.target
+      if (!(target instanceof HTMLElement)) return
+      if (!target.closest('button, input[type="submit"]')) return
+      attempt()
+    },
+    true
+  )
+}
