@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import type React from 'react'
 
-// 구글 파비콘 서비스. 실패하거나 로딩이 늦으면 첫 글자 폴백을 그대로 보여 준다
+// 구글 파비콘 서비스(gstatic 직접 호출). www.google.com/s2 는 gstatic 으로 301 리다이렉트되어
+// CSP img-src 에 막히므로 최종 호스트를 바로 부른다. 실패하면 첫 글자 폴백을 그대로 보여 준다
 function faviconUrl(host: string, size: number): string {
-  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=${size}`
+  const url = encodeURIComponent(`https://${host}`)
+  return `https://t0.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${url}&size=${size}`
 }
 
 interface Props {

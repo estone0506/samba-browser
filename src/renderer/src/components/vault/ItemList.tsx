@@ -214,7 +214,7 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
             type="button"
             onClick={() => setSort(sort === 'name' ? 'recent' : 'name')}
             title={t('vault.list.sortLabel')}
-            className="flex h-[26px] items-center gap-1 rounded-[8px] border border-[var(--line)] px-1.5 text-[12px] text-[var(--text2)]"
+            className="flex h-[26px] shrink-0 items-center gap-1 whitespace-nowrap rounded-[8px] border border-[var(--line)] px-1.5 text-[12px] text-[var(--text2)]"
           >
             {sort === 'name' ? (
               <ArrowDownAZ className="h-3.5 w-3.5" />
@@ -230,7 +230,7 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
                 ? collapseAllGroups()
                 : expandAllGroups(groups.map((g) => g.key))
             }
-            className="h-[26px] rounded-[8px] border border-[var(--line)] px-1.5 text-[12px] text-[var(--text2)]"
+            className="h-[26px] shrink-0 whitespace-nowrap rounded-[8px] border border-[var(--line)] px-1.5 text-[12px] text-[var(--text2)]"
           >
             {expandedGroups.size > 0 ? t('vault.list.collapseAll') : t('vault.list.expandAll')}
           </button>
