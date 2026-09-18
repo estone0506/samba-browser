@@ -33,6 +33,11 @@ export class AgentRunner {
     private vault?: VaultService
   ) {}
 
+  /** 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다) */
+  isRunning(): boolean {
+    return this.abort !== null
+  }
+
   resolveConfirm(id: string, approved: boolean): void {
     const p = this.pending.get(id)
     if (!p) return

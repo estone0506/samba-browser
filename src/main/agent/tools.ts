@@ -9,6 +9,7 @@ import type { VaultService } from '../vault/service'
 import type { AccountDto, AgentAccess, VaultItemType } from '../../shared/vault'
 import { normalizeHost } from '../../shared/host'
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
+import { formatDialogNote } from '../browser/dialogs'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -165,12 +166,19 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     }
     try {
       const r = await fn()
-      const s = typeof r === 'string' ? r : JSON.stringify(r)
+      const raw = typeof r === 'string' ? r : JSON.stringify(r)
       ctx.onStep(
         resolveLabel(),
-        !/not found|not set up|host unknown|refused|denied|error|locked|fail/i.test(s)
+        !/not found|not set up|host unknown|refused|denied|error|locked|fail/i.test(raw)
       )
-      return text(s)
+      // 실행 중 자동으로 닫은 페이지 대화상자가 있으면 그 문구를 결과 앞에 알려 준다
+      const dialog = ctx.tabs.takeDialogMessage?.()
+      return text(
+        dialog
+          ? `${formatDialogNote(dialog)}
+${raw}`
+          : raw
+      )
     } catch (e) {
       ctx.onStep(resolveLabel(), false)
       return text(`error: ${e instanceof Error ? e.message : String(e)}`)

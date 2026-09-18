@@ -44,6 +44,8 @@ export function registerIpc(
   const vault = new VaultService(db, settings, { safeStorage })
   // AI 도구(list_accounts/fill_secret/login)가 쓸 수 있도록 금고를 넘긴다
   const agent = new AgentRunner(tabs, settings, (ev) => send(IPC.agentEvent, ev), vault)
+  // 페이지 JS 대화상자는 AI 작업이 도는 동안에만 자동 처리한다
+  tabs.setAgentRunningProvider(() => agent.isRunning())
   vault.onStateChanged((state) => send(IPC.vaultStateChanged, state))
   // 저장 제안 카드에는 host/username/isNew 만 간다(비밀번호는 메인에 남는다)
   vault.onCapturePrompt((prompt) => send(IPC.vaultCapturePrompt, prompt))
