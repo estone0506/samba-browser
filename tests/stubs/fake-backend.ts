@@ -96,11 +96,12 @@ export function createFakeBackend(): FakeBackend {
     async currentUser() {
       return signedIn
     },
-    async select(name, sinceMs) {
+    async select(name, sinceMs, workspaceId) {
       guard()
       calls.select += 1
       return [...table(name).values()]
         .filter((r) => updatedAtMs(r) > sinceMs)
+        .filter((r) => workspaceId === undefined || r.workspace_id === workspaceId)
         .sort((a, b) => updatedAtMs(a) - updatedAtMs(b))
         .map((r) => ({ ...r }))
     },
@@ -116,11 +117,12 @@ export function createFakeBackend(): FakeBackend {
       // id 기준으로 통째로 덮어쓴다
       for (const row of rows) t.set(row.id, { ...row })
     },
-    async selectKeyed(name, sinceMs) {
+    async selectKeyed(name, sinceMs, workspaceId) {
       guard()
       calls.select += 1
       return [...keyedTable(name).values()]
         .filter((r) => updatedAtMs(r) > sinceMs)
+        .filter((r) => workspaceId === undefined || r.workspace_id === workspaceId)
         .sort((a, b) => updatedAtMs(a) - updatedAtMs(b))
         .map((r) => ({ ...r }))
     },

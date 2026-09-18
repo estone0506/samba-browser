@@ -24,8 +24,12 @@ export interface SyncBackend {
   exchangeCode(code: string): Promise<{ userId: string; email: string }>
   signOut(): Promise<void>
   currentUser(): Promise<{ userId: string; email: string } | null>
-  /** updated_at 이 sinceMs 보다 큰 행만 오래된 순으로 준다 */
-  select(table: string, sinceMs: number): Promise<RemoteRow[]>
+  /**
+   * updated_at 이 sinceMs 보다 큰 행만 오래된 순으로 준다.
+   * workspaceId 를 주면 그 작업공간의 행만 받는다 — 다른 작업공간 행까지 내려받아 봐야
+   * 로컬에서는 보이지 않고, 커서만 앞으로 밀어 버린다
+   */
+  select(table: string, sinceMs: number, workspaceId?: string): Promise<RemoteRow[]>
   /**
    * 표의 행을 전부 준다. updated_at 컬럼이 없는 표(devices)용이다 —
    * 커서로 걸러 낼 수 없고 행 수도 기기 수만큼이라 통째로 읽는다
@@ -33,8 +37,8 @@ export interface SyncBackend {
   selectAll(table: string): Promise<RemoteRow[]>
   upsert(table: string, rows: RemoteRow[]): Promise<void>
   remove(table: string, ids: string[]): Promise<void>
-  /** 복합 PK 표(settings_sync)에서 읽는다 */
-  selectKeyed(table: string, sinceMs: number): Promise<RemoteKeyedRow[]>
+  /** 복합 PK 표(settings_sync)에서 읽는다. workspaceId 를 주면 그 작업공간의 행만 받는다 */
+  selectKeyed(table: string, sinceMs: number, workspaceId?: string): Promise<RemoteKeyedRow[]>
   /** 복합 PK 표(settings_sync)에 올린다. 충돌 해결은 서버의 기본키를 따른다 */
   upsertKeyed(table: string, rows: RemoteKeyedRow[]): Promise<void>
   /** 변경 알림 구독. 반환값을 호출하면 구독을 푼다 */

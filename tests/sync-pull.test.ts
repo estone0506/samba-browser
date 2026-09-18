@@ -14,6 +14,7 @@ import { pullAll, pullCursorKey } from '../src/main/sync/pull'
 import { TOMBSTONE_TTL_MS } from '../src/main/sync/merge'
 import { vaultSyncAad } from '../src/main/sync/mappers'
 import { encrypt } from '../src/main/vault/crypto'
+import { BookmarkRepo } from '../src/main/bookmarks/repo'
 import { createFakeBackend, FAKE_USER_ID, type FakeBackend } from './stubs/fake-backend'
 import { DEFAULT_SETTINGS, type Settings } from '../src/shared/settings'
 import type { RemoteRow } from '../src/main/sync/backend'
@@ -219,6 +220,37 @@ describe('pullAll', () => {
     expect(restored).not.toBeNull()
     expect(local.vaultItemForSync(restored!)?.label).toBe('메모')
     expect(local.getStateNumber(pullCursorKey('vault_items'))).toBe(2_000_000)
+  })
+
+  it('비기본 작업공간에서도 내려받은 행이 보인다', async () => {
+    // 내려받은 행에 workspace_id 를 채우지 않으면 전부 NULL 로 남아, NULL 을 함께 보는
+    // 기본 작업공간에서만 보이고 2번 작업공간에서는 사라진다
+    const ws2 = { localId: 2, remoteId: 'ws-2' }
+    const scoped: PushDeps = { ...deps, workspace: () => ws2 }
+    backend.seed('accounts_sync', [accountRow({ workspace_id: ws2.remoteId })])
+    backend.seed('bookmarks_sync', [bookmarkRow({ workspace_id: ws2.remoteId })])
+
+    await pullAll(scoped)
+
+    vault.setWorkspaceScope({ id: 2, isDefault: false })
+    expect(vault.listAccounts('example.com')).toHaveLength(1)
+
+    const bookmarksRepo = new BookmarkRepo(db)
+    bookmarksRepo.setWorkspaceScope({ id: 2, isDefault: false })
+    expect(bookmarksRepo.tree().folders[0].links.map((l) => l.url)).toEqual([
+      'https://remote.example'
+    ])
+  })
+
+  it('다른 작업공간의 행은 아예 내려받지 않는다', async () => {
+    backend.seed('accounts_sync', [accountRow({ id: 'acc-other', workspace_id: 'ws-other' })])
+    backend.seed('accounts_sync', [accountRow()])
+
+    const result = await pullAll(deps)
+
+    expect(result.applied).toBe(1)
+    expect(local.accountIdByRemote('acc-other')).toBeNull()
+    expect(local.accountIdByRemote('acc-1')).not.toBeNull()
   })
 
   it('북마크는 양쪽 것이 둘 다 남는다', async () => {

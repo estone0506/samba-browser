@@ -67,12 +67,11 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
       const { data } = await client.auth.getUser()
       return data.user ? { userId: data.user.id, email: data.user.email ?? '' } : null
     },
-    async select(table, sinceMs) {
-      const { data, error } = await client
-        .from(table)
-        .select('*')
-        .gt('updated_at', new Date(sinceMs).toISOString())
-        .order('updated_at', { ascending: true })
+    async select(table, sinceMs, workspaceId) {
+      let query = client.from(table).select('*').gt('updated_at', new Date(sinceMs).toISOString())
+      // 활성 작업공간의 행만 받는다(다른 작업공간 행은 로컬에서 보이지도 않는다)
+      if (workspaceId !== undefined) query = query.eq('workspace_id', workspaceId)
+      const { data, error } = await query.order('updated_at', { ascending: true })
       if (error) raise(error.message)
       return (data ?? []) as RemoteRow[]
     },
@@ -86,12 +85,10 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
       const { error } = await client.from(table).upsert(rows)
       if (error) raise(error.message)
     },
-    async selectKeyed(table, sinceMs) {
-      const { data, error } = await client
-        .from(table)
-        .select('*')
-        .gt('updated_at', new Date(sinceMs).toISOString())
-        .order('updated_at', { ascending: true })
+    async selectKeyed(table, sinceMs, workspaceId) {
+      let query = client.from(table).select('*').gt('updated_at', new Date(sinceMs).toISOString())
+      if (workspaceId !== undefined) query = query.eq('workspace_id', workspaceId)
+      const { data, error } = await query.order('updated_at', { ascending: true })
       if (error) raise(error.message)
       return (data ?? []) as RemoteKeyedRow[]
     },

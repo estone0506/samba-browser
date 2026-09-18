@@ -52,7 +52,8 @@ export type PullTable = 'accounts' | 'vault_items' | 'bookmarks' | 'settings'
 type Seen = { updatedAt: number }[] | null
 
 export async function pullAll(deps: PullDeps): Promise<PullResult> {
-  const local = new SyncLocal(deps.db)
+  // 내려받은 행에 지금 작업공간을 찍어 둔다 — 그러지 않으면 비기본 작업공간에서 보이지 않는다
+  const local = new SyncLocal(deps.db, deps.workspace().localId)
   const result: PullResult = { applied: 0, conflicts: 0, pruned: 0 }
   // 표별 커서가 아직 없는 옛 DB 는 단일 커서 자리에서 이어 간다
   const legacy = local.getStateNumber(PULL_CURSOR_KEY) ?? 0
@@ -104,7 +105,7 @@ async function pullAccounts(
   since: number,
   result: PullResult
 ): Promise<Seen> {
-  const rows = await deps.backend.select(remoteTableOf('accounts'), since)
+  const rows = await deps.backend.select(remoteTableOf('accounts'), since, workspaceOf(deps))
   const seen: { updatedAt: number }[] = []
 
   for (const raw of rows) {
@@ -140,7 +141,7 @@ async function pullVaultItems(
   since: number,
   result: PullResult
 ): Promise<Seen> {
-  const rows = await deps.backend.select(remoteTableOf('vault_items'), since)
+  const rows = await deps.backend.select(remoteTableOf('vault_items'), since, workspaceOf(deps))
   if (rows.length === 0) return []
 
   // 금고가 잠겨 있으면 복호화할 수 없다 — 커서도 올리지 않고 다음 주기에 다시 본다
@@ -181,7 +182,7 @@ async function pullBookmarks(
   since: number,
   result: PullResult
 ): Promise<Seen> {
-  const rows = await deps.backend.select(remoteTableOf('bookmarks'), since)
+  const rows = await deps.backend.select(remoteTableOf('bookmarks'), since, workspaceOf(deps))
   if (rows.length === 0) return []
 
   // 북마크는 합집합이다. 같은 (폴더 경로, URL) 만 한 개로 합치고 나머지는 양쪽 다 남는다
@@ -219,7 +220,7 @@ async function pullSettings(
   since: number,
   result: PullResult
 ): Promise<Seen> {
-  const rows = await deps.backend.selectKeyed('settings_sync', since)
+  const rows = await deps.backend.selectKeyed('settings_sync', since, workspaceOf(deps))
   const seen: { updatedAt: number }[] = []
 
   for (const raw of rows) {
@@ -249,4 +250,9 @@ function applyFromSync(deps: PullDeps, patch: Partial<Settings>): void {
 
 function isSyncedSettingKey(key: string): key is (typeof SYNCED_SETTING_KEYS)[number] {
   return (SYNCED_SETTING_KEYS as readonly string[]).includes(key)
+}
+
+/** 지금 활성 작업공간의 원격 uuid. 주기마다 다시 읽는다(작업공간 전환 반영) */
+function workspaceOf(deps: PullDeps): string {
+  return deps.workspace().remoteId
 }
