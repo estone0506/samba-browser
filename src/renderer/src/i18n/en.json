@@ -443,6 +443,21 @@
       "description": "KeyMaster save/lock policy",
       "descriptionDetail": "Configure auto-lock, AI access policy, auto-submit, and more",
       "open": "Open KeyMaster settings"
+    },
+    "extensions": {
+      "title": "Extensions",
+      "add": "Load an extension folder",
+      "addDesc": "Only unpacked Chrome extension folders (containing manifest.json) can be loaded. .crx files and Web Store installs are not supported",
+      "addButton": "Choose folder",
+      "adding": "Loading…",
+      "empty": "No extensions loaded",
+      "remove": "Remove",
+      "failedTitle": "Extensions that failed to load",
+      "limitsTitle": "Good to know",
+      "limitMv3": "Some Manifest V3 APIs are not supported yet",
+      "limitServiceWorker": "Background service workers are limited, so an extension may not behave as expected",
+      "limitNoAutoUpdate": "Extensions are never auto-updated. Load the folder again to pick up a new version",
+      "limitPartition": "Per-profile separation happens only per workspace (session partition)"
     }
   }
 }
