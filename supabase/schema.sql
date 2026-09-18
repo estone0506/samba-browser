@@ -9,6 +9,9 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
+-- workspaces 표는 2b 에서 앱이 쓰지 않는다(2c 예정).
+-- 2b 동안 작업공간의 원격 uuid 는 PC 마다 로컬에서 만들어 sync_state 에 고정하며,
+-- 이 표에는 행이 올라가지 않는다. 다른 표의 workspace_id 는 그 uuid 를 그대로 담는다
 create table if not exists public.workspaces (
   id uuid primary key,
   user_id uuid not null references auth.users(id) on delete cascade,

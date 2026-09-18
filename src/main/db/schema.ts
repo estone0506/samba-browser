@@ -85,7 +85,8 @@ export const auditLog = sqliteTable('audit_log', {
   source: text('source').notNull()
 })
 
-// 작업공간(브라우저 프로필) — 북마크·금고 항목·설정 세트를 가르는 상위 계층
+// 작업공간(브라우저 프로필) — 북마크·금고 항목·설정 세트를 가르는 상위 계층.
+// 이 표는 2b 에서 동기화하지 않는다(2c 예정) — remote_id 는 항상 null 이다
 export const workspaces = sqliteTable('workspaces', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   // 서버(Supabase)의 uuid. 아직 올리지 않았으면 null
