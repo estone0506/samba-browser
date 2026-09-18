@@ -12,7 +12,10 @@ import {
   type SiteDto,
   type VaultItemMeta,
   type VaultItemType,
-  type VaultState
+  type VaultState,
+  type ImportPasswordsResult,
+  type ImportBookmarksResult,
+  type BookmarkTreeDto
 } from '../shared/ipc'
 
 // 항목 저장 요청. value(평문)는 렌더러 → 메인 방향으로만 흐른다
@@ -112,6 +115,17 @@ const api = {
     captureDecision: (accept: boolean): void => {
       ipcRenderer.send(IPC.vaultCaptureDecision, accept)
     }
+  },
+  // 가져오기 — filePath 생략 시 메인이 파일 선택 다이얼로그를 연다
+  importData: {
+    passwords: (filePath?: string): Promise<IpcResult<ImportPasswordsResult>> =>
+      invoke(IPC.importPasswords, filePath),
+    bookmarks: (filePath?: string): Promise<IpcResult<ImportBookmarksResult>> =>
+      invoke(IPC.importBookmarks, filePath)
+  },
+  bookmarks: {
+    tree: (): Promise<IpcResult<BookmarkTreeDto>> => invoke(IPC.bookmarksTree),
+    remove: (id: number): Promise<IpcResult<void>> => invoke(IPC.bookmarksRemove, id)
   }
 }
 

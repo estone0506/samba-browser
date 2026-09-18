@@ -1,10 +1,11 @@
-import { ipcMain, safeStorage, type BrowserWindow } from 'electron'
+import { dialog, ipcMain, safeStorage, type BrowserWindow } from 'electron'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import type { TabManager } from '../browser/tab-manager'
 import { SettingsStore } from '../settings/store'
 import { AgentRunner } from '../agent/runner'
 import type { Db } from '../db/client'
 import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vault/service'
+import { ImportService, type ImportDialogs } from '../import/service'
 import { normalizeHost } from '../../shared/host'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
@@ -35,6 +36,16 @@ export function registerIpc(
   vault.onStateChanged((state) => send(IPC.vaultStateChanged, state))
   // 저장 제안 카드에는 host/username/isNew 만 간다(비밀번호는 메인에 남는다)
   vault.onCapturePrompt((prompt) => send(IPC.vaultCapturePrompt, prompt))
+
+  // 가져오기(비밀번호 CSV·북마크 HTML). filePath 를 안 주면 다이얼로그를 연다
+  const importDialogs: ImportDialogs = {
+    showOpenDialog: async (filters) => {
+      const result = await dialog.showOpenDialog(win, { filters, properties: ['openFile'] })
+      if (result.canceled || result.filePaths.length === 0) return undefined
+      return result.filePaths[0]
+    }
+  }
+  const importService = new ImportService(db, vault, importDialogs)
 
   tabs.onChange((list) => send(IPC.tabUpdated, list))
 
@@ -132,6 +143,18 @@ export function registerIpc(
       console.error('자격정보 저장 실패', e instanceof Error ? e.message : String(e))
     }
   })
+
+  // --- 가져오기 -------------------------------------------------------------
+  ipcMain.handle(IPC.importPasswords, (_, filePath?: string) =>
+    wrap(() => importService.importPasswords(filePath))
+  )
+  ipcMain.handle(IPC.importBookmarks, (_, filePath?: string) =>
+    wrap(() => importService.importBookmarks(filePath))
+  )
+  ipcMain.handle(IPC.bookmarksTree, () => wrap(() => importService.tree()))
+  ipcMain.handle(IPC.bookmarksRemove, (_, id: number) =>
+    wrap(() => importService.removeBookmark(id))
+  )
 
   return { settings, agent, db, vault }
 }
