@@ -649,4 +649,54 @@ describe('VaultService', () => {
       expect(vault.listItems(null)).toHaveLength(1)
     })
   })
+  describe('삭제 감사 로그', () => {
+    it('항목을 지워도 계정별 사용 기록에 삭제 기록이 남는다', async () => {
+      await vault.setup('master-pw')
+      const account = vault.upsertAccount({
+        host: 'example.com',
+        label: '메인',
+        username: 'alice'
+      })
+      const meta = vault.putItem({
+        accountId: account.id,
+        type: 'login_password',
+        label: '로그인 비밀번호',
+        value: SECRET
+      })
+
+      vault.deleteItem(meta.id)
+
+      // 예전에는 vault_items 조인 때문에 삭제 기록이 통째로 사라졌다
+      const logs = vault.listAudit(account.id)
+      const del = logs.find((r) => r.action === 'delete')
+      expect(del).toBeDefined()
+      expect(del?.itemId).toBe(meta.id)
+      expect(del?.accountId).toBe(account.id)
+      // 저장 기록도 그대로 보인다
+      expect(logs.some((r) => r.action === 'save')).toBe(true)
+      expect(JSON.stringify(logs)).not.toMatch(/sup3rs3cret/)
+    })
+
+    it('다른 계정의 기록은 섞이지 않는다', async () => {
+      await vault.setup('master-pw')
+      const a = vault.upsertAccount({ host: 'a.example', label: 'A', username: 'alice' })
+      const b = vault.upsertAccount({ host: 'b.example', label: 'B', username: 'bob' })
+      const itemA = vault.putItem({
+        accountId: a.id,
+        type: 'login_password',
+        label: '로그인 비밀번호',
+        value: SECRET
+      })
+      vault.putItem({
+        accountId: b.id,
+        type: 'login_password',
+        label: '로그인 비밀번호',
+        value: SECRET
+      })
+      vault.deleteItem(itemA.id)
+
+      const logsB = vault.listAudit(b.id)
+      expect(logsB.every((r) => r.action !== 'delete')).toBe(true)
+    })
+  })
 })

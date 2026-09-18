@@ -421,7 +421,12 @@ export class VaultService {
         this.repo.insertItemPlaceholder(input.accountId, input.type, input.label, now)
       const blob = encrypt(key, input.value, String(id))
       this.repo.updateItemSecret(id, blob.ciphertext, blob.iv, input.label, input.type, now)
-      this.repo.insertAudit({ itemId: id, action: 'save', source: 'user' })
+      this.repo.insertAudit({
+        itemId: id,
+        accountId: input.accountId,
+        action: 'save',
+        source: 'user'
+      })
       return this.repo.itemMeta(id)
     })
     if (!meta) throw new Error('항목을 저장하지 못했습니다')
@@ -442,8 +447,16 @@ export class VaultService {
 
   deleteItem(id: number): void {
     this.requireKey()
+    // 삭제 전에 계정 id 를 스냅샷으로 떠 둔다 — 삭제 후에는 vault_items 조인이 안 되어
+    // 계정별 사용 기록에서 삭제 기록 자체가 보이지 않았다
+    const meta = this.repo.itemMeta(id)
     this.repo.deleteItem(id)
-    this.repo.insertAudit({ itemId: id, action: 'delete', source: 'user' })
+    this.repo.insertAudit({
+      itemId: id,
+      accountId: meta?.accountId ?? null,
+      action: 'delete',
+      source: 'user'
+    })
     this.touch()
   }
 
@@ -453,7 +466,12 @@ export class VaultService {
     const row = this.repo.getItemRow(id)
     if (!row) throw new Error('항목을 찾을 수 없습니다')
     const plain = decrypt(key, row.ciphertext, row.iv, String(row.id))
-    this.repo.insertAudit({ itemId: id, action: 'reveal', source: 'user' })
+    this.repo.insertAudit({
+      itemId: id,
+      accountId: row.accountId,
+      action: 'reveal',
+      source: 'user'
+    })
     this.touch()
     return plain
   }
@@ -468,7 +486,13 @@ export class VaultService {
     if (!row) return null
     try {
       const plain = decrypt(this.key, row.ciphertext, row.iv, String(row.id))
-      this.repo.insertAudit({ itemId: row.id, action: 'fill', source: 'ai', jobId })
+      this.repo.insertAudit({
+        itemId: row.id,
+        accountId: row.accountId,
+        action: 'fill',
+        source: 'ai',
+        jobId
+      })
       this.touch()
       return plain
     } catch {

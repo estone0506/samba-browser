@@ -1,7 +1,7 @@
 // 금고 저장소 — drizzle 쿼리만 담당한다(암호화·상태 판단은 service.ts).
 // sql.js 드라이버는 동기이므로 .all()/.get()/.run() 을 그대로 쓴다.
 
-import { eq, and, isNull, desc } from 'drizzle-orm'
+import { eq, and, or, isNull, desc } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { sites, accounts, vaultItems, vaultMeta, auditLog } from '../db/schema'
 import type { SiteDto, VaultItemMeta, VaultItemType } from '../../shared/vault'
@@ -30,6 +30,8 @@ export interface AuditRow {
   id: number
   at: number
   itemId: number | null
+  // 기록 시점의 계정 id 스냅샷(항목이 지워져도 남는다). 전역 항목·가져오기는 null
+  accountId: number | null
   action: string
   jobId: string | null
   source: string
@@ -382,8 +384,10 @@ export class VaultRepo {
 
   // --- audit_log --------------------------------------------------------
 
+  // accountId 는 기록 시점의 스냅샷이다 — 항목이 삭제돼도 계정별 사용 기록에서 사라지지 않는다
   insertAudit(entry: {
     itemId: number | null
+    accountId?: number | null
     action: string
     source: string
     jobId?: string
@@ -393,6 +397,7 @@ export class VaultRepo {
       .values({
         at: Date.now(),
         itemId: entry.itemId,
+        accountId: entry.accountId ?? null,
         action: entry.action,
         jobId: entry.jobId ?? null,
         source: entry.source
@@ -401,7 +406,8 @@ export class VaultRepo {
     this.db.scheduleSave()
   }
 
-  // accountId 를 주면 vault_items 와 조인해 그 계정 소유 항목의 기록만 반환한다
+  // accountId 를 주면 그 계정의 기록만 반환한다.
+  // audit_log.account_id 스냅샷(삭제된 항목 포함)과 vault_items 조인(스냅샷이 없는 옛 기록)을 모두 본다
   listAudit(accountId?: number, limit = AUDIT_LIST_LIMIT): AuditRow[] {
     if (accountId === undefined) {
       return this.d.select().from(auditLog).orderBy(desc(auditLog.id)).limit(limit).all()
@@ -411,13 +417,14 @@ export class VaultRepo {
         id: auditLog.id,
         at: auditLog.at,
         itemId: auditLog.itemId,
+        accountId: auditLog.accountId,
         action: auditLog.action,
         jobId: auditLog.jobId,
         source: auditLog.source
       })
       .from(auditLog)
-      .innerJoin(vaultItems, eq(auditLog.itemId, vaultItems.id))
-      .where(eq(vaultItems.accountId, accountId))
+      .leftJoin(vaultItems, eq(auditLog.itemId, vaultItems.id))
+      .where(or(eq(auditLog.accountId, accountId), eq(vaultItems.accountId, accountId)))
       .orderBy(desc(auditLog.id))
       .limit(limit)
       .all()

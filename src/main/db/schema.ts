@@ -54,6 +54,9 @@ export const auditLog = sqliteTable('audit_log', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   at: integer('at').notNull(),
   itemId: integer('item_id'),
+  // 항목이 삭제된 뒤에도 "어느 계정의 기록인지" 알 수 있도록 남기는 스냅샷.
+  // vault_items 조인만으로는 삭제 기록이 사용 기록에서 사라진다
+  accountId: integer('account_id'),
   action: text('action').notNull(),
   jobId: text('job_id'),
   source: text('source').notNull()

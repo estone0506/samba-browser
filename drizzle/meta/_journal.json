@@ -15,6 +15,13 @@
       "when": 1789714044318,
       "tag": "0001_foamy_puma",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789720404880,
+      "tag": "0002_fat_ender_wiggin",
+      "breakpoints": true
     }
   ]
 }

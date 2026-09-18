@@ -56,6 +56,8 @@ export interface AuditLogDto {
   id: number
   at: number
   itemId: number | null
+  // 기록 시점의 계정 id 스냅샷(항목이 지워져도 남는다). 전역 항목·가져오기는 null
+  accountId: number | null
   action: string
   jobId: string | null
   source: string

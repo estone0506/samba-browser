@@ -1,4 +1,8 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { openDatabase, type Db } from '../src/main/db/client'
 import { sites } from '../src/main/db/schema'
 import { eq } from 'drizzle-orm'
@@ -49,5 +53,64 @@ describe('openDatabase(:memory:)', () => {
     // close() 이후 save()/scheduleSave() 도 조용히 no-op 이어야 한다
     expect(() => db!.save()).not.toThrow()
     expect(() => db!.scheduleSave()).not.toThrow()
+  })
+})
+
+describe('openDatabase(파일 경로)', () => {
+  let dir: string | undefined
+  let db: Db | undefined
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'samba-db-'))
+  })
+
+  afterEach(async () => {
+    db?.close()
+    db = undefined
+    if (dir) await rm(dir, { recursive: true, force: true })
+    dir = undefined
+  })
+
+  it('쓰기 → close → 재오픈 하면 데이터가 남아 있다(파일 내구성)', async () => {
+    const path = join(dir!, 'samba.db')
+
+    db = await openDatabase(path)
+    // 새 파일 DB 는 마이그레이션 직후 곧바로 디스크에 써 둔다
+    expect(existsSync(path)).toBe(true)
+
+    db.drizzle.insert(sites).values({ host: 'example.com', name: '예시', createdAt: 1 }).run()
+    db.save()
+    db.close()
+
+    const reopened = await openDatabase(path)
+    db = reopened
+    const rows = reopened.drizzle.select().from(sites).where(eq(sites.host, 'example.com')).all()
+    expect(rows).toHaveLength(1)
+    expect(rows[0].name).toBe('예시')
+  })
+
+  it('close() 는 예약된 저장을 먼저 비워낸다(scheduleSave 유실 방지)', async () => {
+    const path = join(dir!, 'samba.db')
+
+    db = await openDatabase(path)
+    db.drizzle.insert(sites).values({ host: 'later.example', name: '나중', createdAt: 1 }).run()
+    // save() 를 직접 부르지 않고 디바운스 예약만 걸어 둔 상태에서 닫는다
+    db.scheduleSave()
+    db.close()
+
+    const reopened = await openDatabase(path)
+    db = reopened
+    const rows = reopened.drizzle.select().from(sites).where(eq(sites.host, 'later.example')).all()
+    expect(rows).toHaveLength(1)
+  })
+
+  it('close() 이후 save()/scheduleSave() 는 no-op 이고 isClosed 가 true 다', async () => {
+    const path = join(dir!, 'samba.db')
+    db = await openDatabase(path)
+    db.close()
+    expect(db.isClosed).toBe(true)
+    expect(() => db!.save()).not.toThrow()
+    expect(() => db!.scheduleSave()).not.toThrow()
+    db = undefined
   })
 })
