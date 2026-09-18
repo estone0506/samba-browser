@@ -119,7 +119,7 @@ export function PrimaryButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        'h-9 w-fit rounded-[9px] bg-[var(--text)] px-3 text-[12.5px] font-medium text-white disabled:opacity-40',
+        'h-9 w-fit shrink-0 whitespace-nowrap rounded-[9px] bg-[var(--text)] px-3 text-[12.5px] font-medium text-white disabled:opacity-40',
         className
       )}
     >
@@ -147,7 +147,7 @@ export function SecondaryButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        'h-9 w-fit rounded-[9px] border border-[var(--line)] px-3 text-[12.5px] font-medium text-[var(--text)] hover:bg-black/5 disabled:opacity-40',
+        'h-9 w-fit shrink-0 whitespace-nowrap rounded-[9px] border border-[var(--line)] px-3 text-[12.5px] font-medium text-[var(--text)] hover:bg-black/5 disabled:opacity-40',
         className
       )}
     >

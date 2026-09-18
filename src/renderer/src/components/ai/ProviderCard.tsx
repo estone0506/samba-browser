@@ -65,7 +65,7 @@ export function ProviderCard({
           onClick={onSelect}
           disabled={selected}
           className={cn(
-            'mt-3 h-9 w-fit rounded-[9px] px-3 text-[12.5px] font-medium',
+            'mt-3 h-9 w-fit shrink-0 whitespace-nowrap rounded-[9px] px-3 text-[12.5px] font-medium',
             selected
               ? 'border border-[var(--line)] text-[var(--text2)]'
               : 'bg-[var(--text)] text-white'

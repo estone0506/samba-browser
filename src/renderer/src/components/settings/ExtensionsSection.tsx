@@ -78,7 +78,7 @@ export function ExtensionsSection(): React.JSX.Element {
             type="button"
             onClick={() => void add()}
             disabled={busy}
-            className="h-9 w-fit rounded-[9px] bg-[var(--text)] px-3 text-[12.5px] font-medium text-white disabled:opacity-50"
+            className="h-9 w-fit shrink-0 whitespace-nowrap rounded-[9px] bg-[var(--text)] px-3 text-[12.5px] font-medium text-white disabled:opacity-50"
           >
             {busy ? t('settingsPage.extensions.adding') : t('settingsPage.extensions.addButton')}
           </button>

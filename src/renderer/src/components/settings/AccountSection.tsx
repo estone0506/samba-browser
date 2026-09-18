@@ -232,7 +232,7 @@ function DangerZone(): React.JSX.Element {
         type="button"
         disabled={!armed}
         onClick={() => setNotified(true)}
-        className="h-9 w-fit rounded-[9px] border border-[#b91c1c] px-3 text-[12.5px] font-medium text-[#b91c1c] disabled:opacity-40"
+        className="h-9 w-fit shrink-0 whitespace-nowrap rounded-[9px] border border-[#b91c1c] px-3 text-[12.5px] font-medium text-[#b91c1c] disabled:opacity-40"
       >
         {t('account.deleteAccount')}
       </button>
