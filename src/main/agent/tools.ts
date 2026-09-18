@@ -210,6 +210,56 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
       })
   )
 
+  // 화면 캡처: get_page 텍스트로는 알 수 없는 정보(이미지 캡차·그래프·레이아웃)가 필요할 때 사용.
+  // read_only 모드에서도 허용(조회일 뿐 조작이 아님). 이미지 블록을 돌려줘야 하므로 text() 기반
+  // guard() 를 그대로 쓰지 않고, 같은 호출 상한·step 기록 로직만 인라인으로 맞춘다
+  const screenshot = tool(
+    'screenshot',
+    'Screenshot the active tab as an image. Use when get_page text is not enough (image captcha, chart, layout). Password fields show as dots, never the real value.',
+    { full: z.boolean().optional() },
+    async () => {
+      const over = ctx.tick()
+      if (over) {
+        if (!limitNotified) {
+          limitNotified = true
+          ctx.onStep('도구 호출 상한 도달', false)
+        }
+        return text(over)
+      }
+      try {
+        const tab = activeOr(ctx)
+        const bounds = tab?.view.getBounds()
+        // 키마스터 등 웹뷰가 접힌 화면(view !== 'browser')은 bounds 가 0 이 되어 캡처 대상이 아니다
+        if (!tab || !bounds || bounds.width === 0 || bounds.height === 0) {
+          ctx.onStep('화면 캡처', false)
+          return text('no visible page')
+        }
+        const image = await tab.view.webContents.capturePage()
+        const { width, height } = image.getSize()
+        // 긴 변을 1280px 로 맞춰 리사이즈(비율 유지)
+        const resized =
+          Math.max(width, height) > 1280
+            ? image.resize(width >= height ? { width: 1280 } : { height: 1280 })
+            : image
+        const base64 = resized.toJPEG(70).toString('base64')
+        const { width: w, height: h } = resized.getSize()
+        ctx.onStep('화면 캡처', true)
+        return {
+          content: [
+            { type: 'image' as const, data: base64, mimeType: 'image/jpeg' },
+            {
+              type: 'text' as const,
+              text: `screenshot of ${currentHost() || 'unknown'} (${w}x${h})`
+            }
+          ]
+        }
+      } catch (e) {
+        ctx.onStep('화면 캡처', false)
+        return text(`error: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+  )
+
   const navigate = tool(
     'navigate',
     'Open a URL or search query in the active tab.',
@@ -484,6 +534,7 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     version: '0.1.0',
     tools: [
       getPage,
+      screenshot,
       navigate,
       click,
       typeTool,
@@ -502,6 +553,7 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
 
 export const SAMBA_TOOL_NAMES = [
   'get_page',
+  'screenshot',
   'navigate',
   'click',
   'type',
