@@ -1,17 +1,7 @@
 import { app } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
-import type { Settings } from '../../shared/ipc'
-import { DEFAULT_DANGER_WORDS } from '../../shared/danger'
-
-const DEFAULTS: Settings = {
-  model: 'sonnet',
-  language: 'ko',
-  panelWidth: 380,
-  lastUrl: 'https://www.google.com',
-  dangerWords: DEFAULT_DANGER_WORDS,
-  maxToolCalls: 40
-}
+import { parseSettings, type Settings } from '../../shared/settings'
 
 // %APPDATA%/samba-browser/config.json
 export class SettingsStore {
@@ -23,13 +13,14 @@ export class SettingsStore {
   }
 
   private load(): Settings {
+    let raw: unknown = {}
     try {
-      if (existsSync(this.file))
-        return { ...DEFAULTS, ...JSON.parse(readFileSync(this.file, 'utf8')) }
+      if (existsSync(this.file)) raw = JSON.parse(readFileSync(this.file, 'utf8'))
     } catch (e) {
       console.error('설정 읽기 실패, 기본값 사용', e)
     }
-    return { ...DEFAULTS }
+    // 손상·조작된 값은 parseSettings 가 필드별로 기본값으로 되돌린다
+    return parseSettings(raw)
   }
 
   get(): Settings {
@@ -37,9 +28,13 @@ export class SettingsStore {
   }
 
   set(patch: Partial<Settings>): Settings {
-    this.cache = { ...this.cache, ...patch }
-    mkdirSync(join(this.file, '..'), { recursive: true })
-    writeFileSync(this.file, JSON.stringify(this.cache, null, 2))
+    this.cache = parseSettings({ ...this.cache, ...patch })
+    try {
+      mkdirSync(join(this.file, '..'), { recursive: true })
+      writeFileSync(this.file, JSON.stringify(this.cache, null, 2))
+    } catch (e) {
+      console.error('설정 저장 실패', e)
+    }
     return this.cache
   }
 }

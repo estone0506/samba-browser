@@ -54,13 +54,7 @@ export type AgentEvent =
       toolCalls?: number
     }
 
-export interface Settings {
-  model: 'sonnet' | 'opus' | 'haiku'
-  language: 'ko' | 'en'
-  panelWidth: number
-  lastUrl: string
-  dangerWords: string[]
-  maxToolCalls: number
-}
+// Settings 는 shared/settings.ts 의 zod 스키마에서 파생된 타입 (z.infer)
+export type { Settings } from './settings'
 
 export type { PageSnapshot }
