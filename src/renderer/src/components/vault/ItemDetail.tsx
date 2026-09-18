@@ -4,13 +4,17 @@ import { useTranslation } from 'react-i18next'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { useVaultStore } from '@renderer/stores/vaultStore'
 import { Button } from '@renderer/components/ui/button'
-import type { AuditLogDto, VaultItemMeta } from '@shared/ipc'
+import { Input } from '@renderer/components/ui/input'
+import { AGENT_ACCESS_VALUES } from '@shared/vault'
+import type { AccountDto, AgentAccess, AuditLogDto, VaultField, VaultItemMeta } from '@shared/ipc'
 
 const USAGE_HISTORY_LIMIT = 10
 // '보기' 로 화면에 드러낸 값을 자동으로 다시 가리는 시간(ms)
 const REVEAL_AUTO_HIDE_MS = 30_000
 // 값을 클립보드에 복사한 뒤 이 시간(ms)이 지나면, 복사 당시와 값이 같을 때만 비운다
 const CLIPBOARD_CLEAR_MS = 30_000
+// 자동 채우기 결과 안내를 화면에 남겨 두는 시간(ms)
+const AUTOFILL_NOTICE_MS = 4000
 
 // 클립보드에 값을 복사하고, 일정 시간 뒤에도 여전히 같은 값이면 비운다.
 // readText 가 실패하면(권한 거부 등) 아무 것도 하지 않는다 — 그 사이 사용자가 복사한
@@ -30,25 +34,28 @@ async function copyWithAutoClear(value: string): Promise<void> {
   }, CLIPBOARD_CLEAR_MS)
 }
 
-const PERSONAL_TYPES = new Set([
-  'card',
-  'passport',
-  'id_card',
-  'birth_date',
-  'address',
-  'phone',
-  'custom'
-])
+// autofillAccount 의 결과 문자열 → i18n 키
+const AUTOFILL_MESSAGE: Record<string, string> = {
+  ok: 'vault.autofill.ok',
+  'filled-password-only': 'vault.autofill.ok',
+  locked: 'vault.autofill.locked',
+  'insecure-page': 'vault.autofill.insecure',
+  excluded: 'vault.autofill.excluded',
+  'host-mismatch': 'vault.autofill.hostMismatch',
+  'fields-not-found': 'vault.autofill.fieldsNotFound'
+}
 
 // 비밀값 한 줄. '보기'를 누른 동안만 화면에 표시하고, 토글을 끄거나
 // 컴포넌트가 사라지면(계정 전환·잠금 포함) 즉시 지운다
 function RevealRow({
   label,
-  item,
+  itemId,
+  fieldKey,
   danger
 }: {
   label: string
-  item: VaultItemMeta
+  itemId: number
+  fieldKey: string
   danger?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -56,7 +63,7 @@ function RevealRow({
   const [value, setValue] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => () => setValue(null), [item.id])
+  useEffect(() => () => setValue(null), [itemId, fieldKey])
 
   // 드러낸 값은 30초 뒤 자동으로 다시 가린다(자리를 비운 사이 화면에 남지 않게)
   useEffect(() => {
@@ -71,13 +78,13 @@ function RevealRow({
       return
     }
     setBusy(true)
-    const v = await reveal(item.id)
+    const v = await reveal(itemId, fieldKey)
     setBusy(false)
     setValue(v)
   }
 
   const copy = async (): Promise<void> => {
-    const v = value ?? (await reveal(item.id))
+    const v = value ?? (await reveal(itemId, fieldKey))
     if (v) void copyWithAutoClear(v)
   }
 
@@ -120,12 +127,14 @@ function PlainRow({
   label,
   value,
   onCopy,
-  onOpen
+  onOpen,
+  onRemove
 }: {
   label: string
   value: string
   onCopy?: () => void
   onOpen?: () => void
+  onRemove?: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   return (
@@ -152,8 +161,161 @@ function PlainRow({
             {t('vault.detail.open')}
           </button>
         )}
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="h-6 rounded-[7px] border border-[var(--line)] px-2 text-[11.5px] text-[var(--text2)]"
+          >
+            {t('vault.websites.remove')}
+          </button>
+        )}
       </div>
     </div>
+  )
+}
+
+// 항목 하나의 섹션>필드를 그대로 그린다. secret 필드는 RevealRow, 나머지는 PlainRow
+function ItemSections({ item }: { item: VaultItemMeta }): React.JSX.Element {
+  const { t } = useTranslation()
+  const rowOf = (field: VaultField): React.JSX.Element =>
+    field.kind === 'secret' ? (
+      <RevealRow key={field.key} label={field.label} itemId={item.id} fieldKey={field.key} />
+    ) : (
+      <PlainRow
+        key={field.key}
+        label={field.label}
+        value={field.value ?? ''}
+        onCopy={field.value ? () => void copyWithAutoClear(field.value as string) : undefined}
+      />
+    )
+
+  if (item.sections.length === 0) {
+    return (
+      <div className="rounded-xl border border-[var(--line)] bg-white px-3.5 py-4 text-center text-[12.5px] text-[var(--text3)]">
+        {t('vault.detail.noHistory')}
+      </div>
+    )
+  }
+  return (
+    <>
+      {item.sections.map((section) => (
+        <section key={section.key} className="mb-5">
+          <h4 className="mb-2 text-[12px] font-semibold text-[var(--text2)]">{section.label}</h4>
+          <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-white">
+            {section.fields.map(rowOf)}
+          </div>
+        </section>
+      ))}
+    </>
+  )
+}
+
+// 계정의 Agent access · Website 목록 · 태그를 편집하는 영역
+function AccountSettings({ account }: { account: AccountDto }): React.JSX.Element {
+  const { t } = useTranslation()
+  const upsertAccount = useVaultStore((s) => s.upsertAccount)
+  const [newUrl, setNewUrl] = useState('')
+  const [newTag, setNewTag] = useState('')
+
+  const patch = (over: { urls?: string[]; tags?: string[]; agentAccess?: AgentAccess }): void => {
+    void upsertAccount({
+      id: account.id,
+      host: account.host,
+      username: account.username,
+      ...over
+    })
+  }
+
+  return (
+    <>
+      <section className="mb-5">
+        <h4 className="mb-2 text-[12px] font-semibold text-[var(--text2)]">
+          {t('vault.agentAccess.label')}
+        </h4>
+        <select
+          value={account.agentAccess}
+          onChange={(e) => patch({ agentAccess: e.target.value as AgentAccess })}
+          className="h-9 w-full rounded-md border border-[var(--line)] bg-white px-3 text-[13px] outline-none"
+        >
+          {AGENT_ACCESS_VALUES.map((value) => (
+            <option key={value} value={value}>
+              {t(`vault.agentAccess.${value}`)}
+            </option>
+          ))}
+        </select>
+      </section>
+
+      <section className="mb-5">
+        <h4 className="mb-2 text-[12px] font-semibold text-[var(--text2)]">
+          {t('vault.websites.label')}
+        </h4>
+        <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-white">
+          {account.urls.map((url) => (
+            <PlainRow
+              key={url}
+              label={t('vault.websites.label')}
+              value={url}
+              onRemove={() => patch({ urls: account.urls.filter((u) => u !== url) })}
+            />
+          ))}
+          <form
+            className="flex items-center gap-2 px-3.5 py-2.5"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const url = newUrl.trim()
+              if (!url || account.urls.includes(url)) return
+              patch({ urls: [...account.urls, url] })
+              setNewUrl('')
+            }}
+          >
+            <Input
+              value={newUrl}
+              onChange={(e) => setNewUrl(e.target.value)}
+              placeholder={t('vault.websites.placeholder')}
+              className="h-8"
+            />
+            <Button type="submit" variant="outline" size="sm" className="h-8 rounded-[9px]">
+              {t('vault.websites.add')}
+            </Button>
+          </form>
+        </div>
+      </section>
+
+      <section className="mb-5">
+        <h4 className="mb-2 text-[12px] font-semibold text-[var(--text2)]">
+          {t('vault.tags.label')}
+        </h4>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {account.tags.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => patch({ tags: account.tags.filter((x) => x !== tag) })}
+              className="rounded-full bg-[var(--bg)] px-2 py-0.5 text-[11.5px] text-[var(--text2)]"
+            >
+              {tag} ×
+            </button>
+          ))}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              const tag = newTag.trim()
+              if (!tag || account.tags.includes(tag)) return
+              patch({ tags: [...account.tags, tag] })
+              setNewTag('')
+            }}
+          >
+            <Input
+              value={newTag}
+              onChange={(e) => setNewTag(e.target.value)}
+              placeholder={t('vault.tags.placeholder')}
+              className="h-7 w-[150px]"
+            />
+          </form>
+        </div>
+      </section>
+    </>
   )
 }
 
@@ -171,12 +333,28 @@ export function ItemDetail({ onEdit, onEditGlobal }: Props): React.JSX.Element {
   const itemsByAccount = useVaultStore((s) => s.itemsByAccount)
   const selectedAccountId = useVaultStore((s) => s.selectedAccountId)
   const selectedGlobalItemId = useVaultStore((s) => s.selectedGlobalItemId)
-
+  const autofill = useVaultStore((s) => s.autofill)
   const lock = useVaultStore((s) => s.lock)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(null), AUTOFILL_NOTICE_MS)
+    return () => clearTimeout(timer)
+  }, [notice])
 
   const openInBrowser = (host: string): void => {
     void window.samba.tabs.create({ url: `https://${host}` })
     setView('browser')
+  }
+
+  const runAutofill = async (accountId: number): Promise<void> => {
+    const result = await autofill(accountId)
+    setNotice(
+      result === null
+        ? 'vault.autofill.failed'
+        : (AUTOFILL_MESSAGE[result] ?? 'vault.autofill.failed')
+    )
   }
 
   if (selectedAccountId === 'global') {
@@ -219,14 +397,7 @@ export function ItemDetail({ onEdit, onEditGlobal }: Props): React.JSX.Element {
             </Button>
           </div>
         </div>
-        <section className="mb-5">
-          <h4 className="mb-2 text-[12px] font-semibold text-[var(--text2)]">
-            {t('vault.detail.value')}
-          </h4>
-          <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-white">
-            <RevealRow label={t('vault.detail.value')} item={item} />
-          </div>
-        </section>
+        <ItemSections item={item} />
         <UsageSection key={`global-${item.id}`} itemId={item.id} />
       </div>
     )
@@ -242,9 +413,6 @@ export function ItemDetail({ onEdit, onEditGlobal }: Props): React.JSX.Element {
   }
   const site = sites.find((s) => s.id === account.siteId)
   const items = itemsByAccount[String(account.id)] ?? []
-  const loginItem = items.find((i) => i.type === 'login_password')
-  const paymentItem = items.find((i) => i.type === 'payment_password')
-  const personalItems = items.filter((i) => PERSONAL_TYPES.has(i.type))
 
   return (
     <div className="flex-1 overflow-auto px-9 py-7">
@@ -259,6 +427,13 @@ export function ItemDetail({ onEdit, onEditGlobal }: Props): React.JSX.Element {
           <div className="mt-0.5 truncate text-[12.5px] text-[var(--text2)]">{account.host}</div>
         </div>
         <div className="ml-auto flex shrink-0 gap-1.5">
+          <Button
+            size="sm"
+            className="h-[30px] rounded-[9px]"
+            onClick={() => void runAutofill(account.id)}
+          >
+            {t('vault.autofill.button')}
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -281,6 +456,8 @@ export function ItemDetail({ onEdit, onEditGlobal }: Props): React.JSX.Element {
         </div>
       </div>
 
+      {notice && <p className="mb-4 text-[12.5px] text-[var(--text2)]">{t(notice)}</p>}
+
       <section className="mb-5">
         <h4 className="mb-2 text-[12px] font-semibold text-[var(--text2)]">
           {t('vault.detail.login')}
@@ -291,40 +468,14 @@ export function ItemDetail({ onEdit, onEditGlobal }: Props): React.JSX.Element {
             value={account.username}
             onCopy={() => void copyWithAutoClear(account.username)}
           />
-          {loginItem && <RevealRow label={t('vault.detail.password')} item={loginItem} />}
-          {site?.loginUrl && (
-            <PlainRow
-              label={t('vault.detail.loginUrl')}
-              value={site.loginUrl}
-              onOpen={() => openInBrowser(account.host)}
-            />
-          )}
         </div>
       </section>
 
-      {paymentItem && (
-        <section className="mb-5">
-          <h4 className="mb-2 text-[12px] font-semibold text-[var(--text2)]">
-            {t('vault.detail.payment')}
-          </h4>
-          <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-white">
-            <RevealRow label={t('vault.detail.paymentPassword')} item={paymentItem} danger />
-          </div>
-        </section>
-      )}
+      {items.map((item) => (
+        <ItemSections key={item.id} item={item} />
+      ))}
 
-      {personalItems.length > 0 && (
-        <section className="mb-5">
-          <h4 className="mb-2 text-[12px] font-semibold text-[var(--text2)]">
-            {t('vault.detail.personal')}
-          </h4>
-          <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-white">
-            {personalItems.map((i) => (
-              <RevealRow key={i.id} label={i.label} item={i} />
-            ))}
-          </div>
-        </section>
-      )}
+      <AccountSettings account={account} />
 
       <UsageSection key={`account-${account.id}`} accountId={account.id} />
     </div>

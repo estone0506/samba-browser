@@ -1,20 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Search, Plus, Download, Settings as SettingsIcon } from 'lucide-react'
+import { Search, Settings as SettingsIcon, ArrowDownAZ, Clock } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import { useVaultStore } from '@renderer/stores/vaultStore'
-import type { AccountDto } from '@shared/ipc'
+import { useBrowserStore } from '@renderer/stores/browserStore'
+import { normalizeHost } from '@shared/host'
+import { VAULT_ITEM_TYPES } from '@shared/vault'
+import type { AccountDto, VaultItemMeta, VaultItemType } from '@shared/ipc'
+import { AddItemMenu } from './AddItemMenu'
 
-const GLOBAL_TYPES = new Set([
-  'card',
-  'passport',
-  'id_card',
-  'birth_date',
-  'address',
-  'phone',
-  'custom'
-])
+// 계정 없이도 존재할 수 있는(전역) 항목 종류
+const GLOBAL_TYPES = new Set<VaultItemType>(['card', 'note', 'identity', 'document'])
 
 function maskUsername(u: string): string {
   if (u.length <= 3) return `${u[0] ?? ''}••`
@@ -22,52 +19,145 @@ function maskUsername(u: string): string {
 }
 
 interface Props {
-  onAdd: () => void
-  onAddGlobal: () => void
+  onAdd: (type: VaultItemType) => void
   onImport: () => void
   onSettings: () => void
 }
 
-export function ItemList({ onAdd, onAddGlobal, onImport, onSettings }: Props): React.JSX.Element {
+/** 계정·항목 목록 — 추천(현재 탭) · 최근 사용 · 필터/정렬 · 사이트별 그룹 */
+export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Element {
   const { t } = useTranslation()
   const accounts = useVaultStore((s) => s.accounts)
   const sites = useVaultStore((s) => s.sites)
   const itemsByAccount = useVaultStore((s) => s.itemsByAccount)
   const query = useVaultStore((s) => s.query)
   const setQuery = useVaultStore((s) => s.setQuery)
+  const typeFilter = useVaultStore((s) => s.typeFilter)
+  const setTypeFilter = useVaultStore((s) => s.setTypeFilter)
+  const tagFilter = useVaultStore((s) => s.tagFilter)
+  const toggleTagFilter = useVaultStore((s) => s.toggleTagFilter)
+  const sort = useVaultStore((s) => s.sort)
+  const setSort = useVaultStore((s) => s.setSort)
+  const recentAccountIds = useVaultStore((s) => s.recentAccountIds)
+  const loadRecent = useVaultStore((s) => s.loadRecent)
   const selectedAccountId = useVaultStore((s) => s.selectedAccountId)
   const selectedGlobalItemId = useVaultStore((s) => s.selectedGlobalItemId)
   const select = useVaultStore((s) => s.select)
   const selectGlobalItem = useVaultStore((s) => s.selectGlobalItem)
-  const [chip, setChip] = useState<'all' | 'global'>('all')
+  // 현재 활성 탭을 구독한다 — 탭이 바뀌면 추천 섹션이 자동으로 갱신된다
+  const activeTab = useBrowserStore((s) => s.activeTab)
 
+  useEffect(() => {
+    void loadRecent()
+  }, [loadRecent])
+
+  const currentHost = normalizeHost(activeTab?.url ?? '')
   const globalItems = itemsByAccount.global ?? []
-
   const q = query.trim().toLowerCase()
+
+  // 모든 계정 태그 모음(필터 바에 칩으로 보여 준다)
+  const allTags = useMemo(() => {
+    const set = new Set<string>()
+    for (const a of accounts) for (const tag of a.tags) set.add(tag)
+    return [...set].sort()
+  }, [accounts])
+
   const matchAccount = (a: AccountDto): boolean => {
-    if (!q) return true
-    return (
-      a.label.toLowerCase().includes(q) ||
-      a.username.toLowerCase().includes(q) ||
-      a.host.toLowerCase().includes(q)
-    )
+    if (q && !`${a.label} ${a.username} ${a.host} ${a.tags.join(' ')}`.toLowerCase().includes(q)) {
+      return false
+    }
+    if (typeFilter !== 'all' && !a.itemTypes.includes(typeFilter)) return false
+    if (tagFilter.length > 0 && !tagFilter.every((tag) => a.tags.includes(tag))) return false
+    return true
   }
+
+  const matchItem = (i: VaultItemMeta): boolean => {
+    if (q && !i.label.toLowerCase().includes(q)) return false
+    if (typeFilter !== 'all' && i.type !== typeFilter) return false
+    // 전역 항목에는 태그가 없으므로 태그 필터가 켜져 있으면 숨긴다
+    return tagFilter.length === 0
+  }
+
+  const visibleAccounts = useMemo(
+    () => accounts.filter(matchAccount),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [accounts, q, typeFilter, tagFilter]
+  )
+
+  // 추천: 현재 탭 호스트와 같은 계정(탭이 없거나 일치 계정이 없으면 섹션 자체를 숨긴다)
+  const suggestions = currentHost ? visibleAccounts.filter((a) => a.host === currentHost) : []
+
+  // 최근 사용: 감사 로그 순서를 그대로 따른다(추천에 이미 나온 계정은 뺀다)
+  const recent = recentAccountIds
+    .map((id) => visibleAccounts.find((a) => a.id === id))
+    .filter((a): a is AccountDto => a !== undefined && !suggestions.includes(a))
 
   const grouped = useMemo(() => {
     const bySite = new Map<number, AccountDto[]>()
-    for (const a of accounts) {
-      if (!matchAccount(a)) continue
+    for (const a of visibleAccounts) {
       const arr = bySite.get(a.siteId) ?? []
       arr.push(a)
       bySite.set(a.siteId, arr)
     }
-    return sites
+    const groups = sites
       .map((site) => ({ site, accounts: bySite.get(site.id) ?? [] }))
       .filter((g) => g.accounts.length > 0)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accounts, sites, q])
+    if (sort === 'name') {
+      groups.sort((a, b) => a.site.name.localeCompare(b.site.name))
+      for (const g of groups) g.accounts.sort((x, y) => x.label.localeCompare(y.label))
+    } else {
+      // 최근순: 최근 사용 목록에 있는 계정을 가진 사이트를 앞으로 올린다
+      const rank = (id: number): number => {
+        const idx = recentAccountIds.indexOf(id)
+        return idx === -1 ? Number.MAX_SAFE_INTEGER : idx
+      }
+      for (const g of groups) g.accounts.sort((x, y) => rank(x.id) - rank(y.id))
+      groups.sort((a, b) => rank(a.accounts[0].id) - rank(b.accounts[0].id))
+    }
+    return groups
+  }, [visibleAccounts, sites, sort, recentAccountIds])
 
-  const filteredGlobalItems = globalItems.filter((i) => !q || i.label.toLowerCase().includes(q))
+  const filteredGlobalItems = globalItems.filter((i) => GLOBAL_TYPES.has(i.type) && matchItem(i))
+
+  const renderAccount = (a: AccountDto, keyPrefix: string): React.JSX.Element => {
+    const site = sites.find((s) => s.id === a.siteId)
+    return (
+      <button
+        key={`${keyPrefix}-${a.id}`}
+        type="button"
+        onClick={() => select(a.id)}
+        className={cn(
+          'flex w-full items-center gap-2.5 rounded-[10px] px-2 py-2 text-left',
+          selectedAccountId === a.id && 'bg-[rgba(0,0,0,.06)]'
+        )}
+      >
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-[var(--text)] text-[13px] font-bold text-white">
+          {(site?.name ?? a.host).slice(0, 1)}
+        </span>
+        <span className="min-w-0 flex-1">
+          <b className="block truncate text-[13px] font-medium">{a.label}</b>
+          <span className="block truncate text-[11.5px] text-[var(--text3)]">
+            {maskUsername(a.username)}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1">
+          {a.tags.slice(0, 2).map((tag) => (
+            <span
+              key={tag}
+              className="rounded-full bg-[var(--bg)] px-1.5 py-0.5 text-[10.5px] text-[var(--text2)]"
+            >
+              {tag}
+            </span>
+          ))}
+          {a.isDefault && (
+            <span className="rounded-full bg-[var(--bg)] px-1.5 py-0.5 text-[10.5px] text-[var(--text2)]">
+              {t('vault.list.default')}
+            </span>
+          )}
+        </span>
+      </button>
+    )
+  }
 
   return (
     <div className="flex w-[300px] shrink-0 flex-col border-r border-black/[.05]">
@@ -82,25 +172,31 @@ export function ItemList({ onAdd, onAddGlobal, onImport, onSettings }: Props): R
           />
         </div>
         <div className="flex items-center gap-1.5">
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as VaultItemType | 'all')}
+            aria-label={t('vault.list.filterType')}
+            className="h-[26px] rounded-[8px] border border-[var(--line)] bg-transparent px-1.5 text-[12px] text-[var(--text2)] outline-none"
+          >
+            <option value="all">{t('vault.list.filterAll')}</option>
+            {VAULT_ITEM_TYPES.map((ty) => (
+              <option key={ty} value={ty}>
+                {t(`vault.itemType.${ty}`)}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
-            onClick={() => setChip('all')}
-            className={cn(
-              'h-[26px] rounded-[8px] px-2.5 text-[12px] text-[var(--text2)]',
-              chip === 'all' ? 'bg-[var(--text)] font-medium text-white' : 'bg-[var(--bg)]'
-            )}
+            onClick={() => setSort(sort === 'name' ? 'recent' : 'name')}
+            title={t('vault.list.sortLabel')}
+            className="flex h-[26px] items-center gap-1 rounded-[8px] border border-[var(--line)] px-1.5 text-[12px] text-[var(--text2)]"
           >
-            {t('vault.list.chipAll')}
-          </button>
-          <button
-            type="button"
-            onClick={() => setChip('global')}
-            className={cn(
-              'h-[26px] rounded-[8px] px-2.5 text-[12px] text-[var(--text2)]',
-              chip === 'global' ? 'bg-[var(--text)] font-medium text-white' : 'bg-[var(--bg)]'
+            {sort === 'name' ? (
+              <ArrowDownAZ className="h-3.5 w-3.5" />
+            ) : (
+              <Clock className="h-3.5 w-3.5" />
             )}
-          >
-            {t('vault.list.chipGlobal')}
+            {sort === 'name' ? t('vault.list.sortName') : t('vault.list.sortRecent')}
           </button>
           <button
             type="button"
@@ -110,104 +206,85 @@ export function ItemList({ onAdd, onAddGlobal, onImport, onSettings }: Props): R
           >
             <SettingsIcon className="h-3.5 w-3.5" />
           </button>
-          <button
-            type="button"
-            onClick={onImport}
-            title={t('vault.list.import')}
-            className="flex h-[26px] w-[26px] items-center justify-center rounded-[8px] border border-[var(--line)] text-[var(--text2)]"
-          >
-            <Download className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={onAdd}
-            title={t('vault.list.add')}
-            className="flex h-[26px] w-[26px] items-center justify-center rounded-[8px] border border-[var(--line)] text-[var(--text2)]"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
+          <AddItemMenu onPick={onAdd} onImport={onImport} />
         </div>
-      </div>
-      <div className="flex-1 overflow-auto px-2 pb-2">
-        {chip === 'all' &&
-          grouped.map(({ site, accounts: siteAccounts }) => (
-            <div key={site.id}>
-              <div className="flex justify-between px-2 pb-1 pt-3 text-[11px] font-semibold text-[var(--text3)]">
-                <span>{site.name}</span>
-                <span>{siteAccounts.length}</span>
-              </div>
-              {siteAccounts.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => select(a.id)}
-                  className={cn(
-                    'flex w-full items-center gap-2.5 rounded-[10px] px-2 py-2 text-left',
-                    selectedAccountId === a.id && 'bg-[rgba(0,0,0,.06)]'
-                  )}
-                >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-[var(--text)] text-[13px] font-bold text-white">
-                    {site.name.slice(0, 1)}
-                  </span>
-                  <span className="min-w-0">
-                    <b className="block truncate text-[13px] font-medium">{a.label}</b>
-                    <span className="block truncate text-[11.5px] text-[var(--text3)]">
-                      {maskUsername(a.username)}
-                    </span>
-                  </span>
-                  {a.isDefault && (
-                    <span className="ml-auto shrink-0 rounded-full bg-[var(--bg)] px-1.5 py-0.5 text-[10.5px] text-[var(--text2)]">
-                      {t('vault.list.default')}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          ))}
-        {(globalItems.length > 0 || !q) && (
-          <div>
-            <div className="flex items-center justify-between px-2 pb-1 pt-3 text-[11px] font-semibold text-[var(--text3)]">
-              <span>{t('vault.list.globalGroup')}</span>
-              <span className="flex items-center gap-1.5">
-                {filteredGlobalItems.length}
-                <button
-                  type="button"
-                  onClick={onAddGlobal}
-                  title={t('vault.list.addGlobal')}
-                  className="flex h-[18px] w-[18px] items-center justify-center rounded-[6px] border border-[var(--line)] text-[var(--text2)]"
-                >
-                  <Plus className="h-3 w-3" />
-                </button>
-              </span>
-            </div>
-            {filteredGlobalItems
-              .filter((i) => GLOBAL_TYPES.has(i.type))
-              .map((i) => (
-                <button
-                  key={i.id}
-                  type="button"
-                  onClick={() => selectGlobalItem(i.id)}
-                  className={cn(
-                    'flex w-full items-center gap-2.5 rounded-[10px] px-2 py-2 text-left',
-                    selectedAccountId === 'global' &&
-                      selectedGlobalItemId === i.id &&
-                      'bg-[rgba(0,0,0,.06)]'
-                  )}
-                >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-[var(--bg)] text-[13px] font-bold text-[var(--text2)]">
-                    {i.label.slice(0, 1)}
-                  </span>
-                  <span className="min-w-0">
-                    <b className="block truncate text-[13px] font-medium">{i.label}</b>
-                    <span className="block truncate text-[11.5px] text-[var(--text3)]">
-                      {t(`vault.itemType.${i.type}`)}
-                    </span>
-                  </span>
-                </button>
-              ))}
+        {allTags.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {allTags.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => toggleTagFilter(tag)}
+                className={cn(
+                  'rounded-full px-2 py-0.5 text-[11px]',
+                  tagFilter.includes(tag)
+                    ? 'bg-[var(--text)] text-white'
+                    : 'bg-[var(--bg)] text-[var(--text2)]'
+                )}
+              >
+                {tag}
+              </button>
+            ))}
           </div>
         )}
-        {grouped.length === 0 && globalItems.length === 0 && (
+      </div>
+      <div className="flex-1 overflow-auto px-2 pb-2">
+        {suggestions.length > 0 && (
+          <div>
+            <div className="px-2 pb-1 pt-2 text-[11px] font-semibold text-[var(--text3)]">
+              {t('vault.list.suggestions')} · {currentHost}
+            </div>
+            {suggestions.map((a) => renderAccount(a, 'sug'))}
+          </div>
+        )}
+        {recent.length > 0 && (
+          <div>
+            <div className="px-2 pb-1 pt-3 text-[11px] font-semibold text-[var(--text3)]">
+              {t('vault.list.recent')}
+            </div>
+            {recent.map((a) => renderAccount(a, 'recent'))}
+          </div>
+        )}
+        {grouped.map(({ site, accounts: siteAccounts }) => (
+          <div key={site.id}>
+            <div className="flex justify-between px-2 pb-1 pt-3 text-[11px] font-semibold text-[var(--text3)]">
+              <span>{site.name}</span>
+              <span>{siteAccounts.length}</span>
+            </div>
+            {siteAccounts.map((a) => renderAccount(a, 'site'))}
+          </div>
+        ))}
+        {filteredGlobalItems.length > 0 && (
+          <div>
+            <div className="px-2 pb-1 pt-3 text-[11px] font-semibold text-[var(--text3)]">
+              {t('vault.list.globalGroup')}
+            </div>
+            {filteredGlobalItems.map((i) => (
+              <button
+                key={i.id}
+                type="button"
+                onClick={() => selectGlobalItem(i.id)}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-[10px] px-2 py-2 text-left',
+                  selectedAccountId === 'global' &&
+                    selectedGlobalItemId === i.id &&
+                    'bg-[rgba(0,0,0,.06)]'
+                )}
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-[var(--bg)] text-[13px] font-bold text-[var(--text2)]">
+                  {i.label.slice(0, 1)}
+                </span>
+                <span className="min-w-0">
+                  <b className="block truncate text-[13px] font-medium">{i.label}</b>
+                  <span className="block truncate text-[11.5px] text-[var(--text3)]">
+                    {t(`vault.itemType.${i.type}`)}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        {grouped.length === 0 && filteredGlobalItems.length === 0 && (
           <p className="px-2 py-6 text-center text-[12px] text-[var(--text3)]">
             {t('vault.list.empty')}
           </p>

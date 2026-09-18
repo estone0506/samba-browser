@@ -149,7 +149,9 @@ export function registerIpc(
   ipcMain.handle(IPC.vaultPutItem, (_, input: PutItemInput) => wrap(() => vault.putItem(input)))
   ipcMain.handle(IPC.vaultDeleteItem, (_, id: number) => wrap(() => vault.deleteItem(id)))
   // 사용자가 '보기' 를 눌렀을 때만 호출된다(감사 로그 기록됨)
-  ipcMain.handle(IPC.vaultReveal, (_, id: number) => wrap(() => vault.reveal(id)))
+  ipcMain.handle(IPC.vaultReveal, (_, id: number, fieldKey?: string) =>
+    wrap(() => vault.reveal(id, fieldKey))
+  )
   ipcMain.handle(IPC.vaultUpsertAccount, (_, dto: UpsertAccountInput) =>
     wrap(() => vault.upsertAccount(dto))
   )

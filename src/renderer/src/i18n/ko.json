@@ -151,7 +151,16 @@
       "default": "기본",
       "globalGroup": "전역 항목",
       "empty": "저장된 항목이 없어요",
-      "settingsBtn": "키마스터 설정"
+      "settingsBtn": "키마스터 설정",
+      "suggestions": "추천",
+      "recent": "최근 사용",
+      "filterType": "유형",
+      "filterAll": "전체",
+      "filterTags": "태그",
+      "sortName": "이름순",
+      "sortRecent": "최근순",
+      "sortLabel": "정렬",
+      "noSuggestions": "현재 탭과 일치하는 계정이 없어요"
     },
     "settings": {
       "title": "키마스터 설정",
@@ -210,15 +219,12 @@
       }
     },
     "itemType": {
-      "login_password": "로그인 비밀번호",
-      "payment_password": "결제 비밀번호",
-      "card": "카드",
-      "passport": "여권",
-      "id_card": "신분증",
-      "birth_date": "생년월일",
-      "address": "주소",
-      "phone": "연락처",
-      "custom": "기타"
+      "login": "로그인",
+      "password": "비밀번호",
+      "card": "신용카드",
+      "note": "보안 메모",
+      "identity": "신원정보",
+      "document": "문서"
     },
     "editor": {
       "editTitle": "계정 편집",
@@ -233,7 +239,11 @@
       "value": "값",
       "valuePlaceholder": "비워두면 변경하지 않아요",
       "cancel": "취소",
-      "save": "저장"
+      "save": "저장",
+      "newTitle": "{{type}} 추가",
+      "editItemTitle": "{{type}} 편집",
+      "generate": "생성",
+      "keepHint": "비워두면 기존 값을 유지해요"
     },
     "import": {
       "title": "가져오기",
@@ -261,6 +271,98 @@
         "bookmarksExportSteps": "크롬·웨일·엣지·Aside: 북마크 관리자 › ⋮ › 북마크 내보내기(HTML)",
         "bookmarksSupports": "Netscape 형식 자동 인식"
       }
+    },
+    "add": {
+      "menu": "추가",
+      "login": "로그인",
+      "password": "비밀번호",
+      "card": "신용카드",
+      "note": "보안 메모",
+      "identity": "신원정보",
+      "document": "문서",
+      "documentDisabled": "2단계 이후 지원",
+      "generator": "비밀번호 생성기",
+      "import": "가져오기…"
+    },
+    "generator": {
+      "title": "비밀번호 생성기",
+      "length": "길이",
+      "symbols": "기호 포함",
+      "digits": "숫자 포함",
+      "generate": "생성",
+      "copy": "복사",
+      "use": "사용",
+      "copied": "복사했어요"
+    },
+    "agentAccess": {
+      "label": "Agent access",
+      "inherit": "전역 설정 따름",
+      "always": "항상 허용",
+      "while_unlocked": "잠금 해제 중에만",
+      "never": "절대 허용 안 함"
+    },
+    "websites": {
+      "label": "Website",
+      "add": "+ URL 추가",
+      "placeholder": "https://example.com/login",
+      "remove": "삭제"
+    },
+    "tags": {
+      "label": "태그",
+      "add": "태그 추가",
+      "placeholder": "엔터로 추가"
+    },
+    "autofill": {
+      "button": "자동 채우기",
+      "ok": "현재 탭에 채웠어요",
+      "fieldsNotFound": "로그인 폼을 찾지 못했어요",
+      "locked": "먼저 잠금을 해제하세요",
+      "hostMismatch": "현재 탭이 이 계정의 사이트가 아니에요",
+      "insecure": "https 페이지에서만 채울 수 있어요",
+      "excluded": "제외 도메인이에요",
+      "failed": "채우지 못했어요"
+    },
+    "fields": {
+      "add": "+ 사용자 정의 필드",
+      "key": "필드 키",
+      "fieldLabel": "표시 이름",
+      "kind": "종류",
+      "remove": "삭제",
+      "kindText": "텍스트",
+      "kindSecret": "비밀",
+      "kindUrl": "URL",
+      "kindDate": "날짜",
+      "kindSelect": "선택"
+    },
+    "sections": {
+      "login": "로그인",
+      "card": "카드 정보",
+      "payment": "결제",
+      "identity": "신원정보",
+      "note": "메모",
+      "custom": "추가 정보"
+    },
+    "popover": {
+      "title": "키마스터",
+      "open": "키마스터 열기",
+      "close": "닫기",
+      "manage": "전체 관리"
+    },
+    "fieldNames": {
+      "password": "비밀번호",
+      "holder": "소유자",
+      "brand": "카드사/종류",
+      "number": "카드 번호",
+      "expiry": "유효기간",
+      "cvc": "CVC",
+      "cardPassword": "결제 비밀번호",
+      "name": "이름",
+      "birth": "생년월일",
+      "address": "주소",
+      "phone": "연락처",
+      "passport": "여권번호",
+      "idCard": "신분증번호",
+      "note": "메모"
     }
   },
   "settingsPage": {

@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import type {
   AccountDto,
+  AgentAccess,
+  AuditLogDto,
+  FieldKind,
   CapturePromptDto,
   ImportBookmarksResult,
   ImportPasswordsResult,
@@ -13,13 +16,28 @@ import type {
 // 계정 목록에서 선택 가능한 대상: 특정 계정(number) · 전역 항목(accountId=null) · 없음
 export type SelectedAccount = number | 'global' | null
 
+export interface PutFieldInput {
+  key: string
+  label: string
+  kind: FieldKind
+  // 생략하면 메인이 기존 암호문을 유지한다(편집에서 "비워두면 유지")
+  value?: string
+}
+
+export interface PutSectionInput {
+  key: string
+  label: string
+  fields: PutFieldInput[]
+}
+
 interface PutItemInput {
   // 편집 대상 항목 id. 주면 그 항목을 그대로 갱신한다(라벨·종류 변경 포함)
   id?: number
   accountId: number | null
   type: VaultItemType
   label: string
-  value: string
+  value?: string
+  sections?: PutSectionInput[]
 }
 
 interface UpsertAccountInput {
@@ -31,7 +49,13 @@ interface UpsertAccountInput {
   isDefault?: boolean
   siteName?: string
   loginUrl?: string
+  urls?: string[]
+  agentAccess?: AgentAccess
+  tags?: string[]
 }
+
+// 목록 정렬 기준
+export type VaultSort = 'name' | 'recent'
 
 interface VaultStoreState {
   state: VaultState
@@ -43,6 +67,12 @@ interface VaultStoreState {
   // 전역 항목 목록에서 선택된 개별 항목(계정이 없는 항목이라 accountId 만으론 특정할 수 없다)
   selectedGlobalItemId: number | null
   query: string
+  // 필터·정렬(목록 상단 바)
+  typeFilter: VaultItemType | 'all'
+  tagFilter: string[]
+  sort: VaultSort
+  // 최근 사용(감사 로그에서 계산한 계정 id 목록, 최신순)
+  recentAccountIds: number[]
   loading: boolean
   error: string | null
   // 자동 저장 제안 카드. main 이 push 한 것을 그대로 담아둔다(비밀번호는 담기지 않음)
@@ -72,12 +102,21 @@ interface VaultStoreState {
   putItem: (input: PutItemInput) => Promise<boolean>
   deleteItem: (id: number, accountId: number | null) => Promise<void>
   // 사용자가 '보기'를 눌렀을 때만 호출. 반환값은 store 에 저장하지 않고 호출자에게만 준다
-  reveal: (id: number) => Promise<string | null>
+  reveal: (id: number, fieldKey?: string) => Promise<string | null>
   upsertAccount: (dto: UpsertAccountInput) => Promise<AccountDto | null>
   setQuery: (q: string) => void
+  setTypeFilter: (t: VaultItemType | 'all') => void
+  toggleTagFilter: (tag: string) => void
+  setSort: (s: VaultSort) => void
+  loadRecent: () => Promise<void>
+  // 사용자가 누르는 '자동 채우기'. 결과 문자열만 돌려받는다(값은 메인에 머문다)
+  autofill: (accountId: number) => Promise<string | null>
   importPasswords: () => Promise<ImportPasswordsResult | null>
   importBookmarks: () => Promise<ImportBookmarksResult | null>
 }
+
+// 최근 사용 목록에 보여 줄 계정 수
+const RECENT_LIMIT = 5
 
 function itemsKey(accountId: number | null): string {
   return accountId === null ? 'global' : String(accountId)
@@ -91,6 +130,10 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
   selectedAccountId: null,
   selectedGlobalItemId: null,
   query: '',
+  typeFilter: 'all',
+  tagFilter: [],
+  sort: 'name',
+  recentAccountIds: [],
   loading: false,
   error: null,
   capture: null,
@@ -238,8 +281,8 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
     if (r.ok) await get().loadItems(accountId)
   },
 
-  reveal: async (id) => {
-    const r = await window.samba.vault.reveal(id)
+  reveal: async (id, fieldKey) => {
+    const r = await window.samba.vault.reveal(id, fieldKey)
     return r.ok ? r.data : null
   },
 
@@ -254,6 +297,40 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
   },
 
   setQuery: (q) => set({ query: q }),
+
+  setTypeFilter: (t) => set({ typeFilter: t }),
+
+  toggleTagFilter: (tag) =>
+    set((s) => ({
+      tagFilter: s.tagFilter.includes(tag)
+        ? s.tagFilter.filter((x) => x !== tag)
+        : [...s.tagFilter, tag]
+    })),
+
+  setSort: (sort) => set({ sort }),
+
+  // 최근 사용 계정 — 감사 로그의 fill/reveal 기록에서 계정 id 를 최신순으로 뽑는다
+  loadRecent: async () => {
+    const r = await window.samba.vault.audit()
+    if (!r.ok) return
+    const ids: number[] = []
+    for (const log of r.data as AuditLogDto[]) {
+      if (log.action !== 'fill' && log.action !== 'reveal') continue
+      if (log.accountId === null || ids.includes(log.accountId)) continue
+      ids.push(log.accountId)
+    }
+    set({ recentAccountIds: ids.slice(0, RECENT_LIMIT) })
+  },
+
+  autofill: async (accountId) => {
+    const r = await window.samba.vault.autofill(accountId)
+    if (!r.ok) {
+      set({ error: r.error })
+      return null
+    }
+    await get().loadRecent()
+    return r.data
+  },
 
   importPasswords: async () => {
     const r = await window.samba.importData.passwords()

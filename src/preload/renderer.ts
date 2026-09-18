@@ -12,6 +12,8 @@ import {
   type SiteDto,
   type VaultItemMeta,
   type VaultItemType,
+  type FieldKind,
+  type AgentAccess,
   type VaultState,
   type AuditLogDto,
   type ImportPasswordsResult,
@@ -27,13 +29,30 @@ interface BookmarkMoveInput {
 }
 
 // 항목 저장 요청. value(평문)는 렌더러 → 메인 방향으로만 흐른다
+interface PutFieldInput {
+  key: string
+  label: string
+  kind: FieldKind
+  // 생략하면 메인이 기존 암호문을 유지한다
+  value?: string
+}
+
+interface PutSectionInput {
+  key: string
+  label: string
+  fields: PutFieldInput[]
+}
+
 interface PutItemInput {
   // 편집 대상 항목 id. 주면 그 항목을 그대로 갱신한다
   id?: number
   accountId: number | null
   type: VaultItemType
   label: string
-  value: string
+  // 단일 값 항목(하위 호환)
+  value?: string
+  // 섹션>필드 구조
+  sections?: PutSectionInput[]
 }
 
 interface UpsertAccountInput {
@@ -45,6 +64,10 @@ interface UpsertAccountInput {
   isDefault?: boolean
   siteName?: string
   loginUrl?: string
+  // 생략하면 메인이 기존 값을 유지한다
+  urls?: string[]
+  agentAccess?: AgentAccess
+  tags?: string[]
 }
 
 // ipcRenderer.invoke 반환 타입이 Promise<any> 이므로 제네릭 헬퍼로 감싸 IpcResult<T> 를 명시
@@ -109,8 +132,12 @@ const api = {
     putItem: (input: PutItemInput): Promise<IpcResult<VaultItemMeta>> =>
       invoke(IPC.vaultPutItem, input),
     deleteItem: (id: number): Promise<IpcResult<void>> => invoke(IPC.vaultDeleteItem, id),
-    // 사용자가 '보기' 를 눌렀을 때만 호출한다
-    reveal: (id: number): Promise<IpcResult<string>> => invoke(IPC.vaultReveal, id),
+    // 사용자가 '보기' 를 눌렀을 때만 호출한다. fieldKey 로 항목 안의 개별 필드를 지정한다
+    reveal: (id: number, fieldKey?: string): Promise<IpcResult<string>> =>
+      invoke(IPC.vaultReveal, id, fieldKey),
+    // 상세 화면의 '자동 채우기'. 값은 메인 안에서만 오가고 여기로는 결과 문자열만 온다
+    autofill: (accountId: number): Promise<IpcResult<string>> =>
+      invoke(IPC.vaultAutofill, accountId),
     upsertAccount: (dto: UpsertAccountInput): Promise<IpcResult<AccountDto>> =>
       invoke(IPC.vaultUpsertAccount, dto),
     // 사용 기록(감사 로그). accountId 생략 시 전체(최근 200건), 계정 지정 시 해당 계정 항목만
