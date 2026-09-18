@@ -31,6 +31,12 @@ export interface AccountRow {
   tags: string[]
 }
 
+// 계정 삭제 되돌리기용 스냅샷. 암호문을 그대로 들고 있으므로 메인 밖으로 나가지 않는다
+export interface AccountSnapshot {
+  account: typeof accounts.$inferSelect
+  items: (typeof vaultItems.$inferSelect)[]
+}
+
 export interface AuditRow {
   id: number
   at: number
@@ -427,6 +433,41 @@ export class VaultRepo {
       .orderBy(desc(auditLog.id))
       .limit(limit)
       .all()
+  }
+
+  // --- 계정 삭제·복원(되돌리기) -----------------------------------------
+
+  /**
+   * 계정 한 건과 딸린 항목을 원본 컬럼 그대로 떠 둔다(되돌리기용 스냅샷).
+   * 암호문이 들어 있으므로 이 값은 메인 프로세스 밖으로 나가지 않는다.
+   */
+  accountSnapshot(id: number): AccountSnapshot | null {
+    const account = this.d.select().from(accounts).where(eq(accounts.id, id)).get()
+    if (!account) return null
+    const items = this.d.select().from(vaultItems).where(eq(vaultItems.accountId, id)).all()
+    return {
+      account,
+      items: items.map((r) => ({ ...r, ciphertext: toBuffer(r.ciphertext), iv: toBuffer(r.iv) }))
+    }
+  }
+
+  /** 계정과 딸린 항목을 지운다(FK cascade 에 기대지 않고 직접 지운다) */
+  deleteAccountCascade(id: number): void {
+    this.d.delete(vaultItems).where(eq(vaultItems.accountId, id)).run()
+    this.d.delete(accounts).where(eq(accounts.id, id)).run()
+    this.db.scheduleSave()
+  }
+
+  /**
+   * 스냅샷을 원래 id 그대로 되돌린다.
+   * id 를 유지해야 암호문의 AAD(`${itemId}:${fieldKey}`)가 여전히 맞는다
+   */
+  restoreSnapshot(snapshot: AccountSnapshot): void {
+    this.d.insert(accounts).values(snapshot.account).run()
+    for (const item of snapshot.items) {
+      this.d.insert(vaultItems).values(item).run()
+    }
+    this.db.scheduleSave()
   }
 
   // 여러 쓰기를 한 트랜잭션으로 묶는다(항목 생성: placeholder insert → 암호문 update)

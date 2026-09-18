@@ -152,6 +152,12 @@ export function registerIpc(
   ipcMain.handle(IPC.vaultReveal, (_, id: number, fieldKey?: string) =>
     wrap(() => vault.reveal(id, fieldKey))
   )
+  ipcMain.handle(IPC.vaultDeleteAccounts, (_, ids: number[]) =>
+    wrap(() => vault.deleteAccounts(Array.isArray(ids) ? ids : []))
+  )
+  ipcMain.handle(IPC.vaultUndoDelete, (_, token: string) =>
+    wrap(() => vault.undoDeleteAccounts(token))
+  )
   ipcMain.handle(IPC.vaultUpsertAccount, (_, dto: UpsertAccountInput) =>
     wrap(() => vault.upsertAccount(dto))
   )

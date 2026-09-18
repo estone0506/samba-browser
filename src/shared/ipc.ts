@@ -31,6 +31,9 @@ export const IPC = {
   vaultDeleteItem: 'vault:deleteItem',
   vaultReveal: 'vault:reveal',
   vaultUpsertAccount: 'vault:upsertAccount',
+  // 계정 삭제(딸린 항목까지)와 되돌리기. 되돌리기용 스냅샷은 메인 메모리에만 60초 머문다
+  vaultDeleteAccounts: 'vault:deleteAccounts',
+  vaultUndoDelete: 'vault:undoDelete',
   vaultAudit: 'vault:audit',
   vaultStateChanged: 'vault:stateChanged', // main → renderer 이벤트
   vaultCapturePrompt: 'vault:capturePrompt', // main → renderer 이벤트 (비밀번호 제외)

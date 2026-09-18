@@ -75,6 +75,8 @@ interface VaultStoreState {
   recentAccountIds: number[]
   // 펼쳐 둔 도메인 그룹 키(registrableDomain). 기본은 모두 접힘이라 비어 있다
   expandedGroups: Set<string>
+  // 방금 지운 계정의 되돌리기 안내(토스트). 토큰만 들고 있고 값은 메인에 남는다
+  pendingUndo: { token: string; count: number } | null
   loading: boolean
   error: string | null
   // 자동 저장 제안 카드. main 이 push 한 것을 그대로 담아둔다(비밀번호는 담기지 않음)
@@ -112,6 +114,10 @@ interface VaultStoreState {
   setSort: (s: VaultSort) => void
   loadRecent: () => Promise<void>
   toggleGroup: (key: string) => void
+  // 계정(들) 삭제 — 성공하면 되돌리기 토스트가 뜬다
+  deleteAccounts: (ids: number[]) => Promise<void>
+  undoDelete: () => Promise<void>
+  clearPendingUndo: () => void
   expandAllGroups: (keys: string[]) => void
   collapseAllGroups: () => void
   // 사용자가 누르는 '자동 채우기'. 결과 문자열만 돌려받는다(값은 메인에 머문다)
@@ -140,6 +146,7 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
   sort: 'name',
   recentAccountIds: [],
   expandedGroups: new Set<string>(),
+  pendingUndo: null,
   loading: false,
   error: null,
   capture: null,
@@ -327,6 +334,37 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
   expandAllGroups: (keys) => set({ expandedGroups: new Set(keys) }),
 
   collapseAllGroups: () => set({ expandedGroups: new Set<string>() }),
+
+  deleteAccounts: async (ids) => {
+    if (ids.length === 0) return
+    const r = await window.samba.vault.deleteAccounts(ids)
+    if (!r.ok) {
+      set({ error: r.error })
+      return
+    }
+    // 지워진 계정이 선택돼 있었다면 선택을 푼다
+    set((s) => ({
+      pendingUndo: r.data,
+      selectedAccountId:
+        typeof s.selectedAccountId === 'number' && ids.includes(s.selectedAccountId)
+          ? null
+          : s.selectedAccountId
+    }))
+    await get().loadAccounts()
+    await get().loadRecent()
+  },
+
+  undoDelete: async () => {
+    const pending = get().pendingUndo
+    if (!pending) return
+    set({ pendingUndo: null })
+    const r = await window.samba.vault.undoDelete(pending.token)
+    if (!r.ok || !r.data) return
+    await get().loadAccounts()
+    await get().loadRecent()
+  },
+
+  clearPendingUndo: () => set({ pendingUndo: null }),
 
   // 최근 사용 계정 — 감사 로그의 fill/reveal 기록에서 계정 id 를 최신순으로 뽑는다
   loadRecent: async () => {

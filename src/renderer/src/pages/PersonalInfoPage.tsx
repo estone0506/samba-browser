@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import { SetupScreen } from '@renderer/components/vault/SetupScreen'
 import { UnlockScreen } from '@renderer/components/vault/UnlockScreen'
 import { ItemList } from '@renderer/components/vault/ItemList'
@@ -69,6 +70,42 @@ export function PersonalInfoPage(): React.JSX.Element {
       />
       <ImportPanel open={importOpen} onOpenChange={setImportOpen} />
       <VaultSettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <UndoToast />
+    </div>
+  )
+}
+
+// 삭제 후 8초 동안 떠 있는 되돌리기 토스트. 값(암호문)은 메인 메모리에만 남아 있고
+// 여기서는 토큰으로만 복원을 요청한다
+const UNDO_TOAST_MS = 8000
+
+function UndoToast(): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const pendingUndo = useVaultStore((s) => s.pendingUndo)
+  const undoDelete = useVaultStore((s) => s.undoDelete)
+  const clearPendingUndo = useVaultStore((s) => s.clearPendingUndo)
+
+  useEffect(() => {
+    if (!pendingUndo) return
+    const timer = setTimeout(clearPendingUndo, UNDO_TOAST_MS)
+    return () => clearTimeout(timer)
+  }, [pendingUndo, clearPendingUndo])
+
+  if (!pendingUndo) return null
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center">
+      <div className="pointer-events-auto flex items-center gap-3 rounded-[12px] bg-[var(--text)] px-3.5 py-2 text-[12.5px] text-white shadow-[0_8px_24px_rgba(0,0,0,.2)]">
+        <span>
+          {t('vault.list.deleted')} · {pendingUndo.count}
+        </span>
+        <button
+          type="button"
+          onClick={() => void undoDelete()}
+          className="rounded-[8px] bg-white/15 px-2 py-0.5 font-medium"
+        >
+          {t('vault.list.undo')}
+        </button>
+      </div>
     </div>
   )
 }

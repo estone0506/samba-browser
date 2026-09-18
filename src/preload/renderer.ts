@@ -140,6 +140,10 @@ const api = {
       invoke(IPC.vaultAutofill, accountId),
     upsertAccount: (dto: UpsertAccountInput): Promise<IpcResult<AccountDto>> =>
       invoke(IPC.vaultUpsertAccount, dto),
+    // 계정 삭제(딸린 항목까지). 되돌리기 토큰만 돌려받는다(스냅샷은 메인에 남는다)
+    deleteAccounts: (ids: number[]): Promise<IpcResult<{ token: string; count: number }>> =>
+      invoke(IPC.vaultDeleteAccounts, ids),
+    undoDelete: (token: string): Promise<IpcResult<boolean>> => invoke(IPC.vaultUndoDelete, token),
     // 사용 기록(감사 로그). accountId 생략 시 전체(최근 200건), 계정 지정 시 해당 계정 항목만
     audit: (accountId?: number, limit?: number): Promise<IpcResult<AuditLogDto[]>> =>
       invoke(IPC.vaultAudit, accountId, limit),

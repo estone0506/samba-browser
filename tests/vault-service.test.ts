@@ -821,4 +821,72 @@ describe('VaultService', () => {
       expect(Object.keys(picker[0]).sort()).toEqual(['id', 'label', 'username'])
     })
   })
+  // --- 계정 삭제·되돌리기 ----------------------------------------------------
+
+  describe('계정 삭제와 되돌리기', () => {
+    it('계정을 지우면 딸린 항목도 함께 사라진다', async () => {
+      await vault.setup('master-pw')
+      const account = vault.upsertAccount({
+        host: 'shop.example',
+        label: '메인',
+        username: 'me'
+      })
+      vault.putItem({
+        accountId: account.id,
+        type: 'login',
+        label: '로그인 비밀번호',
+        value: SECRET
+      })
+
+      const result = vault.deleteAccounts([account.id])
+      expect(result.count).toBe(1)
+      expect(vault.listAccounts('shop.example')).toHaveLength(0)
+      expect(vault.listItems(account.id)).toHaveLength(0)
+    })
+
+    it('되돌리면 계정·항목이 되살아나고 값도 그대로 복호화된다', async () => {
+      await vault.setup('master-pw')
+      const account = vault.upsertAccount({
+        host: 'shop.example',
+        label: '메인',
+        username: 'me',
+        tags: ['쇼핑']
+      })
+      const item = vault.putItem({
+        accountId: account.id,
+        type: 'login',
+        label: '로그인 비밀번호',
+        value: SECRET
+      })
+
+      const { token } = vault.deleteAccounts([account.id])
+      expect(vault.undoDeleteAccounts(token)).toBe(true)
+
+      const restored = vault.listAccounts('shop.example')
+      expect(restored).toHaveLength(1)
+      // id 를 그대로 되살려야 암호문의 AAD 가 여전히 맞는다
+      expect(restored[0].id).toBe(account.id)
+      expect(restored[0].tags).toEqual(['쇼핑'])
+      expect(vault.reveal(item.id)).toBe(SECRET)
+    })
+
+    it('같은 토큰으로 두 번 되돌릴 수 없다', async () => {
+      await vault.setup('master-pw')
+      const account = vault.upsertAccount({ host: 'a.example', label: 'A', username: 'a' })
+      const { token } = vault.deleteAccounts([account.id])
+      expect(vault.undoDeleteAccounts(token)).toBe(true)
+      expect(vault.undoDeleteAccounts(token)).toBe(false)
+    })
+
+    it('여러 계정을 한 번에 지우고 한 번에 되돌린다(사이트 그룹 삭제)', async () => {
+      await vault.setup('master-pw')
+      const a = vault.upsertAccount({ host: 'nid.naver.com', label: 'A', username: 'a' })
+      const b = vault.upsertAccount({ host: 'shopping.naver.com', label: 'B', username: 'b' })
+      const { token, count } = vault.deleteAccounts([a.id, b.id])
+      expect(count).toBe(2)
+      expect(vault.listAccounts()).toHaveLength(0)
+      expect(vault.undoDeleteAccounts(token)).toBe(true)
+      expect(vault.listAccounts()).toHaveLength(2)
+    })
+  })
 })

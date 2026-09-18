@@ -13,7 +13,7 @@
 
 import { timingSafeEqual } from 'node:crypto'
 import type { Db } from '../db/client'
-import { VaultRepo, type AuditRow } from './repo'
+import { VaultRepo, type AccountSnapshot, type AuditRow } from './repo'
 import {
   DEFAULT_FIELD_KEY,
   DEFAULT_SECTION_KEY,
@@ -128,6 +128,9 @@ const META_VERIFIER_IV = 'verifier_iv'
 const META_KDF_PARAMS = 'kdf_params'
 const META_DEVICE_KEY = 'device_wrapped_key'
 
+// 삭제 되돌리기 스냅샷을 메모리에 들고 있는 시간(ms). 지나면 폐기한다
+const UNDO_TTL_MS = 60_000
+
 const SALT_BYTES = 16
 const CAPTURE_TTL_MS = 60_000
 const MINUTE_MS = 60_000
@@ -145,6 +148,8 @@ export class VaultService {
   // dispose() 가 이미 실행됐는지(중복 호출 방어). before-quit 과 창 closed 이벤트
   // 양쪽에서 종료 정리를 부를 수 있어서 필요하다
   private disposed = false
+  // 삭제 되돌리기 버퍼(토큰 → 스냅샷). 암호문이 들어 있어 메인 메모리에만 둔다
+  private undoBuffer = new Map<string, { snapshots: AccountSnapshot[]; timer: NodeJS.Timeout }>()
 
   constructor(
     private readonly db: Db,
@@ -276,6 +281,8 @@ export class VaultService {
       this.captureTimer = undefined
     }
     this.pending = null
+    for (const entry of this.undoBuffer.values()) clearTimeout(entry.timer)
+    this.undoBuffer.clear()
     this.listeners.clear()
     this.captureListeners.clear()
     this.lock()
@@ -586,6 +593,46 @@ export class VaultService {
     }
     if (input.accountId === null) return this.repo.findGlobalItemRow(input.type, input.label)
     return this.repo.findItemRow(input.accountId, input.type)
+  }
+
+  /**
+   * 계정(들)과 딸린 항목을 지우고, 되돌리기용 스냅샷을 메모리에 60초 보관한다.
+   * 스냅샷에는 암호문이 들어 있으므로 반환값에는 토큰과 개수만 담는다.
+   */
+  deleteAccounts(ids: number[]): { token: string; count: number } {
+    this.requireKey()
+    const snapshots: AccountSnapshot[] = []
+    this.repo.transaction(() => {
+      for (const id of ids) {
+        const snapshot = this.repo.accountSnapshot(id)
+        if (!snapshot) continue
+        snapshots.push(snapshot)
+        this.repo.deleteAccountCascade(id)
+        this.repo.insertAudit({ itemId: null, accountId: id, action: 'delete', source: 'user' })
+      }
+      return null
+    })
+    const token = randomBytes(16).toString('hex')
+    const timer = setTimeout(() => this.undoBuffer.delete(token), UNDO_TTL_MS)
+    timer.unref?.()
+    this.undoBuffer.set(token, { snapshots, timer })
+    this.touch()
+    return { token, count: snapshots.length }
+  }
+
+  /** 되돌리기 — 보관 중인 스냅샷을 원래 id 그대로 복원한다. 만료됐으면 false */
+  undoDeleteAccounts(token: string): boolean {
+    const entry = this.undoBuffer.get(token)
+    if (!entry) return false
+    clearTimeout(entry.timer)
+    this.undoBuffer.delete(token)
+    if (!this.key) return false
+    this.repo.transaction(() => {
+      for (const snapshot of entry.snapshots) this.repo.restoreSnapshot(snapshot)
+      return null
+    })
+    this.touch()
+    return true
   }
 
   deleteItem(id: number): void {

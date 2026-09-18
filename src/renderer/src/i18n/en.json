@@ -163,7 +163,12 @@
       "noSuggestions": "No account matches the current tab",
       "collapseAll": "Collapse all",
       "expandAll": "Expand all",
-      "accountCount": "{{count}} accounts"
+      "accountCount": "{{count}} accounts",
+      "deleteAccount": "Delete account",
+      "deleteSite": "Delete all accounts for this site",
+      "deleteConfirm": "Delete {{count}} accounts?",
+      "deleted": "Deleted",
+      "undo": "Undo"
     },
     "settings": {
       "title": "KeyMaster settings",
