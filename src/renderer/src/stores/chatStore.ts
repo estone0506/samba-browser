@@ -12,11 +12,18 @@ export interface Step {
   ok: boolean
 }
 
+// SDK 재시도 대기 표시용 (진행 띠 라벨은 i18n 으로 화면에서 조립)
+export interface Retry {
+  attempt: number
+  reason: string
+}
+
 interface ChatState {
   messages: ChatMessage[]
   status: 'idle' | 'running' | 'done' | 'failed' | 'stopped'
   toolCalls: number
   currentLabel: string
+  retry: Retry | null
   confirm: { requestId: string; action: string } | null
   authError: 'missing' | 'limit' | null
   send: (text: string) => Promise<void>
@@ -34,6 +41,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   status: 'idle',
   toolCalls: 0,
   currentLabel: '',
+  retry: null,
   confirm: null,
   authError: null,
   send: async (text) => {
@@ -46,10 +54,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ],
       status: 'running',
       toolCalls: 0,
+      currentLabel: '',
+      retry: null,
       authError: null
     }))
     const r = await window.samba.agent.run(text)
-    if (!r.ok) set({ status: 'failed', currentLabel: r.error })
+    if (!r.ok) set({ status: 'failed', currentLabel: r.error, retry: null })
   },
   stop: async () => {
     await window.samba.agent.stop()
@@ -67,14 +77,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
       patchLast({ text: last.text ? `${last.text}\n${e.text}` : e.text })
     if (e.type === 'step' && last?.role === 'ai') {
       patchLast({ steps: [...(last.steps ?? []), { label: e.label, ok: e.ok }] })
-      set((s) => ({ toolCalls: s.toolCalls + 1, currentLabel: e.label }))
+      set((s) => ({ toolCalls: s.toolCalls + 1, currentLabel: e.label, retry: null }))
     }
+    if (e.type === 'progress') set({ retry: { attempt: e.attempt, reason: e.reason } })
     if (e.type === 'confirm') set({ confirm: { requestId: e.requestId, action: e.action } })
     if (e.type === 'status') {
+      // 중단·실패·완료 뒤에 뒤늦게 도착한 running 은 무시한다.
+      // send() 가 실행을 시작할 때 status 를 먼저 running 으로 바꾸므로 정상 시작은 통과한다
+      if (e.state === 'running' && get().status !== 'running') return
       const auth = e.message?.startsWith('auth:')
         ? (e.message.slice(5) as 'missing' | 'limit')
         : null
-      set({ status: e.state, authError: auth, toolCalls: e.toolCalls ?? get().toolCalls })
+      set({
+        status: e.state,
+        authError: auth,
+        toolCalls: e.toolCalls ?? get().toolCalls,
+        retry: e.state === 'running' ? get().retry : null
+      })
     }
   }
 }))
