@@ -10,7 +10,7 @@ import { VaultService } from '../src/main/vault/service'
 import { SyncOutbox, createOutboxRecorder, settingUpdatedAtKey } from '../src/main/sync/outbox'
 import { SyncLocal } from '../src/main/sync/local'
 import { pushAll, type PushDeps, type SettingsAccess } from '../src/main/sync/push'
-import { pullAll } from '../src/main/sync/pull'
+import { pullAll, pullCursorKey } from '../src/main/sync/pull'
 import { TOMBSTONE_TTL_MS } from '../src/main/sync/merge'
 import { vaultSyncAad } from '../src/main/sync/mappers'
 import { encrypt } from '../src/main/vault/crypto'
@@ -196,7 +196,29 @@ describe('pullAll', () => {
 
     expect(result.applied).toBe(0)
     expect(local.vaultItemIdByRemote('item-2')).toBeNull()
-    expect(local.getStateNumber('pullCursor')).toBe(0)
+    expect(local.getStateNumber(pullCursorKey('vault_items'))).toBeNull()
+  })
+
+  it('잠금 중에 다른 표를 받아도, 해제 후 그 구간의 금고 행이 내려온다', async () => {
+    // 커서가 표별로 나뉘기 전에는 계정 한 건 때문에 커서가 전진해 금고 행이 영영 누락됐다
+    backend.seed('vault_items_sync', [goodVaultRow(vault, '메모')])
+    backend.seed('accounts_sync', [accountRow({ updated_at: new Date(9_000_000).toISOString() })])
+    vault.lock()
+
+    await pullAll(deps)
+    expect(local.accountIdByRemote('acc-1')).not.toBeNull()
+    expect(local.vaultItemIdByRemote('item-2')).toBeNull()
+    // 계정 표의 커서만 전진하고, 금고 표의 커서는 그대로다
+    expect(local.getStateNumber(pullCursorKey('accounts'))).toBe(9_000_000)
+    expect(local.getStateNumber(pullCursorKey('vault_items'))).toBeNull()
+
+    await vault.unlock(MASTER)
+    await pullAll(deps)
+
+    const restored = local.vaultItemIdByRemote('item-2')
+    expect(restored).not.toBeNull()
+    expect(local.vaultItemForSync(restored!)?.label).toBe('메모')
+    expect(local.getStateNumber(pullCursorKey('vault_items'))).toBe(2_000_000)
   })
 
   it('북마크는 양쪽 것이 둘 다 남는다', async () => {
