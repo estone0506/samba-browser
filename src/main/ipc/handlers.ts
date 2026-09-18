@@ -3,6 +3,7 @@ import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ip
 import type { TabManager } from '../browser/tab-manager'
 import { SettingsStore } from '../settings/store'
 import { AgentRunner } from '../agent/runner'
+import type { Db } from '../db/client'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -17,8 +18,9 @@ function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
 
 export function registerIpc(
   win: BrowserWindow,
-  tabs: TabManager
-): { settings: SettingsStore; agent: AgentRunner } {
+  tabs: TabManager,
+  db: Db
+): { settings: SettingsStore; agent: AgentRunner; db: Db } {
   const settings = new SettingsStore()
   // 창이 이미 파괴됐는데 send 하면 예외가 난다. 모든 main→renderer 통지는 이 관문을 거친다
   const send = (channel: string, payload: unknown): void => {
@@ -68,5 +70,6 @@ export function registerIpc(
   ipcMain.handle(IPC.settingsGet, () => wrap(() => settings.get()))
   ipcMain.handle(IPC.settingsSet, (_, patch: Partial<Settings>) => wrap(() => settings.set(patch)))
 
-  return { settings, agent }
+  // 이 태스크는 DB 계층만 배선한다 — vault/import IPC 는 다음 태스크에서 db 를 사용
+  return { settings, agent, db }
 }

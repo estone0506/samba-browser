@@ -1,8 +1,10 @@
+import { join } from 'node:path'
 import { app } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createMainWindow } from './window'
 import { TabManager } from './browser/tab-manager'
 import { registerIpc } from './ipc/handlers'
+import { openDatabase } from './db/client'
 
 // 어디서도 잡지 못한 Promise 거부는 조용히 사라지지 않게 기록한다
 process.on('unhandledRejection', (reason) => {
@@ -11,12 +13,13 @@ process.on('unhandledRejection', (reason) => {
 
 app
   .whenReady()
-  .then(() => {
+  .then(async () => {
     electronApp.setAppUserModelId('com.samba.browser')
     app.on('browser-window-created', (_, w) => optimizer.watchWindowShortcuts(w))
     const win = createMainWindow()
     const tabs = new TabManager(win)
-    registerIpc(win, tabs)
+    const db = await openDatabase(join(app.getPath('userData'), 'data.db'))
+    registerIpc(win, tabs, db)
     tabs.create({ url: 'https://www.google.com' })
     // macOS 의 activate 재생성은 1단계(Windows 전용) 범위 밖이라 배선하지 않는다
   })
