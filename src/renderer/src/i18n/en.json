@@ -52,5 +52,96 @@
     "missing": "AI is not connected. Run claude login in a terminal or add an API key in Settings.",
     "limit": "You've reached the AI usage limit. Please try again later."
   },
-  "settings": { "model": "Model", "language": "Language" }
+  "settings": { "model": "Model", "language": "Language" },
+  "vault": {
+    "setup": {
+      "title": "Set up personal info vault",
+      "desc": "Encrypt and store accounts, passwords, and payment info with a master password",
+      "password1": "Master password",
+      "password2": "Confirm master password",
+      "remember": "Remember on this PC",
+      "warning": "If you lose your master password, stored data cannot be recovered. Keep it somewhere safe.",
+      "submit": "Create vault",
+      "tooShort": "Enter at least {{n}} characters",
+      "mismatch": "Passwords don't match",
+      "failed": "Couldn't create the vault"
+    },
+    "unlock": {
+      "title": "Unlock",
+      "desc": "Enter your master password",
+      "placeholder": "Master password",
+      "submit": "Unlock",
+      "failed": "Incorrect password"
+    },
+    "list": {
+      "searchPlaceholder": "Search accounts or sites",
+      "chipAll": "All",
+      "chipGlobal": "Global",
+      "add": "Add account",
+      "import": "Import",
+      "default": "Default",
+      "globalGroup": "Global items",
+      "empty": "No items saved yet"
+    },
+    "detail": {
+      "openInBrowser": "Open in browser",
+      "edit": "Edit",
+      "lock": "Lock",
+      "login": "Login",
+      "username": "Username",
+      "password": "Password",
+      "loginUrl": "Login URL",
+      "payment": "Payment",
+      "paymentPassword": "Payment password",
+      "personal": "Personal info",
+      "history": "Usage history",
+      "noHistory": "No recent activity",
+      "show": "Show",
+      "hide": "Hide",
+      "copy": "Copy",
+      "open": "Open",
+      "dangerBadge": "Sensitive",
+      "value": "Value",
+      "empty": "Select an account or item on the left"
+    },
+    "itemType": {
+      "login_password": "Login password",
+      "payment_password": "Payment password",
+      "card": "Card",
+      "passport": "Passport",
+      "id_card": "ID card",
+      "birth_date": "Date of birth",
+      "address": "Address",
+      "phone": "Phone",
+      "custom": "Custom"
+    },
+    "editor": {
+      "editTitle": "Edit account",
+      "addTitle": "Add account",
+      "label": "Account label",
+      "username": "Username",
+      "host": "Site host",
+      "itemType": "Item type",
+      "value": "Value",
+      "valuePlaceholder": "Leave blank to keep unchanged",
+      "cancel": "Cancel",
+      "save": "Save"
+    },
+    "import": {
+      "title": "Import",
+      "passwordsButton": "Password CSV",
+      "bookmarksButton": "Bookmark HTML",
+      "lockedError": "Unlock the vault before importing",
+      "failed": "Import failed",
+      "passwordsSummaryTitle": "Password import result",
+      "bookmarksSummaryTitle": "Bookmark import result",
+      "added": "Added",
+      "updated": "Updated",
+      "skipped": "Skipped",
+      "sites": "Sites",
+      "folders": "Folders",
+      "bookmarks": "Bookmarks",
+      "deleteCsvHint": "We recommend deleting the original CSV file"
+    }
+  }
 }
