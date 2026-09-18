@@ -57,7 +57,10 @@ function account(over: Partial<AccountDto> = {}): AccountDto {
     label: '메인',
     username: 'hongildong',
     isDefault: false,
-    itemTypes: ['login_password'],
+    itemTypes: ['login'],
+    urls: [],
+    agentAccess: 'inherit',
+    tags: [],
     ...over
   }
 }
@@ -80,6 +83,8 @@ function build(
     confirmResult?: boolean
     // 호스트를 알 수 없는 상황(정규화 실패)을 재현하기 위한 탭 URL 오버라이드
     tabUrl?: string
+    // 탭 프로필(계정 순회에서 계정 자동 선택에 쓰인다)
+    tabProfile?: string
     vaultAccessPolicy?: ToolContext['vaultAccessPolicy']
     vaultAutoSubmit?: ToolContext['vaultAutoSubmit']
     vaultExcludedHosts?: ToolContext['vaultExcludedHosts']
@@ -102,10 +107,11 @@ function build(
     getSecretForFill,
     ensureUnlockedByDevice
   } as unknown as VaultService
-  const tab =
-    opts.tabUrl === undefined
-      ? fakeTab
-      : { ...fakeTab, view: { webContents: { getURL: () => opts.tabUrl! } } }
+  const tab = {
+    ...fakeTab,
+    ...(opts.tabProfile === undefined ? {} : { profile: opts.tabProfile }),
+    ...(opts.tabUrl === undefined ? {} : { view: { webContents: { getURL: () => opts.tabUrl! } } })
+  }
   const tabs = {
     active: () => tab,
     create: vi.fn(),
@@ -206,9 +212,7 @@ describe('금고 AI 도구', () => {
 
   it('guard 모드라도 로그인 비밀번호는 확인 카드를 띄우지 않는다', async () => {
     const b = build()
-    expect(await callTool(b, 'fill_secret', { elementId: 2, itemType: 'login_password' })).toBe(
-      'ok'
-    )
+    expect(await callTool(b, 'fill_secret', { elementId: 2, itemType: 'login' })).toBe('ok')
     expect(b.confirm).not.toHaveBeenCalled()
   })
 
@@ -219,7 +223,7 @@ describe('금고 AI 도구', () => {
     const result = await callTool(b, 'login', {})
 
     expect(result).toBe('submitted: check the page for success or captcha/2FA')
-    expect(b.getSecretForFill).toHaveBeenCalledWith(1, 'login_password', 'job-1')
+    expect(b.getSecretForFill).toHaveBeenCalledWith(1, 'login', 'value', 'job-1')
     expect(pageBridge.fillValue).toHaveBeenNthCalledWith(1, fakeTab, 1, 'hongildong')
     expect(pageBridge.fillValue).toHaveBeenNthCalledWith(2, fakeTab, 2, PASSWORD)
     expect(pageBridge.submitForm).toHaveBeenCalledWith(fakeTab, 3)
@@ -245,7 +249,7 @@ describe('금고 AI 도구', () => {
     const result = await callTool(b, 'login', {})
 
     expect(result).toBe('submitted: check the page for success or captcha/2FA')
-    expect(b.getSecretForFill).toHaveBeenCalledWith(7, 'login_password', 'job-1')
+    expect(b.getSecretForFill).toHaveBeenCalledWith(7, 'login', 'value', 'job-1')
     assertNoSecretLeak(b, result)
   })
 
@@ -264,7 +268,7 @@ describe('금고 AI 도구', () => {
     expect(await callTool(byLabel, 'login', { accountLabel: '회사' })).toBe(
       'submitted: check the page for success or captcha/2FA'
     )
-    expect(byLabel.getSecretForFill).toHaveBeenCalledWith(2, 'login_password', 'job-1')
+    expect(byLabel.getSecretForFill).toHaveBeenCalledWith(2, 'login', 'value', 'job-1')
 
     const byDefault = build({
       accounts: [
@@ -275,7 +279,7 @@ describe('금고 AI 도구', () => {
     expect(await callTool(byDefault, 'login', {})).toBe(
       'submitted: check the page for success or captcha/2FA'
     )
-    expect(byDefault.getSecretForFill).toHaveBeenCalledWith(2, 'login_password', 'job-1')
+    expect(byDefault.getSecretForFill).toHaveBeenCalledWith(2, 'login', 'value', 'job-1')
 
     const ambiguous = build({ accounts: two })
     expect(await callTool(ambiguous, 'login', {})).toBe('account not found: use list_accounts')
@@ -295,7 +299,7 @@ describe('금고 AI 도구', () => {
     const raw = await callTool(b, 'list_accounts', {})
     expect(b.listAccounts).toHaveBeenCalledWith('shop.example')
     expect(JSON.parse(raw)).toEqual([
-      { label: '메인', username: 'ho***', types: ['login_password'] }
+      { label: '메인', username: 'ho***', types: ['login'], tags: [] }
     ])
     expect(raw).not.toContain('hongildong')
   })
@@ -306,7 +310,7 @@ describe('금고 AI 도구', () => {
     expect(b.listAccounts).toHaveBeenCalledWith('shop.example')
     expect(JSON.parse(raw)).toEqual({
       vaultLocked: true,
-      accounts: [{ label: '메인', username: 'ho***', types: ['login_password'] }]
+      accounts: [{ label: '메인', username: 'ho***', types: ['login'], tags: [] }]
     })
   })
 
@@ -336,8 +340,8 @@ describe('금고 AI 도구', () => {
 
   it('저장된 항목이 없으면 값 없이 not found 를 돌려준다', async () => {
     const b = build({ secret: null })
-    expect(await callTool(b, 'fill_secret', { elementId: 4, itemType: 'passport' })).toBe(
-      'not found: no passport saved for this account'
+    expect(await callTool(b, 'fill_secret', { elementId: 4, itemType: 'identity' })).toBe(
+      'not found: no identity.value saved for this account'
     )
   })
 
@@ -366,7 +370,7 @@ describe('금고 AI 도구', () => {
   it('pageBridge.fillValue 실패를 그대로 전달한다(값은 확인되지 않는다)', async () => {
     const b = build()
     pageBridge.fillValue.mockResolvedValueOnce('refused: SECRET field. Ask the user to type it.')
-    const result = await callTool(b, 'fill_secret', { elementId: 2, itemType: 'login_password' })
+    const result = await callTool(b, 'fill_secret', { elementId: 2, itemType: 'login' })
     expect(result).toBe('refused: SECRET field. Ask the user to type it.')
     assertNoSecretLeak(b, result)
   })
@@ -399,7 +403,7 @@ describe('금고 AI 도구', () => {
     const b = build()
     pageBridge.fillValue.mockClear()
     pageBridge.isSecretField.mockResolvedValueOnce(false)
-    const result = await callTool(b, 'fill_secret', { elementId: 9, itemType: 'login_password' })
+    const result = await callTool(b, 'fill_secret', { elementId: 9, itemType: 'login' })
     expect(result).toBe('refused: target is not a secret input')
     expect(pageBridge.fillValue).not.toHaveBeenCalled()
     expect(b.getSecretForFill).not.toHaveBeenCalled()
@@ -409,7 +413,7 @@ describe('금고 AI 도구', () => {
   it('비밀 입력칸 검사는 passport 등 로그인성이 아닌 항목에는 적용하지 않는다', async () => {
     const b = build()
     pageBridge.isSecretField.mockResolvedValueOnce(false)
-    expect(await callTool(b, 'fill_secret', { elementId: 9, itemType: 'passport' })).toBe('ok')
+    expect(await callTool(b, 'fill_secret', { elementId: 9, itemType: 'identity' })).toBe('ok')
   })
 
   it('금고가 설정되지 않았으면(uninitialized) 설정 안내를 돌려준다', async () => {
@@ -484,9 +488,7 @@ describe('금고 AI 도구', () => {
 
     const fill = build({ tabUrl: 'http://shop.example/login' })
     pageBridge.fillValue.mockClear()
-    expect(await callTool(fill, 'fill_secret', { elementId: 5, itemType: 'login_password' })).toBe(
-      INSECURE
-    )
+    expect(await callTool(fill, 'fill_secret', { elementId: 5, itemType: 'login' })).toBe(INSECURE)
     expect(fill.getSecretForFill).not.toHaveBeenCalled()
     expect(pageBridge.fillValue).not.toHaveBeenCalled()
 
@@ -501,9 +503,7 @@ describe('금고 AI 도구', () => {
     pageBridge.isSecretField.mockReset()
     pageBridge.isSecretField.mockImplementation(async () => true)
     const b = build({ tabUrl: 'http://localhost:5173/login' })
-    expect(await callTool(b, 'fill_secret', { elementId: 5, itemType: 'login_password' })).toBe(
-      'ok'
-    )
+    expect(await callTool(b, 'fill_secret', { elementId: 5, itemType: 'login' })).toBe('ok')
   })
 })
 
@@ -516,5 +516,97 @@ describe('isSecurePageUrl', () => {
     expect(isSecurePageUrl('file:///c:/tmp/login.html')).toBe(false)
     expect(isSecurePageUrl('about:blank')).toBe(false)
     expect(isSecurePageUrl('')).toBe(false)
+  })
+})
+
+// --- Task 11: field 인자 · 항목별 agentAccess · 계정 순회 -------------------
+
+describe('fill_secret 의 field 인자', () => {
+  it('field 를 생략하면 기본 필드 value 로 조회한다', async () => {
+    pageBridge.isSecretField.mockReset()
+    pageBridge.isSecretField.mockImplementation(async () => true)
+    const b = build()
+    expect(await callTool(b, 'fill_secret', { elementId: 2, itemType: 'login' })).toBe('ok')
+    expect(b.getSecretForFill).toHaveBeenCalledWith(1, 'login', 'value', 'job-1')
+  })
+
+  it('카드 번호는 field 로 지정해 채우고, 반환 문자열에 값이 없다', async () => {
+    const CARD = '4111111111111111'
+    const b = build({ secret: CARD })
+    const result = await callTool(b, 'fill_secret', {
+      elementId: 3,
+      itemType: 'card',
+      field: 'card.number'
+    })
+    expect(result).toBe('ok')
+    expect(result).not.toContain(CARD)
+    expect(b.getSecretForFill).toHaveBeenCalledWith(1, 'card', 'card.number', 'job-1')
+    // step 라벨에도 값이 남지 않는다
+    expect(JSON.stringify(b.steps)).not.toContain(CARD)
+  })
+})
+
+describe('항목별 agentAccess', () => {
+  it("agentAccess:'never' 계정은 금고가 열려 있어도 거부한다", async () => {
+    const b = build({
+      state: 'unlocked',
+      accounts: [account({ agentAccess: 'never' })],
+      vaultAccessPolicy: 'always'
+    })
+    expect(await callTool(b, 'fill_secret', { elementId: 2, itemType: 'login' })).toBe(
+      'refused: KeyMaster access policy is Never'
+    )
+    expect(b.getSecretForFill).not.toHaveBeenCalled()
+  })
+
+  it("agentAccess:'always' 계정은 전역 정책이 while_unlocked 여도 기기 키로 자동 해제한다", async () => {
+    const b = build({
+      state: 'locked',
+      accounts: [account({ agentAccess: 'always' })],
+      vaultAccessPolicy: 'while_unlocked',
+      deviceUnlockSucceeds: true
+    })
+    expect(await callTool(b, 'fill_secret', { elementId: 2, itemType: 'login' })).toBe('ok')
+    expect(b.ensureUnlockedByDevice).toHaveBeenCalled()
+  })
+
+  it("agentAccess:'inherit' 은 전역 정책(never)을 그대로 따른다", async () => {
+    const b = build({
+      accounts: [account({ agentAccess: 'inherit' })],
+      vaultAccessPolicy: 'never'
+    })
+    expect(await callTool(b, 'fill_secret', { elementId: 2, itemType: 'login' })).toBe(
+      'refused: KeyMaster access policy is Never'
+    )
+  })
+})
+
+describe('계정 순회(login 의 탭 프로필 자동 선택)', () => {
+  it('라벨 없이도 탭 profile 과 같은 라벨의 계정을 고른다', async () => {
+    const b = build({
+      tabProfile: '부계정',
+      accounts: [account({ id: 1, label: '메인' }), account({ id: 2, label: '부계정' })]
+    })
+    expect(await callTool(b, 'login', {})).toContain('submitted')
+    expect(b.getSecretForFill).toHaveBeenCalledWith(2, 'login', 'value', 'job-1')
+  })
+
+  it('accountLabel 을 주면 탭 profile 보다 라벨이 우선한다', async () => {
+    const b = build({
+      tabProfile: '부계정',
+      accounts: [account({ id: 1, label: '메인' }), account({ id: 2, label: '부계정' })]
+    })
+    expect(await callTool(b, 'login', { accountLabel: '메인' })).toContain('submitted')
+    expect(b.getSecretForFill).toHaveBeenCalledWith(1, 'login', 'value', 'job-1')
+  })
+})
+
+describe('list_accounts 응답', () => {
+  it('태그를 함께 돌려준다', async () => {
+    const b = build({ accounts: [account({ tags: ['쇼핑', '해외'] })] })
+    const raw = await callTool(b, 'list_accounts', {})
+    expect(JSON.parse(raw)).toEqual([
+      { label: '메인', username: 'ho***', types: ['login'], tags: ['쇼핑', '해외'] }
+    ])
   })
 })

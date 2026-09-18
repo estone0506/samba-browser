@@ -3,6 +3,7 @@
 // [중요] 여기의 값들은 src/shared/* 의 원본과 **수동으로 동기화해야 한다**.
 //   - MAX_ELEMENTS      ← src/shared/snapshot.ts 의 MAX_ELEMENTS
 //   - PAGE_IPC.vaultCapture ← src/shared/ipc.ts 의 IPC.vaultCapture
+//   - PAGE_IPC.vaultPickerAccounts/vaultPickerFill ← 같은 파일의 IPC 동명 채널
 //
 // 왜 복제하는가:
 // page.ts 는 sandbox:true 로 주입되는 preload 라 다른 파일을 require() 할 수 없다.
@@ -18,5 +19,7 @@ export const MAX_ELEMENTS = 150
 
 // preload(격리 월드) → 메인 프로세스 IPC 채널
 export const PAGE_IPC = {
-  vaultCapture: 'vault:capture'
+  vaultCapture: 'vault:capture',
+  vaultPickerAccounts: 'vault:pickerAccounts',
+  vaultPickerFill: 'vault:pickerFill'
 } as const

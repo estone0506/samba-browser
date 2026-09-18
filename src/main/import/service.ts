@@ -100,7 +100,7 @@ export class ImportService {
 
       this.vault.putItem({
         accountId: account.id,
-        type: 'login_password',
+        type: 'login',
         label: '로그인 비밀번호',
         value: row.password
       })

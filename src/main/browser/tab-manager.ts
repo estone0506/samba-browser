@@ -5,6 +5,7 @@ import type { Layout, TabInfo } from '../../shared/ipc'
 import { BLOCKED_URL_MESSAGE, isAllowedUrl } from '../../shared/url'
 import type { SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
+import { installDialogHandler, isAutomationActive } from './dialogs'
 
 export interface Tab {
   id: string
@@ -121,6 +122,11 @@ export class TabManager {
   // 주소창 검색어 → URL 변환에 쓸 기본 검색엔진
   private searchEngine: SearchEngine = 'google'
   // === 신규 추가분 끝 ========================================================
+  // AI 작업이 실행 중인지 알려 주는 판정기(handlers 가 AgentRunner 를 연결한다).
+  // 페이지 JS 대화상자는 작업 실행 중에만 자동 처리한다
+  private agentRunning: () => boolean = () => false
+  // 자동 처리한 대화상자 문구(탭별 1건). 다음 도구 결과 앞에 붙이고 비운다
+  private lastDialogMessage = new Map<string, string>()
 
   constructor(private win: BrowserWindow) {
     // 창이 닫히면 남은 리스너·탭을 정리해 파괴된 창에 접근하지 않게 한다
@@ -148,6 +154,24 @@ export class TabManager {
 
   setSearchEngine(engine: SearchEngine): void {
     this.searchEngine = engine
+  }
+
+  /** AI 작업 실행 여부 판정기를 연결한다(대화상자 자동 처리 조건) */
+  setAgentRunningProvider(fn: () => boolean): void {
+    this.agentRunning = fn
+  }
+
+  /**
+   * 자동 처리한 대화상자 문구를 한 번 꺼내고 비운다.
+   * tabId 를 생략하면 활성 탭 기준이다(도구 결과에 붙일 때 쓴다)
+   */
+  takeDialogMessage(tabId?: string): string | null {
+    const id = tabId ?? this.activeId
+    if (!id) return null
+    const message = this.lastDialogMessage.get(id)
+    if (message === undefined) return null
+    this.lastDialogMessage.delete(id)
+    return message
   }
   // === 신규 추가분 끝 ========================================================
 
@@ -227,6 +251,11 @@ export class TabManager {
     wc.on('did-navigate', () => this.emit())
     wc.on('did-navigate-in-page', () => this.emit())
     guardNavigation(wc)
+    // 페이지 JS 대화상자(alert/confirm/prompt)는 작업 실행 중에만 자동으로 닫는다
+    installDialogHandler(wc, {
+      isAutomationActive: () => isAutomationActive(this.agentRunning()),
+      onMessage: (message) => this.lastDialogMessage.set(tab.id, message)
+    })
     wc.setWindowOpenHandler(({ url: target }) => {
       if (!isAllowedUrl(target)) {
         console.warn(`새 창 차단: ${target}`)
@@ -258,6 +287,7 @@ export class TabManager {
     const idx = this.tabs.findIndex((t) => t.id === id)
     if (idx < 0) return
     const [tab] = this.tabs.splice(idx, 1)
+    this.lastDialogMessage.delete(id)
     if (!this.win.isDestroyed()) this.win.contentView.removeChildView(tab.view)
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
     if (this.activeId === id) {

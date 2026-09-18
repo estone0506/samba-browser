@@ -153,7 +153,24 @@
       "default": "Default",
       "globalGroup": "Global items",
       "empty": "No items saved yet",
-      "settingsBtn": "KeyMaster settings"
+      "settingsBtn": "KeyMaster settings",
+      "suggestions": "Suggestions",
+      "recent": "Recently used",
+      "filterType": "Type",
+      "filterAll": "All",
+      "filterTags": "Tags",
+      "sortName": "Name",
+      "sortRecent": "Recent",
+      "sortLabel": "Sort",
+      "noSuggestions": "No account matches the current tab",
+      "collapseAll": "Collapse all",
+      "expandAll": "Expand all",
+      "accountCount": "{{count}} accounts",
+      "deleteAccount": "Delete account",
+      "deleteSite": "Delete all accounts for this site",
+      "deleteConfirm": "Delete {{count}} accounts?",
+      "deleted": "Deleted",
+      "undo": "Undo"
     },
     "settings": {
       "title": "KeyMaster settings",
@@ -214,15 +231,12 @@
       }
     },
     "itemType": {
-      "login_password": "Login password",
-      "payment_password": "Payment password",
-      "card": "Card",
-      "passport": "Passport",
-      "id_card": "ID card",
-      "birth_date": "Date of birth",
-      "address": "Address",
-      "phone": "Phone",
-      "custom": "Custom"
+      "login": "Login",
+      "password": "Password",
+      "card": "Credit card",
+      "note": "Secure note",
+      "identity": "Identity",
+      "document": "Document"
     },
     "editor": {
       "editTitle": "Edit account",
@@ -237,7 +251,11 @@
       "value": "Value",
       "valuePlaceholder": "Leave blank to keep unchanged",
       "cancel": "Cancel",
-      "save": "Save"
+      "save": "Save",
+      "newTitle": "New {{type}}",
+      "editItemTitle": "Edit {{type}}",
+      "generate": "Generate",
+      "keepHint": "Leave empty to keep the saved value"
     },
     "import": {
       "title": "Import",
@@ -265,6 +283,98 @@
         "bookmarksExportSteps": "Chrome·Whale·Edge·Aside: Bookmark Manager › ⋮ › Export Bookmarks (HTML)",
         "bookmarksSupports": "Netscape format auto-detected"
       }
+    },
+    "add": {
+      "menu": "Add",
+      "login": "Login",
+      "password": "Password",
+      "card": "Credit card",
+      "note": "Secure note",
+      "identity": "Identity",
+      "document": "Document",
+      "documentDisabled": "Coming after stage 2",
+      "generator": "Password generator",
+      "import": "Import…"
+    },
+    "generator": {
+      "title": "Password generator",
+      "length": "Length",
+      "symbols": "Include symbols",
+      "digits": "Include digits",
+      "generate": "Generate",
+      "copy": "Copy",
+      "use": "Use",
+      "copied": "Copied"
+    },
+    "agentAccess": {
+      "label": "Agent access",
+      "inherit": "Follow global setting",
+      "always": "Always allow",
+      "while_unlocked": "Only while unlocked",
+      "never": "Never allow"
+    },
+    "websites": {
+      "label": "Website",
+      "add": "+ Add URL",
+      "placeholder": "https://example.com/login",
+      "remove": "Remove"
+    },
+    "tags": {
+      "label": "Tags",
+      "add": "Add tag",
+      "placeholder": "Press Enter to add"
+    },
+    "autofill": {
+      "button": "Autofill",
+      "ok": "Filled in the current tab",
+      "fieldsNotFound": "No login form found",
+      "locked": "Unlock KeyMaster first",
+      "hostMismatch": "The current tab is not this account’s site",
+      "insecure": "Only https pages can be filled",
+      "excluded": "This host is excluded",
+      "failed": "Could not fill"
+    },
+    "fields": {
+      "add": "+ Custom field",
+      "key": "Field key",
+      "fieldLabel": "Display name",
+      "kind": "Kind",
+      "remove": "Remove",
+      "kindText": "Text",
+      "kindSecret": "Secret",
+      "kindUrl": "URL",
+      "kindDate": "Date",
+      "kindSelect": "Select"
+    },
+    "sections": {
+      "login": "Login",
+      "card": "Card details",
+      "payment": "Payment",
+      "identity": "Identity",
+      "note": "Note",
+      "custom": "Additional"
+    },
+    "popover": {
+      "title": "KeyMaster",
+      "open": "Open KeyMaster",
+      "close": "Close",
+      "manage": "Manage all"
+    },
+    "fieldNames": {
+      "password": "Password",
+      "holder": "Cardholder",
+      "brand": "Card brand / type",
+      "number": "Card number",
+      "expiry": "Expiry",
+      "cvc": "CVC",
+      "cardPassword": "Payment password",
+      "name": "Name",
+      "birth": "Date of birth",
+      "address": "Address",
+      "phone": "Phone",
+      "passport": "Passport number",
+      "idCard": "ID card number",
+      "note": "Note"
     }
   },
   "settingsPage": {

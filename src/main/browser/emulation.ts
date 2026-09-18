@@ -37,6 +37,20 @@ function isAttached(wc: WebContents): boolean {
   }
 }
 
+// 대화상자 감시 등 다른 기능이 디버거를 계속 필요로 하는 webContents.
+// 여기 들어 있으면 모바일 에뮬레이션 해제가 디버거를 떼어내지 않는다
+const debuggerPinned = new WeakSet<WebContents>()
+
+/** 이 webContents 의 디버거를 에뮬레이션 해제 시에도 유지한다 */
+export function keepDebuggerAttached(wc: WebContents): void {
+  debuggerPinned.add(wc)
+}
+
+/** 디버거를 붙인다(이미 붙어 있으면 그대로). 다른 모듈(dialogs)과 공유한다 */
+export function ensureDebuggerAttached(wc: WebContents): boolean {
+  return attach(wc)
+}
+
 function attach(wc: WebContents): boolean {
   try {
     if (!isUsable(wc)) return false
@@ -95,7 +109,8 @@ export function clearMobileEmulation(wc: WebContents): Promise<void> {
     await send(wc, 'Emulation.setTouchEmulationEnabled', { enabled: false })
     await send(wc, 'Emulation.setUserAgentOverride', { userAgent: '' })
     setUserAgent(wc, '')
-    // detach 는 명령이 모두 끝난 뒤, 그리고 아직 붙어 있을 때만
+    // detach 는 명령이 모두 끝난 뒤, 아직 붙어 있고, 다른 기능이 붙잡고 있지 않을 때만
+    if (debuggerPinned.has(wc)) return
     try {
       if (isAttached(wc)) wc.debugger.detach()
     } catch (e) {

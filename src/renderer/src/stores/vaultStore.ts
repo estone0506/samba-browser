@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import type {
   AccountDto,
+  AgentAccess,
+  AuditLogDto,
+  FieldKind,
   CapturePromptDto,
   ImportBookmarksResult,
   ImportPasswordsResult,
@@ -14,13 +17,28 @@ import type {
 // 계정 목록에서 선택 가능한 대상: 특정 계정(number) · 전역 항목(accountId=null) · 없음
 export type SelectedAccount = number | 'global' | null
 
+export interface PutFieldInput {
+  key: string
+  label: string
+  kind: FieldKind
+  // 생략하면 메인이 기존 암호문을 유지한다(편집에서 "비워두면 유지")
+  value?: string
+}
+
+export interface PutSectionInput {
+  key: string
+  label: string
+  fields: PutFieldInput[]
+}
+
 interface PutItemInput {
   // 편집 대상 항목 id. 주면 그 항목을 그대로 갱신한다(라벨·종류 변경 포함)
   id?: number
   accountId: number | null
   type: VaultItemType
   label: string
-  value: string
+  value?: string
+  sections?: PutSectionInput[]
 }
 
 interface UpsertAccountInput {
@@ -32,7 +50,13 @@ interface UpsertAccountInput {
   isDefault?: boolean
   siteName?: string
   loginUrl?: string
+  urls?: string[]
+  agentAccess?: AgentAccess
+  tags?: string[]
 }
+
+// 목록 정렬 기준
+export type VaultSort = 'name' | 'recent'
 
 interface VaultStoreState {
   state: VaultState
@@ -44,6 +68,16 @@ interface VaultStoreState {
   // 전역 항목 목록에서 선택된 개별 항목(계정이 없는 항목이라 accountId 만으론 특정할 수 없다)
   selectedGlobalItemId: number | null
   query: string
+  // 필터·정렬(목록 상단 바)
+  typeFilter: VaultItemType | 'all'
+  tagFilter: string[]
+  sort: VaultSort
+  // 최근 사용(감사 로그에서 계산한 계정 id 목록, 최신순)
+  recentAccountIds: number[]
+  // 펼쳐 둔 도메인 그룹 키(registrableDomain). 기본은 모두 접힘이라 비어 있다
+  expandedGroups: Set<string>
+  // 방금 지운 계정의 되돌리기 안내(토스트). 토큰만 들고 있고 값은 메인에 남는다
+  pendingUndo: { token: string; count: number } | null
   loading: boolean
   error: string | null
   // 자동 저장 제안 카드. main 이 push 한 것을 그대로 담아둔다(비밀번호는 담기지 않음)
@@ -80,12 +114,28 @@ interface VaultStoreState {
   putItem: (input: PutItemInput) => Promise<boolean>
   deleteItem: (id: number, accountId: number | null) => Promise<void>
   // 사용자가 '보기'를 눌렀을 때만 호출. 반환값은 store 에 저장하지 않고 호출자에게만 준다
-  reveal: (id: number) => Promise<string | null>
+  reveal: (id: number, fieldKey?: string) => Promise<string | null>
   upsertAccount: (dto: UpsertAccountInput) => Promise<AccountDto | null>
   setQuery: (q: string) => void
+  setTypeFilter: (t: VaultItemType | 'all') => void
+  toggleTagFilter: (tag: string) => void
+  setSort: (s: VaultSort) => void
+  loadRecent: () => Promise<void>
+  toggleGroup: (key: string) => void
+  // 계정(들) 삭제 — 성공하면 되돌리기 토스트가 뜬다
+  deleteAccounts: (ids: number[]) => Promise<void>
+  undoDelete: () => Promise<void>
+  clearPendingUndo: () => void
+  expandAllGroups: (keys: string[]) => void
+  collapseAllGroups: () => void
+  // 사용자가 누르는 '자동 채우기'. 결과 문자열만 돌려받는다(값은 메인에 머문다)
+  autofill: (accountId: number) => Promise<string | null>
   importPasswords: () => Promise<ImportPasswordsResult | null>
   importBookmarks: () => Promise<ImportBookmarksResult | null>
 }
+
+// 최근 사용 목록에 보여 줄 계정 수
+const RECENT_LIMIT = 5
 
 function itemsKey(accountId: number | null): string {
   return accountId === null ? 'global' : String(accountId)
@@ -99,6 +149,12 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
   selectedAccountId: null,
   selectedGlobalItemId: null,
   query: '',
+  typeFilter: 'all',
+  tagFilter: [],
+  sort: 'name',
+  recentAccountIds: [],
+  expandedGroups: new Set<string>(),
+  pendingUndo: null,
   loading: false,
   error: null,
   capture: null,
@@ -264,8 +320,8 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
     if (r.ok) await get().loadItems(accountId)
   },
 
-  reveal: async (id) => {
-    const r = await window.samba.vault.reveal(id)
+  reveal: async (id, fieldKey) => {
+    const r = await window.samba.vault.reveal(id, fieldKey)
     return r.ok ? r.data : null
   },
 
@@ -280,6 +336,84 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
   },
 
   setQuery: (q) => set({ query: q }),
+
+  setTypeFilter: (t) => set({ typeFilter: t }),
+
+  toggleTagFilter: (tag) =>
+    set((s) => ({
+      tagFilter: s.tagFilter.includes(tag)
+        ? s.tagFilter.filter((x) => x !== tag)
+        : [...s.tagFilter, tag]
+    })),
+
+  setSort: (sort) => set({ sort }),
+
+  // 그룹 헤더 접기/펼치기. Set 은 새 인스턴스로 갈아 끼워 리렌더를 일으킨다
+  toggleGroup: (key) =>
+    set((s) => {
+      const next = new Set(s.expandedGroups)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return { expandedGroups: next }
+    }),
+
+  expandAllGroups: (keys) => set({ expandedGroups: new Set(keys) }),
+
+  collapseAllGroups: () => set({ expandedGroups: new Set<string>() }),
+
+  deleteAccounts: async (ids) => {
+    if (ids.length === 0) return
+    const r = await window.samba.vault.deleteAccounts(ids)
+    if (!r.ok) {
+      set({ error: r.error })
+      return
+    }
+    // 지워진 계정이 선택돼 있었다면 선택을 푼다
+    set((s) => ({
+      pendingUndo: r.data,
+      selectedAccountId:
+        typeof s.selectedAccountId === 'number' && ids.includes(s.selectedAccountId)
+          ? null
+          : s.selectedAccountId
+    }))
+    await get().loadAccounts()
+    await get().loadRecent()
+  },
+
+  undoDelete: async () => {
+    const pending = get().pendingUndo
+    if (!pending) return
+    set({ pendingUndo: null })
+    const r = await window.samba.vault.undoDelete(pending.token)
+    if (!r.ok || !r.data) return
+    await get().loadAccounts()
+    await get().loadRecent()
+  },
+
+  clearPendingUndo: () => set({ pendingUndo: null }),
+
+  // 최근 사용 계정 — 감사 로그의 fill/reveal 기록에서 계정 id 를 최신순으로 뽑는다
+  loadRecent: async () => {
+    const r = await window.samba.vault.audit()
+    if (!r.ok) return
+    const ids: number[] = []
+    for (const log of r.data as AuditLogDto[]) {
+      if (log.action !== 'fill' && log.action !== 'reveal') continue
+      if (log.accountId === null || ids.includes(log.accountId)) continue
+      ids.push(log.accountId)
+    }
+    set({ recentAccountIds: ids.slice(0, RECENT_LIMIT) })
+  },
+
+  autofill: async (accountId) => {
+    const r = await window.samba.vault.autofill(accountId)
+    if (!r.ok) {
+      set({ error: r.error })
+      return null
+    }
+    await get().loadRecent()
+    return r.data
+  },
 
   importPasswords: async () => {
     const r = await window.samba.importData.passwords()
