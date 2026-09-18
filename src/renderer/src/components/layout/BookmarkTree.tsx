@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, Folder, X } from 'lucide-react'
@@ -74,14 +74,52 @@ function FolderRow({
   const { t } = useTranslation()
   const expanded = useBookmarkStore((s) => s.expanded.has(folder.id))
   const toggle = useBookmarkStore((s) => s.toggle)
+  const removeFolder = useBookmarkStore((s) => s.removeFolder)
   const isEmpty = folder.folders.length === 0 && folder.links.length === 0
+  const hasChildren = folder.folders.length > 0 || folder.links.length > 0
+
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleteTimeoutId, setDeleteTimeoutId] = useState<ReturnType<typeof setTimeout> | null>(null)
+
+  const handleDeleteClick = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    if (!hasChildren) {
+      // 하위 항목이 없으면 바로 삭제
+      void removeFolder(folder.id)
+    } else {
+      // 하위 항목이 있으면 2단계 확인
+      setConfirmDelete(true)
+      // 2초 후 자동 취소
+      if (deleteTimeoutId) clearTimeout(deleteTimeoutId)
+      const timeoutId = setTimeout(() => {
+        setConfirmDelete(false)
+        setDeleteTimeoutId(null)
+      }, 2000)
+      setDeleteTimeoutId(timeoutId)
+    }
+  }
+
+  const handleConfirmDelete = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    if (deleteTimeoutId) clearTimeout(deleteTimeoutId)
+    setConfirmDelete(false)
+    setDeleteTimeoutId(null)
+    void removeFolder(folder.id)
+  }
+
+  const handleCancelDelete = (): void => {
+    if (deleteTimeoutId) clearTimeout(deleteTimeoutId)
+    setConfirmDelete(false)
+    setDeleteTimeoutId(null)
+  }
+
   return (
     <div>
       <button
         type="button"
         onClick={() => toggle(folder.id)}
         style={{ paddingLeft: 10 + depth * 14 }}
-        className="flex w-full items-center gap-1.5 rounded-[8px] py-1 pr-1.5 text-left text-[12.5px] font-medium text-[var(--text2)] hover:bg-black/5"
+        className="group flex w-full items-center gap-1.5 rounded-[8px] py-1 pr-1.5 text-left text-[12.5px] font-medium text-[var(--text2)] hover:bg-black/5"
       >
         <ChevronRight
           className={cn(
@@ -93,7 +131,40 @@ function FolderRow({
         <span className="min-w-0 flex-1 truncate">
           {folder.isToolbar ? t('bookmark.toolbar') : folder.name}
         </span>
+        {confirmDelete ? (
+          <span
+            role="button"
+            tabIndex={-1}
+            title={t('bookmark.delete')}
+            onClick={handleConfirmDelete}
+            className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-500/20 text-[11px] font-bold text-red-600 hover:bg-red-500/30"
+          >
+            ○
+          </span>
+        ) : (
+          <span
+            role="button"
+            tabIndex={-1}
+            title={t('bookmark.deleteFolder')}
+            onClick={handleDeleteClick}
+            className="hidden h-4 w-4 shrink-0 items-center justify-center rounded-full text-[var(--text3)] hover:bg-black/10 group-hover:flex"
+          >
+            <X className="h-3 w-3" />
+          </span>
+        )}
       </button>
+      {confirmDelete && (
+        <div className="px-2.5 py-1 text-[11px] text-[var(--text3)]">
+          <span className="inline-block mr-1.5">{t('bookmark.delete')}?</span>
+          <button
+            type="button"
+            onClick={handleCancelDelete}
+            className="text-[11px] font-medium text-[var(--text3)] hover:text-[var(--text)] hover:underline"
+          >
+            {t('confirm.deny')}
+          </button>
+        </div>
+      )}
       {expanded && (
         <div>
           {isEmpty && (
