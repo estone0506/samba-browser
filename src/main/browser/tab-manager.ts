@@ -7,6 +7,7 @@ import { attachInternalProtocol } from './internal-protocol'
 import type { SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
 import { installDialogHandler, isAutomationActive } from './dialogs'
+import { getFaviconService, type FaviconResponse } from '../favicon/service'
 
 export interface Tab {
   id: string
@@ -261,6 +262,25 @@ export class TabManager {
       if (isMainFrame && code !== -3) console.error(`탭 로드 실패 ${code} ${desc}: ${failedUrl}`)
     })
     wc.on('did-navigate-in-page', () => this.emit())
+    // 탭이 실제로 받은 파비콘을 파비콘 서비스 캐시에 넣어 둔다.
+    // 이미 열고 있는 페이지에서 나온 정보라 추가로 노출되는 것이 없고,
+    // /favicon.ico 가 없는 사이트의 아이콘도 이 경로로 채워진다
+    wc.on('page-favicon-updated', (_e, icons) => {
+      const iconUrl = icons?.[0]
+      if (typeof iconUrl !== 'string') return
+      const service = getFaviconService()
+      if (!service) return
+      // 해당 탭의 세션으로 받아야 쿠키·프록시 설정이 페이지와 같아진다
+      void service
+        .storeFromPage(
+          wc.getURL(),
+          iconUrl,
+          (url, init) => ses.fetch(url, init) as unknown as Promise<FaviconResponse>
+        )
+        .catch((e: unknown) => {
+          console.warn('파비콘 저장 실패', e instanceof Error ? e.message : String(e))
+        })
+    })
     guardNavigation(wc)
     // 페이지 JS 대화상자(alert/confirm/prompt)는 작업 실행 중에만 자동으로 닫는다
     installDialogHandler(wc, {

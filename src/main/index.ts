@@ -5,6 +5,7 @@ import { createMainWindow } from './window'
 import { TabManager } from './browser/tab-manager'
 import { registerInternalProtocol, registerInternalScheme } from './browser/internal-protocol'
 import { registerIpc } from './ipc/handlers'
+import { registerFaviconIpc } from './ipc/favicon'
 import { openDatabase, type Db } from './db/client'
 import type { VaultService } from './vault/service'
 import { runLoginHarness, writeVaultLocked } from './e2e/login-harness'
@@ -60,6 +61,9 @@ app
         : {})
     })
     const win = createMainWindow()
+    // 파비콘은 사이트 자체에서만 받아온다(제3자 전송 없음). 탭 생성 전에 등록해야
+    // 첫 탭의 page-favicon-updated 도 캐시에 들어간다
+    registerFaviconIpc()
     const tabs = new TabManager(win)
     db = await openDatabase(join(app.getPath('userData'), 'data.db'))
     const ipc = registerIpc(win, tabs, db)

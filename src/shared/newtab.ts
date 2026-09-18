@@ -9,6 +9,8 @@ export interface NewTabBookmarkDto {
   url: string
   // 파비콘 조회용 호스트(예: naver.com). URL 파싱은 메인에서 끝낸다
   host: string
+  // 메인이 캐시에서 찾은 파비콘 dataUrl. 없으면 페이지가 첫 글자 폴백을 그린다
+  favicon?: string
 }
 
 export interface NewTabInitDto {

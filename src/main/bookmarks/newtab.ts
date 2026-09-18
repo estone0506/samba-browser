@@ -4,6 +4,15 @@
 import type { BookmarkFolderDto, BookmarkTreeDto } from '../../shared/import'
 import { NEW_TAB_BOOKMARK_LIMIT, type NewTabBookmarkDto } from '../../shared/newtab'
 import { isAllowedExternalUrl } from '../../shared/url'
+import { getFaviconService } from '../favicon/service'
+
+// 파비콘 조회에 필요한 만큼만 좁힌 인터페이스(테스트에서 가짜를 넣기 위해 분리)
+export interface FaviconLookup {
+  // 동기 조회 — 캐시에 있을 때만 값이 나온다
+  peek: (host: string) => string | null
+  // 캐시에 없으면 다음 새 탭에서 쓰이도록 미리 받아 둔다
+  prefetch: (host: string) => void
+}
 
 // 파비콘 조회용 호스트. 파싱에 실패하면 빈 문자열(페이지는 첫 글자 폴백을 그린다)
 function hostOf(url: string): string {
@@ -24,11 +33,25 @@ function findToolbar(folders: BookmarkFolderDto[]): BookmarkFolderDto | null {
   return null
 }
 
-export function toolbarBookmarks(tree: BookmarkTreeDto): NewTabBookmarkDto[] {
+/**
+ * 새 탭 북마크 목록. 파비콘은 메인 캐시(사이트 자체에서 받아 둔 것)에서만 꺼내 쓰고,
+ * 없으면 미리 받아 두기만 한다 — 호출부가 동기라서 여기서 기다리지 않는다.
+ */
+export function toolbarBookmarks(
+  tree: BookmarkTreeDto,
+  favicons: FaviconLookup | null = getFaviconService()
+): NewTabBookmarkDto[] {
   const toolbar = findToolbar(tree.folders)
   const links = toolbar && toolbar.links.length > 0 ? toolbar.links : tree.links
   return links
     .filter((l) => isAllowedExternalUrl(l.url))
     .slice(0, NEW_TAB_BOOKMARK_LIMIT)
-    .map((l) => ({ title: l.title || hostOf(l.url), url: l.url, host: hostOf(l.url) }))
+    .map((l) => {
+      const host = hostOf(l.url)
+      const favicon = host ? favicons?.peek(host) : null
+      if (host && !favicon) favicons?.prefetch(host)
+      const dto: NewTabBookmarkDto = { title: l.title || host, url: l.url, host }
+      if (favicon) dto.favicon = favicon
+      return dto
+    })
 }
