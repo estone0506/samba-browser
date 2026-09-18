@@ -112,3 +112,4 @@ Free, 월 500 크레딧, 추가 구매, 자동 충전. 월별 사용량 표.
 - 목록: 검색, 금고 선택(All accounts), **Suggestions**(현재 사이트 계정 자동 필터), This Week(최근 사용)
 - 상세: Personal › Personal, **Autofill 버튼**, Credentials(Username·••••), Website(로그인 URL)
 - 삼바 반영: 항목 6종 재편(로그인/비밀번호/신용카드/보안메모/신원정보/문서), + 메뉴 동일, 추천 섹션, 자동 채우기 버튼, 툴바 열쇠 팝오버 (2단계 Task 11)
+- **New Login 폼**: 금고 선택(Personal) · Cancel/Save · 제목 New Login + 부제 **현재 사이트 호스트 자동** · Credentials(Username, Password + 생성 버튼 ↻) · Website(**현재 URL 자동 입력** + 도메인/전체URL 전환 ⇄ + **URL 추가**로 여러 URL) → 삼바 Task 11: 로그인 추가 시 현재 탭 호스트/URL 자동, 비밀번호 생성, 계정당 URL 여러 개(sites.loginUrl → login_urls 목록)
