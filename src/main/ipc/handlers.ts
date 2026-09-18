@@ -1,5 +1,4 @@
-import { dialog, ipcMain, safeStorage, type BrowserWindow, type WebContents } from 'electron'
-import { z } from 'zod'
+import { dialog, ipcMain, safeStorage, type BrowserWindow } from 'electron'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import type { TabManager } from '../browser/tab-manager'
 import { SettingsStore } from '../settings/store'
@@ -7,6 +6,7 @@ import { AgentRunner } from '../agent/runner'
 import type { Db } from '../db/client'
 import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vault/service'
 import { ImportService, type ImportDialogs } from '../import/service'
+import { VaultCaptureGate } from './vault-capture'
 import { normalizeHost } from '../../shared/host'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
@@ -128,52 +128,30 @@ export function registerIpc(
   ipcMain.handle(IPC.vaultAudit, (_, accountId?: number, limit?: number) =>
     wrap(() => vault.listAudit(accountId, limit))
   )
-  // 페이지(preload 격리 월드)가 감지한 로그인 폼 제출. host/username/password 만 담고 길이 상한을 둔다
-  const captureSchema = z.object({
-    host: z.string().min(1).max(512),
-    username: z.string().max(512),
-    password: z.string().min(1).max(512)
+  // 페이지(preload 격리 월드)가 감지한 로그인 폼 제출.
+  // 검증·레이트리밋·호스트 대조는 전부 VaultCaptureGate 안에 있다(테스트 가능하도록 분리)
+  const captureGate = new VaultCaptureGate({
+    vault,
+    excludedHosts: () => settings.get().vaultExcludedHosts
   })
-  // preload 쪽 레이트리밋과 별개로, sender(webContents) 당 30초에 최대 3회로 다시 한 번 제한한다
-  // (메인이 유일하게 신뢰할 수 있는 경계이므로 preload 우회 가능성에 대비한 방어선)
-  const CAPTURE_WINDOW_MS = 30_000
-  const CAPTURE_MAX_PER_WINDOW = 3
-  const captureSentAt = new WeakMap<WebContents, number[]>()
   ipcMain.on(IPC.vaultCapture, (e, raw: unknown) => {
-    // 발신자가 실제 탭의 webContents 가 아니면 무시(위조 발신자 방지)
-    if (!tabs.hasWebContents(e.sender)) return
-    const now = Date.now()
-    const timestamps = (captureSentAt.get(e.sender) ?? []).filter(
-      (t) => now - t < CAPTURE_WINDOW_MS
+    captureGate.handle(
+      e.sender,
+      { trusted: tabs.hasWebContents(e.sender), frameUrl: e.senderFrame?.url ?? '' },
+      raw
     )
-    if (timestamps.length >= CAPTURE_MAX_PER_WINDOW) {
-      captureSentAt.set(e.sender, timestamps)
-      return
-    }
-    timestamps.push(now)
-    captureSentAt.set(e.sender, timestamps)
-    const parsed = captureSchema.safeParse(raw)
-    if (!parsed.success) return
-    const { host: rawHost, username, password } = parsed.data
-    const host = normalizeHost(rawHost) || rawHost
-    // 제외 도메인이면 저장 제안 자체를 띄우지 않는다
-    const excluded = settings.get().vaultExcludedHosts
-    if (excluded.some((h) => (normalizeHost(h) || h) === host)) return
-    // 값 자체는 절대 로그로 남기지 않는다
-    if (vault.state() === 'unlocked') {
-      if (vault.hasSameSecret(host, username, password)) return // 기존 값과 동일하면 제안하지 않음
-      const isNew = !vault.listAccounts(host).some((a) => a.username === username)
-      vault.setPendingCapture({ host, username, password, isNew })
-    } else {
-      // 잠긴 상태에서는 기존 값과 비교할 수 없으므로 항상 프롬프트를 띄운다
-      vault.setPendingCapture({ host, username, password, isNew: true })
-    }
   })
 
   // 저장 제안 수락/거절. 거절이면 보관 중이던 비밀번호를 그냥 버린다
   ipcMain.on(IPC.vaultCaptureDecision, (_, accept: boolean) => {
     const capture = vault.takePendingCapture()
     if (!accept || !capture) return
+    // 수락했는데 그 사이 금고가 잠겼다면(자동 잠금 등) 조용히 버리지 않고 제안을 다시 띄운다.
+    // 사용자가 카드에서 잠금을 풀고 다시 저장할 수 있다
+    if (vault.state() !== 'unlocked') {
+      vault.setPendingCapture({ ...capture, locked: true })
+      return
+    }
     try {
       const host = normalizeHost(capture.host) || capture.host
       // 기존 계정이면 label/isDefault 를 넘기지 않는다 — 사용자가 붙여 둔 라벨과

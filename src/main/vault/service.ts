@@ -79,6 +79,8 @@ export interface PendingCapture {
   username: string
   password: string
   isNew: boolean
+  // 감지 시점에 금고가 잠겨 있었는가(UI 문구 분기용)
+  locked: boolean
 }
 
 const META_SALT = 'salt'
@@ -530,7 +532,8 @@ export class VaultService {
     return {
       host: this.pending.host,
       username: this.pending.username,
-      isNew: this.pending.isNew
+      isNew: this.pending.isNew,
+      locked: this.pending.locked
     }
   }
 
@@ -544,7 +547,7 @@ export class VaultService {
     }
     if (!pending) return null
     if (Date.now() > pending.expiresAt) return null
-    const { host, username, password, isNew } = pending
-    return { host, username, password, isNew }
+    const { host, username, password, isNew, locked } = pending
+    return { host, username, password, isNew, locked }
   }
 }

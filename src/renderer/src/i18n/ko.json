@@ -1,5 +1,7 @@
 {
-  "app": { "name": "SAMBA Browser" },
+  "app": {
+    "name": "SAMBA Browser"
+  },
   "sidebar": {
     "browser": "브라우저",
     "tasks": "작업",
@@ -16,7 +18,9 @@
     "mobile": "모바일",
     "profile": "프로필"
   },
-  "tab": { "new": "새 탭" },
+  "tab": {
+    "new": "새 탭"
+  },
   "chat": {
     "title": "AI",
     "placeholder": "지시를 입력하세요…",
@@ -52,14 +56,19 @@
     "missing": "AI 연결이 안 됐어요. 터미널에서 claude login 을 실행하거나 설정에서 API 키를 입력하세요.",
     "limit": "AI 사용 한도에 도달했어요. 잠시 후 다시 시도하세요."
   },
-  "settings": { "model": "모델", "language": "언어" },
+  "settings": {
+    "model": "모델",
+    "language": "언어"
+  },
   "capture": {
     "title": "{{host}} 계정 정보를 저장할까요?",
     "titleUpdate": "{{host}} 계정 비밀번호를 갱신할까요?",
+    "titleLocked": "{{host}} 로그인 정보를 저장할까요?",
     "body": "{{host}} 에 {{username}} 로 로그인했어요. 다음에 자동으로 채울 수 있게 저장해 둘까요?",
     "skip": "이번만 건너뛰기",
     "save": "저장",
-    "unlockToSave": "잠금 해제 후 저장"
+    "unlockToSave": "잠금 해제 후 저장",
+    "lockedNotice": "금고가 잠겨 있어요. 잠금을 풀면 저장할 수 있어요"
   },
   "bookmark": {
     "title": "북마크",

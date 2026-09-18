@@ -43,13 +43,21 @@ export function CapturePrompt(): React.JSX.Element | null {
   if (!capture) return null
 
   const isLocked = vaultState !== 'unlocked'
+  // 잠긴 상태에서 감지된 제안은 기존 계정 여부를 알 수 없어 isNew 가 항상 true 다.
+  // 그래서 "새 계정" 이라고 단정하지 않는 중립 문구를 쓴다
+  const titleKey = capture.locked
+    ? 'capture.titleLocked'
+    : capture.isNew
+      ? 'capture.title'
+      : 'capture.titleUpdate'
 
   const submitUnlock = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault()
     setErr(null)
     const ok = await unlockOnly(pw)
     if (!ok) {
-      setErr(t('vault.unlock.failed'))
+      // captureErr 에는 번역된 문장이 아니라 i18n 키를 담는다(store 에서도 설정하기 때문)
+      setErr('vault.unlock.failed')
       setPw('')
       return
     }
@@ -59,9 +67,7 @@ export function CapturePrompt(): React.JSX.Element | null {
   return (
     <div
       role="alertdialog"
-      aria-label={t(capture.isNew ? 'capture.title' : 'capture.titleUpdate', {
-        host: capture.host
-      })}
+      aria-label={t(titleKey, { host: capture.host })}
       className="mx-3 mt-3 mb-1 animate-in rounded-[14px] border border-[var(--line)] bg-white p-3 shadow-[0_8px_24px_rgba(0,0,0,.06)] fade-in-0 slide-in-from-top-1 duration-150"
     >
       <div className="flex items-start gap-2.5">
@@ -70,7 +76,7 @@ export function CapturePrompt(): React.JSX.Element | null {
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-[13px] font-semibold text-[var(--text)]">
-            {t(capture.isNew ? 'capture.title' : 'capture.titleUpdate', { host: capture.host })}
+            {t(titleKey, { host: capture.host })}
           </div>
           <p className="mt-1 break-words text-[12.5px] leading-relaxed text-[var(--text2)]">
             {t('capture.body', { host: capture.host, username: capture.username })}
@@ -91,7 +97,7 @@ export function CapturePrompt(): React.JSX.Element | null {
               className="h-8 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
             />
           </div>
-          {err && <p className="text-[12px] text-[#b91c1c]">{err}</p>}
+          {err && <p className="text-[12px] text-[#b91c1c]">{t(err)}</p>}
           <div className="flex justify-end gap-2">
             <Button
               type="button"

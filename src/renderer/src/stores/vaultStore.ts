@@ -121,6 +121,12 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
     }),
 
   decideCapture: (accept) => {
+    // 잠긴 상태에서 '저장'을 누르면 메인이 조용히 버린다. 대신 카드에서 잠금 해제를
+    // 요구하고 그 이유를 알린다(captureErr 는 번역된 문장이 아니라 i18n 키다)
+    if (accept && get().state !== 'unlocked') {
+      set({ captureUnlocking: true, captureErr: 'capture.lockedNotice' })
+      return
+    }
     window.samba.vault.captureDecision(accept)
     set({ capture: null, captureUnlocking: false, capturePw: '', captureErr: null })
   },

@@ -46,6 +46,9 @@ export interface CapturePromptDto {
   host: string
   username: string
   isNew: boolean
+  // 감지 시점에 금고가 잠겨 있었는가. 잠겨 있으면 기존 계정 여부를 알 수 없어
+  // isNew 가 항상 true 이므로, UI 는 "새 계정" 대신 중립적인 문구를 쓴다
+  locked: boolean
 }
 
 // 사용 기록(감사 로그) 한 줄. 값(평문)은 절대 포함하지 않는다

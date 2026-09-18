@@ -1,5 +1,7 @@
 {
-  "app": { "name": "SAMBA Browser" },
+  "app": {
+    "name": "SAMBA Browser"
+  },
   "sidebar": {
     "browser": "Browser",
     "tasks": "Tasks",
@@ -16,7 +18,9 @@
     "mobile": "Mobile",
     "profile": "Profile"
   },
-  "tab": { "new": "New Tab" },
+  "tab": {
+    "new": "New Tab"
+  },
   "chat": {
     "title": "AI",
     "placeholder": "Type an instruction…",
@@ -52,14 +56,19 @@
     "missing": "AI is not connected. Run claude login in a terminal or add an API key in Settings.",
     "limit": "You've reached the AI usage limit. Please try again later."
   },
-  "settings": { "model": "Model", "language": "Language" },
+  "settings": {
+    "model": "Model",
+    "language": "Language"
+  },
   "capture": {
     "title": "Save your {{host}} account info?",
     "titleUpdate": "Update the password for your {{host}} account?",
+    "titleLocked": "Save your sign-in for {{host}}?",
     "body": "You just signed in to {{host}} as {{username}}. Save it so it can autofill next time?",
     "skip": "Skip this time",
     "save": "Save",
-    "unlockToSave": "Unlock to save"
+    "unlockToSave": "Unlock to save",
+    "lockedNotice": "KeyMaster is locked. Unlock it to save."
   },
   "bookmark": {
     "title": "Bookmarks",

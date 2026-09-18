@@ -11,6 +11,7 @@ const vaultState = vi.fn(async (): Promise<IpcResult<VaultState>> => ({
 }))
 const vaultSites = vi.fn(async () => ({ ok: true, data: [] }))
 const vaultAccounts = vi.fn(async () => ({ ok: true, data: [] }))
+const captureDecision = vi.fn()
 
 const win = {
   samba: {
@@ -21,7 +22,7 @@ const win = {
       sites: vaultSites,
       accounts: vaultAccounts,
       onCapturePrompt: vi.fn(),
-      captureDecision: vi.fn()
+      captureDecision
     }
   }
 }
@@ -70,6 +71,7 @@ describe('vaultStore 잠금 해제', () => {
 describe('vaultStore capture 상태 초기화', () => {
   beforeEach(() => {
     useVaultStore.setState({
+      state: 'unlocked',
       capture: null,
       captureUnlocking: false,
       capturePw: '',
@@ -79,23 +81,31 @@ describe('vaultStore capture 상태 초기화', () => {
 
   it('host/username 이 다른 새 capture 가 오면 인라인 잠금 해제 폼 상태를 초기화한다', () => {
     useVaultStore.setState({ capturePw: 'typed', captureUnlocking: true, captureErr: 'err' })
-    useVaultStore.getState().setCapture({ host: 'a.com', username: 'alice', isNew: true })
+    useVaultStore
+      .getState()
+      .setCapture({ host: 'a.com', username: 'alice', isNew: true, locked: false })
 
     useVaultStore.setState({ capturePw: 'typed-again', captureUnlocking: true, captureErr: 'err2' })
-    useVaultStore.getState().setCapture({ host: 'b.com', username: 'bob', isNew: true })
+    useVaultStore
+      .getState()
+      .setCapture({ host: 'b.com', username: 'bob', isNew: true, locked: false })
 
     const s = useVaultStore.getState()
-    expect(s.capture).toEqual({ host: 'b.com', username: 'bob', isNew: true })
+    expect(s.capture).toEqual({ host: 'b.com', username: 'bob', isNew: true, locked: false })
     expect(s.capturePw).toBe('')
     expect(s.captureUnlocking).toBe(false)
     expect(s.captureErr).toBeNull()
   })
 
   it('같은 host/username 의 capture 재수신은 폼 상태를 건드리지 않는다', () => {
-    useVaultStore.getState().setCapture({ host: 'a.com', username: 'alice', isNew: true })
+    useVaultStore
+      .getState()
+      .setCapture({ host: 'a.com', username: 'alice', isNew: true, locked: false })
     useVaultStore.setState({ capturePw: 'typed', captureUnlocking: true })
 
-    useVaultStore.getState().setCapture({ host: 'a.com', username: 'alice', isNew: true })
+    useVaultStore
+      .getState()
+      .setCapture({ host: 'a.com', username: 'alice', isNew: true, locked: false })
 
     const s = useVaultStore.getState()
     expect(s.capturePw).toBe('typed')
@@ -103,7 +113,10 @@ describe('vaultStore capture 상태 초기화', () => {
   })
 
   it('decideCapture 는 capture 와 폼 상태를 모두 정리한다', () => {
-    useVaultStore.getState().setCapture({ host: 'a.com', username: 'alice', isNew: true })
+    useVaultStore.setState({ state: 'unlocked' })
+    useVaultStore
+      .getState()
+      .setCapture({ host: 'a.com', username: 'alice', isNew: true, locked: false })
     useVaultStore.setState({ capturePw: 'typed', captureUnlocking: true, captureErr: 'err' })
 
     useVaultStore.getState().decideCapture(true)
@@ -113,5 +126,21 @@ describe('vaultStore capture 상태 초기화', () => {
     expect(s.capturePw).toBe('')
     expect(s.captureUnlocking).toBe(false)
     expect(s.captureErr).toBeNull()
+  })
+  it('잠긴 상태에서 저장을 누르면 메인에 보내지 않고 잠금 해제를 요구한다', () => {
+    useVaultStore.setState({ state: 'locked' })
+    useVaultStore
+      .getState()
+      .setCapture({ host: 'a.com', username: 'alice', isNew: true, locked: true })
+    captureDecision.mockClear()
+
+    useVaultStore.getState().decideCapture(true)
+
+    const s = useVaultStore.getState()
+    expect(captureDecision).not.toHaveBeenCalled()
+    expect(s.capture).not.toBeNull()
+    expect(s.captureUnlocking).toBe(true)
+    // 번역된 문장이 아니라 i18n 키를 담는다
+    expect(s.captureErr).toBe('capture.lockedNotice')
   })
 })
