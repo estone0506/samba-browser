@@ -148,3 +148,7 @@ Aside Password 설정 화면 기준 요약:
 ### 설정 전 화면 재확인 (2026-09-18 저녁, 9장) — 기존 기록과 일치. 추가 관찰:
 - **Memory 에피소드 실제 내용**(2026-09-17.md): 에이전트가 무신사머니 인출 중 만난 사실을 시각·근거(sessions.get id)와 함께 기록 — 예: "NICE ePAY 결제비밀번호 창이 **별도 창(m.niceepay.com:7006/epay/pinCert.do)** 으로 열림", "키패드 스냅샷에는 숫자 버튼·입력완료가 보이지만 **몇 자리 입력됐는지는 스크린샷으로만 확인 가능(값은 알 수 없음)**", "사용자 직접 실행과 에이전트 시도의 인과를 구분해 기록". → 3단계 결제/인증 설계 참고: ① 결제창은 팝업(별도 WebContents) 이므로 팝업 탭도 스냅샷·조작 대상에 포함 ② 보안 키패드는 입력 자리수 표시(●)로 진행 확인 ③ 메모리 항목은 "사실 + 근거 세션 + 주의" 구조.
 - Account › Sync: "Browser data recovery" 토글(클라우드 복구) — 2b 동기화 설계에 복구 옵션 포함.
+- **Memory › Configure**: 메모리 생성 켜기/끄기, 에피소드 보관 기간(Never forget 등) → 삼바 4단계 메모리 설정 2항목.
+- **Password 설정 하단 추가 확인**: "Connect external password manager"(외부 관리자 연동), Export CSV/JSON, "Disable in incognito", URL matching strategy(Domain). → 이미 정책 변경에 반영(자동잠금 1주·접근정책·자동제출·도메인 매칭). 내보내기 CSV/JSON 은 Task 11 에 추가.
+- **Routines**: Free 3개 제한 배너 + Upgrade, 루틴 토글·주기, Create, Suggestions "Scan"(히스토리에서 반복 작업 찾기) — 이미 기록.
+- **Developers**: Aside CLI(Codex/Claude Code 에서 `/aside-browser` 스킬로 웹 작업 실행), Aside Skills 추가, **Aside MCP 서버 토글**, Remote Control(Pro) — 2차 로드맵(삼바 MCP 서버 노출) 유지.
