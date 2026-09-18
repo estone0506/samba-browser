@@ -73,7 +73,7 @@ export class TabManager {
       this.create({ url, profile, mobile: tab.mobile })
       return { action: 'deny' }
     })
-    if (tab.mobile) applyMobileEmulation(wc)
+    if (tab.mobile) void applyMobileEmulation(wc)
     void wc.loadURL(opts.url ?? 'https://www.google.com')
     this.activate(tab.id)
     return this.list().find((t) => t.id === tab.id)!
@@ -124,13 +124,15 @@ export class TabManager {
     this.get(id)?.view.webContents.reload()
   }
 
-  setMobile(id: string, mobile: boolean): void {
+  async setMobile(id: string, mobile: boolean): Promise<void> {
     const tab = this.get(id)
     if (!tab) return
     tab.mobile = mobile
-    if (mobile) applyMobileEmulation(tab.view.webContents)
-    else clearMobileEmulation(tab.view.webContents)
-    tab.view.webContents.reload()
+    const wc = tab.view.webContents
+    // 에뮬레이션 적용/해제가 끝난 뒤에 새로고침해야 UA·뷰포트가 반영된다
+    if (mobile) await applyMobileEmulation(wc)
+    else await clearMobileEmulation(wc)
+    if (!wc.isDestroyed()) wc.reload()
     this.emit()
   }
 
