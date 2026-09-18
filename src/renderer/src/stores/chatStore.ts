@@ -97,11 +97,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const auth = e.message?.startsWith('auth:')
         ? (e.message.slice(5) as 'missing' | 'limit')
         : null
+      const done = e.state === 'done' || e.state === 'failed' || e.state === 'stopped'
       set({
         status: e.state,
         authError: auth,
         toolCalls: e.toolCalls ?? get().toolCalls,
-        retry: e.state === 'running' ? get().retry : null
+        retry: e.state === 'running' ? get().retry : null,
+        // 중단 후 응답 불가능한 확인 카드가 남지 않도록 정리
+        confirm: done ? null : get().confirm
       })
     }
   }

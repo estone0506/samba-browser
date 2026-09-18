@@ -63,10 +63,10 @@ export class AgentRunner {
   }
 
   async run(prompt: string): Promise<void> {
-    // agent:run 은 즉시 ack 를 돌려주므로, 거절 사실도 status 이벤트로 알려야 UI 가 복구된다
+    // 이미 실행 중이면 세대 가드 없이 status 를 emit 하면 진행 중인 실행의 UI 를 덮어쓸 수 있다.
+    // 핸들러가 throw 를 { ok: false, error } 로 ack 하므로 에러만 던진다.
     if (this.abort) {
-      this.emit({ type: 'status', state: 'failed', message: 'busy: agent is already running' })
-      return
+      throw new Error('이미 실행 중')
     }
     // 이전 작업의 잔여 확인 요청 정리
     this.clearPending()

@@ -64,6 +64,16 @@ describe('chatStore 상태 가드', () => {
     expect(useChatStore.getState().status).toBe('stopped')
   })
 
+  it('confirm 대기 중 stopped 가 오면 confirm 을 정리한다', () => {
+    useChatStore.setState({
+      status: 'running',
+      confirm: { requestId: 'req-1', action: '위험한 작업', kind: 'danger' }
+    })
+    fire({ type: 'status', state: 'stopped' })
+    expect(useChatStore.getState().status).toBe('stopped')
+    expect(useChatStore.getState().confirm).toBeNull()
+  })
+
   it('이전 run 의 늦은 오류 응답이 새 실행을 failed 로 덮지 않는다', async () => {
     // 첫 실행의 invoke 는 아주 늦게 ok:false 로 끝난다
     let releaseFirst: (r: IpcResult<AgentRunAck>) => void = () => {}
