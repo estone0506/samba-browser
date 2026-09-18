@@ -1,8 +1,9 @@
 import { join } from 'node:path'
 import { app } from 'electron'
-import { electronApp, optimizer } from '@electron-toolkit/utils'
+import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { createMainWindow } from './window'
 import { TabManager } from './browser/tab-manager'
+import { registerInternalProtocol, registerInternalScheme } from './browser/internal-protocol'
 import { registerIpc } from './ipc/handlers'
 import { openDatabase, type Db } from './db/client'
 import type { VaultService } from './vault/service'
@@ -12,6 +13,9 @@ import { runLoginHarness, writeVaultLocked } from './e2e/login-harness'
 // app.whenReady() 이전에 지정해야 하므로 모듈 최상단에서 처리한다
 const userDataOverride = process.env.SAMBA_USER_DATA
 if (userDataOverride) app.setPath('userData', userDataOverride)
+
+// 내부 페이지 스킴(samba://) 등록도 app.whenReady() 이전이어야 한다
+registerInternalScheme()
 
 // 어디서도 잡지 못한 Promise 거부는 조용히 사라지지 않게 기록한다
 process.on('unhandledRejection', (reason) => {
@@ -48,6 +52,13 @@ app
   .then(async () => {
     electronApp.setAppUserModelId('com.samba.browser')
     app.on('browser-window-created', (_, w) => optimizer.watchWindowShortcuts(w))
+    // 자체 새 탭 페이지 서빙. 개발 모드에서는 vite 개발 서버로 넘긴다
+    registerInternalProtocol({
+      rendererDir: join(__dirname, '../renderer'),
+      ...(is.dev && process.env['ELECTRON_RENDERER_URL']
+        ? { devServerUrl: process.env['ELECTRON_RENDERER_URL'] }
+        : {})
+    })
     const win = createMainWindow()
     const tabs = new TabManager(win)
     db = await openDatabase(join(app.getPath('userData'), 'data.db'))
@@ -79,7 +90,8 @@ app
       app.quit()
       return
     }
-    tabs.create({ url: 'https://www.google.com' })
+    // url 을 주지 않으면 설정에서 계산된 기본 주소(새 탭 페이지/홈/빈 페이지)로 연다
+    tabs.create()
     // macOS 의 activate 재생성은 1단계(Windows 전용) 범위 밖이라 배선하지 않는다
   })
   .catch((e: unknown) => {
