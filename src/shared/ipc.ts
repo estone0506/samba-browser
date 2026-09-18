@@ -45,6 +45,8 @@ export type AgentEvent =
   | { type: 'text'; text: string }
   | { type: 'step'; label: string; ok: boolean }
   | { type: 'confirm'; requestId: string; action: string }
+  // 진행 상황만 알리는 이벤트(도구 호출 아님). 지금은 SDK 재시도 대기 표시에 쓴다
+  | { type: 'progress'; kind: 'apiRetry'; attempt: number; reason: string }
   | {
       type: 'status'
       state: 'running' | 'done' | 'failed' | 'stopped'

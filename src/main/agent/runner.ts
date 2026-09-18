@@ -6,6 +6,7 @@ import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
 import { buildSystemPrompt } from './prompt'
 import { runQuery, classifyAuthError, isFatalApiError } from './provider'
 import { makeCounter } from './counter'
+import { createTextDeduper } from './dedupe'
 
 // 확인 요청 응답 대기 상한 30분
 const CONFIRM_TIMEOUT_MS = 30 * 60 * 1000
@@ -20,6 +21,8 @@ interface PendingConfirm {
 export class AgentRunner {
   private abort: AbortController | null = null
   private pending = new Map<string, PendingConfirm>()
+  // 실행 세대 번호. 중단된 이전 스트림이 뒤늦게 보내는 이벤트를 걸러낸다
+  private generation = 0
 
   constructor(
     private tabs: TabManager,
@@ -48,7 +51,13 @@ export class AgentRunner {
   stop(): void {
     // 실행 중이 아니면 아무것도 하지 않는다(중복 stopped 방지)
     if (!this.abort) return
-    this.abort.abort()
+    const abort = this.abort
+    // 곧바로 새 작업을 받을 수 있도록 abort 를 동기적으로 비운다.
+    // (SDK 스트림은 재시도 백오프 중이면 수십 초 뒤에야 끝나므로 finally 를 기다릴 수 없다)
+    this.abort = null
+    // 세대를 올려 이전 스트림의 잔여 이벤트를 무시한다
+    this.generation += 1
+    abort.abort()
     this.clearPending()
     this.emit({ type: 'status', state: 'stopped' })
   }
@@ -60,7 +69,13 @@ export class AgentRunner {
     const s = this.settings.get()
     const abort = new AbortController()
     this.abort = abort
+    const gen = ++this.generation
+    // 이 실행이 최신 세대일 때만 UI 로 이벤트를 보낸다
+    const emit = (e: AgentEvent): void => {
+      if (gen === this.generation) this.emit(e)
+    }
     const counter = makeCounter(s.maxToolCalls)
+    const deduper = createTextDeduper()
     // api_retry 로 관측한 마지막 API 오류(결과 메시지에 문구가 없을 때 사용)
     let apiError = ''
     // 종료 상태를 이미 보냈는지. SDK 는 오류 result 를 내보낸 뒤 throw 까지 하므로 중복 방지
@@ -69,7 +84,7 @@ export class AgentRunner {
       tabs: this.tabs,
       dangerWords: s.dangerWords,
       tick: counter.tick,
-      onStep: (label, ok) => this.emit({ type: 'step', label, ok }),
+      onStep: (label, ok) => emit({ type: 'step', label, ok }),
       confirm: (action) =>
         new Promise<boolean>((resolve) => {
           const id = randomUUID()
@@ -80,10 +95,10 @@ export class AgentRunner {
           // 대기 타이머가 앱 종료를 막지 않도록 한다
           timer.unref?.()
           this.pending.set(id, { resolve, timer })
-          this.emit({ type: 'confirm', requestId: id, action })
+          emit({ type: 'confirm', requestId: id, action })
         })
     })
-    this.emit({ type: 'status', state: 'running', toolCalls: 0 })
+    emit({ type: 'status', state: 'running', toolCalls: 0 })
     try {
       const stream = runQuery({
         prompt,
@@ -94,11 +109,15 @@ export class AgentRunner {
         abort
       })
       for await (const msg of stream) {
+        // 중단됐으면 남은 메시지는 읽지 않는다(스트림이 늦게 끝나도 UI 는 즉시 정리됨)
+        if (abort.signal.aborted) break
         if (msg.type === 'assistant') {
-          // SDKAssistantMessage.message = Anthropic API 메시지
+          // SDKAssistantMessage.message = Anthropic API 메시지.
+          // 같은 문단이 두 번 실려 오는 경우가 있어 중복 제거기를 거친다
           for (const block of msg.message.content) {
-            if (block.type === 'text' && block.text.trim())
-              this.emit({ type: 'text', text: block.text })
+            if (block.type !== 'text') continue
+            const text = deduper.accept(block.text)
+            if (text) emit({ type: 'text', text })
           }
         } else if (msg.type === 'system' && msg.subtype === 'api_retry') {
           // 인증 실패는 SDK 가 최대 10회 재시도한다(수 분 소요). 회복 불가 오류면 즉시 중단
@@ -106,7 +125,7 @@ export class AgentRunner {
           if (isFatalApiError(msg.error)) {
             const kind = classifyAuthError(apiError)
             settled = true
-            this.emit({
+            emit({
               type: 'status',
               state: 'failed',
               message: kind ? `auth:${kind}` : apiError,
@@ -115,6 +134,8 @@ export class AgentRunner {
             abort.abort()
             return
           }
+          // 재시도 가능한 오류(rate_limit·overloaded·server_error)는 진행 띠에만 알린다
+          emit({ type: 'progress', kind: 'apiRetry', attempt: msg.attempt, reason: msg.error })
         } else if (msg.type === 'result') {
           const failed = msg.subtype !== 'success' || msg.is_error
           // 실패 사유 문구를 모아 인증 오류 여부를 판정
@@ -125,8 +146,13 @@ export class AgentRunner {
             .filter(Boolean)
             .join(' ')
           const kind = classifyAuthError(detail)
+          // assistant 텍스트를 한 번도 못 받았을 때만 최종 결과 문자열을 대신 보여준다
+          if (!failed && deduper.count() === 0) {
+            const text = deduper.accept(msg.subtype === 'success' ? msg.result : '')
+            if (text) emit({ type: 'text', text })
+          }
           settled = true
-          this.emit({
+          emit({
             type: 'status',
             state: failed ? 'failed' : 'done',
             toolCalls: counter.count(),
@@ -139,7 +165,7 @@ export class AgentRunner {
       if (!abort.signal.aborted && !settled) {
         const message = e instanceof Error ? e.message : String(e)
         const kind = classifyAuthError(`${message} ${apiError}`)
-        this.emit({
+        emit({
           type: 'status',
           state: 'failed',
           message: kind ? `auth:${kind}` : message,
@@ -147,8 +173,11 @@ export class AgentRunner {
         })
       }
     } finally {
-      this.abort = null
-      this.clearPending()
+      // 이미 stop() 이나 다음 run() 이 상태를 가져갔으면 건드리지 않는다
+      if (gen === this.generation) {
+        this.abort = null
+        this.clearPending()
+      }
     }
   }
 }
