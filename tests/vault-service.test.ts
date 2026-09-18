@@ -1,0 +1,345 @@
+// 속도를 위해 테스트에서는 argon2id 메모리를 낮춘다 (import 전에 설정)
+process.env.VAULT_KDF_MEM = '8192'
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { openDatabase, type Db } from '../src/main/db/client'
+import { VaultService, type SafeStorageLike } from '../src/main/vault/service'
+import { DEFAULT_SETTINGS, type Settings } from '../src/shared/settings'
+
+const SECRET = 'sup3rs3cret!'
+
+// SettingsStore 는 electron app 에 의존하므로 테스트에서는 최소 인터페이스만 흉내낸다
+function makeSettings(patch: Partial<Settings> = {}): { get: () => Settings } {
+  const value: Settings = { ...DEFAULT_SETTINGS, ...patch }
+  return { get: () => value }
+}
+
+// safeStorage 스텁 — 실제 DPAPI 대신 접두사만 붙여 왕복을 흉내낸다
+function makeSafeStorage(available = true): SafeStorageLike {
+  return {
+    isEncryptionAvailable: () => available,
+    encryptString: (plain: string) => Buffer.from(`wrapped:${plain}`, 'utf8'),
+    decryptString: (buf: Buffer) => {
+      const s = buf.toString('utf8')
+      if (!s.startsWith('wrapped:')) throw new Error('복호화 실패')
+      return s.slice('wrapped:'.length)
+    }
+  }
+}
+
+describe('VaultService', () => {
+  let db: Db
+  let vault: VaultService
+
+  beforeEach(async () => {
+    db = await openDatabase(':memory:')
+    vault = new VaultService(db, makeSettings())
+  })
+
+  afterEach(() => {
+    vault.dispose()
+    db.close()
+    vi.useRealTimers()
+  })
+
+  it('처음에는 uninitialized, setup 하면 unlocked', async () => {
+    expect(vault.state()).toBe('uninitialized')
+    await vault.setup('master-pw')
+    expect(vault.state()).toBe('unlocked')
+  })
+
+  it('lock 하면 locked, 올바른 마스터로 다시 unlock 된다', async () => {
+    await vault.setup('master-pw')
+    vault.lock()
+    expect(vault.state()).toBe('locked')
+    await expect(vault.unlock('master-pw')).resolves.toBe(true)
+    expect(vault.state()).toBe('unlocked')
+  })
+
+  it('잘못된 마스터 비밀번호는 false 를 반환하고 잠긴 상태를 유지한다', async () => {
+    await vault.setup('master-pw')
+    vault.lock()
+    await expect(vault.unlock('wrong-pw')).resolves.toBe(false)
+    expect(vault.state()).toBe('locked')
+  })
+
+  it('putItem 후 listItems 결과에 값·ciphertext 가 없다', async () => {
+    await vault.setup('master-pw')
+    const account = vault.upsertAccount({
+      host: 'example.com',
+      label: '메인',
+      username: 'alice',
+      isDefault: true
+    })
+    const meta = vault.putItem({
+      accountId: account.id,
+      type: 'login_password',
+      label: '로그인 비밀번호',
+      value: SECRET
+    })
+
+    const items = vault.listItems(account.id)
+    expect(items).toHaveLength(1)
+    expect(items[0].id).toBe(meta.id)
+    expect(items[0].type).toBe('login_password')
+    // 메타에는 값 관련 필드 자체가 없어야 한다
+    expect(Object.keys(items[0]).sort()).toEqual(
+      ['accountId', 'id', 'label', 'type', 'updatedAt'].sort()
+    )
+  })
+
+  it('공개 목록·메타 어디에도 비밀값 문자열이 직렬화되지 않는다', async () => {
+    await vault.setup('master-pw')
+    const account = vault.upsertAccount({
+      host: 'example.com',
+      label: '메인',
+      username: 'alice',
+      isDefault: true
+    })
+    vault.putItem({
+      accountId: account.id,
+      type: 'login_password',
+      label: '로그인 비밀번호',
+      value: SECRET
+    })
+
+    const serialized = JSON.stringify({
+      state: vault.state(),
+      sites: vault.listSites(),
+      accounts: vault.listAccounts('example.com'),
+      allAccounts: vault.listAccounts(),
+      items: vault.listItems(account.id),
+      globalItems: vault.listItems(null)
+    })
+    expect(serialized).not.toMatch(/sup3rs3cret/)
+    expect(serialized).not.toMatch(/ciphertext/i)
+    expect(serialized).not.toMatch(/\biv\b/)
+  })
+
+  it('reveal 은 잠금 상태에서 throw 하고, 해제 상태에서 원문을 돌려준다', async () => {
+    await vault.setup('master-pw')
+    const account = vault.upsertAccount({
+      host: 'example.com',
+      label: '메인',
+      username: 'alice',
+      isDefault: false
+    })
+    const meta = vault.putItem({
+      accountId: account.id,
+      type: 'login_password',
+      label: '로그인 비밀번호',
+      value: SECRET
+    })
+
+    expect(vault.reveal(meta.id)).toBe(SECRET)
+
+    vault.lock()
+    expect(() => vault.reveal(meta.id)).toThrow()
+  })
+
+  it('getSecretForFill 왕복 — 계정/타입으로 평문을 얻는다', async () => {
+    await vault.setup('master-pw')
+    const account = vault.upsertAccount({
+      host: 'example.com',
+      label: '메인',
+      username: 'alice',
+      isDefault: true
+    })
+    vault.putItem({
+      accountId: account.id,
+      type: 'login_password',
+      label: '로그인 비밀번호',
+      value: SECRET
+    })
+
+    expect(vault.getSecretForFill(account.id, 'login_password', 'job-1')).toBe(SECRET)
+    expect(vault.getSecretForFill(account.id, 'card')).toBeNull()
+
+    vault.lock()
+    expect(vault.getSecretForFill(account.id, 'login_password')).toBeNull()
+  })
+
+  it('reveal/fill 은 감사 로그를 남긴다', async () => {
+    await vault.setup('master-pw')
+    const account = vault.upsertAccount({
+      host: 'example.com',
+      label: '메인',
+      username: 'alice',
+      isDefault: true
+    })
+    const meta = vault.putItem({
+      accountId: account.id,
+      type: 'login_password',
+      label: '로그인 비밀번호',
+      value: SECRET
+    })
+
+    vault.reveal(meta.id)
+    vault.getSecretForFill(account.id, 'login_password', 'job-9')
+
+    const log = vault.listAudit()
+    const reveal = log.find((r) => r.action === 'reveal')
+    const fill = log.find((r) => r.action === 'fill')
+    expect(reveal).toBeDefined()
+    expect(reveal?.source).toBe('user')
+    expect(reveal?.itemId).toBe(meta.id)
+    expect(fill).toBeDefined()
+    expect(fill?.source).toBe('ai')
+    expect(fill?.jobId).toBe('job-9')
+    // 감사 로그에도 값은 들어가지 않는다
+    expect(JSON.stringify(log)).not.toMatch(/sup3rs3cret/)
+  })
+
+  it('deleteItem 후 목록에서 사라진다', async () => {
+    await vault.setup('master-pw')
+    const account = vault.upsertAccount({
+      host: 'example.com',
+      label: '메인',
+      username: 'alice',
+      isDefault: true
+    })
+    const meta = vault.putItem({
+      accountId: account.id,
+      type: 'login_password',
+      label: '로그인 비밀번호',
+      value: SECRET
+    })
+    vault.deleteItem(meta.id)
+    expect(vault.listItems(account.id)).toHaveLength(0)
+  })
+
+  it('listAccounts 는 보유한 항목 타입을 함께 준다', async () => {
+    await vault.setup('master-pw')
+    const account = vault.upsertAccount({
+      host: 'example.com',
+      label: '메인',
+      username: 'alice',
+      isDefault: true
+    })
+    vault.putItem({
+      accountId: account.id,
+      type: 'login_password',
+      label: '로그인 비밀번호',
+      value: SECRET
+    })
+    vault.putItem({
+      accountId: account.id,
+      type: 'card',
+      label: '카드',
+      value: '4111-1111-1111-1111'
+    })
+
+    const accounts = vault.listAccounts('example.com')
+    expect(accounts).toHaveLength(1)
+    expect(accounts[0].itemTypes.sort()).toEqual(['card', 'login_password'])
+    expect(vault.listSites().map((s) => s.host)).toEqual(['example.com'])
+  })
+
+  it('미사용 시간이 설정값(분)을 넘으면 자동으로 잠긴다', async () => {
+    vi.useFakeTimers()
+    await vault.setup('master-pw')
+    expect(vault.state()).toBe('unlocked')
+
+    // 기본 15분 - 1ms 까지는 열려 있다
+    vi.advanceTimersByTime(15 * 60 * 1000 - 1)
+    expect(vault.state()).toBe('unlocked')
+
+    vi.advanceTimersByTime(1)
+    expect(vault.state()).toBe('locked')
+  })
+
+  it('touch() 는 자동 잠금 타이머를 되돌린다', async () => {
+    vi.useFakeTimers()
+    await vault.setup('master-pw')
+
+    vi.advanceTimersByTime(14 * 60 * 1000)
+    vault.touch()
+    vi.advanceTimersByTime(14 * 60 * 1000)
+    expect(vault.state()).toBe('unlocked')
+
+    vi.advanceTimersByTime(60 * 1000)
+    expect(vault.state()).toBe('locked')
+  })
+
+  it('onStateChanged 구독자가 상태 변화를 받는다', async () => {
+    const seen: string[] = []
+    const off = vault.onStateChanged((s) => seen.push(s))
+    await vault.setup('master-pw')
+    vault.lock()
+    off()
+    await vault.unlock('master-pw')
+    expect(seen).toEqual(['unlocked', 'locked'])
+  })
+
+  it('보류 중 캡처는 60초 뒤 폐기되고, take 하면 즉시 비워진다', async () => {
+    vi.useFakeTimers()
+    vault.setPendingCapture({
+      host: 'example.com',
+      username: 'alice',
+      password: SECRET,
+      isNew: true
+    })
+    const taken = vault.takePendingCapture()
+    expect(taken?.password).toBe(SECRET)
+    // 한 번 가져가면 사라진다
+    expect(vault.takePendingCapture()).toBeNull()
+
+    vault.setPendingCapture({
+      host: 'example.com',
+      username: 'alice',
+      password: SECRET,
+      isNew: false
+    })
+    vi.advanceTimersByTime(60 * 1000 + 1)
+    expect(vault.takePendingCapture()).toBeNull()
+  })
+
+  it('capture 프롬프트 DTO 에는 비밀번호가 없다', () => {
+    vault.setPendingCapture({
+      host: 'example.com',
+      username: 'alice',
+      password: SECRET,
+      isNew: true
+    })
+    const prompt = vault.pendingCapturePrompt()
+    expect(prompt).toEqual({ host: 'example.com', username: 'alice', isNew: true })
+    expect(JSON.stringify(prompt)).not.toMatch(/sup3rs3cret/)
+  })
+
+  describe('기기 기억(vaultRememberDevice)', () => {
+    it('켜져 있으면 다음 인스턴스가 마스터 없이 자동 해제된다', async () => {
+      const settings = makeSettings({ vaultRememberDevice: true })
+      const safeStorage = makeSafeStorage()
+      const first = new VaultService(db, settings, { safeStorage })
+      await first.setup('master-pw')
+      first.dispose()
+
+      const second = new VaultService(db, settings, { safeStorage })
+      expect(second.state()).toBe('unlocked')
+      second.dispose()
+    })
+
+    it('safeStorage 를 쓸 수 없으면 잠긴 상태를 유지한다', async () => {
+      const settings = makeSettings({ vaultRememberDevice: true })
+      const first = new VaultService(db, settings, { safeStorage: makeSafeStorage() })
+      await first.setup('master-pw')
+      first.dispose()
+
+      const second = new VaultService(db, settings, { safeStorage: makeSafeStorage(false) })
+      expect(second.state()).toBe('locked')
+      second.dispose()
+    })
+
+    it('꺼져 있으면 감싼 키를 저장하지 않아 자동 해제되지 않는다', async () => {
+      const settings = makeSettings({ vaultRememberDevice: false })
+      const safeStorage = makeSafeStorage()
+      const first = new VaultService(db, settings, { safeStorage })
+      await first.setup('master-pw')
+      first.dispose()
+
+      const second = new VaultService(db, settings, { safeStorage })
+      expect(second.state()).toBe('locked')
+      second.dispose()
+    })
+  })
+})
