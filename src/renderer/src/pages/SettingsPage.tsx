@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import i18n from '@renderer/i18n'
 import { cn } from '@renderer/lib/utils'
 import { VaultSettingsPanel } from '@renderer/components/vault/VaultSettingsPanel'
+import { ExtensionsSection } from '@renderer/components/settings/ExtensionsSection'
 import { Switch } from '@renderer/components/ui/switch'
 import { isHttpUrl, isInternalUrl } from '@shared/url'
 import type { NewTabUrlMode, PermissionMode, SearchEngine, Settings } from '@shared/settings'
@@ -267,6 +268,9 @@ export function SettingsPage(): React.JSX.Element {
             </button>
           </SettingsRow>
         </SettingsSection>
+
+        {/* 확장 — 압축 해제된 크롬 확장 폴더 */}
+        <ExtensionsSection />
       </div>
 
       <VaultSettingsPanel open={vaultSettingsOpen} onOpenChange={setVaultSettingsOpen} />

@@ -128,6 +128,9 @@ export class TabManager {
   // 탭 세션 파티션 접두사. 작업공간이 바뀌면 handlers 가 갈아 끼운다.
   // 이미 열려 있는 탭의 세션은 건드리지 않고, 새로 여는 탭부터 새 파티션을 쓴다
   private partitionPrefix = 'persist:'
+  // 이 창이 실제로 만든 파티션 세션. 새 파티션이 생기면 확장 관리자에게 알려 준다
+  private partitionSessions = new Map<string, Session>()
+  private sessionHook: ((ses: Session, partition: string) => void) | null = null
   // 창 안에서만 듣는 키 입력 처리기(작업공간 Ctrl+Alt+1~9). true 를 돌려주면 페이지로 넘기지 않는다
   private inputHandler: ((input: Input) => boolean) | null = null
   // === 신규 추가분 끝 ========================================================
@@ -174,6 +177,15 @@ export class TabManager {
    */
   setPartitionPrefix(prefix: string): void {
     this.partitionPrefix = prefix
+  }
+
+  /**
+   * 파티션 세션이 처음 만들어질 때 호출될 처리기를 연결한다(확장 재로드용).
+   * 이미 만들어 둔 세션에는 곧바로 한 번씩 적용한다
+   */
+  setSessionHook(fn: (ses: Session, partition: string) => void): void {
+    this.sessionHook = fn
+    for (const [partition, ses] of this.partitionSessions) fn(ses, partition)
   }
 
   /**
@@ -282,6 +294,11 @@ export class TabManager {
     hardenSession(ses, partition)
     // 파티션 세션에도 samba:// 핸들러를 붙인다(기본 세션 등록만으로는 탭에서 안 열림)
     attachInternalProtocol(ses)
+    // 처음 보는 파티션이면 확장 관리자에게 알려 같은 확장을 이 세션에도 걸게 한다
+    if (!this.partitionSessions.has(partition)) {
+      this.partitionSessions.set(partition, ses)
+      this.sessionHook?.(ses, partition)
+    }
     const view = new WebContentsView({
       webPreferences: {
         session: ses,

@@ -443,6 +443,21 @@
       "description": "키마스터 저장/잠금 정책",
       "descriptionDetail": "자동 잠금·AI 접근 정책·자동 제출 등을 설정해요",
       "open": "키마스터 설정 열기"
+    },
+    "extensions": {
+      "title": "확장",
+      "add": "확장 폴더 불러오기",
+      "addDesc": "압축 해제된 크롬 확장 폴더(manifest.json 이 들어 있는 폴더)만 불러올 수 있어요. .crx 파일과 웹스토어 설치는 지원하지 않아요",
+      "addButton": "폴더 선택",
+      "adding": "불러오는 중…",
+      "empty": "불러온 확장이 없어요",
+      "remove": "제거",
+      "failedTitle": "불러오지 못한 확장",
+      "limitsTitle": "알아두실 점",
+      "limitMv3": "MV3(Manifest V3)의 일부 API 는 아직 지원되지 않아요",
+      "limitServiceWorker": "백그라운드 서비스 워커는 제약이 있어 확장이 기대대로 동작하지 않을 수 있어요",
+      "limitNoAutoUpdate": "확장 자동 업데이트가 없어요. 새 버전은 폴더를 다시 불러와야 해요",
+      "limitPartition": "프로필별 분리는 작업공간(세션 파티션) 단위로만 이뤄져요"
     }
   }
 }
