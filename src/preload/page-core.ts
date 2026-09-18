@@ -3,6 +3,11 @@
 // preload 로드가 실패한다. 타입은 `import type` 만 사용(번들에 남지 않음), 값은 ./page-constants 에서.
 import type { PageElement, PageSnapshot } from '../shared/snapshot'
 import { MAX_ELEMENTS } from './page-constants'
+import {
+  detectLoginFields,
+  usernameElementFor as detectUsernameElementFor,
+  type LoginFields
+} from './login-detect'
 
 // 스냅샷 id → 실제 DOM 요소 매핑 (스냅샷마다 갱신)
 let registry: HTMLElement[] = []
@@ -191,42 +196,9 @@ function formOf(el: HTMLElement): HTMLFormElement | null {
   return null
 }
 
-const USERNAME_HINT = /id|user|email|login|phone|아이디|이메일/i
-
-function isUsernameCandidate(el: HTMLInputElement): boolean {
-  const auto = (el.getAttribute('autocomplete') || '').toLowerCase()
-  if (auto === 'username' || auto === 'email') return true
-  const hay = `${el.name} ${el.id} ${el.getAttribute('placeholder') || ''}`
-  return USERNAME_HINT.test(hay)
-}
-
-function isTextishInput(el: HTMLInputElement): boolean {
-  return el.type === 'text' || el.type === 'email' || el.type === 'tel'
-}
-
-// password 입력칸보다 문서 순서상 앞에 있는, 보이는 text/email/tel 입력을 문서 순서대로 모은다.
-// password 가 form 안에 있으면 같은 form 소속만 후보로 삼는다(무관한 폼의 입력을 잘못 고르지 않도록).
-// form 이 없을 때만 문서 전체에서 찾는다.
-function textCandidatesBefore(passwordEl: HTMLInputElement): HTMLInputElement[] {
-  const pwForm = formOf(passwordEl)
-  const all = Array.from(document.querySelectorAll<HTMLInputElement>('input'))
-  const pwPos = all.indexOf(passwordEl)
-  if (pwPos === -1) return []
-  const candidates: HTMLInputElement[] = []
-  for (let i = 0; i < pwPos; i++) {
-    const el = all[i]
-    if (!isVisible(el) || !isTextishInput(el)) continue
-    if (pwForm && formOf(el) !== pwForm) continue
-    candidates.push(el)
-  }
-  return candidates
-}
-
-// username 후보: 자동완성/이름 힌트가 맞는 입력 우선, 없으면 password 바로 앞 텍스트 입력
+// username 후보 선택은 login-detect 모듈(Chromium/Bitwarden 규칙 이식)에 위임한다
 function usernameElementFor(passwordEl: HTMLInputElement): HTMLInputElement | undefined {
-  const candidates = textCandidatesBefore(passwordEl)
-  const matched = candidates.find(isUsernameCandidate)
-  return matched ?? candidates[candidates.length - 1]
+  return detectUsernameElementFor(passwordEl)
 }
 
 function isSubmitLike(el: HTMLElement): boolean {
@@ -244,48 +216,11 @@ function isButtonish(el: HTMLElement): boolean {
 
 const LOGIN_TEXT = /로그인하기|로그인|login|sign in/i
 
-// registry(현재 스냅샷) 안에서 submit 버튼의 id 를 찾는다
-function findSubmit(passwordEl: HTMLInputElement): number | undefined {
-  const form = formOf(passwordEl)
-  if (form) {
-    for (let i = 0; i < registry.length; i++) {
-      const el = registry[i]
-      if (formOf(el) !== form) continue
-      if (isSubmitLike(el)) return i + 1
-    }
-    return undefined
-  }
-  for (let i = 0; i < registry.length; i++) {
-    const el = registry[i]
-    if (!isButtonish(el)) continue
-    if (LOGIN_TEXT.test(labelOf(el))) return i + 1
-  }
-  return undefined
-}
-
-// 로그인 필드 탐지. registry 가 비어 있으면(스냅샷을 아직 안 찍었으면) buildSnapshot 을 먼저 호출한다
-export function findLoginFields(): { username?: number; password?: number; submit?: number } {
+// 로그인 필드 탐지. registry 가 비어 있으면(스냅샷을 아직 안 찍었으면) buildSnapshot 을 먼저 호출한다.
+// 실제 판정은 login-detect 모듈(Chromium/Bitwarden 규칙 이식)이 담당한다
+export function findLoginFields(): LoginFields {
   if (registry.length === 0) buildSnapshot()
-
-  const pwEl = registry.find(
-    (el) => el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'password'
-  ) as HTMLInputElement | undefined
-  if (!pwEl) return {}
-
-  const result: { username?: number; password?: number; submit?: number } = {
-    password: registry.indexOf(pwEl) + 1
-  }
-
-  const userEl = usernameElementFor(pwEl)
-  if (userEl) {
-    const idx = registry.indexOf(userEl)
-    if (idx !== -1) result.username = idx + 1
-  }
-
-  const submitId = findSubmit(pwEl)
-  if (submitId !== undefined) result.submit = submitId
-
-  return result
+  return detectLoginFields(registry)
 }
 
 // 요소의 form 이 있으면 requestSubmit, 없으면 click 으로 제출(둘 다 실제 제출 동작을 유발)
