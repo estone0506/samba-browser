@@ -63,7 +63,7 @@ app
     const win = createMainWindow()
     // 파비콘은 사이트 자체에서만 받아온다(제3자 전송 없음). 탭 생성 전에 등록해야
     // 첫 탭의 page-favicon-updated 도 캐시에 들어간다
-    registerFaviconIpc()
+    registerFaviconIpc(win)
     const tabs = new TabManager(win)
     db = await openDatabase(join(app.getPath('userData'), 'data.db'))
     const ipc = registerIpc(win, tabs, db)

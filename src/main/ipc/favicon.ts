@@ -5,29 +5,29 @@ import { join } from 'node:path'
 import { app, ipcMain, net } from 'electron'
 import { IPC, type IpcResult } from '../../shared/ipc'
 import { FaviconService, setFaviconService, type FaviconResponse } from '../favicon/service'
+import { assertFromRenderer, type RendererWindowLike } from './sender'
 
 export interface FaviconGetResult {
   dataUrl: string | null
 }
 
-export function registerFaviconIpc(): FaviconService {
+// win: 렌더러 창. 파비콘 조회도 UI 전용 채널이므로 발신자를 렌더러 창으로 제한한다
+export function registerFaviconIpc(win: RendererWindowLike): FaviconService {
   const service = new FaviconService({
     cacheDir: join(app.getPath('userData'), 'favicons'),
     fetch: (url, init) => net.fetch(url, init) as unknown as Promise<FaviconResponse>
   })
   setFaviconService(service)
 
-  ipcMain.handle(
-    IPC.faviconGet,
-    async (_e, host: unknown): Promise<IpcResult<FaviconGetResult>> => {
+  ipcMain.handle(IPC.faviconGet, async (e, host: unknown): Promise<IpcResult<FaviconGetResult>> => {
+    try {
+      assertFromRenderer(win, e.sender)
       if (typeof host !== 'string') return { ok: true, data: { dataUrl: null } }
-      try {
-        return { ok: true, data: { dataUrl: await service.get(host) } }
-      } catch (e: unknown) {
-        return { ok: false, error: e instanceof Error ? e.message : String(e) }
-      }
+      return { ok: true, data: { dataUrl: await service.get(host) } }
+    } catch (e: unknown) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
-  )
+  })
 
   return service
 }
