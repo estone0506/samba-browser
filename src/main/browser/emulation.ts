@@ -4,6 +4,11 @@ import type { WebContents } from 'electron'
 const MOBILE_UA =
   'Mozilla/5.0 (Linux; Android 14; SM-F711N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36'
 
+// CDP device metrics 폭. tab-manager 의 뷰 중앙 정렬 계산도 이 값을 그대로 써서
+// "에뮬레이션이 보고하는 뷰포트 폭"과 "실제로 화면에 그려지는 카드 폭"이 어긋나지 않게 한다
+export const MOBILE_WIDTH = 412
+export const MOBILE_HEIGHT = 915
+
 // webContents 별 직렬 실행 큐. PC↔모바일 연타 시 attach/detach 가 뒤엉키지 않게 한다
 const queues = new WeakMap<WebContents, Promise<void>>()
 
@@ -66,8 +71,8 @@ export function applyMobileEmulation(wc: WebContents): Promise<void> {
     if (!attach(wc)) return
     setUserAgent(wc, MOBILE_UA)
     await send(wc, 'Emulation.setDeviceMetricsOverride', {
-      width: 412,
-      height: 915,
+      width: MOBILE_WIDTH,
+      height: MOBILE_HEIGHT,
       deviceScaleFactor: 2.6,
       mobile: true
     })

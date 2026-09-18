@@ -50,4 +50,32 @@ describe('computeViewBounds', () => {
     expect(b.width).toBe(0)
     expect(b.height).toBe(0)
   })
+
+  it('모바일: 넓은 레이아웃에서는 412px 카드가 가운데 정렬된다', () => {
+    // 1440x900 에서 잰 reported(가용 폭 816px)를 그대로 재투영한 경우
+    const b = computeViewBounds(reported, 1440, 900, true)
+    expect(b.width).toBe(412)
+    // 가용 폭(816) 안에서 좌우 여백이 같아야 한다
+    const available = 1440 - reported.x - (1440 - (reported.x + reported.width))
+    expect(b.x).toBe(reported.x + Math.floor((available - 412) / 2))
+    expect(available - b.width - (b.x - reported.x)).toBe(Math.ceil((available - 412) / 2))
+    // 높이는 전체 그대로 유지한다(세로는 중앙 정렬하지 않기로 결정)
+    expect(b.height).toBe(788)
+    expect(b.y).toBe(101)
+  })
+
+  it('모바일: 가용 폭이 412px 보다 좁으면 폭 전체를 그대로 쓰고 좁히지 않는다', () => {
+    const narrow: Layout = {
+      x: 10,
+      y: 20,
+      width: 300,
+      height: 500,
+      viewportWidth: 320,
+      viewportHeight: 600
+    }
+    const b = computeViewBounds(narrow, 320, 600, true)
+    expect(b.width).toBe(300)
+    expect(b.x).toBe(10)
+    expect(b.height).toBe(500)
+  })
 })

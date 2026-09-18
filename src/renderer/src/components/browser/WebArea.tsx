@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import type React from 'react'
+import { useBrowserStore } from '../../stores/browserStore'
 
 // 실제 웹페이지(WebContentsView)는 메인이 그림. 이 컴포넌트는 빈 자리를 만들고 좌표만 보고
 export function WebArea(): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
+  const mobile = useBrowserStore((s) => s.activeTab?.mobile ?? false)
   const send = useCallback((): void => {
     const el = ref.current
     if (!el) return
@@ -43,6 +45,18 @@ export function WebArea(): React.JSX.Element {
     }
   }, [send])
   // min-h-0: flex-col 안에서 내용이 없어도 자동 최소 높이(auto)로 인해
-  // 카드 밖으로 넘치지 않도록 보정
-  return <div ref={ref} className="min-h-0 flex-1 bg-white" />
+  // 카드 밖으로 넘치지 않도록 보정.
+  // 네이티브 WebContentsView 가 이 div 바로 위에 겹쳐 그려지므로, 여기 배경/placeholder 는
+  // 뷰가 아직 붙기 전(로딩 전환 등) 또는 뷰 경계 밖으로 보이는 여백을 위한 시각 보조일 뿐이다.
+  // 모바일: 양옆 여백을 앱 배경색으로, 가운데에 412px 폭 카드 느낌의 placeholder 를 깔아
+  // 웨일 모바일 창처럼 보이게 한다(실제 정렬은 tab-manager 의 computeViewBounds 가 담당)
+  return (
+    <div ref={ref} className="min-h-0 flex-1 bg-[var(--bg)]">
+      {mobile && (
+        <div className="flex h-full w-full items-stretch justify-center">
+          <div className="w-[412px] max-w-full rounded-t-2xl bg-white shadow-lg" />
+        </div>
+      )}
+    </div>
+  )
 }

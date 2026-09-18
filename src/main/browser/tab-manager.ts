@@ -3,7 +3,7 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type { Layout, TabInfo } from '../../shared/ipc'
 import { BLOCKED_URL_MESSAGE, isAllowedUrl } from '../../shared/url'
-import { applyMobileEmulation, clearMobileEmulation } from './emulation'
+import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
 
 export interface Tab {
   id: string
@@ -19,7 +19,14 @@ const DEFAULT_URL = 'https://www.google.com'
 // 지금 창 크기에 그대로 적용한다. 창 크기가 바뀌는 동안 렌더러의 재보고가
 // 늦거나 누락돼도(크기 변경 중 렌더링 파이프라인이 지연되면 실제로 생긴다)
 // 웹뷰가 카드 아래·오른쪽으로 삐져나오지 않는다.
-export function computeViewBounds(l: Layout, contentWidth: number, contentHeight: number): Layout {
+// mobile=true 이면 웹뷰를 웨일 모바일 창처럼 가운데 412px 폭 카드로 좁힌다.
+// 폭만 좁히고 x 를 다시 계산할 뿐, y·높이는 그대로 둔다(세로는 전체 유지하기로 결정)
+export function computeViewBounds(
+  l: Layout,
+  contentWidth: number,
+  contentHeight: number,
+  mobile = false
+): Layout {
   const empty = { x: 0, y: 0, width: 0, height: 0, viewportWidth: 0, viewportHeight: 0 }
   if (l.width <= 0 || l.height <= 0) return empty
   // 뷰포트 정보가 없는 오래된 보고는 좌표를 그대로 쓴다(하위 호환)
@@ -28,6 +35,19 @@ export function computeViewBounds(l: Layout, contentWidth: number, contentHeight
   const width = l.viewportWidth > 0 ? contentWidth - l.x - gapRight : l.width
   const height = l.viewportHeight > 0 ? contentHeight - l.y - gapBottom : l.height
   if (width <= 0 || height <= 0) return empty
+  if (mobile) {
+    // "현재" 창 크기로 재투영된 width 를 기준으로 좁힌다(창 크기 변경 중에도 카드가 어긋나지 않게)
+    const mobileWidth = Math.min(MOBILE_WIDTH, width)
+    const mobileX = l.x + Math.floor((width - mobileWidth) / 2)
+    return {
+      x: mobileX,
+      y: l.y,
+      width: mobileWidth,
+      height,
+      viewportWidth: contentWidth,
+      viewportHeight: contentHeight
+    }
+  }
   return {
     x: l.x,
     y: l.y,
@@ -244,6 +264,8 @@ export class TabManager {
     const tab = this.get(id)
     if (!tab) return
     tab.mobile = mobile
+    // 뷰 bounds(가운데 정렬 여부)는 에뮬레이션 통신을 기다릴 필요 없이 즉시 반영한다
+    this.applyBounds()
     const wc = tab.view.webContents
     // 에뮬레이션 적용/해제가 끝난 뒤에 새로고침해야 UA·뷰포트가 반영된다
     if (mobile) await applyMobileEmulation(wc)
@@ -257,13 +279,13 @@ export class TabManager {
     this.applyBounds()
   }
 
-  // 저장된 좌표를 현재 창 크기에 맞춰 활성 탭에 적용
+  // 저장된 좌표를 현재 창 크기에 맞춰 활성 탭에 적용. mobile 탭이면 가운데 412px 카드로 좁힌다
   private applyBounds(): void {
     if (this.disposed || this.win.isDestroyed()) return
-    const view = this.active()?.view
-    if (!view) return
+    const tab = this.active()
+    if (!tab) return
     const [w, h] = this.win.getContentSize()
-    view.setBounds(computeViewBounds(this.layout, w, h))
+    tab.view.setBounds(computeViewBounds(this.layout, w, h, tab.mobile))
   }
 }
 
