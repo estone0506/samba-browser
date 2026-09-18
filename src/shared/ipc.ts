@@ -35,6 +35,10 @@ export const IPC = {
   vaultDeleteAccounts: 'vault:deleteAccounts',
   vaultUndoDelete: 'vault:undoDelete',
   vaultAudit: 'vault:audit',
+  // 복구 키 — recoveryCreate 응답만 평문 복구 키를 돌려준다(화면 표시 1회용)
+  vaultRecoveryCreate: 'vault:recoveryCreate',
+  vaultRecoveryConfirm: 'vault:recoveryConfirm',
+  vaultRecoveryUnlock: 'vault:recoveryUnlock',
   vaultStateChanged: 'vault:stateChanged', // main → renderer 이벤트
   vaultCapturePrompt: 'vault:capturePrompt', // main → renderer 이벤트 (비밀번호 제외)
   vaultCaptureDecision: 'vault:captureDecision', // renderer → main

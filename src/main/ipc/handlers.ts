@@ -163,6 +163,10 @@ export function registerIpc(
   handleFromRenderer(IPC.vaultSetup, (master: string) => vault.setup(master))
   handleFromRenderer(IPC.vaultUnlock, (master: string) => vault.unlock(master))
   handleFromRenderer(IPC.vaultLock, () => vault.lock())
+  // 복구 키 — 발급 응답만 평문을 돌려주고, 확인을 통과해야 감싼 키가 저장된다
+  handleFromRenderer(IPC.vaultRecoveryCreate, () => vault.createRecoveryKey())
+  handleFromRenderer(IPC.vaultRecoveryConfirm, (input: string) => vault.confirmRecoveryKey(input))
+  handleFromRenderer(IPC.vaultRecoveryUnlock, (input: string) => vault.unlockWithRecoveryKey(input))
   handleFromRenderer(IPC.vaultSites, () => {
     vault.touch()
     return vault.listSites()

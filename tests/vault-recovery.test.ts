@@ -43,9 +43,7 @@ describe('복구 키 문자열', () => {
   })
 
   it('정규화가 소문자·공백·하이픈·혼동 문자를 교정한다', () => {
-    expect(normalizeRecoveryKey('k3f9 abcd-o1il 2345-6789-vwxy')).toBe(
-      'K3F9ABCD011123456789VWXY'
-    )
+    expect(normalizeRecoveryKey('k3f9 abcd-o1il 2345-6789-vwxy')).toBe('K3F9ABCD011123456789VWXY')
     // 대소문자·하이픈을 무시하므로 같은 키의 여러 표기가 같은 값으로 모인다
     const key = generateRecoveryKey()
     expect(normalizeRecoveryKey(key.toLowerCase())).toBe(normalizeRecoveryKey(key))
@@ -104,7 +102,11 @@ describe('VaultService 복구 키', () => {
   })
 
   function metaValue(key: string): Buffer | null {
-    const row = db.drizzle.select().from(vaultMeta).all().find((r) => r.key === key)
+    const row = db.drizzle
+      .select()
+      .from(vaultMeta)
+      .all()
+      .find((r) => r.key === key)
     return row ? Buffer.from(row.value) : null
   }
 

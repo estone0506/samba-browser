@@ -126,6 +126,12 @@ const api = {
     setup: (master: string): Promise<IpcResult<void>> => invoke(IPC.vaultSetup, master),
     unlock: (master: string): Promise<IpcResult<boolean>> => invoke(IPC.vaultUnlock, master),
     lock: (): Promise<IpcResult<void>> => invoke(IPC.vaultLock),
+    // 복구 키 — create 응답의 평문은 화면에 보여 준 뒤 확인 완료 즉시 렌더러 상태에서 버린다
+    recoveryCreate: (): Promise<IpcResult<string>> => invoke(IPC.vaultRecoveryCreate),
+    recoveryConfirm: (input: string): Promise<IpcResult<boolean>> =>
+      invoke(IPC.vaultRecoveryConfirm, input),
+    recoveryUnlock: (input: string): Promise<IpcResult<boolean>> =>
+      invoke(IPC.vaultRecoveryUnlock, input),
     sites: (): Promise<IpcResult<SiteDto[]>> => invoke(IPC.vaultSites),
     accounts: (host?: string): Promise<IpcResult<AccountDto[]>> => invoke(IPC.vaultAccounts, host),
     items: (accountId: number | null): Promise<IpcResult<VaultItemMeta[]>> =>
