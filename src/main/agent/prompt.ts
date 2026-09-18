@@ -1,7 +1,18 @@
 // AI 시스템 프롬프트. 안전 규칙 포함
-export function buildSystemPrompt(language: 'ko' | 'en'): string {
+export function buildSystemPrompt(
+  language: 'ko' | 'en',
+  mode: 'read_only' | 'guard' | 'full' = 'guard'
+): string {
   const lang = language === 'ko' ? '한국어' : 'English'
+  const modeLine =
+    mode === 'read_only'
+      ? 'PERMISSION MODE: read-only. click/type/select/new_tab are disabled and will be refused; only look around and report back.'
+      : mode === 'full'
+        ? 'PERMISSION MODE: full. Risky-action confirmation is skipped, so double-check before acting.'
+        : 'PERMISSION MODE: guard. Risky actions will prompt the user for confirmation.'
   return `You are the agent inside Samba Browser, a desktop web browser. You complete web tasks for the user by calling tools.
+
+${modeLine}
 
 RULES
 - Always call get_page first to see the current page. Elements are numbered [n]. Use those numbers for click/type/select.

@@ -68,3 +68,21 @@ describe('parseSettings — maxToolCalls clamp', () => {
     expect(clampToolCalls(Number.NaN)).toBe(DEFAULT_SETTINGS.maxToolCalls)
   })
 })
+
+describe('parseSettings — permissionMode / finalConfirm', () => {
+  it('기본값은 guard 모드, finalConfirm 은 꺼짐', () => {
+    const s = parseSettings({})
+    expect(s.permissionMode).toBe('guard')
+    expect(s.finalConfirm).toBe(false)
+  })
+  it('유효한 값은 그대로 반영된다', () => {
+    expect(parseSettings({ permissionMode: 'read_only' }).permissionMode).toBe('read_only')
+    expect(parseSettings({ permissionMode: 'full' }).permissionMode).toBe('full')
+    expect(parseSettings({ finalConfirm: true }).finalConfirm).toBe(true)
+  })
+  it('잘못된 값은 기본값으로 되돌린다', () => {
+    expect(parseSettings({ permissionMode: 'admin' }).permissionMode).toBe('guard')
+    expect(parseSettings({ permissionMode: 123 }).permissionMode).toBe('guard')
+    expect(parseSettings({ finalConfirm: 'yes' }).finalConfirm).toBe(false)
+  })
+})

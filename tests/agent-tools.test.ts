@@ -49,7 +49,10 @@ const create = vi.fn((o: { url?: string } = {}) => {
   return { id: 't2' }
 })
 
-function build(confirmResult: boolean): {
+function build(
+  confirmResult: boolean,
+  opts: { mode?: ToolContext['mode']; finalConfirm?: boolean } = {}
+): {
   tools: ToolStub[]
   confirm: ReturnType<typeof vi.fn>
   steps: Array<{ label: string; ok: boolean }>
@@ -66,6 +69,8 @@ function build(confirmResult: boolean): {
   const ctx: ToolContext = {
     tabs,
     dangerWords: DEFAULT_DANGER_WORDS,
+    mode: opts.mode ?? 'guard',
+    finalConfirm: opts.finalConfirm ?? false,
     confirm,
     tick: () => null,
     onStep: (label, ok) => steps.push({ label, ok })
@@ -160,5 +165,72 @@ describe('new_tab URL 관문', () => {
     const { tools } = build(true)
     const r = await get(tools, 'new_tab').handler({ url: 'https://www.google.com' })
     expect(textOut(r)).toBe('ok: tab t2')
+  })
+})
+
+describe('read_only 모드 — 조작 도구는 실행하지 않고 거부한다', () => {
+  it('click 은 확인 없이 refused 를 반환하고 실제 클릭은 하지 않는다', async () => {
+    pageBridge.textOf.mockResolvedValue('결제하기')
+    const { tools, confirm } = build(true, { mode: 'read_only' })
+    const r = await get(tools, 'click').handler({ id: 3, label: '계속' })
+    expect(textOut(r)).toMatch(/refused/)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(pageBridge.click).not.toHaveBeenCalled()
+  })
+
+  it('type 도 refused 를 반환한다', async () => {
+    const { tools } = build(true, { mode: 'read_only' })
+    const r = await get(tools, 'type').handler({ id: 1, text: 'hi', submit: false })
+    expect(textOut(r)).toMatch(/refused/)
+    expect(pageBridge.type).not.toHaveBeenCalled()
+  })
+
+  it('new_tab 도 refused 를 반환하고 tabs.create 를 호출하지 않는다', async () => {
+    const { tools } = build(true, { mode: 'read_only' })
+    const r = await get(tools, 'new_tab').handler({ url: 'https://www.google.com' })
+    expect(textOut(r)).toMatch(/refused/)
+    expect(create).not.toHaveBeenCalled()
+  })
+})
+
+describe('full 모드 — 위험 단어 확인 없이 바로 실행한다', () => {
+  it('위험한 클릭도 confirm 없이 바로 실행된다', async () => {
+    pageBridge.textOf.mockResolvedValue('결제하기')
+    const { tools, confirm } = build(true, { mode: 'full' })
+    const r = await get(tools, 'click').handler({ id: 3, label: '계속' })
+    expect(confirm).not.toHaveBeenCalled()
+    expect(pageBridge.click).toHaveBeenCalledWith(fakeTab, 3)
+    expect(textOut(r)).toBe('ok')
+  })
+
+  it('new_tab 은 URL 허용목록은 그대로 유지한다', async () => {
+    const { tools } = build(true, { mode: 'full' })
+    const r = await get(tools, 'new_tab').handler({ url: 'file:///C:/Windows/win.ini' })
+    expect(textOut(r)).toMatch(/refused/)
+  })
+})
+
+describe('finalConfirm — done 호출 전에 확인 카드를 띄운다', () => {
+  it('거부하면 계속 지시 문자열을 반환하고 완료 스텝을 기록하지 않는다', async () => {
+    const { tools, confirm, steps } = build(false, { finalConfirm: true })
+    const r = await get(tools, 'done').handler({ summary: '작업 완료' })
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(confirm.mock.calls[0][1]).toBe('finish')
+    expect(textOut(r)).toBe('user asked to continue; do not finish yet')
+    expect(steps.some((s) => s.label.startsWith('완료:'))).toBe(false)
+  })
+
+  it('승인하면 정상 완료된다', async () => {
+    const { tools, confirm } = build(true, { finalConfirm: true })
+    const r = await get(tools, 'done').handler({ summary: '작업 완료' })
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(textOut(r)).toBe('DONE: 작업 완료')
+  })
+
+  it('꺼져 있으면 confirm 을 호출하지 않는다', async () => {
+    const { tools, confirm } = build(true, { finalConfirm: false })
+    const r = await get(tools, 'done').handler({ summary: '작업 완료' })
+    expect(confirm).not.toHaveBeenCalled()
+    expect(textOut(r)).toBe('DONE: 작업 완료')
   })
 })

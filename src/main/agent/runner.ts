@@ -87,9 +87,11 @@ export class AgentRunner {
     const server = createSambaTools({
       tabs: this.tabs,
       dangerWords: s.dangerWords,
+      mode: s.permissionMode,
+      finalConfirm: s.finalConfirm,
       tick: counter.tick,
       onStep: (label, ok) => emit({ type: 'step', label, ok }),
-      confirm: (action) =>
+      confirm: (action, kind = 'danger') =>
         new Promise<boolean>((resolve) => {
           const id = randomUUID()
           const timer = setTimeout(() => {
@@ -99,14 +101,14 @@ export class AgentRunner {
           // 대기 타이머가 앱 종료를 막지 않도록 한다
           timer.unref?.()
           this.pending.set(id, { resolve, timer })
-          emit({ type: 'confirm', requestId: id, action })
+          emit({ type: 'confirm', requestId: id, action, kind })
         })
     })
     emit({ type: 'status', state: 'running', toolCalls: 0 })
     try {
       const stream = runQuery({
         prompt,
-        systemPrompt: buildSystemPrompt(s.language),
+        systemPrompt: buildSystemPrompt(s.language, s.permissionMode),
         model: s.model,
         mcpServers: { samba: server },
         allowedTools: SAMBA_TOOL_NAMES,

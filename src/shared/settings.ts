@@ -9,13 +9,19 @@ export const MAX_TOOL_CALLS = 200
 const MIN_PANEL_WIDTH = 280
 const MAX_PANEL_WIDTH = 900
 
+// 사용 권한 모드: 읽기 전용(read_only) · 위험 행동 확인(guard) · 자동(full)
+export const PERMISSION_MODES = ['read_only', 'guard', 'full'] as const
+export type PermissionMode = (typeof PERMISSION_MODES)[number]
+
 export const DEFAULT_SETTINGS = {
   model: 'sonnet' as const,
   language: 'ko' as const,
   panelWidth: 380,
   lastUrl: 'https://www.google.com',
   dangerWords: DEFAULT_DANGER_WORDS,
-  maxToolCalls: 40
+  maxToolCalls: 40,
+  permissionMode: 'guard' as const,
+  finalConfirm: false
 }
 
 // 손상된 config.json 이어도 앱이 뜨도록 필드마다 catch 로 기본값으로 되돌린다
@@ -29,7 +35,9 @@ export const settingsSchema = z.object({
     .catch(DEFAULT_SETTINGS.panelWidth),
   lastUrl: z.string().min(1).catch(DEFAULT_SETTINGS.lastUrl),
   dangerWords: z.array(z.string()).catch([]),
-  maxToolCalls: z.number().catch(DEFAULT_SETTINGS.maxToolCalls)
+  maxToolCalls: z.number().catch(DEFAULT_SETTINGS.maxToolCalls),
+  permissionMode: z.enum(PERMISSION_MODES).catch(DEFAULT_SETTINGS.permissionMode),
+  finalConfirm: z.boolean().catch(DEFAULT_SETTINGS.finalConfirm)
 })
 
 export type Settings = z.infer<typeof settingsSchema>

@@ -4,12 +4,22 @@ import type { TabManager } from '../browser/tab-manager'
 import { pageBridge } from '../browser/page-bridge'
 import { serializeSnapshot } from '../../shared/snapshot'
 import { isDangerous } from '../../shared/danger'
+import type { PermissionMode } from '../../shared/settings'
+
+// 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
+const READ_ONLY_REFUSAL = 'refused: read-only mode'
+// finalConfirm 이 거부됐을 때 모델이 계속 작업하도록 돌려주는 문자열
+const CONTINUE_INSTRUCTION = 'user asked to continue; do not finish yet'
 
 export interface ToolContext {
   tabs: TabManager
   dangerWords: string[]
-  // 위험 행동 확인. 승인이면 true
-  confirm: (action: string) => Promise<boolean>
+  // 사용 권한 모드. read_only 는 조작 도구를 실행하지 않고, full 은 위험 단어 확인을 생략한다
+  mode: PermissionMode
+  // 켜져 있으면 done 호출 전에 확인 카드를 띄운다
+  finalConfirm: boolean
+  // 위험 행동 확인. 승인이면 true. kind 로 위험/완료 확인 카드를 구분한다
+  confirm: (action: string, kind?: 'danger' | 'finish') => Promise<boolean>
   // 호출 카운터. 상한 넘으면 문자열 반환
   tick: () => string | null
   onStep: (label: string, ok: boolean) => void
@@ -84,12 +94,14 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     { id: z.number().int(), label: z.string().describe('element text, for logging') },
     ({ id, label }) =>
       guard(`클릭: ${label} (#${id})`, async () => {
+        if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
         // 위험 판정 근거는 페이지의 실제 텍스트. AI 가 준 label 은 기록용일 뿐 신뢰하지 않는다
         const pageText = await pageBridge.textOf(tab, id)
-        if (isDangerous(`${pageText} ${label}`, ctx.dangerWords)) {
-          const ok = await ctx.confirm(`클릭: ${pageText || label}`)
+        // full 모드는 위험 단어 확인을 생략한다(SECRET 거부·URL 허용목록·호출 상한은 그대로 유지)
+        if (ctx.mode !== 'full' && isDangerous(`${pageText} ${label}`, ctx.dangerWords)) {
+          const ok = await ctx.confirm(`클릭: ${pageText || label}`, 'danger')
           if (!ok) return 'denied by user'
         }
         const r = await pageBridge.click(tab, id)
@@ -104,12 +116,13 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     { id: z.number().int(), text: z.string(), submit: z.boolean().default(false) },
     ({ id, text: t, submit }) =>
       guard(`입력: "${t.slice(0, 30)}" (#${id})`, async () => {
+        if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
         // 입력값 자체와 대상 입력칸의 실제 텍스트를 함께 판정
         const pageText = await pageBridge.textOf(tab, id)
-        if (isDangerous(`${pageText} ${t}`, ctx.dangerWords)) {
-          const ok = await ctx.confirm(`입력: ${t}${pageText ? ` → ${pageText}` : ''}`)
+        if (ctx.mode !== 'full' && isDangerous(`${pageText} ${t}`, ctx.dangerWords)) {
+          const ok = await ctx.confirm(`입력: ${t}${pageText ? ` → ${pageText}` : ''}`, 'danger')
           if (!ok) return 'denied by user'
         }
         const r = await pageBridge.type(tab, id, t, submit)
@@ -124,6 +137,7 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     { id: z.number().int(), value: z.string() },
     ({ id, value }) =>
       guard(`선택: ${value} (#${id})`, async () => {
+        if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
         return tab ? pageBridge.select(tab, id, value) : 'no active tab'
       })
@@ -157,6 +171,7 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     { url: z.string().optional(), profile: z.string().optional(), mobile: z.boolean().optional() },
     (o) =>
       guard(`새 탭 ${o.profile ?? ''}`, async () => {
+        if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const t = ctx.tabs.create(o)
         return `ok: tab ${t.id}`
       })
@@ -181,9 +196,16 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     'done',
     'Finish the task with a short summary for the user.',
     { summary: z.string() },
-    ({ summary }) => {
+    async ({ summary }) => {
+      if (ctx.finalConfirm) {
+        const ok = await ctx.confirm(summary, 'finish')
+        if (!ok) {
+          ctx.onStep(`계속 진행: ${summary.slice(0, 60)}`, true)
+          return text(CONTINUE_INSTRUCTION)
+        }
+      }
       ctx.onStep(`완료: ${summary.slice(0, 60)}`, true)
-      return Promise.resolve(text(`DONE: ${summary}`))
+      return text(`DONE: ${summary}`)
     }
   )
 
