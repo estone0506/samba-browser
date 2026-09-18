@@ -26,7 +26,7 @@ interface ChatState {
   toolCalls: number
   currentLabel: string
   retry: Retry | null
-  confirm: { requestId: string; action: string } | null
+  confirm: { requestId: string; action: string; kind: 'danger' | 'finish' } | null
   authError: 'missing' | 'limit' | null
   send: (text: string) => Promise<void>
   stop: () => Promise<void>
@@ -88,7 +88,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((s) => ({ toolCalls: s.toolCalls + 1, currentLabel: e.label, retry: null }))
     }
     if (e.type === 'progress') set({ retry: { attempt: e.attempt, reason: e.reason } })
-    if (e.type === 'confirm') set({ confirm: { requestId: e.requestId, action: e.action } })
+    if (e.type === 'confirm')
+      set({ confirm: { requestId: e.requestId, action: e.action, kind: e.kind ?? 'danger' } })
     if (e.type === 'status') {
       // 중단·실패·완료 뒤에 뒤늦게 도착한 running 은 무시한다.
       // send() 가 실행을 시작할 때 status 를 먼저 running 으로 바꾸므로 정상 시작은 통과한다

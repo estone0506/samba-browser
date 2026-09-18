@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowUp } from 'lucide-react'
 import { useChatStore } from '@renderer/stores/chatStore'
+import { PermissionMenu } from './PermissionMenu'
 
 export function ChatInput(): React.JSX.Element {
   const { t } = useTranslation()
@@ -34,6 +35,9 @@ export function ChatInput(): React.JSX.Element {
         >
           <ArrowUp className="h-3.5 w-3.5" />
         </button>
+      </div>
+      <div className="mt-2 flex items-center gap-1.5">
+        <PermissionMenu />
       </div>
     </div>
   )

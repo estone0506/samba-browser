@@ -33,7 +33,20 @@
     "title": "확인이 필요합니다",
     "body": "AI가 다음 행동을 하려고 합니다: {{action}}",
     "approve": "승인",
-    "deny": "거부"
+    "deny": "거부",
+    "finish": "작업을 완료할까요?",
+    "continue": "계속 진행",
+    "finishOk": "완료"
+  },
+  "permission": {
+    "title": "사용 권한",
+    "readOnly": "읽기 전용",
+    "readOnlyDesc": "페이지를 읽고 이동만 해요. 클릭·입력은 하지 않아요",
+    "guard": "확인",
+    "guardDesc": "위험한 행동 전에 승인을 물어봐요",
+    "full": "자동",
+    "fullDesc": "위험 확인 없이 바로 실행해요",
+    "finalConfirm": "최종 확인"
   },
   "auth": {
     "missing": "AI 연결이 안 됐어요. 터미널에서 claude login 을 실행하거나 설정에서 API 키를 입력하세요.",

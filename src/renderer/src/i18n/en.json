@@ -33,7 +33,20 @@
     "title": "Confirmation required",
     "body": "AI is about to perform: {{action}}",
     "approve": "Approve",
-    "deny": "Deny"
+    "deny": "Deny",
+    "finish": "Finish the task?",
+    "continue": "Keep going",
+    "finishOk": "Finish"
+  },
+  "permission": {
+    "title": "Permission",
+    "readOnly": "Read-only",
+    "readOnlyDesc": "Reads pages and navigates only. No clicking or typing",
+    "guard": "Guard",
+    "guardDesc": "Asks for approval before risky actions",
+    "full": "Full",
+    "fullDesc": "Acts immediately, skipping risk confirmation",
+    "finalConfirm": "Final confirmation"
   },
   "auth": {
     "missing": "AI is not connected. Run claude login in a terminal or add an API key in Settings.",
