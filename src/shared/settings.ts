@@ -50,6 +50,8 @@ export const DEFAULT_SETTINGS = {
   vaultAutoUpdatePassword: true,
   vaultExcludedHosts: [] as string[],
   // === 홈/새 탭/검색엔진 기본값 (신규 추가분) ===============================
+  // 로컬 OCR(ocr 도구) 사용 여부. 첫 사용 시 모델(약 18MB)을 내려받는다
+  ocrEnabled: true,
   homeUrl: 'https://www.google.com',
   newTabUrl: 'home' as const,
   searchEngine: 'google' as const
@@ -89,6 +91,8 @@ export const settingsSchema = z.object({
   vaultExcludedHosts: z.array(z.string()).catch(DEFAULT_SETTINGS.vaultExcludedHosts),
   // === 홈/새 탭/검색엔진 (신규 추가분) =======================================
   // 홈 주소. http/https 가 아니면(about:blank·javascript: 등) 기본값으로 되돌린다
+  // 로컬 OCR 사용 여부
+  ocrEnabled: z.boolean().catch(DEFAULT_SETTINGS.ocrEnabled),
   homeUrl: z
     .string()
     .refine((v) => isHttpUrl(v))

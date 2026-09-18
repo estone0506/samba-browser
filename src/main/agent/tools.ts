@@ -10,6 +10,7 @@ import type { AccountDto, AgentAccess, VaultItemType } from '../../shared/vault'
 import { normalizeHost, registrableDomain } from '../../shared/host'
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
 import { formatDialogNote } from '../browser/dialogs'
+import { createOcrTool } from './tools-ocr'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -591,6 +592,7 @@ ${raw}`
     tools: [
       getPage,
       screenshot,
+      createOcrTool(ctx),
       navigate,
       click,
       typeTool,
@@ -610,6 +612,7 @@ ${raw}`
 export const SAMBA_TOOL_NAMES = [
   'get_page',
   'screenshot',
+  'ocr',
   'navigate',
   'click',
   'type',

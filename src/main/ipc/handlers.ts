@@ -2,6 +2,7 @@ import { dialog, ipcMain, safeStorage, type BrowserWindow, type WebContents } fr
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import type { TabManager } from '../browser/tab-manager'
 import { SettingsStore } from '../settings/store'
+import { setOcrEnabled } from '../agent/tools-ocr'
 import { AgentRunner } from '../agent/runner'
 import type { Db } from '../db/client'
 import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vault/service'
@@ -37,6 +38,7 @@ export function registerIpc(
     tabs.setSearchEngine(s.searchEngine)
   }
   applyBrowserDefaults(settings.get())
+  setOcrEnabled(settings.get().ocrEnabled)
   // === 신규 추가분 끝 =========================================================
   // 창이 이미 파괴됐는데 send 하면 예외가 난다. 모든 main→renderer 통지는 이 관문을 거친다
   const send = (channel: string, payload: unknown): void => {
@@ -120,6 +122,7 @@ export function registerIpc(
       const s = settings.set(patch)
       // 홈 주소·새 탭 주소·검색엔진이 바뀌면 tab-manager 도 즉시 반영한다
       applyBrowserDefaults(s)
+      setOcrEnabled(s.ocrEnabled)
       return s
     })
   )
