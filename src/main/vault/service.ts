@@ -58,6 +58,7 @@ import type {
   VaultState
 } from '../../shared/vault'
 import type { Settings } from '../../shared/settings'
+import type { WorkspaceScope } from '../../shared/sync'
 import { normalizeHost, registrableDomain } from '../../shared/host'
 
 // electron safeStorage 중 실제로 쓰는 부분만 좁혀 둔 인터페이스(테스트에서 스텁 주입)
@@ -522,6 +523,11 @@ export class VaultService {
 
   listSites(): SiteDto[] {
     return this.repo.listSites()
+  }
+
+  /** 활성 작업공간을 저장소에 알려 준다(조회 범위 필터 + 새 행에 붙일 작업공간) */
+  setWorkspaceScope(scope: WorkspaceScope | null): void {
+    this.repo.setWorkspaceScope(scope)
   }
 
   listAccounts(host?: string): AccountDto[] {

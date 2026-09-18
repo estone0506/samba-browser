@@ -38,6 +38,8 @@ import { AuthService } from '../sync/auth'
 import { hasSupabaseEnv } from '../sync/env'
 import { createSessionStore } from '../sync/session-store'
 import { createSupabaseBackend } from '../sync/supabase-backend'
+import { WorkspaceService } from '../workspace/service'
+import { workspaceShortcutIndex } from '../workspace/shortcut'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -486,6 +488,55 @@ export function registerIpc(
   handleFromRenderer(IPC.authSignInGoogle, () => auth.signInGoogle())
   handleFromRenderer(IPC.authSignOut, () => auth.signOut())
   // === 계정 인증 끝 ====================================================================
+
+  // === 작업공간(브라우저 프로필) — 이 블록만 따로 추가한다 =============================
+  const workspace = new WorkspaceService(db, settings)
+  // 첫 실행이면 '기본' 작업공간을 만들고, 저장소·탭 파티션을 현재 작업공간에 맞춘다
+  const applyWorkspace = (notify: boolean): void => {
+    const current = workspace.ensureDefault()
+    const scope = workspace.scope()
+    vault.setWorkspaceScope(scope)
+    importService.setWorkspaceScope(scope)
+    // 열려 있는 탭의 세션은 그대로 두고, 새로 여는 탭부터 새 파티션을 쓴다
+    tabs.setPartitionPrefix(workspace.partitionPrefix())
+    if (notify) send(IPC.workspaceChanged, current)
+  }
+  applyWorkspace(false)
+  workspace.onChanged(() => applyWorkspace(true))
+
+  // Ctrl+Alt+1~9 — 전역 단축키가 아니라 이 창(렌더러 UI + 탭 페이지)에서만 듣는다
+  const handleWorkspaceShortcut = (input: {
+    type: string
+    key: string
+    control: boolean
+    alt: boolean
+    shift: boolean
+    meta: boolean
+  }): boolean => {
+    const index = workspaceShortcutIndex(input)
+    if (index === null) return false
+    try {
+      return workspace.switchToIndex(index) !== null
+    } catch (e) {
+      console.error('작업공간 전환 실패', e)
+      return false
+    }
+  }
+  win.webContents.on('before-input-event', (e, input) => {
+    if (handleWorkspaceShortcut(input)) e.preventDefault()
+  })
+  tabs.setInputHandler(handleWorkspaceShortcut)
+
+  handleFromRenderer(IPC.workspaceList, () => workspace.list())
+  handleFromRenderer(IPC.workspaceCreate, (o: { name: string; color?: string }) =>
+    workspace.create(o.name, o.color)
+  )
+  handleFromRenderer(IPC.workspaceSwitch, (id: number) => workspace.switchTo(id))
+  handleFromRenderer(IPC.workspaceRename, (o: { id: number; name: string }) =>
+    workspace.rename(o.id, o.name)
+  )
+  handleFromRenderer(IPC.workspaceDelete, (id: number) => workspace.remove(id))
+  // === 작업공간 끝 =====================================================================
 
   return { settings, agent, db, vault, auth }
 }

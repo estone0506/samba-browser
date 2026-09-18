@@ -36,6 +36,17 @@ export interface DeviceDto {
   isCurrent: boolean
 }
 
+/**
+ * 조회 범위. 저장소(금고·북마크)가 어떤 작업공간의 데이터를 보여줄지 가린다.
+ * 2b 이전에 만들어진 행은 workspace_id 가 NULL 이고, 이는 "기본 작업공간 것"으로 본다
+ * (마이그레이션으로 값을 채우지 않는다).
+ */
+export interface WorkspaceScope {
+  id: number
+  /** 이 작업공간이 기본(가장 먼저 만들어진) 작업공간인가 — NULL 행이 여기에 보인다 */
+  isDefault: boolean
+}
+
 /** 작업공간 한 줄. id 는 로컬 DB 의 정수, remoteId 는 원격 uuid */
 export interface WorkspaceDto {
   id: number

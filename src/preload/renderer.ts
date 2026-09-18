@@ -26,7 +26,7 @@ import {
   type TaskModelKey,
   type TaskModels
 } from '../shared/ipc'
-import type { AuthState } from '../shared/sync'
+import type { AuthState, WorkspaceDto } from '../shared/sync'
 
 // 북마크 관리자 페이지용 요청 입력 타입
 interface BookmarkMoveInput {
@@ -247,6 +247,22 @@ const api = {
   favicon: {
     get: (host: string): Promise<IpcResult<{ dataUrl: string | null }>> =>
       invoke(IPC.faviconGet, host)
+  },
+  // 작업공간(브라우저 프로필) — 전환은 메인이 세션 파티션·조회 범위를 함께 바꾼다
+  workspace: {
+    list: (): Promise<IpcResult<WorkspaceDto[]>> => invoke(IPC.workspaceList),
+    create: (name: string, color?: string): Promise<IpcResult<WorkspaceDto>> =>
+      invoke(IPC.workspaceCreate, { name, color }),
+    switch: (id: number): Promise<IpcResult<WorkspaceDto>> => invoke(IPC.workspaceSwitch, id),
+    rename: (id: number, name: string): Promise<IpcResult<WorkspaceDto>> =>
+      invoke(IPC.workspaceRename, { id, name }),
+    remove: (id: number): Promise<IpcResult<void>> => invoke(IPC.workspaceDelete, id),
+    // 단축키(Ctrl+Alt+1~9)로 바뀐 경우에도 렌더러가 따라오도록 메인이 밀어 준다
+    onChanged: (cb: (w: WorkspaceDto) => void): (() => void) => {
+      const h = (_: unknown, w: WorkspaceDto): void => cb(w)
+      ipcRenderer.on(IPC.workspaceChanged, h)
+      return () => ipcRenderer.off(IPC.workspaceChanged, h)
+    }
   }
 }
 

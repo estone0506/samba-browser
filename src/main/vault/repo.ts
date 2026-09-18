@@ -1,11 +1,12 @@
 // 금고 저장소 — drizzle 쿼리만 담당한다(암호화·상태 판단은 service.ts).
 // sql.js 드라이버는 동기이므로 .all()/.get()/.run() 을 그대로 쓴다.
 
-import { eq, and, or, isNull, desc } from 'drizzle-orm'
+import { eq, and, or, isNull, desc, type SQL } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { sites, accounts, vaultItems, vaultMeta, auditLog } from '../db/schema'
 import type { AgentAccess, SiteDto, VaultItemMeta, VaultItemType } from '../../shared/vault'
 import { normalizeAgentAccess, normalizeItemType } from '../../shared/vault'
+import type { WorkspaceScope } from '../../shared/sync'
 import { parseFields, serializeFields, toMetaSections, type StoredSection } from './fields'
 
 // 암호문을 포함한 내부 행. 이 타입은 메인 프로세스 밖으로 나가지 않는다
@@ -86,8 +87,33 @@ function parseStringArray(raw: string | null): string[] {
 export class VaultRepo {
   constructor(private readonly db: Db) {}
 
+  // 현재 작업공간. null 이면 범위 제한 없이 전부 본다(작업공간 기능이 붙기 전 동작)
+  private scope: WorkspaceScope | null = null
+
   private get d(): Db['drizzle'] {
     return this.db.drizzle
+  }
+
+  /** 활성 작업공간을 알려 준다. 이후의 조회는 이 범위로 걸러지고, 새 행은 이 작업공간에 붙는다 */
+  setWorkspaceScope(scope: WorkspaceScope | null): void {
+    this.scope = scope
+  }
+
+  /** 새 행에 붙일 작업공간 id */
+  private get scopeId(): number | null {
+    return this.scope ? this.scope.id : null
+  }
+
+  /**
+   * 작업공간 범위 조건. 범위가 없으면 undefined(=조건 없음)를 돌려준다.
+   * 기본 작업공간에서는 아직 작업공간이 없던 시절의 행(NULL)도 함께 보인다
+   */
+  private scopeWhere(
+    column: typeof accounts.workspaceId | typeof vaultItems.workspaceId
+  ): SQL | undefined {
+    if (!this.scope) return undefined
+    if (this.scope.isDefault) return or(isNull(column), eq(column, this.scope.id))
+    return eq(column, this.scope.id)
   }
 
   // --- vault_meta -------------------------------------------------------
@@ -170,7 +196,11 @@ export class VaultRepo {
       })
       .from(accounts)
       .innerJoin(sites, eq(accounts.siteId, sites.id))
-    const rows = host ? base.where(eq(sites.host, host)).all() : base.all()
+    const conds = [
+      host ? eq(sites.host, host) : undefined,
+      this.scopeWhere(accounts.workspaceId)
+    ].filter((c): c is SQL => c !== undefined)
+    const rows = conds.length > 0 ? base.where(and(...conds)).all() : base.all()
     return rows.map(toAccountRow)
   }
 
@@ -244,7 +274,8 @@ export class VaultRepo {
         agentAccess: input.agentAccess ?? 'inherit',
         tags: JSON.stringify(input.tags ?? []),
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        workspaceId: this.scopeId
       })
       .returning({ id: accounts.id })
       .all()
@@ -286,7 +317,10 @@ export class VaultRepo {
       })
       .from(vaultItems)
       .where(
-        accountId === null ? isNull(vaultItems.accountId) : eq(vaultItems.accountId, accountId)
+        and(
+          accountId === null ? isNull(vaultItems.accountId) : eq(vaultItems.accountId, accountId),
+          this.scopeWhere(vaultItems.workspaceId)
+        )
       )
       .all()
     return rows.map(toItemMeta)
@@ -343,7 +377,8 @@ export class VaultRepo {
         fields: serializeFields([]),
         ciphertext: Buffer.alloc(0),
         iv: Buffer.alloc(0),
-        updatedAt
+        updatedAt,
+        workspaceId: this.scopeId
       })
       .returning({ id: vaultItems.id })
       .all()
