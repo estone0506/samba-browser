@@ -19,7 +19,8 @@ pnpm dev
 - **[PRD](docs/PRD.md)** — 제품 요구사항
 - **[기술스택](docs/기술스택.md)** — 사용 기술 및 라이브러리
 - **[실행방법](docs/실행방법.md)** — 초보자용 설치 및 실행 가이드
-- **[구현 계획](docs/superpowers/plans/2026-09-18-mvp-stage1-browser-shell.md)** — MVP 1단계 구현 계획
+- **[구현 계획 1단계](docs/superpowers/plans/2026-09-18-mvp-stage1-browser-shell.md)** / **[2단계](docs/superpowers/plans/2026-09-18-stage2-vault-import.md)**
+- **[검수 기록](docs/검수/)** — 단계별 실검수 결과
 - **[Aside 검토](docs/reference/aside-검토.md)** — 아키텍처 리뷰
 - **[목업](docs/mockups/)** — UI/UX 디자인 참고자료
 
@@ -35,6 +36,13 @@ pnpm dev
 - **Claude Agent SDK** — AI 기능 (Claude 구독 로그인 연결. `ANTHROPIC_API_KEY` 가 있으면 그것을 우선 사용)
 
 자세한 기술 스택 정보는 [기술스택](docs/기술스택.md)을 참고하세요.
+
+## 2단계에서 추가된 것
+- **키마스터**: 로그인·결제 비밀번호·카드·신분증 등 6종 항목을 마스터 비밀번호로 암호화 저장(argon2id + AES-256-GCM). AI 는 값을 보지 못하고 `login`/`fill_secret` 도구로 채우기만 한다
+- **가져오기**: 크롬·웨일·엣지·Bitwarden 등 비밀번호 CSV, 북마크 HTML
+- **자동 로그인**: 로그인창 아이디 칸에 계정 목록 드롭리스트, AI 로그인(알려진 로그인 URL·로그인 링크 폴백, 2단계 로그인, 캡차는 `screenshot`/`ocr` 도구), 로그인 성공 시 바뀐 비밀번호 자동 갱신
+- **로컬 OCR**: PP-OCRv5 한국어 ONNX(첫 사용 시 약 18MB 다운로드), 설정에서 끌 수 있음
+- **자체 새 탭 페이지** `samba://newtab`, 홈 버튼·홈 주소 설정, 북마크 관리자
 
 ## 알려진 한계 (MVP 1단계)
 
