@@ -216,10 +216,11 @@ function isButtonish(el: HTMLElement): boolean {
 
 const LOGIN_TEXT = /로그인하기|로그인|login|sign in/i
 
-// 로그인 필드 탐지. registry 가 비어 있으면(스냅샷을 아직 안 찍었으면) buildSnapshot 을 먼저 호출한다.
+// 로그인 필드 탐지. 호출할 때마다 스냅샷을 새로 구성한다 — SPA 는 클라이언트 라우팅으로 화면이
+// 바뀌어도 문서를 새로 만들지 않아 이전 registry 가 낡은 채 남기 때문(E2E 하네스에서 확인된 버그).
 // 실제 판정은 login-detect 모듈(Chromium/Bitwarden 규칙 이식)이 담당한다
 export function findLoginFields(): LoginFields {
-  if (registry.length === 0) buildSnapshot()
+  buildSnapshot()
   return detectLoginFields(registry)
 }
 
