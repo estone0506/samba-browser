@@ -192,6 +192,11 @@ const api = {
     sort: (folderId: number | null): Promise<IpcResult<void>> =>
       invoke(IPC.bookmarksSort, { folderId, by: 'name' }),
     export: (): Promise<IpcResult<string | undefined>> => invoke(IPC.bookmarksExport)
+  },
+  // 파비콘 — 메인이 사이트 자체에서 받아 온 dataUrl. 호스트는 제3자로 나가지 않는다
+  favicon: {
+    get: (host: string): Promise<IpcResult<{ dataUrl: string | null }>> =>
+      invoke(IPC.faviconGet, host)
   }
 }
 
