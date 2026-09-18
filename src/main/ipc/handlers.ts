@@ -1,4 +1,4 @@
-import { dialog, ipcMain, safeStorage, type BrowserWindow, type WebContents } from 'electron'
+import { app, dialog, ipcMain, safeStorage, type BrowserWindow, type WebContents } from 'electron'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import { defaultTabUrl } from '../../shared/settings'
 import type { TabManager } from '../browser/tab-manager'
@@ -17,6 +17,15 @@ import { normalizeHost } from '../../shared/host'
 import { isAllowedExternalUrl, isInternalUrl } from '../../shared/url'
 import { toolbarBookmarks } from '../bookmarks/newtab'
 import type { NewTabInitDto } from '../../shared/newtab'
+// === AI 연결(2b 추가분) ===============================================================
+import { join as joinPath } from 'path'
+import { isAiProviderId, isApiKeyVendor, isTaskModelKey } from '../../shared/ai'
+import type { AiProviderId, ApiKeyVendor, TaskModelKey } from '../../shared/ai'
+import { ApiKeyStore } from '../ai/keys'
+import { defaultProbes, detectProviders, testApiKey } from '../ai/providers'
+import { remapOnProviderChange, taskModelChoices } from '../ai/models'
+import { setApiKeyResolver } from '../agent/provider'
+// === AI 연결 끝 =======================================================================
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -375,6 +384,61 @@ export function registerIpc(
     })
   })
   // === 자체 새 탭 페이지 끝 =============================================================
+
+  // === AI 연결(2b 추가분 — 병합 편의를 위해 이 블록만 별도로 추가) ======================
+  // 평문 API 키는 이 저장소와 agent/provider.ts 안에만 머문다. 렌더러로 나가는 것은
+  // 마스킹 문자열(sk-ant-••••1234)과 boolean 뿐이다
+  const apiKeys = new ApiKeyStore(joinPath(app.getPath('userData'), 'ai-keys.bin'), safeStorage)
+  const aiProbes = defaultProbes()
+  // ApiKeyStore.get 의 유일한 소비자(agent/provider.ts)에 조회기를 심는다.
+  // '내 API 키' 경로를 고른 경우에만 키를 넘긴다
+  setApiKeyResolver(() =>
+    settings.get().aiProvider === 'api_key' ? apiKeys.get('anthropic') : null
+  )
+  win.once('closed', () => setApiKeyResolver(null))
+
+  handleFromRenderer(IPC.aiProviders, () => detectProviders(aiProbes, apiKeys.masked()))
+  handleFromRenderer(IPC.aiSetProvider, (raw: unknown) => {
+    if (!isAiProviderId(raw)) throw new Error('알 수 없는 AI 연결 경로')
+    const before = settings.get()
+    const { models, changed } = remapOnProviderChange(
+      before.taskModels,
+      before.aiProvider as AiProviderId,
+      raw
+    )
+    const after = settings.set({ aiProvider: raw, taskModels: models })
+    return { provider: after.aiProvider, taskModels: after.taskModels, changed }
+  })
+  // 평문 키는 렌더러 → 메인 한 방향으로만 흐른다. 응답은 마스킹뿐이다
+  handleFromRenderer(IPC.aiSetApiKey, (rawVendor: unknown, rawKey: unknown) => {
+    if (!isApiKeyVendor(rawVendor)) throw new Error('알 수 없는 API 키 제공자')
+    const key = typeof rawKey === 'string' ? rawKey : ''
+    if (key.trim()) apiKeys.set(rawVendor as ApiKeyVendor, key)
+    else apiKeys.remove(rawVendor as ApiKeyVendor)
+    return apiKeys.masked()
+  })
+  // 확인은 모델 목록 1회 호출. 응답 본문은 읽지도 로그에 남기지도 않는다
+  handleFromRenderer(IPC.aiTestKey, async (rawVendor: unknown, rawKey: unknown) => {
+    if (!isApiKeyVendor(rawVendor)) throw new Error('알 수 없는 API 키 제공자')
+    const key = typeof rawKey === 'string' ? rawKey : ''
+    return testApiKey(rawVendor as ApiKeyVendor, key)
+  })
+  handleFromRenderer(IPC.aiTaskModels, () => {
+    const s = settings.get()
+    return {
+      provider: s.aiProvider,
+      taskModels: s.taskModels,
+      choices: taskModelChoices(s.aiProvider as AiProviderId)
+    }
+  })
+  handleFromRenderer(IPC.aiSetTaskModel, (rawKey: unknown, rawModel: unknown) => {
+    if (!isTaskModelKey(rawKey)) throw new Error('알 수 없는 작업 등급')
+    if (typeof rawModel !== 'string' || !rawModel.trim()) throw new Error('모델 이름이 비어 있음')
+    const key = rawKey as TaskModelKey
+    const next = { ...settings.get().taskModels, [key]: rawModel.trim() }
+    return settings.set({ taskModels: next }).taskModels
+  })
+  // === AI 연결 끝 =======================================================================
 
   return { settings, agent, db, vault }
 }

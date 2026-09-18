@@ -19,7 +19,12 @@ import {
   type AuditLogDto,
   type ImportPasswordsResult,
   type ImportBookmarksResult,
-  type BookmarkTreeDto
+  type BookmarkTreeDto,
+  type AiProviderId,
+  type AiProviderStatus,
+  type ApiKeyVendor,
+  type TaskModelKey,
+  type TaskModels
 } from '../shared/ipc'
 
 // 북마크 관리자 페이지용 요청 입력 타입
@@ -192,6 +197,28 @@ const api = {
     sort: (folderId: number | null): Promise<IpcResult<void>> =>
       invoke(IPC.bookmarksSort, { folderId, by: 'name' }),
     export: (): Promise<IpcResult<string | undefined>> => invoke(IPC.bookmarksExport)
+  },
+  // AI 연결 — 평문 키는 setApiKey 로 들어가기만 하고 되돌아오지 않는다.
+  // 이쪽으로 오는 것은 마스킹 문자열과 boolean 뿐이다
+  ai: {
+    providers: (): Promise<IpcResult<AiProviderStatus[]>> => invoke(IPC.aiProviders),
+    setProvider: (
+      id: AiProviderId
+    ): Promise<
+      IpcResult<{ provider: AiProviderId; taskModels: TaskModels; changed: TaskModelKey[] }>
+    > => invoke(IPC.aiSetProvider, id),
+    setApiKey: (
+      vendor: ApiKeyVendor,
+      key: string
+    ): Promise<IpcResult<Partial<Record<ApiKeyVendor, string>>>> =>
+      invoke(IPC.aiSetApiKey, vendor, key),
+    testKey: (vendor: ApiKeyVendor, key: string): Promise<IpcResult<{ ok: boolean }>> =>
+      invoke(IPC.aiTestKey, vendor, key),
+    taskModels: (): Promise<
+      IpcResult<{ provider: AiProviderId; taskModels: TaskModels; choices: string[] }>
+    > => invoke(IPC.aiTaskModels),
+    setTaskModel: (key: TaskModelKey, model: string): Promise<IpcResult<TaskModels>> =>
+      invoke(IPC.aiSetTaskModel, key, model)
   },
   // 파비콘 — 메인이 사이트 자체에서 받아 온 dataUrl. 호스트는 제3자로 나가지 않는다
   favicon: {

@@ -64,7 +64,25 @@
   },
   "settings": {
     "model": "Model",
-    "language": "Language"
+    "language": "Language",
+    "ai": {
+      "title": "AI connection",
+      "claudeSubscription": "Claude subscription",
+      "apiKey": "My API key",
+      "serviceCredit": "Service credit",
+      "serviceCreditSoon": "Coming with the Pro plan",
+      "connected": "Connected",
+      "needsLogin": "Sign-in required",
+      "notInstalled": "Not installed",
+      "unset": "Not connected",
+      "keyKept": "Your key is encrypted on this PC only and is never synced",
+      "testKey": "Test key",
+      "taskModels": "Models by task",
+      "fast": "Fast",
+      "standard": "Standard",
+      "deep": "Deep",
+      "visual": "Visual"
+    }
   },
   "capture": {
     "title": "Save your {{host}} account info?",
