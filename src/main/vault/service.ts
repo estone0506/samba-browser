@@ -20,7 +20,10 @@ import {
   decrypt,
   makeVerifier,
   checkVerifier,
-  zeroize
+  zeroize,
+  clampMemoryKiB,
+  resolveDefaultKdfParams,
+  type KdfParams
 } from './crypto'
 import type {
   AccountDto,
@@ -72,12 +75,6 @@ export interface PendingCapture {
   username: string
   password: string
   isNew: boolean
-}
-
-interface KdfParams {
-  memoryKiB: number
-  iterations: number
-  parallelism: number
 }
 
 const META_SALT = 'salt'
@@ -150,11 +147,9 @@ export class VaultService {
     if (master.length === 0) throw new Error('마스터 비밀번호가 비어 있습니다')
 
     const salt = randomBytes(SALT_BYTES)
-    const params: KdfParams = {
-      memoryKiB: Number(process.env.VAULT_KDF_MEM ?? 65536),
-      iterations: 3,
-      parallelism: 1
-    }
+    // 환경변수 게이트는 crypto.resolveDefaultKdfParams() 안에만 있다 — 여기서 process.env 를
+    // 직접 읽으면 프로덕션에서도 메모리 비용을 낮출 수 있게 되므로 절대 하지 않는다
+    const params: KdfParams = resolveDefaultKdfParams()
     const key = await deriveKey(master, salt, {
       memoryKiB: params.memoryKiB,
       iterations: params.iterations,
@@ -243,18 +238,16 @@ export class VaultService {
 
   private readKdfParams(): KdfParams {
     const raw = this.repo.getMeta(META_KDF_PARAMS)
-    const fallback: KdfParams = {
-      memoryKiB: Number(process.env.VAULT_KDF_MEM ?? 65536),
-      iterations: 3,
-      parallelism: 1
-    }
+    const fallback: KdfParams = resolveDefaultKdfParams()
     if (!raw) return fallback
     try {
       const parsed: unknown = JSON.parse(raw.toString('utf8'))
       if (typeof parsed !== 'object' || parsed === null) return fallback
       const p = parsed as Partial<KdfParams>
       return {
-        memoryKiB: typeof p.memoryKiB === 'number' ? p.memoryKiB : fallback.memoryKiB,
+        // DB 값이 변조돼 터무니없이 작아도 허용 범위 아래로는 내려가지 않는다
+        memoryKiB:
+          typeof p.memoryKiB === 'number' ? clampMemoryKiB(p.memoryKiB) : fallback.memoryKiB,
         iterations: typeof p.iterations === 'number' ? p.iterations : fallback.iterations,
         parallelism: typeof p.parallelism === 'number' ? p.parallelism : fallback.parallelism
       }

@@ -40,18 +40,44 @@ export function randomBytes(n: number): Buffer {
   return nodeRandomBytes(n)
 }
 
+/** argon2id 파라미터. 저장된 kdf_params 와 같은 모양이다 */
+export interface KdfParams {
+  memoryKiB: number
+  iterations: number
+  parallelism: number
+}
+
+/** 메모리 비용(KiB)을 8192~1048576 범위로 clamp 한다. 숫자가 아니면 기본값(65536) */
+export function clampMemoryKiB(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_MEMORY_KIB
+  return Math.min(MAX_MEMORY_KIB, Math.max(MIN_MEMORY_KIB, value))
+}
+
 /** VAULT_KDF_MEM 환경변수를 8192~1048576 범위로 clamp 해서 읽는다. 숫자가 아니면 기본값 */
 function resolveMemoryKiBFromEnv(): number {
-  const raw = Number(process.env.VAULT_KDF_MEM)
-  if (!Number.isFinite(raw)) return DEFAULT_MEMORY_KIB
-  return Math.min(MAX_MEMORY_KIB, Math.max(MIN_MEMORY_KIB, raw))
+  return clampMemoryKiB(Number(process.env.VAULT_KDF_MEM))
+}
+
+/**
+ * 새 금고를 만들 때(또는 저장된 kdf_params 가 없을 때) 쓸 기본 argon2id 파라미터.
+ * VAULT_KDF_MEM 환경변수는 vitest 실행 중(process.env.VITEST === 'true')에만 반영된다 —
+ * 프로덕션에서는 환경변수로 메모리 비용을 낮춰 공격을 쉽게 만들 수 없다.
+ * 호출부(service.setup 등)가 직접 process.env 를 읽으면 이 게이트가 무력화되므로,
+ * KDF 기본값이 필요한 곳은 반드시 이 함수를 쓴다.
+ */
+export function resolveDefaultKdfParams(): KdfParams {
+  return {
+    memoryKiB: process.env.VITEST === 'true' ? resolveMemoryKiBFromEnv() : DEFAULT_MEMORY_KIB,
+    iterations: DEFAULT_ITERATIONS,
+    parallelism: DEFAULT_PARALLELISM
+  }
 }
 
 /**
  * argon2id 로 비밀번호와 salt 로부터 32바이트 키를 유도한다.
- * 메모리 비용은 opts.memoryKiB 명시 인자가 우선이고, 없으면 기본값(65536)을 쓴다.
- * VAULT_KDF_MEM 환경변수는 vitest 실행 중(process.env.VITEST === 'true')에만
- * 허용되며 8192~1048576 범위로 clamp 되고, 숫자가 아니면 기본값을 쓴다.
+ * 메모리 비용은 opts.memoryKiB 명시 인자가 우선이고(항상 8192~1048576 로 clamp),
+ * 없으면 resolveDefaultKdfParams() 의 값을 쓴다.
+ * VAULT_KDF_MEM 환경변수는 vitest 실행 중(process.env.VITEST === 'true')에만 반영된다.
  * iterations/parallelism 은 저장된 kdf_params 를 그대로 전달할 수 있도록 열어 두며,
  * 생략하면 기본값(3/1)을 쓴다.
  */
@@ -64,9 +90,7 @@ export async function deriveKey(
     throw new Error(`salt 는 ${SALT_LENGTH}바이트여야 합니다`)
   }
 
-  const memorySize =
-    opts?.memoryKiB ??
-    (process.env.VITEST === 'true' ? resolveMemoryKiBFromEnv() : DEFAULT_MEMORY_KIB)
+  const memorySize = clampMemoryKiB(opts?.memoryKiB ?? resolveDefaultKdfParams().memoryKiB)
 
   const hash = await argon2id({
     password,

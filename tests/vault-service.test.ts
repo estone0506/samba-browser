@@ -5,7 +5,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { openDatabase, type Db } from '../src/main/db/client'
 import { VaultService, type SafeStorageLike } from '../src/main/vault/service'
 import { VaultRepo } from '../src/main/vault/repo'
-import { deriveKey, makeVerifier, randomBytes } from '../src/main/vault/crypto'
+import {
+  deriveKey,
+  makeVerifier,
+  randomBytes,
+  resolveDefaultKdfParams
+} from '../src/main/vault/crypto'
 import { DEFAULT_SETTINGS, type Settings } from '../src/shared/settings'
 
 const SECRET = 'sup3rs3cret!'
@@ -509,6 +514,32 @@ describe('VaultService', () => {
       expect(save?.source).toBe('user')
       expect(save?.itemId).toBe(meta.id)
       expect(JSON.stringify(log)).not.toMatch(/sup3rs3cret/)
+    })
+  })
+  describe('KDF 파라미터', () => {
+    it('setup 은 resolveDefaultKdfParams() 결과를 그대로 저장한다', async () => {
+      await vault.setup('master-pw')
+      const raw = new VaultRepo(db).getMeta('kdf_params')
+      expect(raw).not.toBeNull()
+      expect(JSON.parse(raw!.toString('utf8'))).toEqual(resolveDefaultKdfParams())
+    })
+
+    it('VITEST 게이트 밖(프로덕션 경로)에서는 VAULT_KDF_MEM 을 무시하고 65536 으로 저장한다', async () => {
+      // 게이트가 뚫려 있으면 저장된 memoryKiB 가 8192 가 된다(리뷰 지적 회귀 테스트)
+      const originalVitest = process.env.VITEST
+      delete process.env.VITEST
+      try {
+        await vault.setup('master-pw')
+      } finally {
+        if (originalVitest === undefined) delete process.env.VITEST
+        else process.env.VITEST = originalVitest
+      }
+      const raw = new VaultRepo(db).getMeta('kdf_params')
+      expect(JSON.parse(raw!.toString('utf8'))).toEqual({
+        memoryKiB: 65536,
+        iterations: 3,
+        parallelism: 1
+      })
     })
   })
 })
