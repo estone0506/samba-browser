@@ -8,11 +8,18 @@ export function WebArea(): React.JSX.Element {
     const el = ref.current
     if (!el) return
     const r = el.getBoundingClientRect()
+    // 가장자리를 각각 반올림한 뒤 빼서 폭·높이를 낸다.
+    // width 를 따로 반올림하면 서브픽셀 위치에서 오른쪽·아래가 1px 어긋난다
+    const x = Math.round(r.left)
+    const y = Math.round(r.top)
     void window.samba.layout.set({
-      x: Math.round(r.left),
-      y: Math.round(r.top),
-      width: Math.round(r.width),
-      height: Math.round(r.height)
+      x,
+      y,
+      width: Math.round(r.right) - x,
+      height: Math.round(r.bottom) - y,
+      // 메인이 여백을 현재 창 크기에 다시 투영할 수 있도록 측정 기준 뷰포트도 같이 보낸다
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight
     })
   }, [])
   // 진행 띠가 나타나고 사라질 때 웹뷰가 잠깐 버튼 위를 덮지 않도록,

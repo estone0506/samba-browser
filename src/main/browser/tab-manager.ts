@@ -14,6 +14,30 @@ export interface Tab {
 
 const DEFAULT_URL = 'https://www.google.com'
 
+// 렌더러가 보고한 좌표를 "현재" 창 콘텐츠 크기에 다시 투영한다.
+// 렌더러는 보고 시점의 뷰포트 크기를 함께 보내므로, 거기서 오른쪽·아래 여백을 뽑아
+// 지금 창 크기에 그대로 적용한다. 창 크기가 바뀌는 동안 렌더러의 재보고가
+// 늦거나 누락돼도(크기 변경 중 렌더링 파이프라인이 지연되면 실제로 생긴다)
+// 웹뷰가 카드 아래·오른쪽으로 삐져나오지 않는다.
+export function computeViewBounds(l: Layout, contentWidth: number, contentHeight: number): Layout {
+  const empty = { x: 0, y: 0, width: 0, height: 0, viewportWidth: 0, viewportHeight: 0 }
+  if (l.width <= 0 || l.height <= 0) return empty
+  // 뷰포트 정보가 없는 오래된 보고는 좌표를 그대로 쓴다(하위 호환)
+  const gapRight = l.viewportWidth > 0 ? Math.max(0, l.viewportWidth - (l.x + l.width)) : 0
+  const gapBottom = l.viewportHeight > 0 ? Math.max(0, l.viewportHeight - (l.y + l.height)) : 0
+  const width = l.viewportWidth > 0 ? contentWidth - l.x - gapRight : l.width
+  const height = l.viewportHeight > 0 ? contentHeight - l.y - gapBottom : l.height
+  if (width <= 0 || height <= 0) return empty
+  return {
+    x: l.x,
+    y: l.y,
+    width,
+    height,
+    viewportWidth: contentWidth,
+    viewportHeight: contentHeight
+  }
+}
+
 // 이미 하드닝한 파티션 이름. session.fromPartition 은 같은 인스턴스를 돌려주므로 1회만 건다
 const hardenedPartitions = new Set<string>()
 
@@ -53,13 +77,28 @@ function guardNavigation(wc: WebContents): void {
 export class TabManager {
   private tabs: Tab[] = []
   private activeId: string | null = null
-  private layout: Layout = { x: 0, y: 0, width: 800, height: 600 }
+  private layout: Layout = {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    viewportWidth: 0,
+    viewportHeight: 0
+  }
   private listeners: Array<(tabs: TabInfo[]) => void> = []
   private disposed = false
 
   constructor(private win: BrowserWindow) {
     // 창이 닫히면 남은 리스너·탭을 정리해 파괴된 창에 접근하지 않게 한다
     win.once('closed', () => this.dispose())
+    // 창 크기가 바뀌면 렌더러 보고를 기다리지 않고 메인이 먼저 맞춘다.
+    // (최대화·복원·드래그 리사이즈 때 렌더러 보고가 누락되면 이전 크기가 그대로 남아
+    //  웹페이지가 카드 밖까지 그려지던 문제를 막는다)
+    win.on('resize', () => this.applyBounds())
+    // 최대화·복원은 resize 가 중간 크기로 한 번 먼저 오고 최종 크기가 나중에 확정되므로
+    // 끝난 뒤에 한 번 더 맞춘다
+    win.on('maximize', () => this.applyBounds())
+    win.on('unmaximize', () => this.applyBounds())
   }
 
   onChange(cb: (tabs: TabInfo[]) => void): void {
@@ -159,8 +198,8 @@ export class TabManager {
       this.win.contentView.removeChildView(t.view)
     }
     this.win.contentView.addChildView(tab.view)
-    tab.view.setBounds(this.layout)
     this.activeId = id
+    this.applyBounds()
     this.emit()
   }
 
@@ -212,7 +251,16 @@ export class TabManager {
 
   setLayout(l: Layout): void {
     this.layout = l
-    this.active()?.view.setBounds(l)
+    this.applyBounds()
+  }
+
+  // 저장된 좌표를 현재 창 크기에 맞춰 활성 탭에 적용
+  private applyBounds(): void {
+    if (this.disposed || this.win.isDestroyed()) return
+    const view = this.active()?.view
+    if (!view) return
+    const [w, h] = this.win.getContentSize()
+    view.setBounds(computeViewBounds(this.layout, w, h))
   }
 }
 

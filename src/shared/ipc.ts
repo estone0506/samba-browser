@@ -66,6 +66,11 @@ export interface Layout {
   y: number
   width: number
   height: number
+  // 이 좌표를 잰 시점의 렌더러 뷰포트 크기(innerWidth/innerHeight).
+  // 메인은 여기서 오른쪽·아래 여백을 뽑아 "현재" 창 크기에 다시 투영한다.
+  // 창 크기 변경 중 렌더러 보고가 늦거나 누락돼도 웹뷰가 카드 밖으로 삐져나오지 않게 하는 기준값
+  viewportWidth: number
+  viewportHeight: number
 }
 
 export type AgentEvent =
