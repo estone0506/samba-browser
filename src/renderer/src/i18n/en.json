@@ -70,16 +70,16 @@
   },
   "vault": {
     "setup": {
-      "title": "Set up KeyMaster vault",
+      "title": "Set up KeyMaster",
       "desc": "Encrypt and store accounts, passwords, and payment info with a master password",
       "password1": "Master password",
       "password2": "Confirm master password",
       "remember": "Remember on this PC",
       "warning": "If you lose your master password, stored data cannot be recovered. Keep it somewhere safe.",
-      "submit": "Create vault",
+      "submit": "Create KeyMaster",
       "tooShort": "Enter at least {{n}} characters",
       "mismatch": "Passwords don't match",
-      "failed": "Couldn't create the vault"
+      "failed": "Couldn't create KeyMaster"
     },
     "unlock": {
       "title": "Unlock",
@@ -162,7 +162,7 @@
       "title": "Import",
       "passwordsButton": "Password CSV",
       "bookmarksButton": "Bookmark HTML",
-      "lockedError": "Unlock the vault before importing",
+      "lockedError": "Unlock KeyMaster before importing",
       "failed": "Import failed",
       "passwordsSummaryTitle": "Password import result",
       "bookmarksSummaryTitle": "Bookmark import result",
