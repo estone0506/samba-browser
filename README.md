@@ -1,4 +1,4 @@
-# 삼바브라우저 (Samba Browser)
+# SAMBA Browser (삼바브라우저)
 
 사람이 하는 웹 작업(로그인·인증·결제 포함)을 AI가 대신 끝내주는 Chromium 기반 데스크톱 브라우저
 
