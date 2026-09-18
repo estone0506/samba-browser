@@ -3,6 +3,7 @@
 // 여기서 out/renderer 아래 파일로 서빙된다. 개발 모드에서는 vite 개발 서버로 넘긴다.
 
 import { net, protocol } from 'electron'
+import type { Session } from 'electron'
 import { join, normalize, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { INTERNAL_SCHEME } from '../../shared/url'
@@ -44,11 +45,24 @@ function safeJoin(root: string, pathname: string): string | null {
  * app.whenReady() **이후에** 호출한다.
  * rendererDir 은 빌드 결과(out/renderer) 경로, devServerUrl 은 개발 모드의 vite 주소다
  */
+type Handler = (request: Request) => Promise<Response>
+
+// 기본 세션에 등록한 핸들러. 탭은 persist:<profile> 파티션 세션을 쓰므로
+// 그 세션에도 같은 핸들러를 붙여야 samba:// 가 열린다(세션별 protocol 은 서로 독립)
+let installed: Handler | null = null
+
+/** 탭 세션에 내부 스킴 핸들러를 붙인다. 같은 세션에는 1회만 */
+export function attachInternalProtocol(ses: Session): void {
+  if (!installed) return
+  if (ses.protocol.isProtocolHandled(INTERNAL_SCHEME)) return
+  ses.protocol.handle(INTERNAL_SCHEME, installed)
+}
+
 export function registerInternalProtocol(opts: {
   rendererDir: string
   devServerUrl?: string
 }): void {
-  protocol.handle(INTERNAL_SCHEME, async (request) => {
+  const handler: Handler = async (request) => {
     const url = new URL(request.url)
     const page = PAGES[url.hostname]
     if (!page) return new Response('not found', { status: 404 })
@@ -59,5 +73,7 @@ export function registerInternalProtocol(opts: {
     const file = safeJoin(opts.rendererDir, pathname)
     if (!file) return new Response('forbidden', { status: 403 })
     return net.fetch(pathToFileURL(file).toString())
-  })
+  }
+  installed = handler
+  protocol.handle(INTERNAL_SCHEME, handler)
 }

@@ -62,9 +62,9 @@ describe('내부 페이지(samba://newtab)', () => {
   it('내부 페이지는 외부 브라우저로 열 대상이 아니다', () => {
     expect(isHttpUrl(NEW_TAB_URL)).toBe(false)
   })
-  it('주소창에 samba://newtab 을 쳐도 검색어로 처리된다(내부 주소 직접 입력 방지)', () => {
-    expect(isInternalUrl(toUrl(NEW_TAB_URL))).toBe(false)
-    expect(isHttpUrl(toUrl(NEW_TAB_URL))).toBe(true)
+  it('주소창에 samba://newtab 을 치면 그대로 연다(크롬의 chrome://newtab 과 같은 방식)', () => {
+    expect(toUrl(NEW_TAB_URL)).toBe(NEW_TAB_URL)
+    expect(isInternalUrl(toUrl(NEW_TAB_URL))).toBe(true)
   })
 })
 

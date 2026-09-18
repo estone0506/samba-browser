@@ -3,6 +3,7 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type { Layout, TabInfo } from '../../shared/ipc'
 import { BLOCKED_URL_MESSAGE, isAllowedUrl, isInternalUrl, NEW_TAB_URL } from '../../shared/url'
+import { attachInternalProtocol } from './internal-protocol'
 import type { SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
 import { installDialogHandler, isAutomationActive } from './dialogs'
@@ -226,6 +227,8 @@ export class TabManager {
     const partition = `persist:${profile}`
     const ses = session.fromPartition(partition)
     hardenSession(ses, partition)
+    // 파티션 세션에도 samba:// 핸들러를 붙인다(기본 세션 등록만으로는 탭에서 안 열림)
+    attachInternalProtocol(ses)
     const view = new WebContentsView({
       webPreferences: {
         session: ses,
