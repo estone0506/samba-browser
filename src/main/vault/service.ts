@@ -25,6 +25,7 @@ import {
   type StoredField,
   type StoredSection
 } from './fields'
+import type { ExportRow } from './export'
 import {
   randomBytes,
   deriveKey,
@@ -883,6 +884,85 @@ export class VaultService {
     } catch {
       return false
     }
+  }
+
+  /**
+   * 잠금 해제 상태에서 마스터 비밀번호를 한 번 더 확인한다(내보내기 같은 위험 작업 전용).
+   * 저장된 salt·kdf_params 로 키를 다시 유도해 verifier 를 확인하고, 현재 들고 있는
+   * 마스터 키와 상수 시간으로 비교한다. 잠겨 있으면 항상 false 다
+   */
+  async verifyMaster(master: string): Promise<boolean> {
+    if (!this.key) return false
+    const salt = this.repo.getMeta(META_SALT)
+    const ct = this.repo.getMeta(META_VERIFIER_CT)
+    const iv = this.repo.getMeta(META_VERIFIER_IV)
+    if (!salt || !ct || !iv) return false
+
+    const params = this.readKdfParams()
+    const candidate = await deriveKey(master, salt, {
+      memoryKiB: params.memoryKiB,
+      iterations: params.iterations,
+      parallelism: params.parallelism
+    })
+    try {
+      if (!checkVerifier(candidate, { ciphertext: ct, iv })) return false
+      if (candidate.length !== this.key.length) return false
+      return timingSafeEqual(candidate, this.key)
+    } finally {
+      zeroize(candidate)
+    }
+  }
+
+  /**
+   * 내보내기용 평문 행 목록 — **메인 프로세스 내부에서만** 호출한다.
+   * IPC 로 노출하지 않으며, 호출부(export.ts)가 파일을 쓴 직후 배열을 비운다.
+   * 복호화에 실패한 필드는 조용히 건너뛴다(항목 자체는 살린다)
+   */
+  exportRows(): ExportRow[] {
+    const key = this.requireKey()
+    const accounts = new Map(this.repo.listAccounts().map((a) => [a.id, a]))
+    const rows: ExportRow[] = []
+
+    // 계정별 항목 + 계정에 딸리지 않은 전역 항목(accountId = null)
+    const itemIds = [
+      ...[...accounts.keys()].flatMap((id) => this.repo.listItems(id).map((m) => m.id)),
+      ...this.repo.listItems(null).map((m) => m.id)
+    ]
+
+    for (const itemId of itemIds) {
+      const item = this.repo.getItemRow(itemId)
+      if (!item) continue
+      const account = item.accountId === null ? undefined : accounts.get(item.accountId)
+      const fields: Record<string, string> = {}
+      for (const section of item.sections) {
+        for (const field of section.fields) {
+          if (!isSecretField(field)) {
+            if (field.value !== undefined) fields[field.key] = field.value
+            continue
+          }
+          try {
+            fields[field.key] = decrypt(
+              key,
+              Buffer.from(field.ciphertext, 'base64'),
+              Buffer.from(field.iv, 'base64'),
+              aadFor(item.id, field)
+            )
+          } catch {
+            // 이 필드만 건너뛴다
+          }
+        }
+      }
+      rows.push({
+        type: item.type,
+        label: account?.label || item.label,
+        host: account?.host ?? '',
+        url: account?.urls[0] ?? '',
+        username: account?.username ?? '',
+        note: fields.note ?? '',
+        fields
+      })
+    }
+    return rows
   }
 
   private requireKey(): Buffer {

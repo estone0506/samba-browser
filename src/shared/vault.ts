@@ -137,3 +137,19 @@ export interface AuditLogDto {
   jobId: string | null
   source: string
 }
+
+// --- 내보내기 ------------------------------------------------------------
+// 요청·응답 어디에도 평문 값은 없다. master 는 렌더러 → 메인 한 방향으로만 흐르고
+// 메인에서 검증 후 즉시 버려지며, 응답에는 내보낸 항목 "개수" 와 저장 경로만 담긴다
+export type ExportFormat = 'csv' | 'json'
+
+export interface ExportRequest {
+  format: ExportFormat
+  // 마스터 비밀번호 재입력 값
+  master: string
+}
+
+export interface ExportResult {
+  itemCount: number
+  filePath: string
+}
