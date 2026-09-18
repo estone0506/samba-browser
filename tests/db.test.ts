@@ -37,4 +37,17 @@ describe('openDatabase(:memory:)', () => {
     const rows = await db.drizzle.select().from(sites)
     expect(rows).toHaveLength(0)
   })
+
+  it('close() 를 두 번 호출해도 안전하고, isClosed 가 true 로 바뀐다', async () => {
+    db = await openDatabase(':memory:')
+    expect(db.isClosed).toBe(false)
+    expect(() => db!.close()).not.toThrow()
+    expect(db.isClosed).toBe(true)
+    // 종료 순서가 겹치는 경우(before-quit + 창 closed) 대비: 이미 닫힌 sql.js 핸들에
+    // 다시 close() 해도 예외 없이 no-op 이어야 한다
+    expect(() => db!.close()).not.toThrow()
+    // close() 이후 save()/scheduleSave() 도 조용히 no-op 이어야 한다
+    expect(() => db!.save()).not.toThrow()
+    expect(() => db!.scheduleSave()).not.toThrow()
+  })
 })

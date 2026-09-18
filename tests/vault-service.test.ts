@@ -58,6 +58,16 @@ describe('VaultService', () => {
     vi.useRealTimers()
   })
 
+  it('db.close() 이후 dispose() 를 호출해도 throw 하지 않는다(종료 순서 버그 회귀 테스트)', async () => {
+    await vault.setup('master-pw')
+    // 실제 버그 재현 순서: db 가 먼저 닫히고, 그 다음 vault.dispose() → lock() →
+    // pruneDeviceWrappedKeyIfDisabled() 가 닫힌 DB 를 조회하려 했었다
+    db.close()
+    expect(() => vault.dispose()).not.toThrow()
+    // dispose() 는 DB 접근과 무관하게 항상 키를 zeroize 해야 한다
+    expect(vault.state()).toBe('uninitialized')
+  })
+
   it('처음에는 uninitialized, setup 하면 unlocked', async () => {
     expect(vault.state()).toBe('uninitialized')
     await vault.setup('master-pw')

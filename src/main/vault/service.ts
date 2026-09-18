@@ -100,9 +100,12 @@ export class VaultService {
   private pending: (PendingCapture & { expiresAt: number }) | null = null
   private listeners = new Set<(state: VaultState) => void>()
   private captureListeners = new Set<(prompt: CapturePromptDto) => void>()
+  // dispose() 가 이미 실행됐는지(중복 호출 방어). before-quit 과 창 closed 이벤트
+  // 양쪽에서 종료 정리를 부를 수 있어서 필요하다
+  private disposed = false
 
   constructor(
-    db: Db,
+    private readonly db: Db,
     private readonly settings: SettingsReader,
     options: VaultServiceOptions = {}
   ) {
@@ -114,8 +117,11 @@ export class VaultService {
   // --- 상태 -------------------------------------------------------------
 
   state(): VaultState {
+    // 키를 이미 들고 있으면 DB 를 다시 확인할 필요가 없다 — DB 가 닫힌 뒤에도
+    // (종료 순서가 겹치는 경우) 안전하게 'unlocked' 를 돌려줄 수 있다
+    if (this.key) return 'unlocked'
     if (!this.isInitialized()) return 'uninitialized'
-    return this.key ? 'unlocked' : 'locked'
+    return 'locked'
   }
 
   onStateChanged(cb: (state: VaultState) => void): () => void {
@@ -131,6 +137,9 @@ export class VaultService {
   }
 
   private isInitialized(): boolean {
+    // DB 가 이미 닫혔으면(종료 중) 쿼리를 시도하지 않는다 — sql.js 는 닫힌 핸들에 대한
+    // 쿼리에서 'out of memory' 예외를 던진다
+    if (this.db.isClosed) return false
     return this.repo.getMeta(META_SALT) !== null && this.repo.getMeta(META_VERIFIER_CT) !== null
   }
 
@@ -187,12 +196,20 @@ export class VaultService {
       clearTimeout(this.autoLockTimer)
       this.autoLockTimer = undefined
     }
+    // 키 zeroize 는 DB 상태와 무관하게 항상 수행한다(메모리에 평문 키를 남기지 않는 것이 최우선)
     if (this.key) {
       zeroize(this.key)
       this.key = null
       this.emit()
     }
-    this.pruneDeviceWrappedKeyIfDisabled()
+    // 종료 순서가 겹쳐 DB 가 먼저 닫힌 뒤 lock() 이 불릴 수 있다(예: before-quit 에서
+    // vault.dispose() 후 db.close() 를 호출했는데 창 closed 이벤트가 뒤이어 dispose() 를
+    // 한 번 더 부르는 경우). DB 작업은 실패해도 잠금 자체를 막으면 안 되므로 try/catch 로 감싼다
+    try {
+      this.pruneDeviceWrappedKeyIfDisabled()
+    } catch (e: unknown) {
+      console.error('기기 기억 키 정리 실패', e instanceof Error ? e.message : String(e))
+    }
   }
 
   // 사용자 활동이 있을 때마다 자동 잠금 타이머를 되돌린다
@@ -205,12 +222,15 @@ export class VaultService {
   // vaultRememberDevice 가 꺼져 있는데 예전에 저장된 감싼 키가 남아 있으면 지운다.
   // lock()/touch() 양쪽에서 불러 옵션을 끈 시점 이후 첫 상태 확인에서 곧바로 반영되게 한다
   private pruneDeviceWrappedKeyIfDisabled(): void {
+    if (this.db.isClosed) return
     if (this.settings.get().vaultRememberDevice) return
     if (this.repo.getMeta(META_DEVICE_KEY)) this.repo.deleteMeta(META_DEVICE_KEY)
   }
 
-  // 인스턴스를 버릴 때 타이머·키를 정리한다(앱 종료·테스트)
+  // 인스턴스를 버릴 때 타이머·키를 정리한다(앱 종료·테스트). 두 번 호출돼도 안전하다
   dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
     if (this.captureTimer) {
       clearTimeout(this.captureTimer)
       this.captureTimer = undefined
