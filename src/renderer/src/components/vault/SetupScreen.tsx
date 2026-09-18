@@ -15,7 +15,7 @@ export function SetupScreen(): React.JSX.Element {
   const loading = useVaultStore((s) => s.loading)
   const [pw1, setPw1] = useState('')
   const [pw2, setPw2] = useState('')
-  const [remember, setRemember] = useState(false)
+  const [remember, setRemember] = useState(true)
   const [err, setErr] = useState<string | null>(null)
 
   const submit = async (e: React.FormEvent): Promise<void> => {
@@ -64,14 +64,19 @@ export function SetupScreen(): React.JSX.Element {
             onChange={(e) => setPw2(e.target.value)}
           />
         </div>
-        <label className="flex items-center gap-2 text-[12.5px] text-[var(--text2)]">
+        <label className="flex items-start gap-2 text-[12.5px] text-[var(--text2)]">
           <input
             type="checkbox"
             checked={remember}
             onChange={(e) => setRemember(e.target.checked)}
-            className="h-3.5 w-3.5 rounded border-[var(--line)]"
+            className="mt-0.5 h-3.5 w-3.5 rounded border-[var(--line)]"
           />
-          {t('vault.setup.remember')}
+          <span>
+            <span className="block">{t('vault.setup.remember')}</span>
+            <span className="block text-[11px] text-[var(--text3)]">
+              {t('vault.setup.rememberDesc')}
+            </span>
+          </span>
         </label>
         <div className="rounded-[10px] bg-[rgba(0,0,0,.04)] px-3 py-2.5 text-[11.5px] leading-relaxed text-[var(--text2)]">
           {t('vault.setup.warning')}

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Search, Plus, Download } from 'lucide-react'
+import { Search, Plus, Download, Settings as SettingsIcon } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import { useVaultStore } from '@renderer/stores/vaultStore'
 import type { AccountDto } from '@shared/ipc'
@@ -25,9 +25,10 @@ interface Props {
   onAdd: () => void
   onAddGlobal: () => void
   onImport: () => void
+  onSettings: () => void
 }
 
-export function ItemList({ onAdd, onAddGlobal, onImport }: Props): React.JSX.Element {
+export function ItemList({ onAdd, onAddGlobal, onImport, onSettings }: Props): React.JSX.Element {
   const { t } = useTranslation()
   const accounts = useVaultStore((s) => s.accounts)
   const sites = useVaultStore((s) => s.sites)
@@ -103,9 +104,17 @@ export function ItemList({ onAdd, onAddGlobal, onImport }: Props): React.JSX.Ele
           </button>
           <button
             type="button"
+            onClick={onSettings}
+            title={t('vault.list.settingsBtn')}
+            className="ml-auto flex h-[26px] w-[26px] items-center justify-center rounded-[8px] border border-[var(--line)] text-[var(--text2)]"
+          >
+            <SettingsIcon className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
             onClick={onImport}
             title={t('vault.list.import')}
-            className="ml-auto flex h-[26px] w-[26px] items-center justify-center rounded-[8px] border border-[var(--line)] text-[var(--text2)]"
+            className="flex h-[26px] w-[26px] items-center justify-center rounded-[8px] border border-[var(--line)] text-[var(--text2)]"
           >
             <Download className="h-3.5 w-3.5" />
           </button>

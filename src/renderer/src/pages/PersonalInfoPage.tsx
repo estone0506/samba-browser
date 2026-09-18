@@ -6,6 +6,7 @@ import { ItemList } from '@renderer/components/vault/ItemList'
 import { ItemDetail } from '@renderer/components/vault/ItemDetail'
 import { ItemEditor } from '@renderer/components/vault/ItemEditor'
 import { ImportPanel } from '@renderer/components/vault/ImportPanel'
+import { VaultSettingsPanel } from '@renderer/components/vault/VaultSettingsPanel'
 import { useVaultStore } from '@renderer/stores/vaultStore'
 import type { VaultItemMeta } from '@shared/ipc'
 
@@ -23,6 +24,7 @@ export function PersonalInfoPage(): React.JSX.Element {
   // 열 때마다 바뀌어 ItemEditor 를 새로 마운트시킨다(폼 상태를 effect 없이 초기화하기 위함)
   const [editorKey, setEditorKey] = useState(0)
   const [importOpen, setImportOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const openEditor = (): void => {
     setEditorMode('account')
     setEditingGlobalItem(undefined)
@@ -57,6 +59,7 @@ export function PersonalInfoPage(): React.JSX.Element {
         onAdd={openEditor}
         onAddGlobal={() => openGlobalEditor()}
         onImport={() => setImportOpen(true)}
+        onSettings={() => setSettingsOpen(true)}
       />
       <ItemDetail onEdit={openEditor} onEditGlobal={openGlobalEditor} />
       <ItemEditor
@@ -68,6 +71,7 @@ export function PersonalInfoPage(): React.JSX.Element {
         item={editorMode === 'global' ? editingGlobalItem : undefined}
       />
       <ImportPanel open={importOpen} onOpenChange={setImportOpen} />
+      <VaultSettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   )
 }
