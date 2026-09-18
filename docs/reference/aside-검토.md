@@ -152,3 +152,4 @@ Aside Password 설정 화면 기준 요약:
 - **Password 설정 하단 추가 확인**: "Connect external password manager"(외부 관리자 연동), Export CSV/JSON, "Disable in incognito", URL matching strategy(Domain). → 이미 정책 변경에 반영(자동잠금 1주·접근정책·자동제출·도메인 매칭). 내보내기 CSV/JSON 은 Task 11 에 추가.
 - **Routines**: Free 3개 제한 배너 + Upgrade, 루틴 토글·주기, Create, Suggestions "Scan"(히스토리에서 반복 작업 찾기) — 이미 기록.
 - **Developers**: Aside CLI(Codex/Claude Code 에서 `/aside-browser` 스킬로 웹 작업 실행), Aside Skills 추가, **Aside MCP 서버 토글**, Remote Control(Pro) — 2차 로드맵(삼바 MCP 서버 노출) 유지.
+- **Profiles 메뉴(로고 클릭)**: 프로필 여러 개(예: "박가명 (직장)", "Profile 1"), 단축키 Ctrl+Alt+1/2 로 전환, 프로필별 아바타·⋯ 메뉴, New profile. 프로필 = 크롬식 완전 분리(북마크·볼트·세션). → 삼바: 현재 "탭별 파티션(계정=프로필)" 은 유지하고, 상위 개념 **브라우저 프로필(작업공간)** 은 2b 에서 Supabase 계정 하위로 설계(북마크·키마스터 금고·설정 세트 분리, Ctrl+Alt+숫자 전환).
