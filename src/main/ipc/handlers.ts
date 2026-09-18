@@ -31,9 +31,10 @@ export function registerIpc(
     if (win.isDestroyed() || win.webContents.isDestroyed()) return
     win.webContents.send(channel, payload)
   }
-  const agent = new AgentRunner(tabs, settings, (ev) => send(IPC.agentEvent, ev))
   // 금고. 마스터 키는 이 인스턴스 안에만 있고 IPC 로는 절대 나가지 않는다
   const vault = new VaultService(db, settings, { safeStorage })
+  // AI 도구(list_accounts/fill_secret/login)가 쓸 수 있도록 금고를 넘긴다
+  const agent = new AgentRunner(tabs, settings, (ev) => send(IPC.agentEvent, ev), vault)
   vault.onStateChanged((state) => send(IPC.vaultStateChanged, state))
   // 저장 제안 카드에는 host/username/isNew 만 간다(비밀번호는 메인에 남는다)
   vault.onCapturePrompt((prompt) => send(IPC.vaultCapturePrompt, prompt))

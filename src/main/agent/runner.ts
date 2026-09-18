@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import type { TabManager } from '../browser/tab-manager'
 import type { SettingsStore } from '../settings/store'
 import type { AgentEvent } from '../../shared/ipc'
+import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
 import { buildSystemPrompt } from './prompt'
 import { runQuery, classifyAuthError, isFatalApiError } from './provider'
@@ -27,7 +28,9 @@ export class AgentRunner {
   constructor(
     private tabs: TabManager,
     private settings: SettingsStore,
-    private emit: (e: AgentEvent) => void
+    private emit: (e: AgentEvent) => void,
+    // 개인정보 금고. 없으면 금고 도구는 잠금으로 동작한다
+    private vault?: VaultService
   ) {}
 
   resolveConfirm(id: string, approved: boolean): void {
@@ -84,8 +87,12 @@ export class AgentRunner {
     let apiError = ''
     // 종료 상태를 이미 보냈는지. SDK 는 오류 result 를 내보낸 뒤 throw 까지 하므로 중복 방지
     let settled = false
+    // 이번 실행의 감사 로그 식별자(금고 fill 기록에 남는다)
+    const jobId = randomUUID()
     const server = createSambaTools({
       tabs: this.tabs,
+      vault: this.vault,
+      jobId,
       dangerWords: s.dangerWords,
       mode: s.permissionMode,
       finalConfirm: s.finalConfirm,
