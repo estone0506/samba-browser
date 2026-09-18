@@ -61,6 +61,21 @@ export interface PutItemInput {
   type: VaultItemType
   label: string
   value: string
+  // 감사 로그에 남길 표식(예: 'auto-update'). audit 테이블에 별도 note 컬럼이 없어
+  // 기존 jobId 컬럼을 재사용한다. 생략하면 null
+  jobId?: string
+}
+
+// applyAutoPasswordUpdate() 가 되돌리기(undo)를 위해 보관하는 정보. 평문(oldValue)을
+// 메모리에 60초만 들고 있다가 폐기한다(만료 시 undoAutoPasswordUpdate() 가 거부한다)
+interface PendingPasswordUndo {
+  itemId: number
+  accountId: number
+  label: string
+  // 갱신 전 값. 기존 항목이 없어 새로 만든 경우는 null(되돌리기 시 항목을 삭제한다)
+  oldValue: string | null
+  hadExistingItem: boolean
+  expiresAt: number
 }
 
 export interface UpsertAccountInput {
@@ -94,6 +109,8 @@ const META_DEVICE_KEY = 'device_wrapped_key'
 const SALT_BYTES = 16
 const CAPTURE_TTL_MS = 60_000
 const MINUTE_MS = 60_000
+// 자동 갱신 되돌리기 유효 시간(스펙: 60초)
+const UNDO_TTL_MS = 60_000
 
 export class VaultService {
   private readonly repo: VaultRepo
@@ -105,6 +122,8 @@ export class VaultService {
   private pending: (PendingCapture & { expiresAt: number }) | null = null
   private listeners = new Set<(state: VaultState) => void>()
   private captureListeners = new Set<(prompt: CapturePromptDto) => void>()
+  // 자동 갱신 되돌리기 토큰 → 되돌릴 정보. 60초 지나면 setTimeout 이 스스로 지운다
+  private pendingUndos = new Map<string, PendingPasswordUndo>()
   // dispose() 가 이미 실행됐는지(중복 호출 방어). before-quit 과 창 closed 이벤트
   // 양쪽에서 종료 정리를 부를 수 있어서 필요하다
   private disposed = false
@@ -241,6 +260,7 @@ export class VaultService {
     this.pending = null
     this.listeners.clear()
     this.captureListeners.clear()
+    this.pendingUndos.clear()
     this.lock()
   }
 
@@ -443,7 +463,8 @@ export class VaultService {
         itemId: id,
         accountId: input.accountId,
         action: 'save',
-        source: 'user'
+        source: 'user',
+        jobId: input.jobId
       })
       return this.repo.itemMeta(id)
     })
@@ -544,6 +565,75 @@ export class VaultService {
   private requireKey(): Buffer {
     if (!this.key) throw new Error('금고가 잠겨 있습니다')
     return this.key
+  }
+
+  // --- 로그인 성공 감지 자동 갱신 ------------------------------------------
+
+  /**
+   * 로그인 성공을 감지했을 때, 묻지 않고 저장된 로그인 비밀번호를 새 값으로 갱신한다.
+   * 갱신 전 값을 60초간 메모리에 보관해 되돌리기(undoAutoPasswordUpdate)를 지원한다.
+   * 기존 항목이 없으면(드문 경우) 새로 만들고, 되돌리기 시에는 그 항목을 지운다.
+   */
+  applyAutoPasswordUpdate(input: { accountId: number; username: string; value: string }): {
+    undoToken: string
+  } {
+    const key = this.requireKey()
+    const existing = this.repo.findItemRow(input.accountId, 'login_password')
+    const oldValue = existing
+      ? decrypt(key, existing.ciphertext, existing.iv, String(existing.id))
+      : null
+    const label =
+      (existing ? this.repo.itemMeta(existing.id)?.label : undefined) ?? '로그인 비밀번호'
+
+    const meta = this.putItem({
+      id: existing?.id,
+      accountId: input.accountId,
+      type: 'login_password',
+      label,
+      value: input.value,
+      jobId: 'auto-update'
+    })
+
+    const undoToken = randomBytes(16).toString('hex')
+    const expiresAt = Date.now() + UNDO_TTL_MS
+    this.pendingUndos.set(undoToken, {
+      itemId: meta.id,
+      accountId: input.accountId,
+      label,
+      oldValue,
+      hadExistingItem: !!existing,
+      expiresAt
+    })
+    const timer = setTimeout(() => this.pendingUndos.delete(undoToken), UNDO_TTL_MS)
+    timer.unref?.()
+
+    return { undoToken }
+  }
+
+  /**
+   * applyAutoPasswordUpdate() 가 남긴 되돌리기 토큰으로 갱신 전 값을 복원한다.
+   * 토큰이 없거나 만료됐거나 금고가 잠겨 있으면 false.
+   */
+  undoAutoPasswordUpdate(token: string): boolean {
+    const pending = this.pendingUndos.get(token)
+    if (!pending) return false
+    this.pendingUndos.delete(token)
+    if (Date.now() > pending.expiresAt) return false
+    if (!this.key) return false
+
+    if (pending.hadExistingItem && pending.oldValue !== null) {
+      this.putItem({
+        id: pending.itemId,
+        accountId: pending.accountId,
+        type: 'login_password',
+        label: pending.label,
+        value: pending.oldValue,
+        jobId: 'undo-auto-update'
+      })
+    } else {
+      this.deleteItem(pending.itemId)
+    }
+    return true
   }
 
   // --- 저장 제안(capture) -------------------------------------------------

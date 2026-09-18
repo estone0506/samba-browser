@@ -20,11 +20,12 @@ export const captureSchema = z.object({
 export const CAPTURE_WINDOW_MS = 30_000
 export const CAPTURE_MAX_PER_WINDOW = 3
 
-// VaultService 중 capture 경로에서 실제로 쓰는 부분만 좁힌 인터페이스
+// VaultService 중 capture 경로에서 실제로 쓰는 부분만 좁힌 인터페이스.
+// id 는 자동 갱신(onPendingUpdate) 경로에서만 필요해 선택 필드로 둔다(기존 테스트 호환)
 export interface CaptureVaultLike {
   state: () => VaultState
   hasSameSecret: (host: string, username: string, password: string) => boolean
-  listAccounts: (host?: string) => { username: string }[]
+  listAccounts: (host?: string) => { id?: number; username: string }[]
   setPendingCapture: (capture: {
     host: string
     username: string
@@ -51,6 +52,17 @@ export type CaptureOutcome =
   | 'host-mismatch'
   | 'excluded'
   | 'duplicate'
+  // 기존 계정 + 다른 값 + 자동 갱신 활성화 → 저장 제안 없이 "로그인 성공 감지" 대기 상태로 보류
+  | 'pending-update'
+
+// onPendingUpdate 로 넘기는, 자동 갱신 판정에 필요한 최소 정보. 비밀번호를 담지만
+// 이 값은 gate 밖으로 나가는 즉시 호출자(메인)가 60초 이내에 소비/폐기해야 한다
+export interface PendingUpdatePayload {
+  host: string
+  username: string
+  password: string
+  accountId: number
+}
 
 export interface VaultCaptureGateDeps {
   vault: CaptureVaultLike
@@ -58,6 +70,11 @@ export interface VaultCaptureGateDeps {
   excludedHosts: () => string[]
   // 테스트에서 시간 흐름을 제어하기 위한 주입점
   now?: () => number
+  // vaultAutoUpdatePassword 설정(설정에서 매번 최신 값을 읽는다). 없으면 꺼진 것으로 간주한다
+  autoUpdateEnabled?: () => boolean
+  // 자동 갱신 대상(기존 계정 + 다른 값)을 감지했을 때 호출된다. senderKey 는 handle() 에 넘긴
+  // 값을 그대로 돌려준다(메인에서 실제 webContents 로 캐스팅해 사용)
+  onPendingUpdate?: (payload: PendingUpdatePayload, senderKey: object) => void
 }
 
 export class VaultCaptureGate {
@@ -113,7 +130,20 @@ export class VaultCaptureGate {
     if (vault.state() === 'unlocked') {
       // 기존 값과 동일하면 제안하지 않는다
       if (vault.hasSameSecret(host, username, password)) return 'duplicate'
-      const isNew = !vault.listAccounts(host).some((a) => a.username === username)
+      const existingAccount = vault.listAccounts(host).find((a) => a.username === username)
+      const isNew = !existingAccount
+
+      // 기존 계정 + 값이 다름 + 자동 갱신이 켜져 있으면: 저장 제안 카드를 띄우지 않고
+      // "로그인 성공 감지" 대기 상태로 보류한다(호출자가 navigation 을 지켜본다)
+      const autoUpdateOn = this.deps.autoUpdateEnabled?.() ?? false
+      if (existingAccount?.id !== undefined && autoUpdateOn && this.deps.onPendingUpdate) {
+        this.deps.onPendingUpdate(
+          { host, username, password, accountId: existingAccount.id },
+          senderKey
+        )
+        return 'pending-update'
+      }
+
       vault.setPendingCapture({ host, username, password, isNew, locked: false })
       return 'accepted'
     }

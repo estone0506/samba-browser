@@ -36,6 +36,8 @@ export const IPC = {
   vaultCapturePrompt: 'vault:capturePrompt', // main → renderer 이벤트 (비밀번호 제외)
   vaultCaptureDecision: 'vault:captureDecision', // renderer → main
   vaultCapture: 'vault:capture', // preload(격리 월드) → main, 폼 제출에서 감지한 자격정보
+  vaultPasswordUpdated: 'vault:passwordUpdated', // main → renderer 이벤트, 로그인 성공 감지로 자동 갱신됨
+  vaultUndoPasswordUpdate: 'vault:undoPasswordUpdate', // renderer → main, 자동 갱신 되돌리기
   // 가져오기 — filePath 생략 시 메인에서 dialog.showOpenDialog 를 연다
   importPasswords: 'import:passwords',
   importBookmarks: 'import:bookmarks',
@@ -106,6 +108,7 @@ export type {
   VaultItemMeta,
   VaultState,
   CapturePromptDto,
+  PasswordUpdatedDto,
   AuditLogDto
 } from './vault'
 
