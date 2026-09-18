@@ -1,7 +1,8 @@
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
-import type { TabManager } from '../browser/tab-manager'
+import type { TabManager, Tab } from '../browser/tab-manager'
 import { pageBridge } from '../browser/page-bridge'
+import type { LoginFieldsResult } from '../browser/page-bridge'
 import { serializeSnapshot } from '../../shared/snapshot'
 import { isDangerous } from '../../shared/danger'
 import type { PermissionMode, VaultAccessPolicy } from '../../shared/settings'
@@ -11,7 +12,7 @@ import { normalizeHost, registrableDomain } from '../../shared/host'
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
 import { formatDialogNote } from '../browser/dialogs'
 import { createOcrTool } from './tools-ocr'
-import { knownLoginUrl } from '../../shared/site-rules'
+import { knownLoginUrl, isLikelyLoginUrl } from '../../shared/site-rules'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -146,6 +147,63 @@ const text = (t: string): { content: [{ type: 'text'; text: string }] } => ({
 // 현재 탭이 없으면 null
 function activeOr(ctx: ToolContext): ReturnType<TabManager['active']> {
   return ctx.tabs.active()
+}
+
+// 로그인 진입점으로 보이는 요소의 텍스트·링크 주소 패턴(E2E 하네스의 clickLoginLink 와 같은 규칙).
+// 크림처럼 소셜 로그인 버튼만 보이고 이메일 로그인은 한 번 더 눌러야 나오는 사이트가 있어
+// "이메일로 로그인" 류를 가장 먼저 찾는다
+const EMAIL_LOGIN_TEXT_RE = /이메일(로| )?\s?로그인|email.*(login|sign in)|아이디로 로그인/i
+const LOGIN_TEXT_RE = /^(로그인|로그인하기|login|log in|sign\s?in|signin)$/i
+const LOGIN_HREF_RE = /login|signin|sign-in|logon/i
+
+/** 페이지 안에서 로그인 링크·버튼을 텍스트 또는 링크 주소로 찾아 한 번 눌러 본다. 눌렀으면 true */
+async function clickLoginLink(tab: Tab): Promise<boolean> {
+  const snapshot = await pageBridge.snapshot(tab)
+  const target =
+    snapshot.elements.find((el) => EMAIL_LOGIN_TEXT_RE.test(el.text)) ??
+    snapshot.elements.find((el) => LOGIN_TEXT_RE.test(el.text.trim())) ??
+    snapshot.elements.find((el) => el.href !== undefined && LOGIN_HREF_RE.test(el.href)) ??
+    snapshot.elements.find((el) => /로그인|login|sign in/i.test(el.text))
+  if (!target) return false
+  await pageBridge.click(tab, target.id)
+  await pageBridge.waitForLoad(tab)
+  return true
+}
+
+/**
+ * 로그인 폼을 찾는다. 못 찾으면 도구 호출 1회 안에서 아래 순서로 되짚는다(모델 왕복 감소).
+ *   1) 알려진 로그인 URL(knownLoginUrl)로 이동 → 재탐지
+ *   2) 현재 페이지의 로그인 링크를 눌러 이동 → 재탐지
+ * 끝내 못 찾으면 마지막 탐지 결과(stage: 'none')를 그대로 돌려준다.
+ */
+export async function findLoginFieldsWithFallback(
+  tabs: TabManager,
+  tab: Tab,
+  host: string
+): Promise<LoginFieldsResult> {
+  let fields = await pageBridge.findLoginFields(tab)
+  if (fields.stage !== 'none') return fields
+
+  // 1) 지금 페이지가 로그인 페이지로 보이지 않을 때만 알려진 로그인 URL 로 옮겨 간다
+  const known = knownLoginUrl(host)
+  if (known !== undefined && !isLikelyLoginUrl(tab.view.webContents.getURL())) {
+    try {
+      await tabs.navigate(tab.id, known)
+      await pageBridge.waitForLoad(tab)
+      fields = await pageBridge.findLoginFields(tab)
+      if (fields.stage !== 'none') return fields
+    } catch {
+      // 이동 실패는 다음 단계(로그인 링크 클릭)로 넘어간다
+    }
+  }
+
+  // 2) 페이지 안의 로그인 링크를 눌러 본다
+  try {
+    if (await clickLoginLink(tab)) fields = await pageBridge.findLoginFields(tab)
+  } catch {
+    // 스냅샷·클릭 실패는 무시하고 마지막 탐지 결과를 돌려준다
+  }
+  return fields
 }
 
 export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkMcpServer> {
@@ -532,14 +590,13 @@ ${raw}`
           const available = vaultAvailable()
           if (typeof available === 'string') return available
           label = `로그인: ${host}`
-          let fields = await pageBridge.findLoginFields(tab)
+          // 폼이 없으면 알려진 로그인 URL 이동 → 페이지 내 로그인 링크 클릭까지 한 번에 시도한다
+          let fields = await findLoginFieldsWithFallback(ctx.tabs, tab, host)
           if (fields.stage === 'none') {
-            // 알려진 로그인 URL 이 있으면 모델이 바로 이동할 수 있게 알려준다
-            const hint = knownLoginUrl(host)
-            return hint
-              ? `fields not found: navigate to ${hint} first`
-              : 'fields not found: navigate to the login page first'
+            return 'fields not found: navigate to the login page first'
           }
+          // 폴백 이동으로 평문(http) 페이지에 내려섰을 수 있어 다시 확인한다
+          if (!isSecurePageUrl(currentUrl())) return INSECURE_PAGE
           // 라벨을 안 주면 탭 프로필과 같은 라벨의 계정을 자동으로 고른다(계정 순회 지원)
           const account = resolveAccount(available.listAccounts(host), accountLabel, tab.profile)
           if (!account) return ACCOUNT_NOT_FOUND
