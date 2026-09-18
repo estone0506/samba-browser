@@ -2,7 +2,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Globe, ListChecks, Repeat, KeyRound, Smartphone, ScrollText, Settings } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
-import logo from '@renderer/assets/logo.svg'
+import logo from '@renderer/assets/logo.png'
 
 const ITEMS = [
   { key: 'browser', icon: Globe },
