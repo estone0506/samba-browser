@@ -1,0 +1,56 @@
+{
+  "app": { "name": "SAMBA Browser" },
+  "sidebar": {
+    "browser": "Browser",
+    "tasks": "Tasks",
+    "automation": "Automation",
+    "accounts": "Personal Info",
+    "phones": "Phones",
+    "logs": "Logs",
+    "settings": "Settings",
+    "chats": "Chats"
+  },
+  "address": {
+    "placeholder": "Search or enter URL",
+    "pc": "PC",
+    "mobile": "Mobile",
+    "profile": "Profile"
+  },
+  "tab": { "new": "New Tab" },
+  "chat": {
+    "title": "AI",
+    "placeholder": "Type an instruction…",
+    "send": "Send",
+    "stop": "Stop",
+    "thinking": "Thinking…",
+    "provider": "Claude subscription",
+    "apiRetry": "Waiting for AI (retry {{n}} · {{reason}})",
+    "done": "Done",
+    "failed": "Failed",
+    "toolCalls": "Tool calls {{n}} / {{max}}"
+  },
+  "confirm": {
+    "title": "Confirmation required",
+    "body": "AI is about to perform: {{action}}",
+    "approve": "Approve",
+    "deny": "Deny",
+    "finish": "Finish the task?",
+    "continue": "Keep going",
+    "finishOk": "Finish"
+  },
+  "permission": {
+    "title": "Permission",
+    "readOnly": "Read-only",
+    "readOnlyDesc": "Reads pages and navigates only. No clicking or typing",
+    "guard": "Guard",
+    "guardDesc": "Asks for approval before risky actions",
+    "full": "Full",
+    "fullDesc": "Acts immediately, skipping risk confirmation",
+    "finalConfirm": "Final confirmation"
+  },
+  "auth": {
+    "missing": "AI is not connected. Run claude login in a terminal or add an API key in Settings.",
+    "limit": "You've reached the AI usage limit. Please try again later."
+  },
+  "settings": { "model": "Model", "language": "Language" }
+}
