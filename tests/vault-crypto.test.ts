@@ -28,6 +28,29 @@ describe('deriveKey', () => {
     const k2 = await deriveKey('pw1234', salt2)
     expect(k1.equals(k2)).toBe(false)
   })
+
+  it('salt 길이가 16바이트가 아니면 throw', async () => {
+    await expect(deriveKey('pw1234', Buffer.alloc(15))).rejects.toThrow()
+    await expect(deriveKey('pw1234', Buffer.alloc(17))).rejects.toThrow()
+  })
+
+  it('memoryKiB 인자를 명시하면 해당 값을 사용한다(값이 달라도 정상 동작)', async () => {
+    const salt = randomBytes(16)
+    const key = await deriveKey('pw1234', salt, { memoryKiB: 8192 })
+    expect(key.length).toBe(32)
+  })
+})
+
+describe('randomBytes', () => {
+  it('1~1024 범위를 벗어나면 throw', () => {
+    expect(() => randomBytes(0)).toThrow()
+    expect(() => randomBytes(1025)).toThrow()
+  })
+
+  it('범위 내 값은 정상 동작', () => {
+    expect(randomBytes(1).length).toBe(1)
+    expect(randomBytes(1024).length).toBe(1024)
+  })
 })
 
 describe('encrypt/decrypt', () => {

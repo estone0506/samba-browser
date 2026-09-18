@@ -8,6 +8,16 @@ import { argon2id } from 'hash-wasm'
 const IV_LENGTH = 12
 const AUTH_TAG_LENGTH = 16
 const KEY_LENGTH = 32
+const SALT_LENGTH = 16
+
+// argon2id 메모리 비용(KiB) 기본값 및 허용 범위
+const DEFAULT_MEMORY_KIB = 65536
+const MIN_MEMORY_KIB = 8192
+const MAX_MEMORY_KIB = 1048576
+
+// randomBytes 로 생성 가능한 바이트 수 범위
+const MIN_RANDOM_BYTES = 1
+const MAX_RANDOM_BYTES = 1024
 
 // verifier 에 사용하는 고정 평문/AAD
 const VERIFIER_PLAINTEXT = 'samba-vault-verifier'
@@ -18,21 +28,40 @@ export interface EncryptedBlob {
   iv: Buffer
 }
 
-/** 암호학적으로 안전한 난수 n바이트를 생성한다 */
+/** 암호학적으로 안전한 난수 n바이트를 생성한다 (1~1024 범위만 허용) */
 export function randomBytes(n: number): Buffer {
+  if (!Number.isInteger(n) || n < MIN_RANDOM_BYTES || n > MAX_RANDOM_BYTES) {
+    throw new Error(`randomBytes 는 ${MIN_RANDOM_BYTES}~${MAX_RANDOM_BYTES} 범위만 허용합니다`)
+  }
   return nodeRandomBytes(n)
+}
+
+/** VAULT_KDF_MEM 환경변수를 8192~1048576 범위로 clamp 해서 읽는다. 숫자가 아니면 기본값 */
+function resolveMemoryKiBFromEnv(): number {
+  const raw = Number(process.env.VAULT_KDF_MEM)
+  if (!Number.isFinite(raw)) return DEFAULT_MEMORY_KIB
+  return Math.min(MAX_MEMORY_KIB, Math.max(MIN_MEMORY_KIB, raw))
 }
 
 /**
  * argon2id 로 비밀번호와 salt 로부터 32바이트 키를 유도한다.
- * 테스트에서는 VAULT_KDF_MEM 환경변수로 메모리 사용량을 낮춰 속도를 확보한다.
+ * 메모리 비용은 opts.memoryKiB 명시 인자가 우선이고, 없으면 기본값(65536)을 쓴다.
+ * VAULT_KDF_MEM 환경변수는 vitest 실행 중(process.env.VITEST === 'true')에만
+ * 허용되며 8192~1048576 범위로 clamp 되고, 숫자가 아니면 기본값을 쓴다.
  */
 export async function deriveKey(
   password: string,
   salt: Uint8Array,
   opts?: { memoryKiB?: number }
 ): Promise<Buffer> {
-  const memorySize = opts?.memoryKiB ?? Number(process.env.VAULT_KDF_MEM ?? 65536)
+  if (salt.length !== SALT_LENGTH) {
+    throw new Error(`salt 는 ${SALT_LENGTH}바이트여야 합니다`)
+  }
+
+  const memorySize =
+    opts?.memoryKiB ??
+    (process.env.VITEST === 'true' ? resolveMemoryKiBFromEnv() : DEFAULT_MEMORY_KIB)
+
   const hash = await argon2id({
     password,
     salt,
