@@ -1,28 +1,37 @@
 // 가져오기 서비스 — 비밀번호 CSV/북마크 HTML 파일을 읽어 DB 에 반영한다.
 // 비밀값(비밀번호) · 행 원문은 처리 즉시 참조를 해제하고, 어떤 로그에도 남기지 않는다.
 
-import { readFile as fsReadFile } from 'node:fs/promises'
+import { readFile as fsReadFile, writeFile as fsWriteFile } from 'node:fs/promises'
 import type { Db } from '../db/client'
 import type { VaultService } from '../vault/service'
 import { BookmarkRepo } from '../bookmarks/repo'
 import { parsePasswordCsv } from './passwords-csv'
 import { parseNetscapeBookmarks } from './bookmarks-html'
+import { toNetscapeHtml } from './bookmarks-export'
 import { normalizeHost } from '../../shared/host'
 import type { ImportPasswordsResult, ImportBookmarksResult } from '../../shared/import'
 
-// dialog.showOpenDialog 를 감싼 최소 인터페이스 — 테스트에서 파일 선택을 흉내낼 수 있게 주입한다.
+// dialog.showOpenDialog/showSaveDialog 를 감싼 최소 인터페이스 — 테스트에서 파일 선택을 흉내낼 수 있게 주입한다.
 // 취소되면 undefined 를 반환한다
 export interface ImportDialogs {
   showOpenDialog(filters: { name: string; extensions: string[] }[]): Promise<string | undefined>
+  // 내보내기는 파일 선택 다이얼로그를 안 쓰는 흐름(예: 테스트)에서는 생략 가능
+  showSaveDialog?(
+    filters: { name: string; extensions: string[] }[],
+    defaultPath?: string
+  ): Promise<string | undefined>
 }
 
 export interface ImportServiceOptions {
   // 기본은 fs/promises readFile(utf8). 테스트에서 합성 CSV/HTML 문자열을 주입할 때 사용
   readFile?: (filePath: string) => Promise<string>
+  // 기본은 fs/promises writeFile(utf8). 테스트에서 실제 파일 쓰기를 피할 때 사용
+  writeFile?: (filePath: string, content: string) => Promise<void>
 }
 
 const CSV_FILTERS = [{ name: 'CSV', extensions: ['csv'] }]
 const HTML_FILTERS = [{ name: 'HTML', extensions: ['html', 'htm'] }]
+const EXPORT_DEFAULT_FILENAME = 'bookmarks.html'
 const BOM = '﻿'
 
 function stripBom(text: string): string {
@@ -32,6 +41,7 @@ function stripBom(text: string): string {
 export class ImportService {
   private readonly bookmarkRepo: BookmarkRepo
   private readonly readFileImpl: (filePath: string) => Promise<string>
+  private readonly writeFileImpl: (filePath: string, content: string) => Promise<void>
 
   constructor(
     private readonly db: Db,
@@ -41,6 +51,7 @@ export class ImportService {
   ) {
     this.bookmarkRepo = new BookmarkRepo(db)
     this.readFileImpl = options.readFile ?? ((p) => fsReadFile(p, 'utf8'))
+    this.writeFileImpl = options.writeFile ?? ((p, content) => fsWriteFile(p, content, 'utf8'))
   }
 
   /**
@@ -131,5 +142,49 @@ export class ImportService {
 
   removeBookmark(id: number): void {
     this.bookmarkRepo.remove(id)
+  }
+
+  // --- 북마크 관리자 페이지용 CRUD ------------------------------------------
+
+  createBookmarkFolder(parentId: number | null, name: string): number {
+    const id = this.bookmarkRepo.createFolder(parentId, name)
+    this.vault.logAudit('save', 'user')
+    return id
+  }
+
+  createBookmarkLink(folderId: number | null, title: string, url: string): number {
+    const id = this.bookmarkRepo.createLink(folderId, title, url)
+    this.vault.logAudit('save', 'user')
+    return id
+  }
+
+  renameBookmark(id: number, kind: 'folder' | 'link', name: string): void {
+    if (kind === 'folder') this.bookmarkRepo.renameFolder(id, name)
+    else this.bookmarkRepo.renameLink(id, name)
+  }
+
+  moveBookmark(id: number, kind: 'folder' | 'link', toFolderId: number | null): void {
+    if (kind === 'folder') this.bookmarkRepo.moveFolder(id, toFolderId)
+    else this.bookmarkRepo.moveLink(id, toFolderId)
+  }
+
+  removeBookmarkFolder(id: number): void {
+    this.bookmarkRepo.removeFolder(id)
+    this.vault.logAudit('delete', 'user')
+  }
+
+  sortBookmarkFolder(folderId: number | null): void {
+    this.bookmarkRepo.sortFolder(folderId)
+  }
+
+  /** 북마크 트리를 Netscape HTML 로 내보낸다. 취소되면 undefined 를 반환한다 */
+  async exportBookmarks(): Promise<string | undefined> {
+    const tree = this.bookmarkRepo.tree()
+    const html = toNetscapeHtml(tree)
+    const path = await this.dialogs.showSaveDialog?.(HTML_FILTERS, EXPORT_DEFAULT_FILENAME)
+    if (!path) return undefined
+    await this.writeFileImpl(path, html)
+    this.vault.logAudit('export', 'user')
+    return path
   }
 }

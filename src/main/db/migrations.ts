@@ -21,5 +21,9 @@ export const migrations: Migration[] = [
   {
     tag: '0001_foamy_puma',
     sql: ['ALTER TABLE `bookmark_folders` ADD `is_toolbar` integer DEFAULT 0 NOT NULL;']
+  },
+  {
+    tag: '0002_add_bookmark_folder_add_date',
+    sql: ['ALTER TABLE `bookmark_folders` ADD `add_date` integer;']
   }
 ]
