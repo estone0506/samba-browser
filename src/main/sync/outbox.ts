@@ -6,7 +6,8 @@
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { syncOutbox } from '../db/schema'
-import { SYNC_TABLES, type SyncOp, type SyncTable } from '../../shared/sync'
+import { SYNC_TABLES, type OutboxRecorder, type SyncOp, type SyncTable } from '../../shared/sync'
+import { SyncLocal } from './local'
 
 export interface OutboxRow {
   id: number
@@ -103,6 +104,36 @@ export class SyncOutbox {
       .run()
     this.db.scheduleSave()
   }
+}
+
+/**
+ * 쓰기 지점에 주입할 기록 훅을 만든다.
+ *
+ * 삭제(op='delete')는 **행을 지우기 전에** 불러야 한다 — 여기서 로컬 행을 스냅샷으로 떠
+ * payload 에 담아 두어야, 나중에 원격에 삭제 표식(tombstone)을 올릴 수 있다.
+ * (원격 표의 host·label·url 은 NOT NULL 이라 원격 id 만으로는 표식을 만들 수 없다)
+ */
+export function createOutboxRecorder(db: Db, outbox: SyncOutbox): OutboxRecorder {
+  const local = new SyncLocal(db)
+  return (table, rowId, op, payload) => {
+    if (table === 'settings') {
+      // 설정은 DB 밖(config.json)에 있어 수정 시각이 없다. 여기서 대신 찍어 둔다
+      local.setStateNumber(settingUpdatedAtKey(rowId), Date.now())
+      outbox.record(table, rowId, op, payload)
+      return
+    }
+    if (op !== 'delete' || payload !== undefined) {
+      outbox.record(table, rowId, op, payload)
+      return
+    }
+    const snapshot = local.snapshotForDelete(table, Number(rowId))
+    outbox.record(table, rowId, op, snapshot ? JSON.stringify(snapshot) : undefined)
+  }
+}
+
+/** 설정 키의 마지막 수정 시각을 담는 sync_state 키 */
+export function settingUpdatedAtKey(key: string): string {
+  return `settings:${key}:updatedAt`
 }
 
 // 표·연산 이름이 우리가 아는 값이 아니면(옛 버전·손상) 조용히 버린다 — 전송 경로를 더럽히지 않는다

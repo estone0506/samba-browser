@@ -3,6 +3,7 @@
 
 import { eq } from 'drizzle-orm'
 import type { Db } from '../db/client'
+import type { OutboxRecorder } from '../../shared/sync'
 import { bookmarkFolders, bookmarks } from '../db/schema'
 import type { BookmarkFolderNode, BookmarkTree } from '../import/bookmarks-html'
 import type { BookmarkFolderDto, BookmarkLinkDto, BookmarkTreeDto } from '../../shared/import'
@@ -33,10 +34,23 @@ interface BookmarkRow {
 }
 
 export class BookmarkRepo {
+  // 동기화 변경 로그 훅. 주입하지 않으면 아무 일도 하지 않는다(동기화를 끈 상태)
+  private outbox: OutboxRecorder | null = null
+
   constructor(private readonly db: Db) {}
 
   private get d(): Db['drizzle'] {
     return this.db.drizzle
+  }
+
+  /** 변경 로그 훅을 붙인다(로그인 상태에서만) */
+  setOutboxRecorder(recorder: OutboxRecorder | null): void {
+    this.outbox = recorder
+  }
+
+  /** 삭제는 행이 사라지기 전에 기록해야 한다 — 호출 순서에 주의 */
+  private record(id: number, op: 'upsert' | 'delete'): void {
+    this.outbox?.('bookmarks', String(id), op)
   }
 
   // 이미 저장된 URL 목록(전체 DB 기준) — 트리 삽입 전에 한 번만 읽어 중복 판단에 쓴다
@@ -191,6 +205,8 @@ export class BookmarkRepo {
 
   // 북마크 링크 하나를 제거한다
   remove(id: number): void {
+    // 삭제 표식을 만들려면 행이 남아 있어야 한다 — 반드시 지우기 전에 기록한다
+    this.record(id, 'delete')
     this.d.delete(bookmarks).where(eq(bookmarks.id, id)).run()
     this.db.scheduleSave()
   }
@@ -223,10 +239,17 @@ export class BookmarkRepo {
       throw new Error('cannot create bookmark link: URL scheme not allowed')
     const inserted = this.d
       .insert(bookmarks)
-      .values({ folderId, title, url, position: this.nextLinkPosition(folderId) })
+      .values({
+        folderId,
+        title,
+        url,
+        position: this.nextLinkPosition(folderId),
+        updatedAt: Date.now()
+      })
       .returning({ id: bookmarks.id })
       .all()
     this.db.scheduleSave()
+    this.record(inserted[0].id, 'upsert')
     return inserted[0].id
   }
 
@@ -236,8 +259,9 @@ export class BookmarkRepo {
   }
 
   renameLink(id: number, title: string): void {
-    this.d.update(bookmarks).set({ title }).where(eq(bookmarks.id, id)).run()
+    this.d.update(bookmarks).set({ title, updatedAt: Date.now() }).where(eq(bookmarks.id, id)).run()
     this.db.scheduleSave()
+    this.record(id, 'upsert')
   }
 
   // toFolderId 가 id 자신이거나 id 의 자손이면 이동을 거부한다(트리가 끊어지는 것을 막는다)
@@ -272,10 +296,15 @@ export class BookmarkRepo {
   moveLink(id: number, toFolderId: number | null): void {
     this.d
       .update(bookmarks)
-      .set({ folderId: toFolderId, position: this.nextLinkPosition(toFolderId) })
+      .set({
+        folderId: toFolderId,
+        position: this.nextLinkPosition(toFolderId),
+        updatedAt: Date.now()
+      })
       .where(eq(bookmarks.id, id))
       .run()
     this.db.scheduleSave()
+    this.record(id, 'upsert')
   }
 
   // 폴더 제거(cascade) — DB 에 부모→자식 FK 가 없어(자기참조) 하위 폴더/링크를 직접 수집해 지운다

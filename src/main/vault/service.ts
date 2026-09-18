@@ -58,6 +58,7 @@ import type {
   VaultState
 } from '../../shared/vault'
 import type { Settings } from '../../shared/settings'
+import type { OutboxRecorder, SyncOp, SyncTable } from '../../shared/sync'
 import { normalizeHost, registrableDomain } from '../../shared/host'
 
 // electron safeStorage 중 실제로 쓰는 부분만 좁혀 둔 인터페이스(테스트에서 스텁 주입)
@@ -182,6 +183,8 @@ export class VaultService {
   private disposed = false
   // 삭제 되돌리기 버퍼(토큰 → 스냅샷). 암호문이 들어 있어 메인 메모리에만 둔다
   private undoBuffer = new Map<string, { snapshots: AccountSnapshot[]; timer: NodeJS.Timeout }>()
+  // 동기화 변경 로그 훅. 주입하지 않으면 아무 일도 하지 않는다(동기화를 끈 상태)
+  private outbox: OutboxRecorder | null = null
 
   constructor(
     private readonly db: Db,
@@ -191,6 +194,27 @@ export class VaultService {
     this.repo = new VaultRepo(db)
     this.safeStorage = options.safeStorage
     this.tryDeviceUnlock()
+  }
+
+  // --- 동기화 연결 -------------------------------------------------------
+
+  /** 변경 로그 훅을 붙인다(로그인 상태에서만). 붙이지 않으면 기록하지 않는다 */
+  setOutboxRecorder(recorder: OutboxRecorder | null): void {
+    this.outbox = recorder
+  }
+
+  /** 삭제는 행이 사라지기 전에 기록해야 한다 — 호출 순서에 주의 */
+  private record(table: SyncTable, rowId: number, op: SyncOp): void {
+    this.outbox?.(table, String(rowId), op)
+  }
+
+  /**
+   * 동기화 전용 — 잠금 해제 상태에서만 마스터 키를 빌려 준다.
+   * 키 자체를 반환하지 않고 콜백 안에서만 쓰게 해, 호출부가 키를 보관하지 못하게 한다
+   */
+  useMasterKey<T>(fn: (key: Buffer) => T): T | null {
+    if (!this.key) return null
+    return fn(this.key)
   }
 
   // --- 상태 -------------------------------------------------------------
@@ -611,6 +635,7 @@ export class VaultService {
     const normalized = normalizeHost(input.host)
     const host = normalized || input.host
     const row = this.repo.upsertAccount({ ...input, host })
+    this.record('accounts', row.id, 'upsert')
     const types = this.repo.itemTypesByAccount()
     return {
       id: row.id,
@@ -653,6 +678,7 @@ export class VaultService {
       return this.repo.itemMeta(id)
     })
     if (!meta) throw new Error('항목을 저장하지 못했습니다')
+    this.record('vault_items', meta.id, 'upsert')
     this.touch()
     return meta
   }
@@ -743,6 +769,9 @@ export class VaultService {
         const snapshot = this.repo.accountSnapshot(id)
         if (!snapshot) continue
         snapshots.push(snapshot)
+        // 삭제 표식을 만들려면 행이 남아 있어야 한다 — 반드시 지우기 전에 기록한다
+        for (const item of snapshot.items) this.record('vault_items', item.id, 'delete')
+        this.record('accounts', id, 'delete')
         this.repo.deleteAccountCascade(id)
         this.repo.insertAudit({ itemId: null, accountId: id, action: 'delete', source: 'user' })
       }
@@ -764,7 +793,11 @@ export class VaultService {
     this.undoBuffer.delete(token)
     if (!this.key) return false
     this.repo.transaction(() => {
-      for (const snapshot of entry.snapshots) this.repo.restoreSnapshot(snapshot)
+      for (const snapshot of entry.snapshots) {
+        this.repo.restoreSnapshot(snapshot)
+        this.record('accounts', snapshot.account.id, 'upsert')
+        for (const item of snapshot.items) this.record('vault_items', item.id, 'upsert')
+      }
       return null
     })
     this.touch()
@@ -776,6 +809,8 @@ export class VaultService {
     // 삭제 전에 계정 id 를 스냅샷으로 떠 둔다 — 삭제 후에는 vault_items 조인이 안 되어
     // 계정별 사용 기록에서 삭제 기록 자체가 보이지 않았다
     const meta = this.repo.itemMeta(id)
+    // 삭제 표식을 만들려면 행이 남아 있어야 한다 — 반드시 지우기 전에 기록한다
+    this.record('vault_items', id, 'delete')
     this.repo.deleteItem(id)
     this.repo.insertAudit({
       itemId: id,

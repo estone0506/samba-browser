@@ -53,12 +53,7 @@ export type SyncOp = 'upsert' | 'delete'
  * 쓰기 지점(금고·북마크·설정)이 변경 로그를 남길 때 쓰는 훅.
  * 주입하지 않으면 아무 일도 하지 않는다(동기화를 끈 상태 = 2단계까지의 동작 그대로)
  */
-export type OutboxRecorder = (
-  table: SyncTable,
-  rowId: string,
-  op: SyncOp,
-  payload?: string
-) => void
+export type OutboxRecorder = (table: SyncTable, rowId: string, op: SyncOp, payload?: string) => void
 
 /**
  * 동기화 대상 설정 키.

@@ -7,6 +7,14 @@ export interface RemoteRow {
   [column: string]: unknown
 }
 
+/**
+ * 복합 PK 표(settings_sync = user_id + workspace_id + key)의 한 행.
+ * id 컬럼이 아예 없으므로 RemoteRow 를 쓸 수 없다
+ */
+export interface RemoteKeyedRow {
+  [column: string]: unknown
+}
+
 export interface SyncBackend {
   signUp(email: string, password: string): Promise<{ userId: string; email: string }>
   signIn(email: string, password: string): Promise<{ userId: string; email: string }>
@@ -20,6 +28,10 @@ export interface SyncBackend {
   select(table: string, sinceMs: number): Promise<RemoteRow[]>
   upsert(table: string, rows: RemoteRow[]): Promise<void>
   remove(table: string, ids: string[]): Promise<void>
+  /** 복합 PK 표(settings_sync)에서 읽는다 */
+  selectKeyed(table: string, sinceMs: number): Promise<RemoteKeyedRow[]>
+  /** 복합 PK 표(settings_sync)에 올린다. 충돌 해결은 서버의 기본키를 따른다 */
+  upsertKeyed(table: string, rows: RemoteKeyedRow[]): Promise<void>
   /** 변경 알림 구독. 반환값을 호출하면 구독을 푼다 */
   subscribe(table: string, onChange: () => void): Promise<() => void>
 }

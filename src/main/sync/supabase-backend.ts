@@ -2,7 +2,7 @@
 // (서비스 롤 키는 어디에도 두지 않는다)
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { AuthExpiredError, type RemoteRow, type SyncBackend } from './backend'
+import { AuthExpiredError, type RemoteKeyedRow, type RemoteRow, type SyncBackend } from './backend'
 import type { SessionStorageAdapter } from './session-store'
 import { readSupabaseEnv } from './env'
 
@@ -78,6 +78,21 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
     },
     async upsert(table, rows) {
       if (rows.length === 0) return
+      const { error } = await client.from(table).upsert(rows)
+      if (error) raise(error.message)
+    },
+    async selectKeyed(table, sinceMs) {
+      const { data, error } = await client
+        .from(table)
+        .select('*')
+        .gt('updated_at', new Date(sinceMs).toISOString())
+        .order('updated_at', { ascending: true })
+      if (error) raise(error.message)
+      return (data ?? []) as RemoteKeyedRow[]
+    },
+    async upsertKeyed(table, rows) {
+      if (rows.length === 0) return
+      // PostgREST 는 표의 기본키로 충돌을 해결한다 — settings_sync 는 (user_id, workspace_id, key)
       const { error } = await client.from(table).upsert(rows)
       if (error) raise(error.message)
     },
