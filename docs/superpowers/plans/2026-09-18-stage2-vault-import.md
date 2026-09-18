@@ -348,3 +348,4 @@ const fillSecret = tool(
 - **AI 의 계정 순회**: 계정 a/b/c 를 비교해야 할 때(예: 계정별 구매 가능 가격) AI 가 스스로 ① `new_tab({ profile: <계정 라벨> })` 로 계정별 탭(파티션 분리 = 동시 다중 로그인) 을 열고 ② 각 탭에서 `login({ accountLabel })` → 작업 → 결과 수집, 또는 ③ 같은 탭에서 로그아웃 후 다음 계정. 프롬프트 규칙: "여러 계정 비교가 필요하면 계정별 새 탭 + login 을 사용하라". `login` 은 탭의 profile 이 계정 라벨과 같으면 그 계정을 자동 선택. 완료 기준: "네이버 계정 3개 각각 로그인해서 이름 알려줘" 가 탭 3개로 자동 수행.
 - **페이지 JS 대화상자 자동 처리**(E2E 관찰): `alert/confirm/prompt` 네이티브 창이 자동화를 멈춤 → 탭마다 CDP `Page.javascriptDialogOpening` 구독, `Page.handleJavaScriptDialog({accept:true})`(prompt 는 dismiss), 메시지를 다음 도구 결과에 `page dialog: "…"` 로 첨부. 사람이 쓰는 중(작업 없음)에는 그대로 표시.
 - **목록 형태 확정(사용자, 크롬 비밀번호 관리자 기준)**: 기본 전부 접힘, 사이트당 1행 `[파비콘] 도메인 • 계정수(1개면 아이디) [>]`, 클릭 시 계정 행 펼침, 검색 시 매칭 그룹 펼침, 파비콘 google s2 + 첫 글자 폴백, 그룹 키 registrableDomain.
+- **즉시 삭제 ×(사용자)**: 계정 행·사이트 그룹 행 hover × — 계정은 즉시 삭제(cascade·감사), 사이트는 계정 2개 이상이면 인라인 확인, 삭제 후 8초 토스트 [되돌리기](60초 보관).
