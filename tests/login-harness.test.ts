@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { classifyLoginOutcome, maskUsername, sanitizeNote } from '../src/main/e2e/login-harness'
+import {
+  checkHarnessGate,
+  classifyLoginOutcome,
+  maskUsername,
+  sanitizeNote
+} from '../src/main/e2e/login-harness'
+import type { AccountDto } from '../src/shared/vault'
 
 describe('classifyLoginOutcome', () => {
   it('로그인 페이지를 벗어나고 로그아웃 문구가 보이면 성공', () => {
@@ -106,5 +112,58 @@ describe('sanitizeNote / maskUsername', () => {
 
   it('사용자명은 앞 2글자만 남긴다', () => {
     expect(maskUsername('hongildong')).toBe('ho***')
+  })
+})
+
+describe('checkHarnessGate', () => {
+  const account = (over: Partial<AccountDto> = {}): AccountDto => ({
+    id: 1,
+    siteId: 1,
+    host: 'nid.naver.com',
+    label: '네이버',
+    username: 'hongildong',
+    isDefault: true,
+    itemTypes: ['login'],
+    urls: [],
+    agentAccess: 'inherit',
+    tags: [],
+    ...over
+  })
+
+  it('https·같은 등록 도메인이면 통과한다', () => {
+    expect(checkHarnessGate({}, account(), 'https://www.naver.com/login')).toBeNull()
+  })
+
+  it('평문(http) 페이지는 거부한다', () => {
+    expect(checkHarnessGate({}, account(), 'http://www.naver.com/login')).toBe('insecure-page')
+  })
+
+  it('제외 도메인은 거부한다(서브도메인 포함)', () => {
+    expect(
+      checkHarnessGate({ excludedHosts: () => ['naver.com'] }, account(), 'https://nid.naver.com/')
+    ).toBe('excluded')
+  })
+
+  it('전역 접근 정책이 never 면 거부한다', () => {
+    expect(
+      checkHarnessGate({ vaultAccessPolicy: () => 'never' }, account(), 'https://www.naver.com/')
+    ).toBe('access-never')
+  })
+
+  it('계정별 agentAccess 가 전역 정책을 덮어쓴다', () => {
+    expect(
+      checkHarnessGate(
+        { vaultAccessPolicy: () => 'never' },
+        account({ agentAccess: 'while_unlocked' }),
+        'https://www.naver.com/'
+      )
+    ).toBeNull()
+    expect(checkHarnessGate({}, account({ agentAccess: 'never' }), 'https://www.naver.com/')).toBe(
+      'access-never'
+    )
+  })
+
+  it('계정과 다른 등록 도메인이면 거부한다', () => {
+    expect(checkHarnessGate({}, account(), 'https://www.daum.net/')).toBe('host-mismatch')
   })
 })

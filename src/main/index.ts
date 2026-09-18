@@ -80,7 +80,12 @@ app
       }
       const limit = Number(process.env.SAMBA_E2E_LIMIT ?? '0')
       await runLoginHarness(
-        { tabs, vault },
+        {
+          tabs,
+          vault,
+          excludedHosts: () => ipc.settings.get().vaultExcludedHosts,
+          vaultAccessPolicy: () => ipc.settings.get().vaultAccessPolicy
+        },
         {
           hosts: e2eTarget === 'all' ? 'all' : e2eTarget.split(',').map((h) => h.trim()),
           outFile,

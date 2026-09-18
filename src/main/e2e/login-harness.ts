@@ -19,6 +19,8 @@ import type { AccountDto, SiteDto } from '../../shared/vault'
 import { normalizeHost, registrableDomain } from '../../shared/host'
 import { isHttpUrl } from '../../shared/url'
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
+import { checkFillGate, effectiveAccess, type FillGateReason } from '../vault/access-gate'
+import type { VaultAccessPolicy } from '../../shared/settings'
 
 /** 자동 로그인 시도 1건의 판정 결과 */
 export type LoginOutcome =
@@ -35,6 +37,27 @@ export type LoginOutcome =
 export interface LoginHarnessDeps {
   tabs: TabManager
   vault: VaultService
+  // 금고 게이트에 쓰는 설정(주입하지 않으면 제외 도메인 없음·while_unlocked 로 본다)
+  excludedHosts?: () => string[]
+  vaultAccessPolicy?: () => VaultAccessPolicy
+}
+
+/**
+ * 하네스도 AI 도구와 똑같은 금고 게이트를 통과해야 값을 채운다.
+ * https·제외 도메인·계정별 agentAccess·전역 접근 정책·계정 호스트 일치를 한 번에 본다.
+ * 통과하면 null, 막히면 사유를 돌려준다
+ */
+export function checkHarnessGate(
+  deps: Pick<LoginHarnessDeps, 'excludedHosts' | 'vaultAccessPolicy'>,
+  account: AccountDto,
+  url: string
+): FillGateReason | null {
+  return checkFillGate({
+    url,
+    excludedHosts: deps.excludedHosts?.() ?? [],
+    policy: effectiveAccess(account.agentAccess, deps.vaultAccessPolicy?.() ?? 'while_unlocked'),
+    accountHost: account.host
+  })
 }
 
 export interface LoginHarnessOptions {
@@ -331,6 +354,14 @@ async function driveLogin(
     return
   }
   result.formDetected = true
+
+  // AI 도구와 같은 금고 게이트 — 폼을 찾느라 이동한 뒤의 최종 URL 기준으로 검사한다
+  const gate = checkHarnessGate(deps, account, tab.view.webContents.getURL())
+  if (gate !== null) {
+    result.result = 'blocked'
+    result.note = `금고 게이트 거부: ${gate}`
+    return
+  }
 
   const password = deps.vault.getSecretForFill(account.id, 'login', DEFAULT_FIELD_KEY, 'e2e')
   if (password === null) {

@@ -10,6 +10,7 @@ import type { VaultService } from '../vault/service'
 import type { AccountDto, VaultItemType } from '../../shared/vault'
 import { normalizeHost } from '../../shared/host'
 import {
+  checkFillGate,
   checkVaultGate,
   effectiveAccess,
   isHostExcluded as isHostExcludedIn,
@@ -284,10 +285,15 @@ ${raw}`
    * 등록 도메인(eTLD+1)이어야 한다. 통과하면 null, 막히면 안내 문자열을 돌려준다
    */
   const verifyFillTarget = (account: AccountDto): string | null => {
-    const url = currentUrl()
-    const blocked = gateRefusal(url)
-    if (blocked) return blocked
-    if (!sameRegistrableDomain(normalizeHost(url), account.host)) return FILL_HOST_MISMATCH
+    const reason = checkFillGate({
+      url: currentUrl(),
+      excludedHosts: ctx.vaultExcludedHosts ?? [],
+      accountHost: account.host
+    })
+    if (reason === 'host-unknown') return HOST_UNKNOWN
+    if (reason === 'insecure-page') return INSECURE_PAGE
+    if (reason === 'excluded') return VAULT_HOST_EXCLUDED
+    if (reason !== null) return FILL_HOST_MISMATCH
     return null
   }
 

@@ -77,6 +77,23 @@ export function checkVaultGate(input: VaultGateInput): VaultGateReason | null {
   return null
 }
 
+/** 채우기 게이트 거부 사유 — 페이지 게이트 사유에 계정-호스트 불일치가 더해진다 */
+export type FillGateReason = VaultGateReason | 'host-mismatch'
+
+/**
+ * 계정 하나의 비밀값을 지금 페이지에 채워도 되는지 한 번에 판정한다.
+ * checkVaultGate(https·제외 도메인·접근 정책) + 계정 호스트와 같은 등록 도메인인지.
+ * AI 도구·E2E 하네스·사용자 자동 채움이 모두 이 함수를 쓴다
+ */
+export function checkFillGate(
+  input: VaultGateInput & { accountHost: string }
+): FillGateReason | null {
+  const reason = checkVaultGate(input)
+  if (reason) return reason
+  if (!sameRegistrableDomain(normalizeHost(input.url), input.accountHost)) return 'host-mismatch'
+  return null
+}
+
 /**
  * 계정의 비밀값을 이 호스트에 채워도 되는지 — 등록 도메인(eTLD+1)이 같아야 한다.
  * nid.naver.com 계정을 www.naver.com 에 채우는 것은 허용하고,
