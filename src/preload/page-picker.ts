@@ -233,7 +233,10 @@ export function installAutofillPicker(deps: AutofillPickerDeps): void {
     'focusin',
     (e) => {
       const el = e.target
-      if (el instanceof Element && isPickerTarget(el)) showIcon(el)
+      if (!(el instanceof Element) || !isPickerTarget(el)) return
+      showIcon(el)
+      // Aside 처럼 포커스만으로 계정 목록을 바로 연다(이미 열려 있으면 그대로 둔다)
+      if (!menu) void renderMenu()
     },
     true
   )
