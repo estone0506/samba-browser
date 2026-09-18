@@ -116,3 +116,23 @@ Free, 월 500 크레딧, 추가 구매, 자동 충전. 월별 사용량 표.
 - **New Credit Card 폼**: 섹션(Section 이름) 단위 필드 그룹, 드래그 핸들(≡)로 필드 순서 변경, 필드: cardholder name · type(선택) · card number · CVC · (만료 등). 1Password 식 "섹션+필드" 스키마 → 삼바 Task 11: 카드 항목 필드(소유자·카드사/종류·번호·유효기간·CVC·결제비밀번호), 필드 단위 암호화(값별 ciphertext) 고려
 - **New Password 폼**: Section · password(생성 ↻) · website(https://) · **+ Add custom field**(사용자 정의 필드) · **Tags**(태그 입력) → 삼바 Task 11: 모든 항목에 사용자 정의 필드·태그 지원(태그로 KR/CN/JP·계정군 필터), 필드 스키마 = 섹션[ ] > 필드{label,type(text|password|url|date|select),value}
 - **항목 상세 하단 "Agent access: While unlocked"** — 항목별 AI 접근 정책 override(전역 정책 기본, 항목마다 Always/While unlocked/Never) → 삼바 Task 11: `accounts.agentAccess` 컬럼(null=전역 따름) + 상세 화면 선택. 도구는 항목 정책 > 전역 정책 순으로 판정
+
+### Vault 저장·잠금 방식(문서 기준)
+
+Aside Password 설정 화면 기준 요약:
+- **잠금 해제**: 마스터 비밀번호 + OS 인증(Windows Hello). 자동 잠금 기본 **1주**
+- **에이전트 접근 정책**: 3단계 — Always allow / While unlocked / Never, 항목별 예외 가능
+- **자동 채움**: 채운 뒤 자동 제출 옵션(끄면 채우기만)
+- **도메인 매칭**: 저장 시 도메인 매칭 + **제외 도메인** 목록(은행·정부 사이트 등 자동화 자체를 막음)
+- **시크릿 탭**: AI 접근 불가(별도 세션)
+
+우리(키마스터) 반영 표:
+
+| 항목 | Aside | 삼바 반영(2단계) |
+|---|---|---|
+| 자동 잠금 기본값 | 1주 | `vaultAutoLockMinutes` 기본 **10080**(1주). 설정 패널에서 15분/1시간/1일/1주/안 함(43200) 선택 |
+| 이 PC 기억 | 기본 켬(OS 인증으로 잠금 해제) | `vaultRememberDevice` 기본 **true**. safeStorage 로 마스터 키를 감싸 저장, 끄면 즉시 기기 키 삭제 |
+| 에이전트 접근 정책 | Always / While unlocked / Never (항목별 예외) | `vaultAccessPolicy` 3단계 전역 설정(항목별 예외는 추후). `never` 는 도구 즉시 거부, `always` 는 잠겨 있어도 기기 키로 자동 해제(`VaultService.ensureUnlockedByDevice()`) 시도 후 진행, `while_unlocked` 은 기존 동작 |
+| 자동 제출 | 채운 뒤 자동 제출 옵션 | `vaultAutoSubmit` 기본 true. 꺼두면 `login` 도구가 채우기만 하고 제출은 사용자에게 맡김 |
+| 제외 도메인 | 도메인별 저장 제외 | `vaultExcludedHosts` — `fill_secret`/`login`/저장 제안(`vault:capture`) 모두 건너뜀 |
+| 시크릿 탭 | AI 접근 불가 | 추후(시크릿/프로필 개념 도입 시 함께 설계)

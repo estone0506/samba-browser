@@ -18,8 +18,11 @@
 | DB 엔진 | **sql.js(WASM) + drizzle-orm/sql-js** | 네이티브 빌드 없음(better-sqlite3 는 Electron ABI 리빌드 필요). 수천 행 규모에 충분. 파일 `%APPDATA%/samba-browser/data.db` 로 저장(쓰기 후 300ms 디바운스 export) |
 | 키 유도 | **argon2id(hash-wasm)** salt 16B, m=64MiB, t=3, p=1 → 32B 키 | 표준, WASM(네이티브 없음) |
 | 암호화 | **AES-256-GCM** 항목별 iv 12B, 인증태그 포함, AAD=item id | 표준 |
-| 잠금 | 앱 시작 시 잠김. 마스터 비밀번호 입력 → 키를 메모리에만 보관. 미사용 15분(설정) 후 자동 잠금 | |
-| 기기 기억(선택) | "이 PC에서 기억" 켜면 키를 `safeStorage`(DPAPI)로 감싸 저장 → 다음 시작 시 자동 해제 | Aside "Auto lock 1 week" 대응 |
+| 잠금 | 앱 시작 시 잠김. 마스터 비밀번호 입력 → 키를 메모리에만 보관. 미사용 **기본 1주(10080분, 설정 가능: 15분/1시간/1일/1주/안 함)** 후 자동 잠금 | Aside "Auto lock 1 week" 그대로 채택 |
+| 기기 기억(선택) | "이 PC에서 기억" **기본 켬**. 키를 `safeStorage`(DPAPI)로 감싸 저장 → 다음 시작 시 자동 해제. 끄면 저장된 기기 키 즉시 삭제 | Aside 는 OS 인증(Windows Hello)로 해제, 우리는 safeStorage(DPAPI) 위임으로 동등 효과 |
+| AI 접근 정책 | 전역 설정 `vaultAccessPolicy`: **Always allow**(잠겨 있어도 기기 키로 자동 해제 시도) / **While unlocked**(기본값, 잠겨 있으면 거부) / **Never**(항상 거부) | Aside 의 3단계 정책과 동일. 항목별 예외는 다음 단계 |
+| 자동 제출 | `vaultAutoSubmit` 기본 켬. 끄면 `login` 도구가 입력만 채우고 제출은 사용자가 직접 | Aside "자동 채움 후 자동 제출" 옵션 대응 |
+| 제외 도메인 | `vaultExcludedHosts` 목록에 있는 호스트는 자동 채움·로그인·저장 제안을 모두 건너뜀 | Aside 도메인 매칭 + 제외 도메인 대응 |
 | 마스터 비밀번호 분실 | 복구 불가. 설정 시 복구 키(24자, 별도 파일 저장 안내) 발급 — 2b 에서 Supabase 동기화 시 필수. 이번 단계는 경고 문구만 | |
 | AI 접근 | 값은 절대 반환하지 않음. 도구는 **항목 이름/계정 라벨만** 보고 지시. 채움은 메인이 격리 월드에서 직접 | PRD F4 |
 | 자동 저장 | 웹페이지 preload(격리 월드)가 비밀번호 필드 있는 폼 제출을 감지 → 메인 → 채팅 패널 상단 카드 "저장할까요?" | PRD F5 |
