@@ -590,7 +590,8 @@
       "security": "보안",
       "behavior": "동작",
       "ai": "AI 연결",
-      "automation": "자동화"
+      "automation": "자동화",
+      "notify": "알림 연동"
     },
     "general": {
       "searchTitle": "검색",
@@ -673,6 +674,37 @@
       "cacheDesc": "같은 문장을 다시 번역하지 않도록 이 PC 에 최대 1만 건을 보관합니다",
       "clearCache": "캐시 지우기",
       "cacheCleared": "캐시를 비웠습니다"
+    },
+    "notify": {
+      "title": "알림 연동",
+      "desc": "작업이 끝나면 슬랙·텔레그램·디스코드로 알려 드려요",
+      "slack": "슬랙",
+      "slackDesc": "슬랙 Incoming Webhook 주소를 넣으면 그 채널로 알려 드려요",
+      "slackInvalid": "https://hooks.slack.com/ 로 시작하는 주소만 쓸 수 있어요",
+      "discord": "디스코드",
+      "discordDesc": "디스코드 채널 설정 → 연동 → 웹후크에서 만든 주소를 넣어 주세요",
+      "discordInvalid": "https://discord.com/api/webhooks/ 로 시작하는 주소만 쓸 수 있어요",
+      "telegram": "텔레그램",
+      "telegramDesc": "BotFather 로 봇을 만들고, 봇과 나눈 대화의 chat id 를 넣어 주세요",
+      "telegramTokenInvalid": "봇 토큰 형식이 아니에요(숫자:문자 모양)",
+      "chatIdInvalid": "숫자 또는 @채널이름 만 쓸 수 있어요",
+      "use": "알림 보내기",
+      "webhookUrl": "웹훅 주소",
+      "botToken": "봇 토큰",
+      "chatId": "대화 id",
+      "change": "변경",
+      "save": "저장",
+      "cancel": "취소",
+      "test": "테스트 보내기",
+      "testSending": "보내는 중…",
+      "testSent": "전송됨",
+      "testFailed": "실패: {{reason}}",
+      "eventsTitle": "무엇을 알릴까요",
+      "eventsDesc": "비밀번호·인증번호 같은 값은 메시지에 절대 담기지 않아요",
+      "onDone": "작업 완료",
+      "onFailed": "작업 실패",
+      "onAttention": "확인 필요",
+      "onAttentionDesc": "캡차·2단계 인증·결제 비밀번호처럼 사람이 직접 해야 하는 순간"
     }
   },
   "account": {
