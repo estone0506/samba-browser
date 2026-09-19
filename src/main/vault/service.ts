@@ -13,7 +13,13 @@
 
 import { timingSafeEqual } from 'node:crypto'
 import type { Db } from '../db/client'
-import { VaultRepo, type AuditRow, type AccountRow, type AccountSnapshot } from './repo'
+import {
+  VaultRepo,
+  type AuditRow,
+  type AccountRow,
+  type AccountSnapshot,
+  type VaultItemRow
+} from './repo'
 import {
   DEFAULT_FIELD_KEY,
   DEFAULT_SECTION_KEY,
@@ -52,12 +58,14 @@ import type {
   AgentAccess,
   CapturePromptDto,
   FieldKind,
+  PaymentProvider,
   PickerAccountDto,
   SiteDto,
   VaultItemMeta,
   VaultItemType,
   VaultState
 } from '../../shared/vault'
+import { paymentProviderOfSections } from '../../shared/vault'
 import type { Settings } from '../../shared/settings'
 import {
   VAULT_KEY_SYNC_KEYS,
@@ -100,6 +108,11 @@ export interface PutSectionInput {
   label: string
   fields: PutFieldInput[]
 }
+
+// 결제 비밀번호 조회 결과. 값이 없을 때 이유를 호출부가 구분해 안내할 수 있다
+export type PaymentSecretResult =
+  | { value: string; reason?: undefined }
+  | { value: null; reason: 'locked' | 'not-found' | 'ambiguous' }
 
 export interface PutItemInput {
   // 편집 대상 항목 id. 주면 그 항목을 그대로 갱신한다(라벨·종류 변경 포함)
@@ -854,6 +867,11 @@ export class VaultService {
       return row
     }
     if (input.accountId === null) return this.repo.findGlobalItemRow(input.type, input.label)
+    // 결제 비밀번호는 계정당 여러 개다 — 같은 결제 수단일 때만 덮어쓰고, 아니면 새로 만든다
+    if (input.type === 'password') {
+      const provider = paymentProviderOfSections(input.sections ?? [])
+      return this.repo.findPaymentItemRow(input.accountId, provider).row
+    }
     return this.repo.findItemRow(input.accountId, input.type)
   }
 
@@ -956,11 +974,52 @@ export class VaultService {
     type: VaultItemType,
     fieldKey: string = DEFAULT_FIELD_KEY,
     jobId?: string,
-    source: 'ai' | 'user' = 'ai'
+    source: 'ai' | 'user' = 'ai',
+    provider?: PaymentProvider
   ): string | null {
+    // 결제 비밀번호는 계정당 여러 개일 수 있어 제공자별 조회 경로를 탄다
+    if (type === 'password') {
+      return this.getPaymentSecretForFill({ accountId, provider, fieldKey, jobId, source }).value
+    }
     if (!this.key) return null
     const row = this.repo.findItemRow(accountId, type)
     if (!row) return null
+    return this.decryptForFill(row, fieldKey, jobId, source)
+  }
+
+  /**
+   * 결제 비밀번호 전용 조회 — **메인 프로세스 내부에서만** 호출한다.
+   * provider 를 주면 그 결제 수단의 항목만 본다. 주지 않았는데 계정에 결제 비밀번호가
+   * 둘 이상이면 'ambiguous' 로 거부한다(임의로 고르면 잘못 눌러 계정이 잠긴다)
+   */
+  getPaymentSecretForFill(args: {
+    accountId: number
+    provider?: PaymentProvider
+    fieldKey?: string
+    jobId?: string
+    source?: 'ai' | 'user'
+  }): PaymentSecretResult {
+    if (!this.key) return { value: null, reason: 'locked' }
+    const found = this.repo.findPaymentItemRow(args.accountId, args.provider)
+    if (!found.row) return { value: null, reason: found.reason }
+    const plain = this.decryptForFill(
+      found.row,
+      args.fieldKey ?? DEFAULT_FIELD_KEY,
+      args.jobId,
+      args.source ?? 'ai'
+    )
+    if (plain === null) return { value: null, reason: 'not-found' }
+    return { value: plain }
+  }
+
+  // 행 하나에서 secret 필드를 복호화하고 'fill' 감사 로그를 남긴다(평문은 반환값으로만 나간다)
+  private decryptForFill(
+    row: VaultItemRow,
+    fieldKey: string,
+    jobId: string | undefined,
+    source: 'ai' | 'user'
+  ): string | null {
+    if (!this.key) return null
     const field = findField(row.sections, fieldKey)
     if (!field || !isSecretField(field)) return null
     try {

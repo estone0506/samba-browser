@@ -4,8 +4,18 @@
 import { eq, and, or, isNull, desc, type SQL } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { sites, accounts, vaultItems, vaultMeta, auditLog } from '../db/schema'
-import type { AgentAccess, SiteDto, VaultItemMeta, VaultItemType } from '../../shared/vault'
-import { normalizeAgentAccess, normalizeItemType } from '../../shared/vault'
+import type {
+  AgentAccess,
+  PaymentProvider,
+  SiteDto,
+  VaultItemMeta,
+  VaultItemType
+} from '../../shared/vault'
+import {
+  normalizeAgentAccess,
+  normalizeItemType,
+  paymentProviderOfSections
+} from '../../shared/vault'
 import type { WorkspaceScope } from '../../shared/sync'
 import { parseFields, serializeFields, toMetaSections, type StoredSection } from './fields'
 
@@ -19,6 +29,11 @@ export interface VaultItemRow {
   sections: StoredSection[]
   updatedAt: number
 }
+
+// 결제 비밀번호 조회 결과. 못 찾은 이유를 호출부가 구분할 수 있게 담는다
+export type PaymentItemLookup =
+  | { row: VaultItemRow; reason?: undefined }
+  | { row: null; reason: 'not-found' | 'ambiguous' }
 
 export interface AccountRow {
   id: number
@@ -372,6 +387,42 @@ export class VaultRepo {
       .all()
     const row = rows[0]
     return row ? toItemRow(row) : null
+  }
+
+  /** 계정에 딸린 결제 비밀번호('password') 항목 전부. 저장 순서(id)를 그대로 지킨다 */
+  listPaymentItemRows(accountId: number): VaultItemRow[] {
+    return this.d
+      .select()
+      .from(vaultItems)
+      .where(
+        and(
+          eq(vaultItems.accountId, accountId),
+          eq(vaultItems.type, 'password'),
+          isNull(vaultItems.deletedAt)
+        )
+      )
+      .orderBy(vaultItems.id)
+      .all()
+      .map(toItemRow)
+  }
+
+  /**
+   * 결제 비밀번호 한 개를 고른다.
+   * - provider 를 주면 그 결제 수단의 항목만 본다(제공자 필드가 없는 옛 항목은 'site')
+   * - provider 가 없으면 계정에 항목이 정확히 1개일 때만 돌려준다.
+   *   2개 이상이면 어느 결제창인지 알 수 없으므로 'ambiguous' 다 —
+   *   잘못 누르면 계정이 잠기므로 절대 임의로 고르지 않는다
+   */
+  findPaymentItemRow(accountId: number, provider?: PaymentProvider): PaymentItemLookup {
+    const rows = this.listPaymentItemRows(accountId)
+    if (provider) {
+      const matched = rows.filter((r) => paymentProviderOfSections(r.sections) === provider)
+      const first = matched[0]
+      return first ? { row: first } : { row: null, reason: 'not-found' }
+    }
+    if (rows.length === 1) return { row: rows[0] }
+    if (rows.length === 0) return { row: null, reason: 'not-found' }
+    return { row: null, reason: 'ambiguous' }
   }
 
   // AAD 로 쓸 id 를 먼저 얻기 위해 빈 fields 로 행을 만든다(곧바로 updateItemFields 로 채운다).
