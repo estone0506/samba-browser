@@ -15,6 +15,7 @@ import { DEFAULT_SECTION_KEY, resolveSectionKey } from '@renderer/components/set
 // 대신 렌더러가 그린 화면(개인정보 등)이 카드를 채운다
 export type MainView =
   | 'browser'
+  | 'tasks'
   | 'personal'
   | 'bookmarks'
   | 'phones'
