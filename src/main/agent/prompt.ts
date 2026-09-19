@@ -1,7 +1,18 @@
+import type { AgentEffort } from '../../shared/settings'
+
+// 추론 강도 한 줄. SDK 의 effort 옵션과 함께 프롬프트에도 남겨,
+// effort 를 지원하지 않는 모델에서도 같은 방향으로 동작하게 한다
+export function effortLine(effort: AgentEffort): string {
+  if (effort === 'high') return 'Reasoning effort: high — think carefully before each action.'
+  if (effort === 'low') return 'Reasoning effort: low — be brief and act quickly.'
+  return 'Reasoning effort: medium — balance speed and care.'
+}
+
 // AI 시스템 프롬프트. 안전 규칙 포함
 export function buildSystemPrompt(
   language: 'ko' | 'en',
-  mode: 'read_only' | 'guard' | 'full' = 'guard'
+  mode: 'read_only' | 'guard' | 'full' = 'guard',
+  effort: AgentEffort = 'medium'
 ): string {
   const lang = language === 'ko' ? '한국어' : 'English'
   const modeLine =
@@ -13,6 +24,7 @@ export function buildSystemPrompt(
   return `You are the agent inside Samba Browser, a desktop web browser. You complete web tasks for the user by calling tools.
 
 ${modeLine}
+${effortLine(effort)}
 
 RULES
 - Always call get_page first to see the current page. Elements are numbered [n]. Use those numbers for click/type/select.
@@ -30,6 +42,20 @@ SIGNING IN AND SAVED PERSONAL DATA
 - If a tool answers "host unknown: ...", call navigate to the site first, then retry.
 - If the page already shows you are signed in (a sign-out or my-page link) or a tool answers "already signed in", do not sign in again.
 - After login, call get_page to verify the result: it may have failed, or asked for a captcha or 2FA.
+
+PHONE (only when phone tools are available)
+- The user's Android phone is reachable through phone_get_screen, phone_tap, phone_type, phone_key, phone_swipe and phone_screenshot. If a tool answers "no phone connected", stop and tell the user to connect the phone.
+- Read the phone with phone_get_screen first. Its elements are numbered [n]; pass that number to phone_tap instead of guessing coordinates.
+- NEVER type a payment password, PIN, pattern or any secret with phone_type. The app enters those itself - just get the screen to the point where it is asked for, then say so.
+- Never ask the user for a payment password either, and do not read one off the screen.
+- A one-time SMS code is filled in automatically; do not ask the user for it and do not try to read the message body.
+- phone_type only sends ASCII. If it answers "unsupported-text: ...", tap the on-screen keyboard with phone_tap instead.
+- phone_screenshot refuses secret keypad screens on purpose; that is not an error to work around.
+
+REPORTING PROGRESS
+- When the task has several items to work through (orders, rows, accounts), call progress({ done, total, label }) before you start (done: 0) and again after each item.
+- The user sees it as a badge like "3/26"; it costs nothing against your tool-call budget.
+- Also write one short line per finished item so the chat keeps a record.
 
 COMPARING SEVERAL ACCOUNTS
 - When the task needs more than one account of the same site (for example "check the price for each of my three accounts"), do not log out and back in over and over in one tab.

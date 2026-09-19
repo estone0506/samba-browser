@@ -3,6 +3,7 @@ import type {
   AiProviderId,
   AiProviderStatus,
   ApiKeyVendor,
+  SubscriptionProviderId,
   TaskModelKey,
   TaskModels
 } from '@shared/ai'
@@ -21,7 +22,14 @@ interface AiStoreState {
   remapped: TaskModelKey[]
   /** '연결 확인' 결과 — 제공자별 성공/실패 */
   testResults: Partial<Record<ApiKeyVendor, 'ok' | 'fail' | 'testing'>>
+  /** 연결/해지 요청이 도는 중인 구독 카드 */
+  busy: SubscriptionProviderId | null
+  /** 자격이 없어 안내 다이얼로그를 띄워야 하는 구독 카드와 사유 */
+  loginHint: { provider: SubscriptionProviderId; reason: 'not_installed' | 'needs_login' } | null
   load: () => Promise<void>
+  connect: (provider: SubscriptionProviderId, openTerminal?: boolean) => Promise<void>
+  disconnect: (provider: SubscriptionProviderId) => Promise<void>
+  dismissLoginHint: () => void
   setProvider: (id: AiProviderId) => Promise<void>
   setApiKey: (vendor: ApiKeyVendor, key: string) => Promise<void>
   testKey: (vendor: ApiKeyVendor, key: string) => Promise<void>
@@ -38,6 +46,8 @@ export const useAiStore = create<AiStoreState>((set, get) => ({
   error: null,
   remapped: [],
   testResults: {},
+  busy: null,
+  loginHint: null,
 
   load: async () => {
     set({ loading: true, error: null })
@@ -61,6 +71,38 @@ export const useAiStore = create<AiStoreState>((set, get) => ({
       loading: false
     })
   },
+
+  // 연결: 성공하면 카드 상태를 다시 읽고, 자격이 없으면 안내 다이얼로그를 띄운다
+  connect: async (provider, openTerminal = false) => {
+    set({ busy: provider, error: null })
+    const r = await window.samba.ai.connect(provider, openTerminal)
+    set({ busy: null })
+    if (!r.ok) {
+      set({ error: r.error })
+      return
+    }
+    if (r.data.ok) {
+      set({ loginHint: null })
+      await get().load()
+      return
+    }
+    // 터미널을 여는 호출은 안내를 그대로 띄워 둔 채 기다린다
+    if (!openTerminal) set({ loginHint: { provider, reason: r.data.reason ?? 'needs_login' } })
+  },
+
+  // 해지: 진행 중 작업이 있으면 메인이 거절한다(오류 문구를 그대로 보여 준다)
+  disconnect: async (provider) => {
+    set({ busy: provider, error: null })
+    const r = await window.samba.ai.disconnect(provider)
+    set({ busy: null })
+    if (!r.ok) {
+      set({ error: r.error })
+      return
+    }
+    await get().load()
+  },
+
+  dismissLoginHint: () => set({ loginHint: null }),
 
   setProvider: async (id) => {
     const r = await window.samba.ai.setProvider(id)

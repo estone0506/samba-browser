@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="viva.republica.toss" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1600]">
+    <node index="0" text="" resource-id="android:id/statusBarBackground" class="android.view.View" package="viva.republica.toss" content-desc="" clickable="false" enabled="true" password="false" bounds="[0,0][720,60]" />
+    <node index="1" text="송금하기" resource-id="viva.republica.toss:id/title" class="android.widget.TextView" package="viva.republica.toss" content-desc="" clickable="true" enabled="true" password="false" bounds="[0,100][720,200]" />
+    <node index="2" text="" resource-id="viva.republica.toss:id/btn_confirm" class="android.widget.Button" package="viva.republica.toss" content-desc="확인 &amp; 계속" clickable="true" enabled="true" password="false" bounds="[40,1400][680,1500]" />
+    <node index="3" text="1234" resource-id="viva.republica.toss:id/input_amount" class="android.widget.EditText" package="viva.republica.toss" content-desc="" clickable="true" enabled="true" password="true" bounds="[40,300][680,380]" />
+    <node index="4" text="" resource-id="viva.republica.toss:id/pin_keypad" class="android.view.ViewGroup" package="viva.republica.toss" content-desc="" clickable="true" enabled="true" password="false" bounds="[0,900][720,1300]" />
+    <node index="5" text="" resource-id="" class="android.view.View" package="viva.republica.toss" content-desc="" clickable="false" enabled="true" password="false" bounds="[0,200][720,300]" />
+    <node index="6" text="계좌번호를 입력하세요" resource-id="" class="android.widget.TextView" package="viva.republica.toss" content-desc="" clickable="false" enabled="true" password="false" bounds="[40,400][680,460]" />
+    <node index="7" text="숨김" resource-id="" class="android.widget.TextView" package="viva.republica.toss" content-desc="" clickable="false" enabled="true" password="false" bounds="[100,500][100,500]" />
+  </node>
+</hierarchy>

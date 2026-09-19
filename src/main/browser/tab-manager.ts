@@ -9,12 +9,21 @@ import {
 } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import type { Layout, TabInfo } from '../../shared/ipc'
-import { BLOCKED_URL_MESSAGE, isAllowedUrl, isInternalUrl, NEW_TAB_URL } from '../../shared/url'
+import { IPC, type Layout, type TabInfo } from '../../shared/ipc'
+import type { ClosedTabRecord } from './gestures'
+import {
+  BLOCKED_URL_MESSAGE,
+  isAllowedUrl,
+  isExtensionUrl,
+  isInternalUrl,
+  NEW_TAB_URL
+} from '../../shared/url'
 import { attachInternalProtocol } from './internal-protocol'
 import type { PermissionMode, SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
+import { installWebstoreNavigatorUserAgent, installWebstoreUserAgent } from './webstore-ua'
 import { installDialogHandler, isAutomationActive } from './dialogs'
+import { PopupRegistry, type PopupEntry } from './popups'
 import { getFaviconService, type FaviconResponse } from '../favicon/service'
 
 export interface Tab {
@@ -22,7 +31,17 @@ export interface Tab {
   view: WebContentsView
   profile: string
   mobile: boolean
+  // 이 탭을 window.open 으로 띄운 탭. 결제창처럼 별도 WebContents 로 열리는 팝업을
+  // 부모 탭에서 다시 찾기 위해 남긴다(결제 성공 리다이렉트 확인에 쓴다)
+  openerId?: string
 }
+
+/**
+ * window.open 으로 열린 팝업 창(결제창 등). 크롬처럼 별도 창으로 띄운다.
+ * Electron 의 createWindow 는 BrowserWindow 를 기대하므로 WebContentsView 로 만들면 네이티브 크래시가 난다.
+ * 탭 목록에는 넣지 않고 따로 추적해(popups.ts), 부모 탭이 결제 결과를 확인할 때 찾는다
+ */
+type Popup = PopupEntry<BrowserWindow>
 
 // 설정을 아직 못 읽었을 때의 기본 주소. 설정이 들어오면 setDefaultUrl 로 덮인다
 const DEFAULT_URL = NEW_TAB_URL
@@ -78,6 +97,10 @@ const hardenedPartitions = new Set<string>()
 function hardenSession(ses: Session, partition: string): void {
   if (hardenedPartitions.has(partition)) return
   hardenedPartitions.add(partition)
+  // 페이지 preload 는 세션에 등록한다. 탭의 webPreferences.preload 는 window.open 으로 만들어진
+  // 팝업(결제창 등) webContents 에는 적용되지 않아 계정 선택기·AI 스냅샷이 빠졌었다.
+  // 모든 프레임에서 돌지만 page.ts 가 최상위 문서에서만 설치한다
+  ses.registerPreloadScript({ type: 'frame', filePath: join(__dirname, '../preload/page.js') })
   ses.setPermissionRequestHandler((_wc, permission, callback) => {
     console.warn(`권한 요청 거부: ${permission}`)
     callback(false)
@@ -90,17 +113,24 @@ function hardenSession(ses: Session, partition: string): void {
     e.preventDefault()
     console.warn(`다운로드 차단: ${item.getURL()}`)
   })
+  // 웹스토어는 Electron UA 를 보면 "지원되지 않는 브라우저" 안내로 설치 버튼을 감춘다.
+  // 그 호스트 요청에만 크롬 UA 를 보낸다(다른 사이트는 그대로)
+  installWebstoreUserAgent(ses)
 }
 
-// 리다이렉트·페이지 내 이동으로 금지 스킴에 도달하는 경로까지 막는다
-function guardNavigation(wc: WebContents): void {
+// 리다이렉트·페이지 내 이동으로 금지 스킴에 도달하는 경로까지 막는다.
+// allowExtension 은 확장 문서(옵션 페이지)를 담은 탭에만 준다 — 그 탭 안에서는
+// `chrome-extension://` 사이 이동이 정상이기 때문이다(웹 페이지 탭에는 주지 않는다)
+export function guardNavigation(wc: WebContents, allowExtension: boolean): void {
+  const allowed = (url: string): boolean =>
+    isAllowedUrl(url) || (allowExtension && isExtensionUrl(url))
   wc.on('will-navigate', (e, url) => {
-    if (isAllowedUrl(url)) return
+    if (allowed(url)) return
     e.preventDefault()
     console.warn(`이동 차단: ${url}`)
   })
   wc.on('will-redirect', (e, url) => {
-    if (isAllowedUrl(url)) return
+    if (allowed(url)) return
     e.preventDefault()
     console.warn(`리다이렉트 차단: ${url}`)
   })
@@ -109,6 +139,7 @@ function guardNavigation(wc: WebContents): void {
 // 탭 = WebContentsView 1개. 프로필은 persist: 파티션으로 쿠키 분리
 export class TabManager {
   private tabs: Tab[] = []
+  private popups = new PopupRegistry<BrowserWindow>()
   private activeId: string | null = null
   private layout: Layout = {
     x: 0,
@@ -119,6 +150,8 @@ export class TabManager {
     viewportHeight: 0
   }
   private listeners: Array<(tabs: TabInfo[]) => void> = []
+  // 탭 전환 구독자(확장 액션 팝업을 닫는다)
+  private activatedListeners: Array<() => void> = []
   private disposed = false
   // === 홈 버튼 / 설정 페이지 (신규 추가분) ==================================
   // url 없이 탭을 생성할 때 쓸 기본 주소(설정의 홈 주소/새 탭 주소로부터 계산되어 들어온다)
@@ -131,6 +164,8 @@ export class TabManager {
   // 이 창이 실제로 만든 파티션 세션. 새 파티션이 생기면 확장 관리자에게 알려 준다
   private partitionSessions = new Map<string, Session>()
   private sessionHook: ((ses: Session, partition: string) => void) | null = null
+  // 탭 우클릭 메뉴 설치 훅(번역 메뉴). 주입하지 않으면 메뉴를 붙이지 않는다
+  private contextMenuHook: ((wc: WebContents) => void) | null = null
   // 창 안에서만 듣는 키 입력 처리기(작업공간 Ctrl+Alt+1~9). true 를 돌려주면 페이지로 넘기지 않는다
   private inputHandler: ((input: Input) => boolean) | null = null
   // === 신규 추가분 끝 ========================================================
@@ -142,6 +177,12 @@ export class TabManager {
   private dialogConfirm: ((message: string) => Promise<boolean>) | undefined
   // 자동 처리한 대화상자 문구(탭별 1건). 다음 도구 결과 앞에 붙이고 비운다
   private lastDialogMessage = new Map<string, string>()
+  // === 마우스 제스처 ========================================================
+  // 페이지 preload 에 밀어 줄 제스처 설정(켜짐 여부·언어·매핑). 설정이 바뀌면 handlers 가 갈아 끼운다
+  private gestureConfig: unknown = null
+  // 탭이 닫힐 때 알리는 구독자(닫은 탭 다시 열기 스택)
+  private closedListeners: Array<(tab: ClosedTabRecord) => void> = []
+  // === 마우스 제스처 끝 ======================================================
 
   constructor(private win: BrowserWindow) {
     // 창이 닫히면 남은 리스너·탭을 정리해 파괴된 창에 접근하지 않게 한다
@@ -158,6 +199,14 @@ export class TabManager {
 
   onChange(cb: (tabs: TabInfo[]) => void): void {
     this.listeners.push(cb)
+  }
+
+  /**
+   * 탭이 활성화될 때 알린다(확장 액션 팝업 닫기).
+   * onChange 와 나눠 둔 이유는 onChange 가 로딩·제목 변경에도 매번 불리기 때문이다
+   */
+  onActivated(cb: () => void): void {
+    this.activatedListeners.push(cb)
   }
 
   // === 홈 버튼 / 설정 페이지 (신규 추가분) ==================================
@@ -188,6 +237,12 @@ export class TabManager {
     for (const [partition, ses] of this.partitionSessions) fn(ses, partition)
   }
 
+  /** 탭 우클릭 메뉴 설치 훅을 연결한다. 이미 열려 있는 탭에도 소급 적용한다 */
+  setContextMenuHook(fn: (wc: WebContents) => void): void {
+    this.contextMenuHook = fn
+    for (const tab of this.tabs) fn(tab.view.webContents)
+  }
+
   /**
    * 창 안에서만 동작하는 키 입력 처리기를 연결한다(작업공간 전환 단축키).
    * 처리기가 true 를 돌려주면 그 입력은 페이지로 전달되지 않는다
@@ -203,6 +258,46 @@ export class TabManager {
       if (this.inputHandler?.(input)) e.preventDefault()
     })
   }
+
+  // === 마우스 제스처 ========================================================
+  /**
+   * 페이지 preload 에 밀어 줄 제스처 설정을 갈아 끼운다.
+   * 이미 열려 있는 탭에도 즉시 반영한다(설정 화면에서 끄면 바로 궤적이 사라지도록)
+   */
+  setGestureConfig(config: unknown): void {
+    this.gestureConfig = config
+    for (const tab of this.tabs) this.sendGestureConfig(tab.view.webContents)
+  }
+
+  private sendGestureConfig(wc: WebContents): void {
+    if (this.gestureConfig === null || wc.isDestroyed()) return
+    wc.send(IPC.pageGestureConfig, this.gestureConfig)
+  }
+
+  /** 탭이 닫힐 때(다시 열기 스택에 쌓을 수 있게) 알린다 */
+  onTabClosed(cb: (tab: ClosedTabRecord) => void): void {
+    this.closedListeners.push(cb)
+  }
+
+  /**
+   * 페이지를 맨 위·맨 아래로 보낸다(제스처 ↑/↓).
+   * 페이지가 window.scrollTo 를 덮어썼어도 영향을 받지 않도록 격리 월드에서 실행한다
+   */
+  async scrollTo(id: string, to: 'top' | 'bottom'): Promise<void> {
+    const tab = this.get(id)
+    if (!tab) return
+    const wc = tab.view.webContents
+    if (wc.isDestroyed()) return
+    const top = to === 'top' ? '0' : 'el.scrollHeight'
+    // preload 가 사는 격리 월드 id(Electron WorldId.ISOLATED_WORLD). page-bridge 와 같은 값이지만
+    // 순환 import 를 만들지 않으려고 여기서는 숫자를 직접 쓴다
+    await wc.executeJavaScriptInIsolatedWorld(999, [
+      {
+        code: `(() => { const el = document.scrollingElement || document.documentElement; el.scrollTo({ top: ${top}, behavior: 'smooth' }); return '' })()`
+      }
+    ])
+  }
+  // === 마우스 제스처 끝 ======================================================
 
   /** AI 작업 실행 여부 판정기를 연결한다(대화상자 자동 처리 조건) */
   setAgentRunningProvider(fn: () => boolean): void {
@@ -246,8 +341,12 @@ export class TabManager {
     if (this.disposed) return
     this.disposed = true
     this.listeners = []
+    this.activatedListeners = []
+    this.closedListeners = []
     this.tabs = []
     this.activeId = null
+    // 부모 창이 사라졌는데 결제창만 남아 떠 있지 않게 팝업도 함께 파괴한다
+    this.popups.destroyAll()
   }
 
   list(): TabInfo[] {
@@ -279,15 +378,59 @@ export class TabManager {
 
   // IPC 발신자에 해당하는 탭(새 탭 페이지가 자기 탭을 이동시킬 때 쓴다)
   findByWebContents(wc: WebContents): Tab | null {
-    return this.tabs.find((t) => t.view.webContents === wc) ?? null
+    const tab = this.tabs.find((t) => t.view.webContents === wc)
+    if (tab) return tab
+    const popup = this.popups.find((p) => p.win.webContents === wc)
+    return popup ? this.asTab(popup) : null
   }
 
-  create(opts: { url?: string; profile?: string; mobile?: boolean } = {}): TabInfo {
+  /** 팝업 창을 탭 모양으로 감싼다 — 소비자는 .view.webContents 만 쓴다(페이지 브리지·결제 확인) */
+  private asTab(p: Popup): Tab {
+    return {
+      id: p.id,
+      view: { webContents: p.win.webContents } as unknown as WebContentsView,
+      profile: p.profile,
+      mobile: false,
+      openerId: p.openerId
+    }
+  }
+
+  /**
+   * 이 탭이 띄운 팝업 중 아직 살아 있는 가장 최근 것.
+   * 간편결제처럼 결제창이 별도 WebContents 로 열리는 사이트에서 성공 리다이렉트를 확인할 때 쓴다
+   */
+  popupOf(openerId: string): Tab | null {
+    const popup = this.popups.latestFor(openerId)
+    if (popup) return this.asTab(popup)
+    for (let i = this.tabs.length - 1; i >= 0; i--) {
+      const t = this.tabs[i]
+      if (t.openerId === openerId && !t.view.webContents.isDestroyed()) return t
+    }
+    return null
+  }
+
+  create(
+    opts: {
+      url?: string
+      profile?: string
+      mobile?: boolean
+      openerId?: string
+      /**
+       * 확장 문서(옵션 페이지) 탭인가. 앱이 스스로 여는 경로(툴바 액션)에서만 켠다 —
+       * 주소창 입력·웹페이지의 window.open·AI 도구는 이 값을 주지 않으므로
+       * `chrome-extension://` 은 그쪽으로는 여전히 열리지 않는다
+       */
+      extension?: boolean
+    } = {}
+  ): TabInfo {
     if (this.disposed) throw new Error('window closed')
     // url 이 없으면(새 탭 버튼·첫 탭) 설정에서 계산된 기본 주소를 쓴다
     const url = opts.url ? opts.url : this.defaultUrl
+    const allowExtension = opts.extension === true
     // 탭 생성 경로(주소창·AI new_tab·페이지의 window.open)의 공통 관문
-    if (!isAllowedUrl(url)) throw new Error(`${BLOCKED_URL_MESSAGE} (${url})`)
+    if (!isAllowedUrl(url) && !(allowExtension && isExtensionUrl(url))) {
+      throw new Error(`${BLOCKED_URL_MESSAGE} (${url})`)
+    }
     const profile = opts.profile ?? 'default'
     const partition = `${this.partitionPrefix}${profile}`
     const ses = session.fromPartition(partition)
@@ -300,9 +443,9 @@ export class TabManager {
       this.sessionHook?.(ses, partition)
     }
     const view = new WebContentsView({
+      // preload 는 세션에 등록돼 있다(hardenSession) — 여기서 또 주면 두 번 실행된다
       webPreferences: {
         session: ses,
-        preload: join(__dirname, '../preload/page.js'),
         sandbox: true,
         contextIsolation: true
       }
@@ -312,10 +455,17 @@ export class TabManager {
     // 카드가 상단만 둥글고(rounded-t-2xl) 하단은 창 바닥에 닿는 edge-to-edge 레이아웃에서는
     // 0 으로 둬 하단 사각 모서리와 일치시킨다(상단은 카드 테두리 뒤에 가려져 시각적으로 차이가 적다)
     view.setBorderRadius(0)
-    const tab: Tab = { id: randomUUID(), view, profile, mobile: opts.mobile ?? false }
+    const tab: Tab = {
+      id: randomUUID(),
+      view,
+      profile,
+      mobile: opts.mobile ?? false,
+      ...(opts.openerId === undefined ? {} : { openerId: opts.openerId })
+    }
     this.tabs.push(tab)
     const wc = view.webContents
     this.attachInputHandler(wc)
+    this.contextMenuHook?.(wc)
     // 상태 변화 이벤트마다 리스너에 통지 (개별 등록: on() 오버로드가 유니온 리터럴을 받지 않음)
     wc.on('did-start-loading', () => this.emit())
     wc.on('did-stop-loading', () => this.emit())
@@ -332,6 +482,8 @@ export class TabManager {
       if (isMainFrame && code !== -3) console.error(`탭 로드 실패 ${code} ${desc}: ${failedUrl}`)
     })
     wc.on('did-navigate-in-page', () => this.emit())
+    // 문서가 바뀔 때마다 제스처 설정을 다시 밀어 준다(preload 는 매 문서마다 새로 뜬다)
+    wc.on('dom-ready', () => this.sendGestureConfig(wc))
     // 탭이 실제로 받은 파비콘을 파비콘 서비스 캐시에 넣어 둔다.
     // 이미 열고 있는 페이지에서 나온 정보라 추가로 노출되는 것이 없고,
     // /favicon.ico 가 없는 사이트의 아이콘도 이 경로로 채워진다
@@ -351,7 +503,10 @@ export class TabManager {
           console.warn('파비콘 저장 실패', e instanceof Error ? e.message : String(e))
         })
     })
-    guardNavigation(wc)
+    guardNavigation(wc, allowExtension)
+    // 웹스토어 페이지 JS 가 읽는 navigator.userAgent 도 헤더와 같은 크롬 UA 로 맞춘다.
+    // 모바일 탭은 emulation.ts 가 UA 를 따로 관리하므로 건드리지 않는다
+    installWebstoreNavigatorUserAgent(wc, () => tab.mobile)
     // 페이지 JS 대화상자(alert/confirm/prompt)는 작업 실행 중에만 자동으로 닫는다
     installDialogHandler(wc, {
       // SAMBA_E2E 환경변수는 개발 빌드에서만 인정한다(패키징된 앱에서 자동 처리 금지)
@@ -361,14 +516,29 @@ export class TabManager {
       ...(this.dialogConfirm ? { confirm: this.dialogConfirm } : {}),
       onMessage: (message) => this.lastDialogMessage.set(tab.id, message)
     })
-    wc.setWindowOpenHandler(({ url: target }) => {
+    wc.setWindowOpenHandler(({ url: target, disposition }) => {
       if (!isAllowedUrl(target)) {
         console.warn(`새 창 차단: ${target}`)
         return { action: 'deny' }
       }
-      this.create({ url: target, profile, mobile: tab.mobile })
-      return { action: 'deny' }
+      // 크롬과 같은 규칙: target=_blank 링크·일반 새 탭 요청은 탭으로 연다.
+      // (같은 profile 로 열어 로그인 세션·쿠키가 이어진다)
+      if (disposition === 'foreground-tab' || disposition === 'background-tab') {
+        try {
+          this.create({ url: target, profile, mobile: tab.mobile, openerId: tab.id })
+        } catch (e: unknown) {
+          console.warn('새 탭 등록 실패', e instanceof Error ? e.message : String(e))
+        }
+        return { action: 'deny' }
+      }
+      // 창 크기를 지정한 window.open(결제창·인증창) 은 별도 창으로 띄운다.
+      // 'deny' 하고 URL 만 따로 열면 페이지가 받는 window 참조가 null 이 되어,
+      // about:blank 팝업을 먼저 열고 폼을 target 으로 보내는 결제 흐름이 통째로 깨진다.
+      // 창은 Electron 의 표준 경로에 맡기고(직접 createWindow 로 만들면 부모 탭이 이동하는 순간
+      // 브라우저 프로세스가 죽는 경우가 있었다), did-create-window 에서 받아 추적만 한다
+      return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true } }
     })
+    wc.on('did-create-window', (popupWin) => this.registerPopup(popupWin, tab.id, profile))
     if (tab.mobile) void applyMobileEmulation(wc)
     void wc.loadURL(url)
     this.activate(tab.id)
@@ -378,6 +548,8 @@ export class TabManager {
   activate(id: string): void {
     const tab = this.get(id)
     if (!tab || this.win.isDestroyed()) return
+    // 탭 뷰를 다시 얹기 전에 알린다 — 위에 떠 있던 확장 팝업이 탭 뷰 아래로 묻히지 않게
+    for (const cb of this.activatedListeners) cb()
     // 모든 탭 뷰를 창에서 제거(없으면 무시됨)한 뒤 활성 탭만 다시 추가
     for (const t of this.tabs) {
       this.win.contentView.removeChildView(t.view)
@@ -388,11 +560,75 @@ export class TabManager {
     this.emit()
   }
 
+  /** 팝업 창을 부모(메인) 창 가운데로 옮긴다. 화면 밖으로 나가지 않게 최소 0 으로 붙잡는다 */
+  private centerPopup(win: BrowserWindow): void {
+    if (this.win.isDestroyed() || win.isDestroyed()) return
+    const parent = this.win.getBounds()
+    const size = win.getSize()
+    const x = Math.max(0, Math.round(parent.x + (parent.width - size[0]) / 2))
+    const y = Math.max(0, Math.round(parent.y + (parent.height - size[1]) / 2))
+    win.setPosition(x, y)
+  }
+
+  /** 팝업 창을 추적 목록에 넣고, 닫히면 뺀다. 페이지 조작 훅은 탭과 같은 것을 붙인다 */
+  private registerPopup(win: BrowserWindow, openerId: string, profile: string): void {
+    const popup = this.popups.add({
+      id: randomUUID(),
+      win,
+      openerId,
+      profile,
+      handle: {
+        isDestroyed: () => win.isDestroyed(),
+        hide: () => win.hide(),
+        close: () => win.close(),
+        destroy: () => win.destroy()
+      }
+    })
+    // 크롬처럼 부모 창 가운데에 띄운다(기본값은 화면 왼쪽 위라 결제창이 엉뚱한 곳에 떴다).
+    // 페이지가 left/top 을 지정했으면 Electron 이 이미 반영했으므로 그 경우는 두고,
+    // 아니면 부모 창 기준으로 가운데 정렬한다
+    this.centerPopup(win)
+    const wc = win.webContents
+    this.contextMenuHook?.(wc)
+    wc.on('dom-ready', () => this.sendGestureConfig(wc))
+    // 팝업도 탭과 똑같이 막는다 — 결제창에서 file:// 로 넘어가면 로컬 DB 파일이
+    // 그대로 읽힌다. 확장 문서는 팝업으로 열 일이 없으므로 허용하지 않는다
+    guardNavigation(wc, false)
+    // 페이지 JS 대화상자도 탭과 같은 정책으로 처리한다(결제창의 alert 가 작업을 멈추지 않게)
+    installDialogHandler(wc, {
+      isAutomationActive: () =>
+        isAutomationActive(this.agentRunning(), process.env, !app.isPackaged),
+      mode: () => this.dialogMode(),
+      ...(this.dialogConfirm ? { confirm: this.dialogConfirm } : {}),
+      onMessage: (message) => this.lastDialogMessage.set(popup.id, message)
+    })
+    // 팝업이 또 창을 열면(결제 → 인증창) 같은 규칙으로 창을 만든다
+    wc.setWindowOpenHandler(({ url: target }) => {
+      if (!isAllowedUrl(target)) return { action: 'deny' }
+      return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true } }
+    })
+    wc.on('did-create-window', (child) => this.registerPopup(child, openerId, profile))
+    win.on('close', (event) => this.popups.handleClose(popup, () => event.preventDefault()))
+    win.once('closed', () => {
+      this.popups.remove(popup)
+      this.lastDialogMessage.delete(popup.id)
+    })
+  }
+
   close(id: string): void {
     const idx = this.tabs.findIndex((t) => t.id === id)
     if (idx < 0) return
     const [tab] = this.tabs.splice(idx, 1)
     this.lastDialogMessage.delete(id)
+    // 닫히기 전에 주소를 챙겨 둔다(제스처 '닫은 탭 다시 열기')
+    if (!tab.view.webContents.isDestroyed()) {
+      const record: ClosedTabRecord = {
+        url: tab.view.webContents.getURL(),
+        profile: tab.profile,
+        mobile: tab.mobile
+      }
+      for (const cb of this.closedListeners) cb(record)
+    }
     if (!this.win.isDestroyed()) this.win.contentView.removeChildView(tab.view)
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
     if (this.activeId === id) {

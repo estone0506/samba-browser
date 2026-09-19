@@ -3,6 +3,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import i18n from '@renderer/i18n'
 import { ImportPanel } from '@renderer/components/vault/ImportPanel'
+import { CaptureSettingsCard } from './CaptureSettingsCard'
 import { isHttpUrl, isInternalUrl } from '@shared/url'
 import type { NewTabUrlMode, SearchEngine } from '@shared/settings'
 import {
@@ -14,6 +15,7 @@ import {
   TextInput,
   type SectionProps
 } from './shared'
+import { TranslateCard } from './TranslateCard'
 
 // 일반 — 기본 검색엔진 · 시작 화면(홈 주소·새 탭 주소) · 언어 · 가져오기
 export function GeneralSection({ settings, update }: SectionProps): React.JSX.Element {
@@ -94,6 +96,9 @@ export function GeneralSection({ settings, update }: SectionProps): React.JSX.El
           ]}
         />
       </SettingsSection>
+
+      <TranslateCard settings={settings} update={update} />
+      <CaptureSettingsCard settings={settings} update={update} />
 
       <SettingsSection
         title={t('settingsPage.general.importTitle')}

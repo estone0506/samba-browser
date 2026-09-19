@@ -5,3 +5,7 @@ export class BrowserWindow {}
 export const shell = {}
 // ocr/engine.ts 가 모델 보관 위치를 계산할 때 쓴다(테스트는 경로를 직접 주입한다)
 export const app = { getPath: (_name: string): string => '' }
+// browser/context-menu.ts 가 import 하는 이름(순수 함수만 테스트하므로 빈 값으로 둔다)
+export const Menu = { buildFromTemplate: () => ({ popup: (): void => undefined }) }
+export const clipboard = { writeText: (_text: string): void => undefined }
+export const nativeImage = {}

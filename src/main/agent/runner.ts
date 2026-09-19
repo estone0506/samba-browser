@@ -4,9 +4,21 @@ import type { SettingsStore } from '../settings/store'
 import type { AgentEvent } from '../../shared/ipc'
 import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
+import type { PayToolRequest, PhoneToolContext, SmsCodeOutcome } from './tools-phone'
+import type { PayResult } from '../phone/pay'
+import type { PhoneRunContext } from '../phone/wiring'
 import { buildSystemPrompt } from './prompt'
-import { runQuery, classifyAuthError, isFatalApiError } from './provider'
+import { appendPlaybooks, matchPlaybooks, type PlaybookDto } from '../../shared/playbook'
+import {
+  runQuery,
+  runCodexQuery,
+  agentBackend,
+  classifyAuthError,
+  isFatalApiError,
+  NOT_CONNECTED_ERROR
+} from './provider'
 import { resolveModel } from '../ai/models'
+import type { CodexInput } from './provider-codex'
 import { makeCounter } from './counter'
 import { createTextDeduper } from './dedupe'
 import {
@@ -32,6 +44,23 @@ export interface TranscriptEntry {
 /** 대화 기록 저장 훅. 주입하지 않으면 아무것도 저장하지 않는다 */
 export type TranscriptSink = (chatId: number, entry: TranscriptEntry) => void
 
+/** 플레이북 목록 공급자. 주입하지 않으면 플레이북이 전혀 적용되지 않는다 */
+export type PlaybookProvider = () => PlaybookDto[]
+
+/**
+ * 폰 도구 배선. 권한 모드·호출 상한·확인 카드는 웹 도구 것을 그대로 쓰므로
+ * 배선부는 폰 조작 능력과 배정 폰만 넘긴다(금고는 넘기지 않는다)
+ */
+export type PhoneBridge = Pick<PhoneToolContext, 'phones' | 'assigned'> & {
+  /**
+   * 문자 인증 흐름(phone/wiring.ts). 붙어 있지 않으면 wait_for_sms_code 도구가
+   * "sms auth is not available" 만 돌려준다
+   */
+  waitForSmsCode?: (ctx: PhoneRunContext, host?: string) => Promise<SmsCodeOutcome>
+  /** 결제 승인 실행기. 붙어 있지 않으면 결제 도구 자체를 등록하지 않는다 */
+  approvePayment?: (ctx: PhoneRunContext, req: PayToolRequest) => Promise<PayResult>
+}
+
 // 대기 중인 확인 요청(응답 콜백 + 만료 타이머)
 interface PendingConfirm {
   resolve: (ok: boolean) => void
@@ -46,6 +75,10 @@ export class AgentRunner {
   private generation = 0
   // 대화 기록 저장 훅(채팅 저장소). 없으면 기록을 남기지 않는다
   private transcript: TranscriptSink | null = null
+  // 폰 도구 배선. 없으면 폰 도구를 등록하지 않는다(3단계 전 실행·테스트)
+  private phones: PhoneBridge | null = null
+  // 자동화 플레이북 목록 공급자. 없으면 시스템 프롬프트에 아무것도 덧붙이지 않는다
+  private playbooks: PlaybookProvider | null = null
 
   constructor(
     private tabs: TabManager,
@@ -55,9 +88,33 @@ export class AgentRunner {
     private vault?: VaultService
   ) {}
 
+  /** 폰 도구 배선을 붙인다. null 이면 폰 도구를 등록하지 않는다 */
+  setPhones(bridge: PhoneBridge | null): void {
+    this.phones = bridge
+  }
+
   /** 대화 기록 저장 훅을 붙인다(채팅 저장소). null 이면 기록하지 않는다 */
   setTranscript(sink: TranscriptSink | null): void {
     this.transcript = sink
+  }
+
+  /** 플레이북 목록 공급자를 붙인다. null 이면 플레이북을 적용하지 않는다 */
+  setPlaybooks(provider: PlaybookProvider | null): void {
+    this.playbooks = provider
+  }
+
+  /**
+   * 이 프롬프트에 걸리는 플레이북을 찾는다.
+   * 공급자가 던져도 실행 자체는 막지 않는다(플레이북 없이 평소대로 돈다)
+   */
+  private matchedPlaybooks(prompt: string): PlaybookDto[] {
+    if (!this.playbooks) return []
+    try {
+      return matchPlaybooks(prompt, this.playbooks())
+    } catch (e: unknown) {
+      console.error('플레이북 조회 실패', e instanceof Error ? e.message : String(e))
+      return []
+    }
   }
 
   /** 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다) */
@@ -203,6 +260,18 @@ export class AgentRunner {
       if (e.type === 'step') entry.steps.push({ label: e.label, ok: e.ok })
       this.emit(e)
     }
+    // 사용자 문장에 걸리는 플레이북 — 시스템 프롬프트 뒤에 절차를 덧붙이고, 화면에는 이름만 알린다
+    const playbooks = this.matchedPlaybooks(prompt)
+    const systemPrompt = (
+      mode: 'read_only' | 'guard' | 'full',
+      effort?: typeof s.agentEffort
+    ): string =>
+      appendPlaybooks(
+        effort === undefined
+          ? buildSystemPrompt(s.language, mode)
+          : buildSystemPrompt(s.language, mode, effort),
+        playbooks
+      )
     const counter = makeCounter(s.maxToolCalls)
     const deduper = createTextDeduper()
     // api_retry 로 관측한 마지막 API 오류(결과 메시지에 문구가 없을 때 사용)
@@ -211,6 +280,23 @@ export class AgentRunner {
     let settled = false
     // 이번 실행의 감사 로그 식별자(금고 fill 기록에 남는다)
     const jobId = randomUUID()
+    // 폰 배선이 쓰는 작업 문맥. 확인 카드·진행 로그·넘김 카드는 웹 도구 것을 그대로 쓴다
+    const phones = this.phones
+    const phoneCtx = (): PhoneRunContext => ({
+      jobId,
+      confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit),
+      onStep: (label, ok) => emit({ type: 'step', label, ok }),
+      handoff: (req) => this.requestHandoff(req, emit),
+      cancelled: () => abort.signal.aborted
+    })
+    const waitSms = (host?: string): Promise<SmsCodeOutcome> =>
+      phones?.waitForSmsCode
+        ? phones.waitForSmsCode(phoneCtx(), host)
+        : Promise.resolve({ filled: false, digits: 0 })
+    const runPay = (req: PayToolRequest): Promise<PayResult> =>
+      phones?.approvePayment
+        ? phones.approvePayment(phoneCtx(), req)
+        : Promise.resolve({ ok: false, reason: 'declined' as const })
     const server = createSambaTools({
       tabs: this.tabs,
       vault: this.vault,
@@ -224,16 +310,72 @@ export class AgentRunner {
       vaultExcludedHosts: s.vaultExcludedHosts,
       tick: counter.tick,
       onStep: (label, ok) => emit({ type: 'step', label, ok }),
+      onProgress: ({ done, total, label }) =>
+        emit(
+          label === undefined
+            ? { type: 'progress', kind: 'task', done, total }
+            : { type: 'progress', kind: 'task', done, total, label }
+        ),
       confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit),
-      handoff: (req) => this.requestHandoff(req, emit)
+      handoff: (req) => this.requestHandoff(req, emit),
+      // 폰 도구는 웹 도구와 같은 모드·상한·확인 카드를 공유한다
+      phone: phones
+        ? {
+            // 배선부의 두 실행기(waitForSmsCode/approvePayment)는 문맥을 한 겹 덧씌워
+            // 아래에서 따로 넣는다 — 그대로 펼치면 도구가 보는 모양과 어긋난다
+            phones: phones.phones,
+            assigned: phones.assigned,
+            mode: s.permissionMode,
+            tick: counter.tick,
+            onStep: (label, ok) => emit({ type: 'step', label, ok }),
+            confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit),
+            ...(phones.waitForSmsCode === undefined
+              ? {}
+              : { waitForSmsCode: (host?: string) => waitSms(host) })
+          }
+        : undefined,
+      // 결제는 금고를 보는 별도 문맥이다. 실행기(확인 카드·상한·재시도 0)는 wiring 이 쥔다
+      pay:
+        phones && phones.approvePayment
+          ? {
+              tick: counter.tick,
+              onStep: (label, ok) => emit({ type: 'step', label, ok }),
+              run: (req) => runPay(req)
+            }
+          : undefined
     })
     emit({ type: 'status', state: 'running', toolCalls: 0 })
+    // 어떤 플레이북이 적용됐는지 채팅에 한 줄로 알린다(절차 본문은 보내지 않는다)
+    if (playbooks.length > 0) emit({ type: 'playbook', names: playbooks.map((p) => p.name) })
     try {
+      const backend = agentBackend()
+      // 연결된 경로가 없다 — 실행하지 않고 "연결 필요" 안내로 끝낸다
+      if (backend === 'none') {
+        settled = true
+        emit({ type: 'status', state: 'failed', message: 'auth:notConnected', toolCalls: 0 })
+        return
+      }
+      // Codex 구독 경로: Codex CLI 를 백엔드로 텍스트 응답을 받는다(samba 도구는 붙지 않는다)
+      if (backend === 'codex') {
+        settled = await this.runOnCodex(
+          {
+            prompt,
+            systemPrompt: systemPrompt(s.permissionMode),
+            model: resolveModel(s.taskModels, 'standard', s.aiProvider),
+            abort
+          },
+          deduper,
+          emit
+        )
+        return
+      }
       const stream = runQuery({
         prompt,
-        systemPrompt: buildSystemPrompt(s.language, s.permissionMode),
+        systemPrompt: systemPrompt(s.permissionMode, s.agentEffort),
         // 작업별 모델 표의 '표준' 칸이 기본 실행 모델이다(s.model 은 하위 호환으로만 남는다)
         model: resolveModel(s.taskModels, 'standard', s.aiProvider),
+        // 채팅 입력줄에서 고른 추론 강도
+        effort: s.agentEffort,
         mcpServers: { samba: server },
         allowedTools: SAMBA_TOOL_NAMES,
         abort
@@ -300,6 +442,16 @@ export class AgentRunner {
       // stop() 또는 result 처리에서 이미 종료 상태를 보냈으면 중복 emit 하지 않는다
       if (!abort.signal.aborted && !settled) {
         const message = e instanceof Error ? e.message : String(e)
+        // 연결된 경로가 없어 멈춘 경우는 "연결 필요" 안내로 바꿔 보여 준다
+        if (message === NOT_CONNECTED_ERROR) {
+          emit({
+            type: 'status',
+            state: 'failed',
+            message: 'auth:notConnected',
+            toolCalls: counter.count()
+          })
+          return
+        }
         const kind = classifyAuthError(`${message} ${apiError}`)
         emit({
           type: 'status',
@@ -323,5 +475,40 @@ export class AgentRunner {
         }
       }
     }
+  }
+
+  /**
+   * Codex CLI 백엔드로 1건을 실행한다. samba 도구는 인프로세스 MCP 라 붙지 않으므로
+   * 이 경로는 텍스트 응답(그리고 codex 자신이 쓴 도구 흔적)만 화면에 올린다.
+   * 종료 상태를 보냈으면 true 를 돌려준다
+   */
+  private async runOnCodex(
+    input: CodexInput,
+    deduper: ReturnType<typeof createTextDeduper>,
+    emit: (e: AgentEvent) => void
+  ): Promise<boolean> {
+    let lastError = ''
+    for await (const event of runCodexQuery(input)) {
+      if (input.abort.signal.aborted) return false
+      if (event.type === 'text') {
+        const text = deduper.accept(event.text)
+        if (text) emit({ type: 'text', text })
+      } else if (event.type === 'step') {
+        emit({ type: 'step', label: event.label, ok: event.ok })
+      } else if (event.type === 'error') {
+        lastError = event.message
+      } else {
+        const message = event.ok ? undefined : event.message || lastError
+        const kind = message ? classifyAuthError(message) : null
+        emit({
+          type: 'status',
+          state: event.ok ? 'done' : 'failed',
+          toolCalls: 0,
+          message: event.ok ? undefined : kind ? `auth:${kind}` : message
+        })
+        return true
+      }
+    }
+    return false
   }
 }

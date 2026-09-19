@@ -11,25 +11,29 @@ export interface SettingsSectionDef {
 }
 
 /**
- * 스펙 그대로의 순서.
- *   개인     일반 · 모양 · 계정 · 요금제(자리) · 보안
- *   에이전트 에이전트 · AI 연결 · 키마스터 · 자동화(자리) · 개발자(자리)
+ * 설정에는 "다른 화면에 이미 있는 것"을 두지 않는다.
+ *   개인     일반 · 모양 · 계정 · 보안
+ *   AI       동작 · AI 연결   (자동화는 사이드바의 자동화 페이지가 맡는다)
+ *
+ * 여기서 빠진 것들이 간 곳.
+ * - 키마스터 정책 → 보안 섹션
+ * - 폰(경로·화면 품질·결제 상한) → 폰 탭 화면의 "폰 설정" 패널
+ * - 개발자(확장 관리) → 확장 프로그램 전용 페이지
+ *
+ * 그룹 이름과 섹션 이름이 똑같으면(에이전트 > 에이전트) 어디에 있는지 알 수 없어
+ * 에이전트 그룹의 첫 섹션은 "동작"으로 부른다
  */
 export const SECTIONS: readonly SettingsSectionDef[] = [
   { group: 'personal', key: 'general', labelKey: 'settingsPage.sections.general' },
   { group: 'personal', key: 'appearance', labelKey: 'settingsPage.sections.appearance' },
   { group: 'personal', key: 'account', labelKey: 'settingsPage.sections.account' },
-  { group: 'personal', key: 'plan', labelKey: 'settingsPage.sections.plan' },
   { group: 'personal', key: 'security', labelKey: 'settingsPage.sections.security' },
-  { group: 'agent', key: 'agent', labelKey: 'settingsPage.sections.agent' },
-  { group: 'agent', key: 'ai', labelKey: 'settingsPage.sections.ai' },
-  { group: 'agent', key: 'keymaster', labelKey: 'settingsPage.sections.keymaster' },
-  { group: 'agent', key: 'automation', labelKey: 'settingsPage.sections.automation' },
-  { group: 'agent', key: 'developer', labelKey: 'settingsPage.sections.developer' }
+  { group: 'agent', key: 'behavior', labelKey: 'settingsPage.sections.behavior' },
+  { group: 'agent', key: 'ai', labelKey: 'settingsPage.sections.ai' }
 ]
 
-/** 아직 화면이 없어 PlaceholderSection 으로 그리는 섹션 */
-export const PLACEHOLDER_SECTION_KEYS: readonly string[] = ['plan', 'automation']
+/** 아직 화면이 없어 PlaceholderSection 으로 그리는 섹션(지금은 없다) */
+export const PLACEHOLDER_SECTION_KEYS: readonly string[] = []
 
 /** 처음 열릴 때 보여 줄 섹션 */
 export const DEFAULT_SECTION_KEY = 'general'

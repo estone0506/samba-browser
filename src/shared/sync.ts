@@ -25,11 +25,52 @@ export interface SyncStatus {
 export interface AuthState {
   signedIn: boolean
   email?: string
+  /**
+   * 동기화 서버가 내려주는 요금제 값. 스키마 호환을 위해 타입에만 남겨 두고
+   * UI·기능 게이트에서는 쓰지 않는다(요금제 구분 폐지)
+   */
   plan: 'free' | 'pro'
   deviceId: string | null
-  /** .env 가 채워져 있는가 */
+  /** Supabase 접속 정보(앱 설정 또는 .env)가 채워져 있는가 */
   configured: boolean
 }
+
+// === Supabase 연결 입력값 검증 ============================================
+// 설정 → 계정의 "Supabase 연결" 폼과 메인 저장 경로가 같은 규칙을 쓴다.
+// anon(publishable) 키는 공개 키라 저장해도 되지만, service_role 키는 RLS 를
+// 통째로 우회하므로 형식 검사로 걸러 낸다
+
+/** `https://<프로젝트>.supabase.co` 같은 프로젝트 URL 인가 */
+export function isSupabaseProjectUrl(v: string): boolean {
+  const s = v.trim()
+  if (!s.startsWith('https://')) return false
+  try {
+    const u = new URL(s)
+    return u.hostname.length > 0 && u.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * publishable 키(`sb_publishable_...`) 또는 예전 형식의 JWT anon 키(`eyJ...`)인가.
+ * `sb_secret_`·`service_role` 처럼 비밀 키로 보이는 값은 거부한다
+ */
+export function isSupabaseAnonKey(v: string): boolean {
+  const s = v.trim()
+  if (s.length < 20) return false
+  if (/^sb_secret_/i.test(s) || /service_role/i.test(s)) return false
+  return s.startsWith('sb_publishable_') || s.startsWith('eyJ')
+}
+
+/** 설정 화면에 그대로 보여 주지 않기 위한 마스킹(앞 12자 + … + 뒤 4자) */
+export function maskSupabaseKey(v: string): string {
+  const s = v.trim()
+  if (s.length === 0) return ''
+  if (s.length <= 20) return `${s.slice(0, 4)}…`
+  return `${s.slice(0, 12)}…${s.slice(-4)}`
+}
+// === Supabase 연결 입력값 검증 끝 =========================================
 
 /** 설정 화면의 기기 목록 한 줄 */
 export interface DeviceDto {
@@ -84,15 +125,27 @@ export const SYNCED_SETTING_KEYS = [
   'maxToolCalls',
   'permissionMode',
   'finalConfirm',
+  'agentEffort',
   'vaultAutoLockMinutes',
   'vaultAccessPolicy',
   'vaultAutoSubmit',
   'vaultKeepSignedIn',
   'vaultAutoUpdatePassword',
   'vaultExcludedHosts',
+  'autofillAutoSubmit',
   'homeUrl',
   'newTabUrl',
-  'searchEngine'
+  'searchEngine',
+  // 마우스 제스처 — 기기와 무관한 취향 설정이라 동기화 대상이다
+  'mouseGesturesEnabled',
+  'mouseGestures',
+  // 번역 기본 대상 언어·자동 번역 도메인은 PC 가 달라도 같아야 한다.
+  // (번역 캐시는 기기 로컬 파일이라 동기화 대상이 아니다)
+  'translateTargetLang',
+  'translateAutoDomains',
+  // 자동화 플레이북 — 절차는 기기와 무관한 사용자 자산이라 PC 간 같아야 한다.
+  // 값은 사용자가 쓴 절차 마크다운일 뿐, 비밀값은 담기지 않는다(계정은 키마스터가 쥔다)
+  'playbooks'
 ] as const
 
 export type SyncedSettingKey = (typeof SYNCED_SETTING_KEYS)[number]

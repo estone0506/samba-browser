@@ -20,12 +20,16 @@ import {
   type ImportPasswordsResult,
   type ImportBookmarksResult,
   type BookmarkTreeDto,
+  type AiConnectResult,
   type AiProviderId,
   type AiProviderStatus,
   type ApiKeyVendor,
+  type SubscriptionProviderId,
   type TaskModelKey,
   type TaskModels,
   type SyncStatus,
+  type ExtensionActionResult,
+  type ExtensionAnchorDto,
   type ExtensionDto,
   type ExtensionInstallResult,
   type ExtensionListDto,
@@ -34,7 +38,25 @@ import {
   type ChatDto,
   type ChatDetailDto,
   type ChatMessageDto,
-  type AppendMessageInput
+  type AppendMessageInput,
+  type PlaybookDto,
+  type PlaybookInput,
+  type PhoneDto,
+  type PhoneUpdatedDto,
+  type PhoneAuthWaitingDto,
+  type AuthEventDto,
+  type PhoneScreenChunkDto,
+  type ScreenMode,
+  type PhoneScreenModeDto,
+  type PhoneToolsStatusDto,
+  type PhoneToolsProgressDto,
+  type TranslateLang,
+  type TranslateProgressDto,
+  type CaptureMode,
+  type CaptureBeginVideoDto,
+  type CaptureResultDto,
+  type CaptureStillDto,
+  type CaptureVideoSourceDto
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
@@ -146,6 +168,16 @@ const api = {
       invoke(IPC.chatRename, chatId, title),
     remove: (chatId: number): Promise<IpcResult<boolean>> => invoke(IPC.chatDelete, chatId)
   },
+  // 자동화 플레이북 — 이름·트리거·절차 마크다운뿐이다(비밀값은 담기지 않는다)
+  playbooks: {
+    list: (): Promise<IpcResult<PlaybookDto[]>> => invoke(IPC.playbookList),
+    // id 를 빼면 새로 만든다. 이름이 비었거나 없는 id 면 null 이 온다
+    put: (input: PlaybookInput): Promise<IpcResult<PlaybookDto | null>> =>
+      invoke(IPC.playbookPut, input),
+    // 내장 플레이북은 지워지지 않는다(false) — 대신 restore 로 되돌린다
+    remove: (id: string): Promise<IpcResult<boolean>> => invoke(IPC.playbookDelete, id),
+    restore: (id: string): Promise<IpcResult<PlaybookDto | null>> => invoke(IPC.playbookRestore, id)
+  },
   settings: {
     get: (): Promise<IpcResult<Settings>> => invoke(IPC.settingsGet),
     set: (patch: Partial<Settings>): Promise<IpcResult<Settings>> => invoke(IPC.settingsSet, patch)
@@ -238,6 +270,13 @@ const api = {
   // 이쪽으로 오는 것은 마스킹 문자열과 boolean 뿐이다
   ai: {
     providers: (): Promise<IpcResult<AiProviderStatus[]>> => invoke(IPC.aiProviders),
+    // 구독 연결. openTerminal 이면 새 터미널 창에서 `claude login`/`codex login` 을 띄운다
+    connect: (
+      provider: SubscriptionProviderId,
+      openTerminal = false
+    ): Promise<IpcResult<AiConnectResult>> => invoke(IPC.aiConnect, provider, openTerminal),
+    disconnect: (provider: SubscriptionProviderId): Promise<IpcResult<AiConnectResult>> =>
+      invoke(IPC.aiDisconnect, provider),
     setProvider: (
       id: AiProviderId
     ): Promise<
@@ -313,14 +352,150 @@ const api = {
     list: (): Promise<IpcResult<ExtensionListDto>> => invoke(IPC.extList),
     load: (path?: string): Promise<IpcResult<ExtensionDto | null>> => invoke(IPC.extLoad, path),
     remove: (id: string): Promise<IpcResult<void>> => invoke(IPC.extRemove, id),
+    // 확장을 켜고 끈다. 끄면 목록에는 남고 세션에서만 빠진다
+    setEnabled: (id: string, enabled: boolean): Promise<IpcResult<ExtensionDto>> =>
+      invoke(IPC.extSetEnabled, id, enabled),
     // 다른 브라우저(크롬·웨일·엣지·브레이브)에 설치된 확장 목록
     importSources: (): Promise<IpcResult<ImportBrowserDto[]>> => invoke(IPC.extImportSources),
     // 고른 확장을 앱 데이터로 복사한 뒤 로드한다(항목별 성공·실패)
     importFrom: (ids: string[]): Promise<IpcResult<ExtensionInstallResult[]>> =>
       invoke(IPC.extImportFrom, ids),
-    // 웹스토어 주소 또는 32자 id 로 설치한다
+    // 웹스토어 주소 또는 32자 id 로 설치한다(보조 경로 — 기본은 웹스토어 탭의 "Chrome에 추가")
     installWebstore: (input: string): Promise<IpcResult<ExtensionInstallResult>> =>
-      invoke(IPC.extInstallWebstore, input)
+      invoke(IPC.extInstallWebstore, input),
+    // 웹스토어 탭에서 설치가 끝나는 등 목록이 바뀌면 메인이 알려 준다
+    onChanged: (cb: () => void): (() => void) => {
+      const h = (): void => cb()
+      ipcRenderer.on(IPC.extChanged, h)
+      return () => ipcRenderer.off(IPC.extChanged, h)
+    },
+    // 툴바 아이콘·퍼즐 메뉴 항목을 눌렀을 때. anchor 는 버튼의 화면 좌표로,
+    // 메인이 그 아래에 팝업 문서를 붙인다(좌표 말고는 아무 값도 흐르지 않는다)
+    action: (id: string, anchor: ExtensionAnchorDto): Promise<IpcResult<ExtensionActionResult>> =>
+      invoke(IPC.extAction, id, anchor),
+    closePopup: (): Promise<IpcResult<void>> => invoke(IPC.extPopupClose),
+    // 팝업이 스스로 닫혔을 때(바깥 클릭·Esc·탭 전환) 버튼 표시를 되돌리도록 알려 준다
+    onPopupClosed: (cb: () => void): (() => void) => {
+      const h = (): void => cb()
+      ipcRenderer.on(IPC.extPopupClosed, h)
+      return () => ipcRenderer.off(IPC.extPopupClosed, h)
+    }
+  },
+  // 화면 번역 · 이미지 번역 — 원문/번역문만 오간다(입력값·비밀번호는 실리지 않는다)
+  translate: {
+    run: (lang?: TranslateLang): Promise<IpcResult<string>> => invoke(IPC.translateRun, lang),
+    restore: (): Promise<IpcResult<string>> => invoke(IPC.translateRestore),
+    clearCache: (): Promise<IpcResult<boolean>> => invoke(IPC.translateCacheClear),
+    // 진행률·실패 사유 구독(개수와 고정된 사유 코드만 온다)
+    onProgress: (cb: (dto: TranslateProgressDto) => void): (() => void) => {
+      const h = (_: unknown, dto: TranslateProgressDto): void => cb(dto)
+      ipcRenderer.on(IPC.translateProgress, h)
+      return () => ipcRenderer.off(IPC.translateProgress, h)
+    }
+  },
+  // 폰 연동 — 결제 비밀번호·문자 본문은 이 중 어느 채널로도 오지 않는다
+  phone: {
+    list: (): Promise<IpcResult<PhoneDto[]>> => invoke(IPC.phoneList),
+    refresh: (): Promise<IpcResult<PhoneDto[]>> => invoke(IPC.phoneRefresh),
+    detectPaths: (): Promise<IpcResult<{ adb: string; scrcpy: string }>> =>
+      invoke(IPC.phoneDetectPaths),
+    connect: (address: string): Promise<IpcResult<{ ok: boolean; message: string }>> =>
+      invoke(IPC.phoneConnect, address),
+    disconnect: (serial: string): Promise<IpcResult<void>> => invoke(IPC.phoneDisconnect, serial),
+    recover: (serial: string): Promise<IpcResult<boolean>> => invoke(IPC.phoneRecover, serial),
+    setLabel: (id: number, label: string, country: string): Promise<IpcResult<void>> =>
+      invoke(IPC.phoneSetLabel, id, label, country),
+    assign: (accountId: number, phoneId: number | null): Promise<IpcResult<void>> =>
+      invoke(IPC.phoneAssign, accountId, phoneId),
+    authEvents: (limit?: number): Promise<IpcResult<AuthEventDto[]>> =>
+      invoke(IPC.phoneAuthEvents, limit),
+    // 폰 연동 프로그램(adb·scrcpy) 설치 상태·원클릭 설치
+    toolsStatus: (): Promise<IpcResult<PhoneToolsStatusDto>> => invoke(IPC.phoneToolsStatus),
+    installTools: (): Promise<IpcResult<PhoneToolsStatusDto>> => invoke(IPC.phoneInstallTools),
+    onInstallProgress: (cb: (dto: PhoneToolsProgressDto) => void): (() => void) => {
+      const h = (_: unknown, dto: PhoneToolsProgressDto): void => cb(dto)
+      ipcRenderer.on(IPC.phoneInstallProgress, h)
+      return () => ipcRenderer.off(IPC.phoneInstallProgress, h)
+    },
+    // 목록·상태가 바뀔 때마다 온다. warning 은 연결 상한 초과 같은 안내 문구
+    onUpdated: (cb: (list: PhoneDto[], warning?: string) => void): (() => void) => {
+      const h = (_: unknown, dto: PhoneUpdatedDto): void => cb(dto.list, dto.warning)
+      ipcRenderer.on(IPC.phoneUpdated, h)
+      return () => ipcRenderer.off(IPC.phoneUpdated, h)
+    },
+    onAuthWaiting: (cb: (dto: PhoneAuthWaitingDto) => void): (() => void) => {
+      const h = (_: unknown, dto: PhoneAuthWaitingDto): void => cb(dto)
+      ipcRenderer.on(IPC.phoneAuthWaiting, h)
+      return () => ipcRenderer.off(IPC.phoneAuthWaiting, h)
+    },
+    screenStart: (serial: string): Promise<IpcResult<ScreenMode>> =>
+      invoke(IPC.phoneScreenStart, serial),
+    // 사용자가 화면을 직접 눌렀을 때. 좌표는 0~1 비율
+    tap: (serial: string, rx: number, ry: number): Promise<IpcResult<void>> =>
+      invoke(IPC.phoneTap, serial, rx, ry),
+    swipe: (
+      serial: string,
+      rx1: number,
+      ry1: number,
+      rx2: number,
+      ry2: number,
+      durationMs?: number
+    ): Promise<IpcResult<void>> => invoke(IPC.phoneSwipe, serial, rx1, ry1, rx2, ry2, durationMs),
+    key: (serial: string, keyName: string): Promise<IpcResult<void>> =>
+      invoke(IPC.phoneKey, serial, keyName),
+    screenStop: (serial: string): Promise<IpcResult<void>> => invoke(IPC.phoneScreenStop, serial),
+    // scrcpy 큰 창으로 열기(앱 안 임베드와 별개다)
+    openWindow: (serial: string): Promise<IpcResult<void>> => invoke(IPC.phoneOpenWindow, serial),
+    onScreenChunk: (cb: (chunk: PhoneScreenChunkDto) => void): (() => void) => {
+      const h = (_: unknown, chunk: PhoneScreenChunkDto): void => cb(chunk)
+      ipcRenderer.on(IPC.phoneScreenChunk, h)
+      return () => ipcRenderer.off(IPC.phoneScreenChunk, h)
+    },
+    onScreenMode: (cb: (dto: PhoneScreenModeDto) => void): (() => void) => {
+      const h = (_: unknown, dto: PhoneScreenModeDto): void => cb(dto)
+      ipcRenderer.on(IPC.phoneScreenMode, h)
+      return () => ipcRenderer.off(IPC.phoneScreenMode, h)
+    }
+  },
+  // 사진·영상 캡처 — 파일은 설정의 저장 폴더에만 쓰인다(경로를 렌더러가 고르지 못한다)
+  capture: {
+    // 직접 지정용 정지 이미지(웹뷰 1장) + 그 이미지가 덮는 렌더러 좌표
+    still: (): Promise<IpcResult<CaptureStillDto>> => invoke(IPC.captureStill),
+    // 영역 선택·전체 페이지·전체 화면. true 면 메인이 처리를 맡았다는 뜻
+    run: (mode: CaptureMode): Promise<IpcResult<boolean>> => invoke(IPC.captureRun, mode),
+    saveImage: (dataUrl: string): Promise<IpcResult<void>> => invoke(IPC.captureSaveImage, dataUrl),
+    videoSource: (mode: CaptureMode): Promise<IpcResult<CaptureVideoSourceDto>> =>
+      invoke(IPC.captureVideoSource, mode),
+    saveVideo: (bytes: Uint8Array, mode: CaptureMode): Promise<IpcResult<void>> =>
+      invoke(IPC.captureSaveVideo, bytes, mode),
+    // 녹화 1건을 가리키는 token 을 받아, 이어 쓰기·마무리·취소에 그대로 돌려준다
+    beginVideo: (mode: CaptureMode): Promise<IpcResult<CaptureBeginVideoDto>> =>
+      invoke(IPC.captureBeginVideo, mode),
+    appendVideo: (token: string, bytes: Uint8Array): Promise<IpcResult<void>> =>
+      invoke(IPC.captureAppendVideo, token, bytes),
+    endVideo: (token: string, mode: CaptureMode): Promise<IpcResult<void>> =>
+      invoke(IPC.captureEndVideo, token, mode),
+    cancelVideo: (token: string): Promise<IpcResult<void>> => invoke(IPC.captureCancelVideo, token),
+    copyImage: (filePath: string): Promise<IpcResult<void>> =>
+      invoke(IPC.captureCopyImage, filePath),
+    openFile: (filePath: string): Promise<IpcResult<void>> => invoke(IPC.captureOpenFile, filePath),
+    // 경로를 주면 그 파일을 탐색기에서 고르고, 주지 않으면 저장 폴더를 연다
+    openFolder: (filePath?: string): Promise<IpcResult<void>> =>
+      invoke(IPC.captureOpenFolder, filePath ?? ''),
+    // 저장 폴더 선택. 고르면 메인이 설정에 반영하고 그 경로를 돌려준다
+    pickDir: (): Promise<IpcResult<string | null>> => invoke(IPC.capturePickDir),
+    // 지금 쓰는 저장 폴더 경로(설정이 비어 있으면 기본 폴더)
+    dir: (): Promise<IpcResult<string>> => invoke(IPC.captureDir),
+    onShortcut: (cb: (mode: CaptureMode) => void): (() => void) => {
+      const h = (_: unknown, dto: { mode: CaptureMode }): void => cb(dto.mode)
+      ipcRenderer.on(IPC.captureShortcut, h)
+      return () => ipcRenderer.off(IPC.captureShortcut, h)
+    },
+    onDone: (cb: (dto: CaptureResultDto) => void): (() => void) => {
+      const h = (_: unknown, dto: CaptureResultDto): void => cb(dto)
+      ipcRenderer.on(IPC.captureDone, h)
+      return () => ipcRenderer.off(IPC.captureDone, h)
+    }
   }
 }
 

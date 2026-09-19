@@ -1,0 +1,4 @@
+Row: 0 _id=12, address=15881234, body=[Web발신] 인증번호 [493028] 입력, date=1758200000000
+Row: 1 _id=11, address=01055667788, body=[TOSS] 인증번호는 285193 입니다, 타인에게 알려주지 마세요, date=1758199970000
+Row: 2 _id=10, address=15990000, body=[광고] 회원님 주문번호 20240513 상품이 12000원 할인, date=1758199940000
+Row: 3 _id=9, address=0212345678, body=Your verification code is 7391, date=1758199910000

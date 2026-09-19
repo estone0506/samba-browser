@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { ArrowUp } from 'lucide-react'
 import { useChatStore } from '@renderer/stores/chatStore'
 import { PermissionMenu } from './PermissionMenu'
+import { ModelEffortMenu } from './ModelEffortMenu'
 
 export function ChatInput(): React.JSX.Element {
   const { t } = useTranslation()
@@ -36,8 +37,10 @@ export function ChatInput(): React.JSX.Element {
           <ArrowUp className="h-3.5 w-3.5" />
         </button>
       </div>
-      <div className="mt-2 flex items-center gap-1.5">
+      {/* 권한 모드 옆에 모델 · 추론 강도 선택(Aside 하단 줄과 같은 자리) */}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <PermissionMenu />
+        <ModelEffortMenu />
       </div>
     </div>
   )

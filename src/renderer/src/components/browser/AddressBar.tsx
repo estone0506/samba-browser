@@ -11,10 +11,14 @@ import {
   Smartphone,
   KeyRound
 } from 'lucide-react'
+import { ExtensionMenu } from '@renderer/components/extensions/ExtensionMenu'
+import { ExtensionToolbar } from '@renderer/components/extensions/ExtensionToolbar'
 import { useBrowserStore } from '@renderer/stores/browserStore'
 import { displayUrl } from '@renderer/lib/display-url'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { cn } from '@renderer/lib/utils'
+import { TranslatePopover } from './TranslatePopover'
+import { CaptureMenu } from './CaptureMenu'
 
 // 이펙트에서 setState 하면 리렌더가 겹치므로, 렌더 도중 활성 탭 URL 변화를 감지해 상태를 맞춤
 function AddressBarButton({
@@ -87,9 +91,13 @@ export function AddressBar(): React.JSX.Element {
           className="flex-1 bg-transparent text-[12.5px] outline-none"
         />
       </form>
+      <TranslatePopover />
+      <CaptureMenu />
       <AddressBarButton onClick={toggleVaultPanel} title={t('vault.popover.open')}>
         <KeyRound className={cn('h-4 w-4', vaultPanelOpen && 'text-[var(--text)]')} />
       </AddressBarButton>
+      <ExtensionToolbar />
+      <ExtensionMenu />
       <div className="flex rounded-[9px] bg-black/5 p-0.5">
         {[
           { m: false, icon: Monitor, label: t('address.pc') },

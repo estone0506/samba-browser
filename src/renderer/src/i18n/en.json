@@ -10,7 +10,40 @@
     "phones": "Phones",
     "logs": "Logs",
     "settings": "Settings",
-    "chats": "Chats"
+    "chats": "Chats",
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar"
+  },
+  "automation": {
+    "title": "Automation",
+    "desc": "Write down the work you repeat as a playbook, then type its trigger phrase in chat and the AI follows those steps.",
+    "empty": "No playbooks saved yet",
+    "builtin": "Built-in",
+    "off": "Off",
+    "saveFailed": "Could not save. Check that the name is not empty.",
+    "appliedBadge": "Playbook",
+    "applied": "Following '{{names}}'",
+    "progress": "{{done}}/{{total}}",
+    "action": {
+      "new": "New playbook",
+      "run": "Run now",
+      "edit": "Edit",
+      "delete": "Delete",
+      "restore": "Restore default",
+      "save": "Save",
+      "cancel": "Cancel",
+      "toggle": "Enabled"
+    },
+    "field": {
+      "name": "Name",
+      "namePlaceholder": "e.g. Samba unfulfilled orders",
+      "triggers": "Trigger phrases",
+      "triggersDesc": "The playbook fires when your message contains one of these. Separate several with commas.",
+      "triggersPlaceholder": "samba unfulfilled, unfulfilled orders",
+      "instructions": "Steps",
+      "instructionsDesc": "Write the steps the AI should follow, in Markdown.",
+      "length": "{{n}} / {{max}} chars"
+    }
   },
   "workspace": {
     "title": "Workspace",
@@ -32,7 +65,11 @@
     "home": "Home"
   },
   "tab": {
-    "new": "New Tab"
+    "new": "New Tab",
+    "close": "Close tab",
+    "openTabs": "Open tabs",
+    "empty": "No open tabs",
+    "untitled": "Untitled"
   },
   "newtab": {
     "title": "New Tab",
@@ -54,7 +91,23 @@
     "empty": "No saved chats",
     "untitled": "Untitled chat",
     "delete": "Delete chat",
-    "deleteConfirm": "Delete"
+    "deleteConfirm": "Delete",
+    "modelMenu": "Model",
+    "effortMenu": "Reasoning effort",
+    "effort": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High"
+    },
+    "effortDesc": {
+      "low": "Answers quickly with little thinking",
+      "medium": "Balances speed and care",
+      "high": "Thinks carefully before acting"
+    },
+    "collapsePanel": "Collapse AI panel",
+    "expandPanel": "Expand AI panel",
+    "setupHint": "No AI provider is connected yet.",
+    "setupLink": "Settings → AI connection"
   },
   "confirm": {
     "title": "Confirmation required",
@@ -90,7 +143,8 @@
   },
   "auth": {
     "missing": "AI is not connected. Run claude login in a terminal or add an API key in Settings.",
-    "limit": "You've reached the AI usage limit. Please try again later."
+    "limit": "You've reached the AI usage limit. Please try again later.",
+    "notConnected": "No AI connection. Connect a subscription or add an API key in Settings > AI"
   },
   "settings": {
     "model": "Model",
@@ -100,7 +154,7 @@
       "claudeSubscription": "Claude subscription",
       "apiKey": "My API key",
       "serviceCredit": "Service credit",
-      "serviceCreditSoon": "Coming with the Pro plan",
+      "serviceCreditSoon": "Coming soon",
       "connected": "Connected",
       "needsLogin": "Sign-in required",
       "notInstalled": "Not installed",
@@ -113,7 +167,12 @@
       "deep": "Deep",
       "visual": "Visual",
       "use": "Use this path",
-      "inUse": "In use"
+      "inUse": "In use",
+      "codexSubscription": "Codex subscription",
+      "available": "Available",
+      "connect": "Connect",
+      "disconnect": "Disconnect",
+      "notConnectedShort": "Not connected"
     }
   },
   "capture": {
@@ -127,6 +186,43 @@
     "lockedNotice": "KeyMaster is locked. Unlock it to save.",
     "updated": "Your {{host}} password was updated",
     "undo": "Undo"
+  },
+  "screenCapture": {
+    "title": "Capture",
+    "image": "Image",
+    "video": "Video",
+    "settings": "Settings",
+    "settingsDesc": "Capture the screen as an image or a video and keep it in your capture folder",
+    "modes": {
+      "direct": "Drag an area",
+      "region": "Pick an element",
+      "fullPage": "Full page",
+      "fullScreen": "Full screen",
+      "videoDirect": "Drag an area",
+      "videoScreen": "Full screen"
+    },
+    "dragHint": "Drag the area you want to capture",
+    "dragHintVideo": "Drag the area you want to record",
+    "cancel": "Cancel",
+    "stop": "Stop",
+    "saved": "Saved",
+    "open": "Open",
+    "openFolder": "Show in folder",
+    "copy": "Copy to clipboard",
+    "dismiss": "Dismiss",
+    "folder": "Save folder",
+    "changeFolder": "Change folder",
+    "folderChange": "Change",
+    "folderOpen": "Open",
+    "format": "Image format",
+    "microphone": "Record microphone audio",
+    "microphoneDesc": "Include microphone audio in video captures",
+    "clipboard": "Also copy to clipboard when saving",
+    "clipboardDesc": "Applies to image captures only",
+    "shortcuts": "Shortcuts",
+    "shortcutsDesc": "Alt+1 to Alt+6 by default. Leave blank to disable a shortcut",
+    "shortcutInvalid": "That shortcut could not be read (for example: Alt+1)",
+    "recordingBusy": "Stop the current recording before starting another (image captures still work)"
   },
   "bookmark": {
     "title": "Bookmarks",
@@ -338,7 +434,7 @@
         "passwordsSupports": "Bitwarden (login_uri…), Firefox, Safari/Keeper formats auto-detected",
         "passwordsWarning": "⚠️ We strongly recommend deleting the original CSV file after import to prevent plaintext password exposure",
         "bookmarksTitle": "Bookmark HTML format",
-        "bookmarksExportSteps": "Chrome·Whale·Edge·Aside: Bookmark Manager › ⋮ › Export Bookmarks (HTML)",
+        "bookmarksExportSteps": "Chrome·Whale·Edge: Bookmark Manager › ⋮ › Export Bookmarks (HTML)",
         "bookmarksSupports": "Netscape format auto-detected"
       }
     },
@@ -482,62 +578,19 @@
       "ocrEnabled": "Local OCR (read text in images)",
       "ocrEnabledDesc": "Reads text in captchas, receipts, and SMS codes with a local model (downloads ~18MB on first use)"
     },
-    "vault": {
-      "title": "KeyMaster",
-      "description": "KeyMaster save/lock policy",
-      "descriptionDetail": "Configure auto-lock, AI access policy, auto-submit, and more",
-      "open": "Open KeyMaster settings"
-    },
-    "extensions": {
-      "title": "Extensions",
-      "add": "Install an extension",
-      "addDesc": "Install straight from the Chrome Web Store, import the extensions already in another browser, or load an unpacked folder yourself",
-      "addButton": "Load folder",
-      "adding": "Loading…",
-      "empty": "No extensions loaded",
-      "remove": "Remove",
-      "cancel": "Cancel",
-      "storeButton": "Install from Web Store",
-      "storeTitle": "Install from the Chrome Web Store",
-      "storeDesc": "Paste the extension's store URL or its 32-character id. The extension files are kept in the app data folder",
-      "storePlaceholder": "https://chromewebstore.google.com/detail/…  or a 32-character id",
-      "storeSubmit": "Install",
-      "installing": "Installing…",
-      "importButton": "Import from another browser",
-      "importTitle": "Import from another browser",
-      "importDesc": "Copies extensions installed in Chrome, Whale, Edge or Brave into the app data folder and loads them. The originals stay untouched",
-      "importScanning": "Looking for installed browsers…",
-      "importEmpty": "No extensions available to import",
-      "importSubmit": "Import {{count}}",
-      "importing": "Importing…",
-      "importFailed": "Extensions that could not be imported",
-      "sourceStore": "Store",
-      "sourceImported": "Imported",
-      "sourceFolder": "Folder",
-      "failedTitle": "Extensions that failed to load",
-      "limitsTitle": "Good to know",
-      "limitMv3": "Some Manifest V3 APIs are not supported yet",
-      "limitServiceWorker": "Background service workers are limited, so an extension may not behave as expected",
-      "limitNoAutoUpdate": "Extensions are never auto-updated. Install again or reload the folder to pick up a new version",
-      "limitMv2": "Manifest V2 extensions cannot be installed from the Web Store",
-      "limitPartition": "Per-profile separation happens only per workspace (session partition)"
-    },
     "placeholder": "Coming in a later stage",
     "groups": {
       "personal": "Personal",
-      "agent": "Agent"
+      "agent": "AI"
     },
     "sections": {
       "general": "General",
       "appearance": "Appearance",
       "account": "Account",
-      "plan": "Plan",
       "security": "Security",
-      "agent": "Agent",
+      "behavior": "Behavior",
       "ai": "AI connection",
-      "keymaster": "Key Master",
-      "automation": "Automation",
-      "developer": "Developer"
+      "automation": "Automation"
     },
     "general": {
       "searchTitle": "Search",
@@ -553,11 +606,6 @@
       "zoomTitle": "Display size",
       "zoom": "Zoom {{percent}}%",
       "zoomDesc": "Choose between {{min}}% and {{max}}%",
-      "sidebarTitle": "Sidebar",
-      "sidebarBookmarks": "Show bookmarks",
-      "sidebarBookmarksDesc": "Show the bookmark list in the sidebar",
-      "sidebarChat": "Show chat",
-      "sidebarChatDesc": "Show the AI chat shortcut in the sidebar",
       "shortcutsTitle": "Shortcuts",
       "shortcutsDesc": "Read-only for now",
       "shortcutNewTab": "New tab",
@@ -588,6 +636,43 @@
       "open": "Open Key Master",
       "export": "Export",
       "exportUnavailable": "Export is coming in a later stage"
+    },
+    "gestures": {
+      "title": "Mouse gestures",
+      "desc": "Hold the right button and drag to run the action mapped to that direction. A blue trail and the action name appear while you gesture.",
+      "enable": "Use mouse gestures",
+      "enableDesc": "When off, the right-click menu always opens as usual.",
+      "restore": "Restore defaults",
+      "actions": {
+        "none": "None",
+        "back": "Back",
+        "forward": "Forward",
+        "scrollTop": "Scroll to top",
+        "scrollBottom": "Scroll to bottom",
+        "home": "Home page",
+        "reload": "Reload",
+        "newTab": "New tab",
+        "newWindow": "New window (opens a tab)",
+        "newProfileTab": "New profile tab",
+        "closeTab": "Close tab",
+        "reopenTab": "Reopen closed tab",
+        "fullscreen": "Full screen",
+        "maximize": "Maximize window",
+        "minimize": "Minimize window"
+      }
+    },
+    "translate": {
+      "title": "Translation",
+      "desc": "Defaults for page and image translation. The cache stays on this PC.",
+      "targetLang": "Default target language",
+      "autoDomains": "Auto-translate domains",
+      "autoDomainsDesc": "Sites on this list are translated as soon as they load. Click an item to remove it.",
+      "add": "Add",
+      "remove": "Remove",
+      "cache": "Translation cache",
+      "cacheDesc": "Keeps up to 10,000 entries on this PC so the same text is not translated twice.",
+      "clearCache": "Clear cache",
+      "cacheCleared": "Cache cleared"
     }
   },
   "account": {
@@ -607,10 +692,6 @@
     "googleWaiting": "Finish the Google sign-in in your browser",
     "googleWaitingDetail": "We wait up to 5 minutes. If you closed the window, cancel and try again",
     "googleCancel": "Cancel",
-    "planFree": "Free",
-    "planPro": "Pro",
-    "notConfigured": "Sync needs Supabase to be configured",
-    "notConfiguredDetail": "Follow the document below to fill SAMBA_SUPABASE_URL and SAMBA_SUPABASE_ANON_KEY in .env",
     "devicesTitle": "Devices",
     "devicesDesc": "Devices signed in with this account",
     "devicesLoading": "Loading",
@@ -633,6 +714,18 @@
       "rateLimited": "Too many attempts. Please try again shortly",
       "network": "Cannot reach the server. Check your internet connection",
       "generic": "Sign-in failed. Please try again shortly"
+    },
+    "supabase": {
+      "title": "Supabase connection",
+      "desc": "Connect your own Supabase project to sync across PCs",
+      "urlLabel": "Project URL",
+      "keyLabel": "anon (publishable) key",
+      "save": "Save",
+      "change": "Change",
+      "badUrl": "Enter a project URL that starts with https://",
+      "badKey": "Enter an anon key starting with sb_publishable_ or eyJ. Never use a service_role key",
+      "restartNeeded": "Saved. Restart the app to apply.",
+      "optional": "Leave it empty to use this PC only, without sync. See the README to create a project"
     }
   },
   "sync": {
@@ -670,7 +763,19 @@
       "visualUsedIn": "Screenshot reading, captcha checks",
       "remapped": "Switching connection path remapped these models: {{list}}",
       "dismiss": "Got it"
-    }
+    },
+    "codexSubscriptionDesc": "Uses the OpenAI Codex CLI login on this PC",
+    "codexInstallHint": "Codex CLI is not installed. Install it in a terminal, then check again",
+    "codexLoginHint": "Run codex login in a terminal",
+    "availableHint": "This PC has a CLI login, but it is not connected yet. Press Connect to let the AI use it",
+    "loginNeededTitle": "Login required",
+    "loginNeededDetail": "Log in from the terminal window, then press Reconnect. The app never types your credentials for you",
+    "openTerminal": "Open terminal",
+    "retryConnect": "Reconnect",
+    "close": "Close",
+    "disconnectTitle": "Disconnect this subscription?",
+    "disconnectBody": "Once disconnected, the AI stops using this subscription. You can connect again anytime",
+    "disconnectKeepsCli": "Your CLI login files on this PC are left untouched - only the app connection record is cleared"
   },
   "recovery": {
     "title": "Reissue recovery key",
@@ -692,5 +797,189 @@
     "back": "Back",
     "doneBody": "A new recovery key was issued. The old one no longer works",
     "close": "Close"
+  },
+  "phone": {
+    "title": "Phones",
+    "subtitle": "Handle verification texts and payment approvals on connected phones. Up to {{n}} phones.",
+    "findNow": "Scan now",
+    "wifiPlaceholder": "Wi-Fi address (e.g. 192.168.0.5:5555)",
+    "wifiConnect": "Connect",
+    "dismiss": "Dismiss",
+    "empty": "No phones connected. Plug one in over USB and approve USB debugging on the phone.",
+    "recover": "Reconnect",
+    "authWaiting": "Waiting for a verification on this phone",
+    "state": {
+      "online": "Connected",
+      "unauthorized": "Awaiting approval",
+      "offline": "Not responding",
+      "disconnected": "Disconnected"
+    },
+    "transport": {
+      "usb": "USB",
+      "wifi": "Wi-Fi"
+    },
+    "badge": {
+      "still": "Snapshot mode",
+      "smsOk": "SMS readable",
+      "smsBlocked": "SMS blocked"
+    },
+    "pad": {
+      "back": "Back",
+      "home": "Home",
+      "recents": "Recents",
+      "power": "Power"
+    },
+    "screen": {
+      "canvasLabel": "{{name}} screen",
+      "starting": "Opening the screen…",
+      "failed": "Could not open the screen",
+      "unavailable": "Screen streaming is not ready yet",
+      "inputUnavailable": "Screen control is not ready yet",
+      "openWindow": "Open in a larger window"
+    },
+    "tools": {
+      "title": "Phone tools",
+      "desc": "Controlling a phone needs adb and scrcpy. One button downloads, installs and saves the paths for you",
+      "missing": "Not installed yet",
+      "installed": "Installed",
+      "installedWith": "Installed · {{versions}}",
+      "installing": "Installing. Please keep this window open",
+      "install": "Install",
+      "reinstall": "Reinstall",
+      "failed": "Install failed: {{reason}}",
+      "manualHint": "A corporate network may be blocking it. You can also type the adb and scrcpy paths in Settings",
+      "step": {
+        "platformTools": "Downloading adb (platform-tools)",
+        "scrcpy": "Downloading scrcpy"
+      },
+      "guideShow": "How to turn on USB debugging",
+      "guideHide": "Hide the guide",
+      "guide1": "Settings → About phone → Software information, then tap Build number seven times",
+      "guide2": "Settings → Developer options, then turn on USB debugging",
+      "guide3": "Connect by USB and tap Allow on the “Allow USB debugging?” prompt"
+    },
+    "settings": {
+      "pathsTitle": "adb · scrcpy paths",
+      "pathsDesc": "They do not need to be on PATH. Enter the full executable path or detect them automatically.",
+      "adbPath": "adb path",
+      "scrcpyPath": "scrcpy path",
+      "detect": "Detect paths",
+      "detectFailed": "Could not find the paths. Please enter them manually.",
+      "listTitle": "Connected phones",
+      "labelPlaceholder": "Nickname (e.g. Work Galaxy)",
+      "limitNote": "You can connect up to {{n}} phones at a time.",
+      "overLimit": "You are over the {{n}} phone limit. Disconnect the phones you are not using.",
+      "qualityTitle": "Screen quality",
+      "maxSize": "Resolution",
+      "maxSizeDesc": "Pixels on the long edge. Lower is lighter.",
+      "fps": "Frames per second",
+      "autoReconnect": "Auto reconnect",
+      "autoReconnectDesc": "Try to reattach once when the connection drops.",
+      "paymentTitle": "Payments",
+      "paymentDesc": "Payments above the limit always ask a human, whatever the permission mode.",
+      "paymentLimit": "Payment limit (KRW)",
+      "settingsOpen": "Phone settings",
+      "settingsClose": "Close phone settings"
+    },
+    "assign": {
+      "label": "Assigned phone",
+      "open": "Choose a phone",
+      "title": "Choose a phone",
+      "desc": "Pick which phone receives verifications for this account. If you skip it, all connected phones are watched.",
+      "none": "Not chosen",
+      "noneDesc": "Watches every connected phone",
+      "cancel": "Cancel",
+      "save": "Save",
+      "suggestion": "{{host}} was verified on {{phone}}. Make it the assigned phone?",
+      "accept": "Assign",
+      "dismiss": "Not now"
+    }
+  },
+  "extensions": {
+    "title": "Extensions",
+    "add": "Install an extension",
+    "addDesc": "\"Install extensions\" opens the Chrome Web Store in a new tab. Press \"Add to Chrome\" there and it installs right away",
+    "addButton": "Load folder",
+    "adding": "Loading…",
+    "empty": "No extensions loaded",
+    "remove": "Remove",
+    "cancel": "Cancel",
+    "storeButton": "Install extensions",
+    "storeHint": "Find the extension you want in the Chrome Web Store and press \"Add to Chrome\" to install it",
+    "storeByUrl": "Install by URL",
+    "storeTitle": "Install by URL",
+    "storeDesc": "Install straight from a URL instead of opening the store. Paste the extension's store URL or its 32-character id",
+    "storePlaceholder": "https://chromewebstore.google.com/detail/…  or a 32-character id",
+    "storeSubmit": "Install",
+    "installing": "Installing…",
+    "importButton": "Import from another browser",
+    "importTitle": "Import from another browser",
+    "importDesc": "Copies extensions installed in Chrome, Whale, Edge or Brave into the app data folder and loads them. The originals stay untouched",
+    "importScanning": "Looking for installed browsers…",
+    "importEmpty": "No extensions available to import",
+    "importSubmit": "Import {{count}}",
+    "importing": "Importing…",
+    "importFailed": "Extensions that could not be imported",
+    "sourceStore": "Store",
+    "sourceImported": "Imported",
+    "sourceFolder": "Folder",
+    "failedTitle": "Extensions that failed to load",
+    "limitsTitle": "Good to know",
+    "limitMv3": "Some Manifest V3 APIs are not supported yet",
+    "limitServiceWorker": "Background service workers are limited, so an extension may not behave as expected",
+    "limitNoAutoUpdate": "Extensions are never auto-updated. Install again or reload the folder to pick up a new version",
+    "limitMv2": "Manifest V2 extensions cannot be installed from the Web Store",
+    "limitPartition": "Per-profile separation happens only per workspace (session partition)",
+    "pageTitle": "Extensions",
+    "searchPlaceholder": "Search extensions",
+    "devMode": "Developer mode",
+    "menuMine": "My extensions",
+    "menuShortcuts": "Shortcuts",
+    "shortcutsSoon": "Extension shortcuts are coming in a later stage",
+    "countLabel": "{{n}}",
+    "searchEmpty": "No extensions match your search",
+    "details": "Details",
+    "detailsHide": "Collapse",
+    "detailsPermissions": "Permissions",
+    "detailsNoPermissions": "This extension requests no special permissions",
+    "detailsPath": "Path",
+    "detailsSource": "Source",
+    "enabledLabel": "On",
+    "enable": "Turn on",
+    "disable": "Turn off",
+    "disabled": "Off",
+    "manage": "Manage extensions",
+    "installedTitle": "Installed extensions",
+    "toolbarTitle": "Extensions",
+    "menuEmpty": "No extensions installed",
+    "pinned": "Pinned to the toolbar",
+    "actionTitle": "Open {{name}}"
+  },
+  "translate": {
+    "title": "Translate",
+    "targetLang": "Target language",
+    "run": "Translate this page",
+    "restore": "Show original",
+    "working": "Translating…",
+    "needsAi": "An AI connection is required. Connect one in Settings → AI.",
+    "autoOn": "Always translate {{host}}",
+    "autoOff": "Stop translating {{host}}",
+    "autoList": "Auto-translate: {{list}}",
+    "progress": "Translating {{done}}/{{total}}",
+    "progressDone": "Translated {{done}}/{{total}}",
+    "imageWorking": "Translating image…",
+    "imageDone": "Image translated",
+    "fail": {
+      "needsAi": "No AI connection. Connect one in Settings → AI.",
+      "timeout": "It took too long. Please try again in a moment.",
+      "noText": "No text found.",
+      "failed": "Translation failed. Please try again in a moment."
+    },
+    "lang": {
+      "ko": "Korean",
+      "en": "English",
+      "ja": "Japanese",
+      "zh": "Chinese"
+    }
   }
 }

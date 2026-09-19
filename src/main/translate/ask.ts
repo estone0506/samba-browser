@@ -1,0 +1,121 @@
+// 번역용 1회성 모델 호출. 설정된 AI 연결 경로(Claude 구독 / 내 API 키 / Codex 구독)를 그대로 쓴다.
+//
+// agent/provider.ts 의 runQuery·askText 를 재사용하므로 평문 API 키를 이 파일이 만질 일이 없다.
+// 도구는 하나도 붙이지 않는다 — 번역은 "프롬프트 한 덩어리 → 텍스트 한 덩어리" 호출이다.
+//
+// 느린 첫 배치의 주범은 호출 1회마다 붙는 CLI 하위 프로세스 spawn 이다.
+// 그래서 예비 프로세스를 미리 띄워 두고(WarmPool + startWarmSession) 배치가 오면
+// 준비된 것을 바로 쓴다. 예비가 없으면 평소처럼 runQuery 로 돈다(기능은 그대로).
+// 이 예비 프로세스 최적화는 Claude Agent SDK 전용이라, Codex 구독 경로는 warm pool 을
+// 거치지 않고 agent/provider.ts 의 askText(내부에서 Codex CLI 를 부른다)로 바로 간다.
+//
+// 이 모듈은 Claude Agent SDK 를 import 하므로, 테스트는 service.ts 쪽 가짜 ask 를 쓴다.
+
+import {
+  agentBackend,
+  askText,
+  runQuery,
+  startWarmSession,
+  type WarmSession
+} from '../agent/provider'
+import { WarmPool } from '../agent/warm'
+import { TRANSLATE_SYSTEM_PROMPT } from './prompt'
+import type { AskText } from './service'
+
+// 한 배치(최대 30노드·1200자)의 번역에 주는 시간. 배치가 작아진 만큼 대기도 짧게 끊는다
+const ASK_TIMEOUT_MS = 30_000
+
+// 미리 띄워 둘 예비 프로세스 수. 동시 실행(3)보다 적게 둬서 노는 프로세스를 줄인다
+const WARM_SPARES = 2
+
+export interface TranslateAsk {
+  ask: AskText
+  /** 곧 번역이 시작된다고 알려 준다(예비 프로세스를 미리 띄운다) */
+  prewarm: () => void
+  dispose: () => void
+}
+
+/** 예비 프로세스를 가려내는 열쇠 — 모델이 바뀌면 들고 있던 예비는 쓸 수 없다 */
+function warmKey(model: string): string {
+  return `${model}\u0000translate`
+}
+
+export function createSdkAsk(model: () => string): TranslateAsk {
+  const pool = new WarmPool<WarmSession>({
+    close: (session) => session.close(),
+    size: WARM_SPARES
+  })
+
+  const start = (name: string) => (): Promise<WarmSession | null> =>
+    startWarmSession({
+      systemPrompt: TRANSLATE_SYSTEM_PROMPT,
+      model: name,
+      mcpServers: {},
+      allowedTools: []
+    })
+
+  const prewarm = (): void => {
+    const name = model()
+    pool.prewarm(warmKey(name), start(name))
+  }
+
+  const ask: AskText = async ({ model: name, system, prompt }) => {
+    // Codex 구독 경로: Claude Agent SDK warm pool 은 Codex CLI 에 쓸 수 없으니
+    // askText 로 바로 넘긴다(내부에서 Codex 백엔드 분기를 처리한다)
+    if (agentBackend() === 'codex') {
+      const abort = new AbortController()
+      const timer = setTimeout(() => abort.abort(), ASK_TIMEOUT_MS)
+      timer.unref?.()
+      try {
+        return await askText({ model: name, system, prompt, abort })
+      } catch (e) {
+        console.warn('번역 호출 실패(Codex)', e instanceof Error ? e.message : '')
+        return null
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    // 예비는 번역 시스템 프롬프트로 띄워 둔 것이라, 다른 프롬프트면 쓰지 않는다
+    const warm = system === TRANSLATE_SYSTEM_PROMPT ? pool.claim(warmKey(name)) : null
+    // 이번 것을 꺼내 쓰는 동안 다음 배치가 쓸 예비를 채워 둔다
+    pool.prewarm(warmKey(name), start(name))
+    const abort = warm?.abort ?? new AbortController()
+    const timer = setTimeout(() => abort.abort(), ASK_TIMEOUT_MS)
+    timer.unref?.()
+    let text = ''
+    try {
+      const stream = warm
+        ? warm.query(prompt)
+        : runQuery({
+            prompt,
+            systemPrompt: system,
+            model: name,
+            mcpServers: {},
+            allowedTools: [],
+            abort
+          })
+      for await (const message of stream) {
+        if (abort.signal.aborted) break
+        if (message.type !== 'assistant') continue
+        for (const block of message.message.content) {
+          if (block.type === 'text') text += block.text
+        }
+      }
+    } catch (e) {
+      // 실패 사유에 원문이 실릴 수 있어 메시지만 짧게 남긴다
+      console.warn('번역 호출 실패', e instanceof Error ? e.message : '')
+      return null
+    } finally {
+      clearTimeout(timer)
+      // 꺼내 쓴 예비 세션(CLI 프로세스)은 한 번 쓰면 닫는다 — 안 닫으면 배치마다 프로세스가 남는다
+      try {
+        warm?.close()
+      } catch {
+        // 이미 닫힌 세션이면 무시
+      }
+    }
+    return text.trim() || null
+  }
+
+  return { ask, prewarm, dispose: () => pool.dispose() }
+}

@@ -2,19 +2,26 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import type React from 'react'
 import { useBrowserStore } from '../../stores/browserStore'
 import { useUiStore } from '../../stores/uiStore'
+import { useOverlayStore } from '../../stores/overlayStore'
 
 // 실제 웹페이지(WebContentsView)는 메인이 그림. 이 컴포넌트는 빈 자리를 만들고 좌표만 보고
 export function WebArea(): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const mobile = useBrowserStore((s) => s.activeTab?.mobile ?? false)
-  // 구독만으로도 resizing 이 바뀌면 리렌더 → useLayoutEffect 가 다시 측정한다
+  // 구독만으로도 resizing·팝오버·캡처 오버레이가 바뀌면 리렌더 → useLayoutEffect 가 다시 측정한다
   useUiStore((s) => s.resizing)
+  useUiStore((s) => s.captureOverlayOpen)
+  useOverlayStore((s) => s.webviewHidden)
+  const snapshot = useOverlayStore((s) => s.snapshot)
   const send = useCallback((): void => {
     const el = ref.current
     if (!el) return
     // 패널 폭을 드래그하는 동안은 네이티브 뷰를 접어 둔다. 뷰가 렌더러 위에 떠 있어
-    // 포인터가 그 위로 가면 드래그가 끊기기 때문. 놓으면 원래 크기로 다시 보고된다
-    if (useUiStore.getState().resizing) {
+    // 포인터가 그 위로 가면 드래그가 끊기기 때문. 놓으면 원래 크기로 다시 보고된다.
+    // 웹뷰 위로 내려오는 렌더러 팝오버(퍼즐 메뉴 등)·캡처 '직접 지정' 오버레이가 떠 있을 때도
+    // 같은 이유로 접는다 — 네이티브 뷰는 항상 렌더러 위에 그려져 접지 않으면 가려진다
+    const ui = useUiStore.getState()
+    if (ui.resizing || ui.captureOverlayOpen || useOverlayStore.getState().webviewHidden) {
       void window.samba.layout.set({
         x: 0,
         y: 0,
@@ -68,7 +75,22 @@ export function WebArea(): React.JSX.Element {
   // 웨일 모바일 창처럼 보이게 한다(실제 정렬은 tab-manager 의 computeViewBounds 가 담당)
   return (
     <div ref={ref} className="min-h-0 flex-1 bg-[var(--bg)]">
-      {mobile && (
+      {snapshot && (
+        // 웹뷰를 접은 동안 그 자리에 정지 이미지를 깔아 페이지가 사라져 보이지 않게 한다
+        <img
+          src={snapshot.dataUrl}
+          alt=""
+          draggable={false}
+          className="pointer-events-none fixed select-none"
+          style={{
+            left: snapshot.rect.x,
+            top: snapshot.rect.y,
+            width: snapshot.rect.width,
+            height: snapshot.rect.height
+          }}
+        />
+      )}
+      {mobile && !snapshot && (
         <div className="flex h-full w-full items-stretch justify-center">
           <div className="w-[412px] max-w-full rounded-t-2xl bg-white shadow-lg" />
         </div>

@@ -14,6 +14,7 @@ import * as os from 'node:os'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import { defaultTabUrl } from '../../shared/settings'
 import type { TabManager } from '../browser/tab-manager'
+import { ClosedTabStack, newProfileName, runGesture, type GestureDeps } from '../browser/gestures'
 import { SettingsStore } from '../settings/store'
 import { setOcrEnabled } from '../agent/tools-ocr'
 import { AgentRunner } from '../agent/runner'
@@ -22,6 +23,8 @@ import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vau
 import { exportVault, writeOwnerOnlyFile, type ExportRequest } from '../vault/export'
 import { ImportService, type ImportDialogs } from '../import/service'
 import { ChatRepo } from '../chat/repo'
+import { PlaybookStore } from '../playbooks/store'
+import type { PlaybookInput } from '../../shared/playbook'
 import { RECENT_CHAT_LIMIT, type AppendMessageInput } from '../../shared/chat'
 import { VaultCaptureGate } from './vault-capture'
 import { watchLoginSuccess } from './login-watch'
@@ -34,15 +37,35 @@ import { SyncEngineHolder } from '../sync/engine'
 import { toolbarBookmarks } from '../bookmarks/newtab'
 import type { NewTabInitDto } from '../../shared/newtab'
 // === AI 연결(2b 추가분) ===============================================================
-import { isAiProviderId, isApiKeyVendor, isTaskModelKey } from '../../shared/ai'
+import {
+  connectionKeyOf,
+  isAiProviderId,
+  isApiKeyVendor,
+  isSubscriptionProviderId,
+  isTaskModelKey
+} from '../../shared/ai'
 import type { AiProviderId, ApiKeyVendor, TaskModelKey } from '../../shared/ai'
 import { ApiKeyStore } from '../ai/keys'
-import { defaultProbes, detectProviders, testApiKey } from '../ai/providers'
-import { remapOnProviderChange, taskModelChoices } from '../ai/models'
-import { setApiKeyResolver } from '../agent/provider'
+import {
+  defaultProbes,
+  detectProviders,
+  readAccountFromDisk,
+  SUBSCRIPTION_CLI,
+  testApiKey
+} from '../ai/providers'
+import {
+  connectSubscription,
+  disconnectedRecord,
+  openLoginTerminal,
+  migrateAiConnections,
+  withConnection
+} from '../ai/connections'
+import { resolveAgentAuth } from '../ai/auth-route'
+import { remapOnProviderChange, resolveModel, taskModelChoices } from '../ai/models'
+import { setApiKeyResolver, setAuthResolver } from '../agent/provider'
 // === AI 연결 끝 =======================================================================
 import { AuthService } from '../sync/auth'
-import { hasSupabaseEnv } from '../sync/env'
+import { hasSupabaseEnv, setSupabaseEnvFromSettings } from '../sync/env'
 import { createSessionStore } from '../sync/session-store'
 import { createSupabaseBackend } from '../sync/supabase-backend'
 import { SyncConnection } from '../sync/connect'
@@ -52,6 +75,49 @@ import { WorkspaceService } from '../workspace/service'
 import { workspaceShortcutIndex } from '../workspace/shortcut'
 import { ExtensionManager, createSessionExtensionHost } from '../extensions/manager'
 import { createExtensionInstaller } from '../extensions/install-service'
+import { extensionPopupUrl } from '../extensions/action'
+import { ExtensionPopupHost, sessionWithExtension } from '../extensions/popup-view'
+import { WEBSTORE_HOST, isExtensionId } from '../../shared/extensions'
+import type { ExtensionActionResult, ExtensionAnchorDto } from '../../shared/extensions'
+// === 폰 연동(3단계) — child_process 는 phone/process.ts 안에만 있다 ===================
+import { createAdbRunner } from '../phone/process'
+import { PhoneRepo } from '../phone/repo'
+import { PhoneService } from '../phone/service'
+import { registerPhoneScreenIpc } from '../phone/screen-ipc'
+import { installPhoneTools, phoneToolsStatus } from '../phone/tools-install'
+import { createPhoneOps } from '../agent/tools-phone'
+import { readCodeFromImage, readKeypadLayout } from '../ai/visual'
+import { OcrEngine } from '../ocr/engine'
+import { createTabPagePort } from '../phone/tab-port'
+import {
+  AgentProgressRelay,
+  createCodeReader,
+  createKeypadReader,
+  createPhoneAgentBridge,
+  SecretScreenGate
+} from '../phone/wiring'
+// === 화면 번역 · 이미지 번역 — 배선은 translate/register.ts 한 곳에 모여 있다 ==========
+import { registerTranslate } from '../translate/register'
+// === 사진·영상 캡처 — 배선은 capture/capture-ipc.ts 한 곳에 모여 있다 =================
+import { registerCaptureIpc } from '../capture/capture-ipc'
+import type { CaptureShortcutInput } from '../../shared/capture'
+
+/**
+ * 렌더러가 보낸 툴바 버튼 좌표를 숫자만 남긴 형태로 받는다.
+ * 값이 빠지거나 숫자가 아니면 0 으로 본다 — 팝업은 그래도 창 왼쪽 위에 뜬다
+ */
+function toExtensionAnchor(raw: unknown): ExtensionAnchorDto {
+  const o = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  return {
+    x: num(o.x),
+    y: num(o.y),
+    width: num(o.width),
+    height: num(o.height),
+    viewportWidth: num(o.viewportWidth),
+    viewportHeight: num(o.viewportHeight)
+  }
+}
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -85,6 +151,12 @@ export function registerIpc(
   const applyBrowserDefaults = (s: Settings): void => {
     tabs.setDefaultUrl(defaultTabUrl(s))
     tabs.setSearchEngine(s.searchEngine)
+    // 마우스 제스처 설정은 페이지 preload 가 궤적을 그릴지 판단하는 데 필요하다
+    tabs.setGestureConfig({
+      enabled: s.mouseGesturesEnabled,
+      language: s.language,
+      mapping: s.mouseGestures
+    })
   }
   applyBrowserDefaults(settings.get())
   setOcrEnabled(settings.get().ocrEnabled)
@@ -104,6 +176,9 @@ export function registerIpc(
     chats.append({ chatId, role: 'user', content: entry.prompt })
     chats.append({ chatId, role: 'assistant', content: entry.text, steps: entry.steps })
   })
+  // 자동화 플레이북. 사용자 문장에 트리거가 들어 있으면 러너가 절차를 시스템 프롬프트에 덧붙인다
+  const playbooks = new PlaybookStore(settings)
+  agent.setPlaybooks(() => playbooks.list())
   // 페이지 JS 대화상자는 AI 작업이 도는 동안에만 자동 처리한다
   tabs.setAgentRunningProvider(() => agent.isRunning())
   // guard 모드에서 confirm/beforeunload 는 사용자 확인 카드를 거쳐야 '예' 가 된다
@@ -167,6 +242,8 @@ export function registerIpc(
     ipcMain.removeAllListeners(IPC.vaultCaptureDecision)
     ipcMain.removeAllListeners(IPC.vaultCapture)
     ipcMain.removeAllListeners(IPC.vaultUndoPasswordUpdate)
+    ipcMain.removeAllListeners(IPC.pageGesture)
+    ipcMain.removeAllListeners(IPC.pageWebstoreInstall)
     sync.current()?.stop()
     sync.release()
     vault.dispose()
@@ -200,6 +277,12 @@ export function registerIpc(
   handleFromRenderer(IPC.chatRename, (chatId: number, title: string) => chats.rename(chatId, title))
   handleFromRenderer(IPC.chatDelete, (chatId: number) => chats.remove(chatId))
   handleFromRenderer(IPC.agentStop, () => agent.stop())
+
+  // --- 자동화 플레이북 — 절차 문서만 오간다(비밀값 없음) --------------------
+  handleFromRenderer(IPC.playbookList, () => playbooks.list())
+  handleFromRenderer(IPC.playbookPut, (input: PlaybookInput) => playbooks.put(input))
+  handleFromRenderer(IPC.playbookDelete, (id: string) => playbooks.remove(id))
+  handleFromRenderer(IPC.playbookRestore, (id: string) => playbooks.restore(id))
   onFromRenderer(IPC.agentConfirmReply, (requestId: string, approved: boolean) =>
     agent.resolveConfirm(requestId, approved)
   )
@@ -311,7 +394,8 @@ export function registerIpc(
   const autofillDeps: AutofillDeps = {
     vault,
     activeTab: () => tabs.active(),
-    excludedHosts: () => settings.get().vaultExcludedHosts
+    excludedHosts: () => settings.get().vaultExcludedHosts,
+    autoSubmit: () => settings.get().autofillAutoSubmit
   }
   handleFromRenderer(IPC.vaultAutofill, (accountId: number) =>
     autofillAccount(autofillDeps, accountId)
@@ -462,19 +546,137 @@ export function registerIpc(
   })
   // === 자체 새 탭 페이지 끝 =============================================================
 
+  // === 마우스 제스처 ====================================================================
+  // 닫은 탭 다시 열기용 스택(최대 10). 탭이 닫힐 때마다 주소를 쌓아 둔다
+  const closedTabs = new ClosedTabStack()
+  tabs.onTabClosed((closed) => closedTabs.push(closed))
+
+  const gestureDeps: GestureDeps = {
+    activeTabId: () => tabs.active()?.id ?? null,
+    back: (id) => tabs.back(id),
+    forward: (id) => tabs.forward(id),
+    reload: (id) => tabs.reload(id),
+    navigate: (id, url) => tabs.navigate(id, url),
+    scrollTo: (id, to) => tabs.scrollTo(id, to),
+    homeUrl: () => settings.get().homeUrl,
+    newTab: () => {
+      tabs.create({})
+    },
+    // 이 앱은 단일 창이라 '새 창 열기' 는 새 탭으로 대체한다(설정 라벨에도 그렇게 적혀 있다)
+    newWindow: () => {
+      tabs.create({})
+    },
+    // 시크릿창 대체 — 세션이 분리된 새 프로필 탭
+    newProfileTab: () => {
+      tabs.create({ profile: newProfileName(Date.now()) })
+    },
+    closeTab: (id) => tabs.close(id),
+    reopenTab: () => {
+      const last = closedTabs.pop()
+      if (last) tabs.create({ url: last.url, profile: last.profile, mobile: last.mobile })
+    },
+    toggleFullScreen: () => {
+      if (!win.isDestroyed()) win.setFullScreen(!win.isFullScreen())
+    },
+    maximize: () => {
+      if (win.isDestroyed()) return
+      if (win.isMaximized()) win.unmaximize()
+      else win.maximize()
+    },
+    minimize: () => {
+      if (!win.isDestroyed()) win.minimize()
+    }
+  }
+
+  // 발신자는 반드시 관리 중인 탭이어야 한다(웹 페이지·확장의 위조 호출 차단)
+  ipcMain.on(IPC.pageGesture, (e, raw: unknown) => {
+    const tab = tabs.findByWebContents(e.sender)
+    if (!tab) return
+    // 방향 4글자(L/R/U/D)를 넘는 값은 인식기가 만들 수 없다 — 들어오면 버린다
+    if (typeof raw !== 'string' || !/^[LRUD]{1,4}$/.test(raw)) return
+    const s = settings.get()
+    if (!s.mouseGesturesEnabled) return
+    // 제스처가 일어난 그 탭을 대상으로 실행한다(활성 탭 추정에 기대지 않는다)
+    void runGesture(raw, s.mouseGestures, {
+      ...gestureDeps,
+      activeTabId: () => tab.id
+    }).catch((err: unknown) => {
+      console.warn('마우스 제스처 실행 실패', err instanceof Error ? err.message : String(err))
+    })
+  })
+  // === 마우스 제스처 끝 =================================================================
+
   // === AI 연결(2b 추가분 — 병합 편의를 위해 이 블록만 별도로 추가) ======================
   // 평문 API 키는 이 저장소와 agent/provider.ts 안에만 머문다. 렌더러로 나가는 것은
   // 마스킹 문자열(sk-ant-••••1234)과 boolean 뿐이다
   const apiKeys = new ApiKeyStore(join(app.getPath('userData'), 'ai-keys.bin'), safeStorage)
   const aiProbes = defaultProbes()
   // ApiKeyStore.get 의 유일한 소비자(agent/provider.ts)에 조회기를 심는다.
-  // '내 API 키' 경로를 고른 경우에만 키를 넘긴다
-  setApiKeyResolver(() =>
-    settings.get().aiProvider === 'api_key' ? apiKeys.get('anthropic') : null
-  )
-  win.once('closed', () => setApiKeyResolver(null))
+  // 실제로 키를 꺼낼지는 provider.ts 가 인증 경로('api_key')를 보고 정한다
+  setApiKeyResolver(() => apiKeys.get('anthropic'))
+  // 이번 실행에 쓸 인증 경로. **연결한 적 없는 구독은 자격 파일이 있어도 쓰지 않는다**
+  setAuthResolver(() => {
+    const s = settings.get()
+    return resolveAgentAuth({
+      provider: s.aiProvider as AiProviderId,
+      connections: s.aiConnections,
+      // 평문 키는 여기까지 오지 않는다 — 마스킹 결과로 존재 여부만 본다
+      hasApiKey: Boolean(apiKeys.masked().anthropic)
+    })
+  })
+  win.once('closed', () => {
+    setApiKeyResolver(null)
+    setAuthResolver(null)
+  })
 
-  handleFromRenderer(IPC.aiProviders, () => detectProviders(aiProbes, apiKeys.masked()))
+  // 첫 실행 1회 승계: 이미 Claude 구독으로 쓰고 있던 기존 사용자는 연결됨으로 올려 준다
+  {
+    const s = settings.get()
+    const patch = migrateAiConnections({
+      migrated: s.aiConnectionsMigrated,
+      aiProvider: s.aiProvider,
+      connections: s.aiConnections,
+      hasClaudeCredential: SUBSCRIPTION_CLI.claude_subscription.credentialPaths.some((p) =>
+        aiProbes.fileExists(p)
+      ),
+      account: readAccountFromDisk('claude_subscription') ?? undefined
+    })
+    if (patch) {
+      const inherited = patch.aiConnections.claude.connected && !s.aiConnections.claude.connected
+      settings.set(patch)
+      if (inherited) {
+        console.info('[AI] 기존 Claude 구독 사용 상태를 연결됨으로 1회 승계했습니다')
+      }
+    }
+  }
+
+  handleFromRenderer(IPC.aiProviders, () =>
+    detectProviders(aiProbes, apiKeys.masked(), settings.get().aiConnections)
+  )
+  // 연결: 자격이 있으면 연결 기록을 남기고, 없으면 이유만 돌려준다(화면이 안내를 띄운다)
+  handleFromRenderer(IPC.aiConnect, async (raw: unknown, rawOpenTerminal: unknown) => {
+    if (!isSubscriptionProviderId(raw)) throw new Error('알 수 없는 구독 경로')
+    if (rawOpenTerminal === true) {
+      // 새 터미널 창에서 로그인 명령을 띄운다(자격은 그 창에서 사용자가 직접 만든다)
+      openLoginTerminal(raw)
+      return { ok: false, reason: 'needs_login' }
+    }
+    const result = await connectSubscription(raw, aiProbes)
+    if (result.ok && result.connection) {
+      settings.set({
+        aiConnections: withConnection(settings.get().aiConnections, raw, result.connection)
+      })
+    }
+    return result
+  })
+  // 해지: 진행 중 작업이 없을 때만. 앱의 연결 기록만 지우고 CLI 로그인 파일은 두 손 대지 않는다
+  handleFromRenderer(IPC.aiDisconnect, (raw: unknown) => {
+    if (!isSubscriptionProviderId(raw)) throw new Error('알 수 없는 구독 경로')
+    if (agent.isRunning()) throw new Error('작업이 끝난 뒤에 연결을 해지할 수 있어요')
+    const next = withConnection(settings.get().aiConnections, raw, disconnectedRecord())
+    settings.set({ aiConnections: next })
+    return { ok: true, connection: next[connectionKeyOf(raw)] }
+  })
   handleFromRenderer(IPC.aiSetProvider, (raw: unknown) => {
     if (!isAiProviderId(raw)) throw new Error('알 수 없는 AI 연결 경로')
     const before = settings.get()
@@ -518,8 +720,14 @@ export function registerIpc(
   // === AI 연결 끝 =======================================================================
 
   // === 계정 인증(2b) ===================================================================
-  // .env 가 비어 있으면 백엔드를 아예 만들지 않는다(설정 전에도 앱은 그대로 돈다).
+  // 접속 정보가 없으면 백엔드를 아예 만들지 않는다(설정 전에도 앱은 로컬 전용으로 그대로 돈다).
+  // 값의 출처는 설정 → 계정에서 붙여넣은 값이 먼저고, 없으면 .env 다.
+  // 설정을 바꾼 뒤에는 앱을 다시 시작해야 반영된다(백엔드를 시작 시 한 번만 만든다).
   // refresh token 은 safeStorage 로 감싼 파일에만 남고 렌더러로는 나가지 않는다
+  {
+    const s = settings.get()
+    setSupabaseEnvFromSettings(s.syncSupabaseUrl, s.syncSupabaseAnonKey)
+  }
   const syncConfigured = hasSupabaseEnv()
   const sessionStore = createSessionStore(
     join(app.getPath('userData'), 'sync-session.bin'),
@@ -583,10 +791,14 @@ export function registerIpc(
       return false
     }
   }
+  // 캡처 단축키(Alt+1~6)도 같은 창 안 입력 경로를 쓴다. 캡처 배선은 아래에서 붙는다
+  let handleCaptureShortcut: (input: CaptureShortcutInput) => boolean = () => false
+  const handleWindowShortcut = (input: CaptureShortcutInput): boolean =>
+    handleWorkspaceShortcut(input) || handleCaptureShortcut(input)
   win.webContents.on('before-input-event', (e, input) => {
-    if (handleWorkspaceShortcut(input)) e.preventDefault()
+    if (handleWindowShortcut(input)) e.preventDefault()
   })
-  tabs.setInputHandler(handleWorkspaceShortcut)
+  tabs.setInputHandler(handleWindowShortcut)
 
   handleFromRenderer(IPC.workspaceList, () => workspace.list())
   handleFromRenderer(IPC.workspaceCreate, (o: { name: string; color?: string }) =>
@@ -655,6 +867,16 @@ export function registerIpc(
       .catch((e: unknown) => console.error('파티션 세션 확장 로드 실패', e))
   })
 
+  // 확장 액션 팝업(툴바 아이콘 아래에 붙는 작은 창). 창당 한 개만 떠 있는다
+  const extensionPopup = new ExtensionPopupHost({
+    win,
+    onClosed: () => send(IPC.extPopupClosed, null)
+  })
+  win.once('closed', () => extensionPopup.dispose())
+  // 팝업은 탭 뷰 위에 얹히는데, 탭을 전환하면 활성 탭 뷰가 다시 맨 위로 올라간다.
+  // 크롬도 탭을 바꾸면 팝업을 닫으므로 여기서 함께 닫는다
+  tabs.onActivated(() => extensionPopup.close())
+
   handleFromRenderer(IPC.extList, () => ({ items: extensions.list(), errors: extensions.errors() }))
   // 경로를 주지 않으면 폴더 선택 다이얼로그를 연다. 취소하면 null 을 돌려준다.
   // 렌더러가 준 경로든 다이얼로그로 고른 경로든 resolveExtensionFolder 를 반드시 지난다 —
@@ -668,7 +890,48 @@ export function registerIpc(
     }
     return extensions.add(folder)
   })
-  handleFromRenderer(IPC.extRemove, (id: string) => extensions.remove(id))
+  handleFromRenderer(IPC.extRemove, (id: string) => {
+    extensionPopup.close()
+    return extensions.remove(id)
+  })
+  handleFromRenderer(IPC.extSetEnabled, (id: string, enabled: boolean) => {
+    if (extensionPopup.activeId() === id) extensionPopup.close()
+    return extensions.setEnabled(id, enabled)
+  })
+
+  // 툴바 아이콘 클릭 → 크롬이 하던 일을 대신한다.
+  // Electron 39 에는 chrome.action 이 없어 확장이 팝업을 띄워 달라고 할 수 없으므로,
+  // manifest 의 default_popup 을 우리가 읽어 같은 자리에 같은 문서를 띄운다
+  handleFromRenderer(IPC.extAction, (id: unknown, rawAnchor: unknown): ExtensionActionResult => {
+    if (typeof id !== 'string') throw new Error('확장 id 가 올바르지 않아요')
+    const item = extensions.find(id)
+    if (!item) throw new Error('목록에 없는 확장이에요')
+    if (!item.enabled) throw new Error('꺼져 있는 확장이에요')
+    const anchor = toExtensionAnchor(rawAnchor)
+    if (item.popup) {
+      // 팝업은 그 확장이 로드된 세션에서 열어야 chrome.* 이 동작한다.
+      // 보통은 지금 보고 있는 탭의 파티션 세션이고, 거기에 없으면 기본 세션으로 내려간다
+      const active = tabs.active()?.view.webContents.session
+      const ses = sessionWithExtension(id, [...(active ? [active] : []), session.defaultSession])
+      if (!ses) throw new Error('확장이 올라간 세션을 찾지 못했어요')
+      const open = extensionPopup.toggle({
+        id,
+        url: extensionPopupUrl(id, item.popup),
+        session: ses,
+        anchor
+      })
+      return { kind: 'popup', open }
+    }
+    extensionPopup.close()
+    if (item.optionsPage) {
+      // 팝업이 없으면 크롬은 chrome.action.onClicked 를 보낸다. Electron 은 그 이벤트를
+      // 전달할 방법이 없어, 대신 설정 화면에 해당하는 옵션 페이지를 새 탭으로 연다
+      tabs.create({ url: extensionPopupUrl(id, item.optionsPage), extension: true })
+      return { kind: 'options', open: false }
+    }
+    return { kind: 'none', open: false }
+  })
+  handleFromRenderer(IPC.extPopupClose, () => extensionPopup.close())
 
   // 가져오기·웹스토어 설치. 결과 폴더는 항상 userData/extensions/<id> 이고, 로드는 위 관리자가 한다
   const extensionInstaller = createExtensionInstaller({
@@ -683,7 +946,170 @@ export function registerIpc(
   handleFromRenderer(IPC.extInstallWebstore, (input: string) =>
     extensionInstaller.installWebstore(input)
   )
+
+  // 웹스토어 탭에서 "Chrome에 추가" 를 누른 경우 — 크롬과 같은 설치 경험.
+  // 발신자는 반드시 관리 중인 탭이면서 지금 보고 있는 주소가 웹스토어여야 한다
+  // (웹 페이지·확장이 아무 id 나 밀어 넣어 설치시키는 것을 막는다)
+  ipcMain.on(IPC.pageWebstoreInstall, (e, raw: unknown) => {
+    if (!tabs.findByWebContents(e.sender)) return
+    if (normalizeHost(e.sender.getURL()) !== WEBSTORE_HOST) return
+    if (!isExtensionId(raw)) return
+    const id = raw
+    const sender = e.sender
+    void extensionInstaller
+      .installWebstore(id)
+      .then((result) => {
+        const ok = !result.error
+        if (!ok) console.warn(`웹스토어 설치 실패(${id}): ${result.error}`)
+        // 버튼 문구를 바꿔 주도록 누른 그 탭으로 결과를 돌려준다
+        if (!sender.isDestroyed()) {
+          sender.send(IPC.pageWebstoreInstallResult, { id, ok })
+        }
+        // 확장 페이지·퍼즐 메뉴가 열려 있으면 목록을 다시 읽게 한다
+        if (ok) send(IPC.extChanged, null)
+      })
+      .catch((err: unknown) => {
+        console.error('웹스토어 설치 처리 실패', err instanceof Error ? err.message : String(err))
+        if (!sender.isDestroyed()) sender.send(IPC.pageWebstoreInstallResult, { id, ok: false })
+      })
+  })
   // === 확장 끝 =========================================================================
+
+  // === 폰 연동(3단계) — 이 블록만 따로 추가한다 ========================================
+  // 결제 비밀번호·문자 본문은 이 채널들로 흐르지 않는다
+  const phoneAdb = createAdbRunner(() => settings.get().adbPath)
+  // 원클릭 설치본이 들어가는 자리(%APPDATA%/SAMBA Browser/phone-tools)
+  const phoneToolsRoot = join(app.getPath('userData'), 'phone-tools')
+  const phoneRepo = new PhoneRepo(db)
+  // 비밀번호 화면 표식(결제 실행기가 갱신 → 화면 전송이 참조)과 ARS 진행 로그 중계
+  const phoneSecretGate = new SecretScreenGate()
+  const phoneProgress = new AgentProgressRelay()
+  const phones = new PhoneService({
+    adb: phoneAdb,
+    repo: phoneRepo,
+    settings,
+    toolsRoot: phoneToolsRoot,
+    emit: (list, warning) => send(IPC.phoneUpdated, { list, warning }),
+    emitAuthWaiting: (dto) => send(IPC.phoneAuthWaiting, dto),
+    onProgress: (t) => phoneProgress.emit(t)
+  })
+  phones.start()
+  win.once('closed', () => phones.dispose())
+
+  handleFromRenderer(IPC.phoneList, () => phones.list())
+  handleFromRenderer(IPC.phoneRefresh, () => phones.refresh())
+  handleFromRenderer(IPC.phoneDetectPaths, () => phones.detectPaths())
+  handleFromRenderer(IPC.phoneConnect, (address: string) => phones.connectWifi(address))
+  handleFromRenderer(IPC.phoneDisconnect, (serial: string) => phones.disconnect(serial))
+  handleFromRenderer(IPC.phoneRecover, (serial: string) => phones.recover(serial))
+  handleFromRenderer(IPC.phoneSetLabel, (id: number, label: string, country: string) =>
+    phones.setLabel(id, label, country)
+  )
+  handleFromRenderer(IPC.phoneAssign, (accountId: number, phoneId: number | null) =>
+    phones.assign(accountId, phoneId)
+  )
+  handleFromRenderer(IPC.phoneAuthEvents, (limit?: number) => phones.authEvents(limit))
+  // 폰 연동 프로그램 원클릭 설치 — 내려받기·해제·설정 저장까지 메인에서만 한다
+  handleFromRenderer(IPC.phoneToolsStatus, () =>
+    phoneToolsStatus({ root: phoneToolsRoot, settings })
+  )
+  handleFromRenderer(IPC.phoneInstallTools, () =>
+    installPhoneTools({
+      root: phoneToolsRoot,
+      fetchImpl: (url, init) => net.fetch(url, init),
+      settings,
+      onProgress: (p) => send(IPC.phoneInstallProgress, p)
+    })
+  )
+  // AI 폰 도구 배선. 금고는 넘기지 않는다 — 폰 도구는 비밀값을 볼 수 없다.
+  // 문자 인증·결제 승인만 별도 실행기(phone/wiring.ts)를 거치고, 결제 비밀번호는
+  // 그 안의 pay-secret.ts 밖으로 나오지 않는다.
+  // 비밀 화면 표식을 함께 넘겨, 화면 읽기·캡처가 비밀번호 화면을 모델에게 넘기지 않게 한다
+  const phoneOps = createPhoneOps(phoneAdb, () => phones.list(), phoneSecretGate)
+  const visualDeps = {
+    apiKey: () => apiKeys.get('anthropic'),
+    model: () => resolveModel(settings.get().taskModels, 'visual', settings.get().aiProvider)
+  }
+  const phoneOcr = new OcrEngine()
+  const phoneBridge = createPhoneAgentBridge({
+    adb: phoneAdb,
+    phones: {
+      list: () => phones.list(),
+      assignForJob: (accountId) => phones.assignForJob(accountId),
+      notifyAuthWaiting: (dto) => phones.notifyAuthWaiting(dto),
+      watchArs: (siteHost) => phones.watchArs(siteHost)
+    },
+    ops: phoneOps,
+    repo: phoneRepo,
+    vault,
+    page: createTabPagePort(tabs),
+    settings: () => settings.get(),
+    // 인증번호는 로컬 OCR 로 먼저 읽고, 못 읽었을 때만 Visual 을 부른다
+    readCode: createCodeReader({
+      ocrEnabled: () => settings.get().ocrEnabled,
+      ocr: phoneOcr,
+      visual: (png) => readCodeFromImage(visualDeps, png)
+    }),
+    readKeypad: createKeypadReader({
+      adb: phoneAdb,
+      // 결제 키패드 원본 화면을 외부 AI 로 보내는 경로다 — 기본은 꺼짐
+      enabled: () => settings.get().phoneKeypadVisual,
+      screen: (serial) => phoneOps.screen(serial),
+      readLayout: (png, size) => readKeypadLayout(visualDeps, png, size)
+    }),
+    secretGate: phoneSecretGate,
+    progress: phoneProgress
+  })
+  agent.setPhones({
+    phones: phoneOps,
+    assigned: () => phones.list().find((p) => p.state === 'online')?.serial ?? null,
+    waitForSmsCode: phoneBridge.waitForSmsCode,
+    approvePayment: phoneBridge.approvePayment
+  })
+  // === 폰 연동 끝 ======================================================================
+
+  // === 폰 화면(3단계 Task 5) ===========================================================
+  // 화면 전송과 scrcpy 큰 창. 배선은 phone/screen-ipc.ts 한 곳에 모여 있다
+  const phoneScreen = registerPhoneScreenIpc({
+    handle: handleFromRenderer,
+    send,
+    settings: () => settings.get(),
+    // 결제 비밀번호 화면 프레임은 보내지도 저장하지도 않는다
+    isSecretScreen: (serial) => phoneSecretGate.isSecret(serial)
+  })
+  win.once('closed', () => phoneScreen.dispose())
+  // === 폰 화면 끝 ======================================================================
+
+  // === 화면 번역 · 이미지 번역 =========================================================
+  const translate = registerTranslate({
+    handle: handleFromRenderer,
+    tabs,
+    settings: () => settings.get(),
+    apiKeys,
+    userDataDir: app.getPath('userData'),
+    // 번역 캐시에는 번역문이 평문으로 들어가므로 작업공간마다 파일을 나눈다
+    profileId: () => `ws${workspace.active().id}`,
+    // 진행률에는 개수와 고정된 사유 코드만 담긴다(원문·번역문은 오지 않는다)
+    emit: (dto) => send(IPC.translateProgress, dto)
+  })
+  // 작업공간을 바꾸면 그 프로필의 캐시 파일로 갈아 끼운다
+  workspace.onChanged(() => translate.setProfile())
+  win.once('closed', () => translate.dispose())
+  // === 번역 끝 ========================================================================
+  // === 사진·영상 캡처 ==================================================================
+  // 파일은 설정의 저장 폴더에만 쓰인다. 단축키는 위에서 만든 창 안 입력 경로에 붙는다
+  const capture = registerCaptureIpc({
+    handle: handleFromRenderer,
+    send,
+    settings: () => settings.get(),
+    setSettings: (patch) => settings.set(patch),
+    win,
+    tabs,
+    downloadsDir: () => app.getPath('downloads')
+  })
+  handleCaptureShortcut = capture.handleShortcut
+  win.once('closed', () => capture.dispose())
+  // === 캡처 끝 =========================================================================
 
   return { settings, agent, db, vault, auth, sync }
 }

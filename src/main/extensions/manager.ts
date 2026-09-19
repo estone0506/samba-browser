@@ -9,6 +9,8 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import type { Settings } from '../../shared/settings'
 import type { ExtensionDto, ExtensionError, ExtensionSource } from '../../shared/extensions'
+import { pickIconPath, readIconDataUrl, resolveExtensionName } from './import-sources'
+import { resolveActionIconPath, resolveOptionsPath, resolvePopupPath } from './action'
 
 export type { ExtensionDto, ExtensionError, ExtensionSource }
 
@@ -36,6 +38,25 @@ export interface ExtensionManifest {
   name: string
   version: string
   manifestVersion: 2 | 3
+  /** 카드 설명(없으면 빈 문자열) */
+  description: string
+  /** permissions + host_permissions 를 합친 것. 세부정보의 권한 요약에 쓴다 */
+  permissions: string[]
+  /** manifest icons 중 가장 큰 것의 상대 경로(없으면 null) */
+  iconPath: string | null
+  /** 툴바에 그릴 아이콘 — action.default_icon 우선, 없으면 iconPath 와 같다 */
+  actionIconPath: string | null
+  /** 아이콘을 눌렀을 때 띄울 팝업 문서(없으면 null) */
+  popupPath: string | null
+  /** 팝업이 없을 때 새 탭으로 여는 옵션 페이지(없으면 null) */
+  optionsPath: string | null
+  /** `__MSG_…__` 를 풀 때 쓰는 default_locale */
+  defaultLocale?: string
+}
+
+/** manifest 의 문자열 배열 필드를 안전하게 읽는다(형식이 틀리면 빈 배열) */
+function stringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
 }
 
 /** 지원하는 manifest 버전 — MV1 은 크로미움이 더 이상 읽지 않는다 */
@@ -58,7 +79,20 @@ export function parseManifest(raw: unknown): ExtensionManifest {
   if (!SUPPORTED_MANIFEST_VERSIONS.includes(manifestVersion)) {
     throw new Error('지원하지 않는 manifest_version 이에요 (2 또는 3만 지원)')
   }
-  return { name, version, manifestVersion: manifestVersion as 2 | 3 }
+  // 권한은 화면에 보여 주기만 하는 값이라, 형식이 틀려도 거부하지 않고 걸러 낸다
+  const permissions = [...stringArray(o.permissions), ...stringArray(o.host_permissions)]
+  return {
+    name,
+    version,
+    manifestVersion: manifestVersion as 2 | 3,
+    description: typeof o.description === 'string' ? o.description.trim() : '',
+    permissions,
+    iconPath: pickIconPath(o.icons),
+    actionIconPath: resolveActionIconPath(o),
+    popupPath: resolvePopupPath(o),
+    optionsPath: resolveOptionsPath(o),
+    defaultLocale: typeof o.default_locale === 'string' ? o.default_locale : undefined
+  }
 }
 
 /**
@@ -154,6 +188,8 @@ export class ExtensionManager {
   /** 확장을 걸어 둔 세션들. hosts[0] 은 생성자로 받은 기본 세션이다 */
   private hosts: ExtensionHost[] = []
   private failures: ExtensionError[] = []
+  /** 진행 중인 최초 로드. 새 파티션 세션에 확장을 걸기 전에 이것을 기다린다 */
+  private ready: Promise<void> = Promise.resolve()
 
   constructor(
     host: ExtensionHost,
@@ -162,13 +198,14 @@ export class ExtensionManager {
     this.hosts.push(host)
   }
 
-  /** 설정에 저장된 경로·출처를 현재 목록으로 덮어쓴다 */
+  /** 설정에 저장된 경로·출처·꺼 둔 확장을 현재 목록으로 덮어쓴다 */
   private persist(): void {
     const sources: Record<string, ExtensionSource> = {}
     for (const e of this.entries) sources[e.path] = e.source
     this.settings.set({
       extensionPaths: this.entries.map((e) => e.path),
-      extensionSources: sources
+      extensionSources: sources,
+      disabledExtensionIds: this.entries.filter((e) => !e.enabled).map((e) => e.id)
     })
   }
 
@@ -188,10 +225,24 @@ export class ExtensionManager {
 
   /**
    * 앱 시작 시 저장된 경로를 순서대로 로드한다.
-   * 한 개가 실패해도 나머지는 그대로 로드하고, 실패한 경로는 설정에서 지운다(앱 중단 금지)
+   * 한 개가 실패해도 나머지는 그대로 로드하고, 실패한 경로는 설정에서 지운다(앱 중단 금지).
+   *
+   * 끝나기를 기다릴 수 있도록 진행 중인 작업을 ready 에 남긴다 — attachHost 가 이것을
+   * 기다리지 않으면, 첫 탭이 만들어질 때 목록이 아직 비어 있어서 그 탭의 파티션 세션에
+   * 확장이 하나도 걸리지 않는다(확장이 기본 세션에만 남아 아무 탭에서도 동작하지 않는다)
    */
-  async loadSaved(): Promise<ExtensionDto[]> {
+  loadSaved(): Promise<ExtensionDto[]> {
+    const run = this.loadSavedInto()
+    this.ready = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
+  private async loadSavedInto(): Promise<ExtensionDto[]> {
     const saved = this.settings.get().extensionPaths
+    const disabled = new Set(this.settings.get().disabledExtensionIds)
     this.entries = []
     this.failures = []
     const seen = new Set<string>()
@@ -199,7 +250,14 @@ export class ExtensionManager {
       if (seen.has(path)) continue
       seen.add(path)
       try {
-        this.entries.push(await this.loadInto(this.hosts[0], path, this.sourceOf(path)))
+        const dto = await this.loadInto(this.hosts[0], path, this.sourceOf(path))
+        // 확장 id 는 세션에 올려 봐야 알 수 있어서, 꺼 둔 확장도 일단 올린 뒤 바로 걷어낸다.
+        // 목록에는 남아 있어야 화면에서 다시 켤 수 있다
+        if (disabled.has(dto.id)) {
+          dto.enabled = false
+          this.removeFromHosts(dto.id)
+        }
+        this.entries.push(dto)
       } catch (e: unknown) {
         this.failures.push({ path, error: messageOf(e) })
         console.error('확장 로드 실패', path, messageOf(e))
@@ -224,8 +282,63 @@ export class ExtensionManager {
       name: loaded.name?.trim() || manifest.name,
       version: loaded.version?.trim() || manifest.version,
       path: resolved,
-      source
+      source,
+      // 설명도 `__MSG_key__` 일 수 있어 이름과 같은 방식으로 푼다
+      description: resolveExtensionName(manifest.description, resolved, manifest.defaultLocale),
+      permissions: manifest.permissions,
+      enabled: true,
+      // 툴바 아이콘은 크롬과 같은 우선순위 — action.default_icon 이 있으면 그것을 쓴다
+      icon:
+        readIconDataUrl(resolved, manifest.actionIconPath) ??
+        readIconDataUrl(resolved, manifest.iconPath),
+      ...(manifest.popupPath === null ? {} : { popup: manifest.popupPath }),
+      ...(manifest.optionsPath === null ? {} : { optionsPage: manifest.optionsPath })
     }
+  }
+
+  /** id 로 목록의 한 항목을 찾는다(툴바 액션이 팝업 경로를 읽을 때 쓴다) */
+  find(id: string): ExtensionDto | null {
+    return this.entries.find((e) => e.id === id) ?? null
+  }
+
+  /** 모든 세션에서 확장을 걷어낸다. 한 세션이 실패해도 나머지는 계속 걷어낸다 */
+  private removeFromHosts(id: string): void {
+    for (const host of this.hosts) {
+      try {
+        host.removeExtension(id)
+      } catch (e: unknown) {
+        console.error('확장 제거 실패', messageOf(e))
+      }
+    }
+  }
+
+  /**
+   * 확장을 켜거나 끈다. 끄면 세션에서만 걷어내고 목록·경로는 그대로 두므로
+   * 다시 켤 때 폴더를 고를 필요가 없다.
+   *
+   * 켜는 쪽이 실패하면(폴더가 사라졌다 등) 꺼진 상태 그대로 두고 던진다 —
+   * 켜졌다고 표시해 놓고 실제로는 안 도는 상태가 더 나쁘기 때문이다
+   */
+  async setEnabled(id: string, enabled: boolean): Promise<ExtensionDto> {
+    const entry = this.entries.find((e) => e.id === id)
+    if (!entry) throw new Error('목록에 없는 확장이에요')
+    if (entry.enabled === enabled) return { ...entry }
+    if (enabled) {
+      // 첫 세션이 실패하면 아무것도 바꾸지 않는다
+      await this.hosts[0].loadExtension(entry.path)
+      for (const host of this.hosts.slice(1)) {
+        try {
+          await host.loadExtension(entry.path)
+        } catch (e: unknown) {
+          this.failures.push({ path: entry.path, error: messageOf(e) })
+        }
+      }
+    } else {
+      this.removeFromHosts(id)
+    }
+    entry.enabled = enabled
+    this.persist()
+    return { ...entry }
   }
 
   /**
@@ -265,14 +378,9 @@ export class ExtensionManager {
   remove(id: string): void {
     const index = this.entries.findIndex((e) => e.id === id)
     if (index < 0) throw new Error('목록에 없는 확장이에요')
-    this.entries.splice(index, 1)
-    for (const host of this.hosts) {
-      try {
-        host.removeExtension(id)
-      } catch (e: unknown) {
-        console.error('확장 제거 실패', messageOf(e))
-      }
-    }
+    const [removed] = this.entries.splice(index, 1)
+    // 꺼 둔 확장은 이미 세션에 없으므로 다시 걷어낼 것이 없다
+    if (removed.enabled) this.removeFromHosts(id)
     this.persist()
   }
 
@@ -282,7 +390,11 @@ export class ExtensionManager {
    */
   async attachHost(host: ExtensionHost): Promise<void> {
     this.hosts.push(host)
+    // 첫 탭은 앱이 뜨자마자 만들어지므로 저장된 확장을 아직 다 읽지 못했을 수 있다.
+    // 여기서 기다리지 않으면 그 탭 세션에는 확장이 하나도 걸리지 않는다
+    await this.ready
     for (const entry of this.entries) {
+      if (!entry.enabled) continue
       try {
         await host.loadExtension(entry.path)
       } catch (e: unknown) {

@@ -8,26 +8,25 @@ import { AccountSection } from '@renderer/components/settings/AccountSection'
 import { SecuritySection } from '@renderer/components/settings/SecuritySection'
 import { AgentSection } from '@renderer/components/settings/AgentSection'
 import { AiSection } from '@renderer/components/settings/AiSection'
-import { KeymasterSection } from '@renderer/components/settings/KeymasterSection'
 import { PlaceholderSection } from '@renderer/components/settings/PlaceholderSection'
-import { ExtensionsSection } from '@renderer/components/settings/ExtensionsSection'
 import {
-  DEFAULT_SECTION_KEY,
   SECTIONS,
   SETTINGS_GROUPS,
   groupLabelKey,
-  resolveSectionKey,
   sectionsOfGroup,
   type SettingsSectionDef
 } from '@renderer/components/settings/sections'
 import type { Settings } from '@shared/settings'
+import { useUiStore } from '@renderer/stores/uiStore'
 
 // 설정 페이지 — 좌측 240px 섹션 목록 + 우측 패널.
 // 모든 변경은 저장 버튼 없이 즉시 window.samba.settings.set 으로 반영한다
 export function SettingsPage(): React.JSX.Element {
   const { t } = useTranslation()
   const [settings, setSettings] = useState<Settings | null>(null)
-  const [active, setActive] = useState<string>(DEFAULT_SECTION_KEY)
+  // 열린 섹션은 스토어에 둔다 — 채팅 패널의 "설정 → AI 연결" 같은 바깥 링크가 바로 바꿀 수 있게
+  const active = useUiStore((s) => s.settingsSection)
+  const setActive = useUiStore((s) => s.setSettingsSection)
 
   useEffect(() => {
     void window.samba.settings.get().then((r) => {
@@ -43,7 +42,7 @@ export function SettingsPage(): React.JSX.Element {
     })
   }, [])
 
-  const select = (key: string): void => setActive(resolveSectionKey(key))
+  const select = (key: string): void => setActive(key)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)] min-[769px]:flex-row">
@@ -124,15 +123,11 @@ function SectionBody({
       return <AccountSection />
     case 'security':
       return <SecuritySection settings={settings} update={update} />
-    case 'agent':
+    // 동작 — 그룹 이름(에이전트)과 겹치지 않도록 부르는 이름만 바꾼 것이라 내용은 그대로다
+    case 'behavior':
       return <AgentSection settings={settings} update={update} />
     case 'ai':
       return <AiSection />
-    case 'keymaster':
-      return <KeymasterSection />
-    // 개발자 섹션: 압축 해제된 크롬 확장 폴더 관리(Task 15)
-    case 'developer':
-      return <ExtensionsSection />
     default:
       return <PlaceholderSection titleKey={labelKey} />
   }

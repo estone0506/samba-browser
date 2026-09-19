@@ -145,6 +145,52 @@ export const syncOutbox = sqliteTable('sync_outbox', {
   workspaceId: integer('workspace_id')
 })
 
+// 연결된 폰. PC 별 정보라 동기화하지 않는다(remote_id 컬럼이 없다)
+export const phones = sqliteTable('phones', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  serial: text('serial').notNull().unique(),
+  label: text('label').notNull(),
+  // 'KR' | 'CN' | 'JP'
+  country: text('country').notNull(),
+  // 'usb' | 'wifi'
+  transport: text('transport').notNull(),
+  wifiAddress: text('wifi_address'),
+  model: text('model').notNull().default(''),
+  // 문자 DB 조회 가능 여부. NULL 이면 아직 시험 조회 전
+  smsQueryOk: integer('sms_query_ok', { mode: 'boolean' }),
+  lastSeenAt: integer('last_seen_at').notNull(),
+  workspaceId: integer('workspace_id')
+})
+
+// 인증 이벤트(KPI 집계용 로컬 기록). 문자 본문은 담지 않는다 —
+// 추출된 코드와 발신번호 뒷 4자리만 남긴다
+export const authEvents = sqliteTable('auth_events', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  jobId: text('job_id'),
+  phoneId: integer('phone_id'),
+  // 'sms' | 'app_approve' | 'ars'
+  kind: text('kind').notNull(),
+  siteHost: text('site_host').notNull(),
+  ok: integer('ok', { mode: 'boolean' }).notNull(),
+  // 'sms_query' | 'visual' | 'manual'
+  method: text('method').notNull(),
+  elapsedMs: integer('elapsed_ms').notNull(),
+  // 추출한 인증번호(숫자만) — 본문은 남기지 않는다
+  code: text('code'),
+  // 발신번호 뒷 4자리
+  senderTail: text('sender_tail'),
+  // 결제 승인에서 쓴 결제수단 이름(다른 종류는 NULL)
+  payMethod: text('pay_method'),
+  at: integer('at').notNull()
+})
+
+// 계정 ↔ 폰 매핑. 작업 시 사용자가 고르고 기억한다. 동기화하지 않는다
+export const accountPhones = sqliteTable('account_phones', {
+  accountId: integer('account_id').primaryKey(),
+  phoneId: integer('phone_id').notNull(),
+  updatedAt: integer('updated_at').notNull()
+})
+
 // 동기화 부가 상태. 'lastPulledAt' | 'deviceId' | 'userId' | 'settings:<key>:updatedAt'
 export const syncState = sqliteTable('sync_state', {
   key: text('key').primaryKey(),

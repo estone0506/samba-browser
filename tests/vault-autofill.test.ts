@@ -8,8 +8,15 @@ import type { AccountDto } from '../src/shared/vault'
 
 const { pageBridge } = vi.hoisted(() => ({
   pageBridge: {
-    findLoginFields: vi.fn(async () => ({ username: 1, password: 2, submit: 3 })),
-    fillValue: vi.fn(async () => 'ok')
+    findLoginFields: vi.fn(
+      async (): Promise<{
+        username: number | undefined
+        password: number | undefined
+        submit: number | undefined
+      }> => ({ username: 1, password: 2, submit: 3 })
+    ),
+    fillValue: vi.fn(async (): Promise<string> => 'ok'),
+    submitForm: vi.fn(async (): Promise<string> => 'ok')
   }
 }))
 vi.mock('../src/main/browser/page-bridge', () => ({ pageBridge }))
@@ -68,6 +75,18 @@ describe('autofillAccount', () => {
     expect(pageBridge.fillValue).toHaveBeenCalledTimes(2)
   })
 
+  it('autoSubmit 이 켜져 있고 아이디까지 채웠으면 로그인 폼을 바로 제출한다', async () => {
+    pageBridge.submitForm.mockClear()
+    expect(await autofillAccount({ ...deps(), autoSubmit: () => true }, 1)).toBe('ok')
+    expect(pageBridge.submitForm).toHaveBeenCalledTimes(1)
+  })
+
+  it('autoSubmit 이 꺼져 있으면 채우기만 한다', async () => {
+    pageBridge.submitForm.mockClear()
+    expect(await autofillAccount({ ...deps(), autoSubmit: () => false }, 1)).toBe('ok')
+    expect(pageBridge.submitForm).not.toHaveBeenCalled()
+  })
+
   it('등록 도메인이 다르면 채우지 않는다', async () => {
     expect(await autofillAccount(deps({ url: 'https://www.daum.net/login' }), 1)).toBe(
       'host-mismatch'
@@ -103,6 +122,35 @@ describe('autofillAccount', () => {
       'host-mismatch'
     )
     expect(pageBridge.fillValue).not.toHaveBeenCalled()
+  })
+
+  it('아이디 칸이 있는데 금고 아이디가 비어 있으면 제출하지 않는다(빈 아이디 제출 금지)', async () => {
+    pageBridge.submitForm.mockClear()
+    const d = { ...deps({ account: account({ username: '' }) }), autoSubmit: () => true }
+    expect(await autofillAccount(d, 1)).toBe('filled-password-only')
+    // 비밀번호 칸만 채우고 아이디 칸은 건드리지 않는다
+    expect(pageBridge.fillValue).toHaveBeenCalledTimes(1)
+    expect(pageBridge.submitForm).not.toHaveBeenCalled()
+  })
+
+  it('아이디 칸 자체가 없는 비밀번호 전용 화면(2단계)이면 제출한다', async () => {
+    pageBridge.submitForm.mockClear()
+    pageBridge.findLoginFields.mockResolvedValueOnce({
+      username: undefined,
+      password: 2,
+      submit: 3
+    })
+    const d = { ...deps({ account: account({ username: '' }) }), autoSubmit: () => true }
+    expect(await autofillAccount(d, 1)).toBe('ok')
+    expect(pageBridge.submitForm).toHaveBeenCalledTimes(1)
+  })
+
+  it('아이디 채우기가 실패하면 제출하지 않는다', async () => {
+    pageBridge.submitForm.mockClear()
+    pageBridge.fillValue.mockResolvedValueOnce('not found')
+    const d = { ...deps(), autoSubmit: () => true }
+    expect(await autofillAccount(d, 1)).toBe('filled-password-only')
+    expect(pageBridge.submitForm).not.toHaveBeenCalled()
   })
 
   it('계정을 찾지 못하면 값을 읽지 않는다', async () => {

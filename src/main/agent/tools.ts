@@ -20,6 +20,14 @@ import {
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
 import { formatDialogNote } from '../browser/dialogs'
 import { createOcrTool } from './tools-ocr'
+import {
+  createPayTool,
+  createPhoneTools,
+  PAY_TOOL_NAME,
+  PHONE_TOOL_NAMES,
+  type PayToolContext,
+  type PhoneToolContext
+} from './tools-phone'
 import { handoffToolResult, type HandoffResult } from './handoff'
 import { knownLoginUrl, isLikelyLoginUrl } from '../../shared/site-rules'
 import { BLOCKED_URL_MESSAGE, isInternalUrl } from '../../shared/url'
@@ -60,6 +68,17 @@ const FILL_HOST_MISMATCH = 'refused: HOST_MISMATCH — page moved to another dom
 const ALREADY_SIGNED_IN = 'already signed in'
 // 캡차·2FA 를 사용자에게 넘길 수 없을 때(넘김 콜백 미주입) 돌려주는 문자열
 const NEEDS_USER_CAPTCHA = 'needs_user: captcha'
+// progress 도구가 말이 안 되는 숫자를 받았을 때 돌려주는 문자열
+export const PROGRESS_INVALID = 'refused: progress needs 0 <= done <= total and total >= 1'
+// 진행 라벨 표시 상한(상품명이 길어도 진행 배지가 무너지지 않게)
+const PROGRESS_LABEL_MAX = 80
+
+/** progress 도구 입력 검증. 문제가 없으면 null, 있으면 모델이 읽을 거부 문구 */
+export function validateProgress(done: number, total: number): string | null {
+  if (!Number.isInteger(done) || !Number.isInteger(total)) return PROGRESS_INVALID
+  if (total < 1 || done < 0 || done > total) return PROGRESS_INVALID
+  return null
+}
 
 // https·제외 도메인·접근 정책 판정은 하네스·자동 채움과 공유한다(vault/access-gate.ts)
 export { isSecurePageUrl, effectiveAccess }
@@ -117,6 +136,8 @@ export interface ToolContext {
   // 호출 카운터. 상한 넘으면 문자열 반환
   tick: () => string | null
   onStep: (label: string, ok: boolean) => void
+  // 진행 상황 보고(progress 도구). 주입되지 않으면 도구는 받기만 하고 아무 데도 알리지 않는다
+  onProgress?: (p: { done: number; total: number; label?: string }) => void
   // 키마스터. 주입되지 않은 실행(구버전 호출부·테스트)에서는 금고 도구가 잠금으로 동작한다
   vault?: VaultService
   // 감사 로그에 남길 작업 식별자(실행 1건 = jobId 1개)
@@ -137,6 +158,11 @@ export interface ToolContext {
   }) => Promise<HandoffResult>
   // 제외 도메인(정규화된 host 문자열). 미지정 시 빈 목록으로 동작한다
   vaultExcludedHosts?: string[]
+  // 폰 도구 문맥. 주입되지 않은 실행에서는 폰 도구가 아예 등록되지 않는다.
+  // 금고(vault)는 여기에 들어가지 않는다 — 폰 도구는 비밀값을 볼 수 없다
+  phone?: PhoneToolContext
+  // 결제 승인 문맥. 폰 도구와 따로 주입한다 — 결제만 금고를 보는 실행기를 갖는다
+  pay?: PayToolContext
 }
 
 const text = (t: string): { content: [{ type: 'text'; text: string }] } => ({
@@ -775,6 +801,25 @@ ${snapshot}`
     }
   )
 
+  // progress 도 guard 를 거치지 않는다 — 진행 상황을 알리느라 정작 일할 호출이 줄면 안 된다.
+  // 진행 로그(step)도 남기지 않는다(도구 호출 수가 부풀지 않게). 화면에는 진행 배지로만 뜬다
+  const progress = tool(
+    'progress',
+    'Report how far along a multi-item task is, so the user can watch. Call it when you start and after each item.',
+    {
+      done: z.number().int().describe('items finished so far'),
+      total: z.number().int().describe('items in total'),
+      label: z.string().optional().describe('what is being worked on right now')
+    },
+    async ({ done, total, label }) => {
+      const bad = validateProgress(done, total)
+      if (bad) return text(bad)
+      const trimmed = label?.trim().slice(0, PROGRESS_LABEL_MAX)
+      ctx.onProgress?.(trimmed ? { done, total, label: trimmed } : { done, total })
+      return text(`ok: ${done}/${total}`)
+    }
+  )
+
   // done 은 guard 를 거치지 않으므로 도구 호출 상한(tick)에 계산되지 않는다.
   // 상한에 도달했을 때 "done 으로 마무리하라"고 안내하기 때문에, 마무리 호출까지 막으면 안 된다
   const done = tool(
@@ -812,7 +857,10 @@ ${snapshot}`
       listAccounts,
       fillSecret,
       login,
-      done
+      progress,
+      done,
+      ...(ctx.phone ? createPhoneTools(ctx.phone) : []),
+      ...(ctx.pay ? [createPayTool(ctx.pay)] : [])
     ]
   })
 }
@@ -832,5 +880,9 @@ export const SAMBA_TOOL_NAMES = [
   'list_accounts',
   'fill_secret',
   'login',
-  'done'
+  'progress',
+  'done',
+  // 폰 도구가 주입되지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
+  ...PHONE_TOOL_NAMES,
+  PAY_TOOL_NAME
 ].map((n) => `mcp__samba__${n}`)

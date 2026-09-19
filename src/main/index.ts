@@ -1,8 +1,9 @@
 import { join } from 'node:path'
-import { app } from 'electron'
+import { app, BrowserWindow, crashReporter } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { createMainWindow } from './window'
 import { TabManager } from './browser/tab-manager'
+import { markQuitting } from './browser/popups'
 import { registerInternalProtocol, registerInternalScheme } from './browser/internal-protocol'
 import { registerIpc } from './ipc/handlers'
 import { registerFaviconIpc } from './ipc/favicon'
@@ -11,6 +12,17 @@ import type { VaultService } from './vault/service'
 import type { SyncEngineHolder } from './sync/engine'
 import { runLoginHarness, writeVaultLocked } from './e2e/login-harness'
 
+// 브라우저 프로세스 크래시 덤프를 로컬에 남긴다(서버 업로드 없음). 원인 추적용
+crashReporter.start({ uploadToServer: false, compress: false })
+
+// 콘솔 출력 파이프가 끊겨도(EPIPE — 로그를 받던 터미널·파일 핸들이 먼저 닫힘) 앱이 죽지 않게 한다.
+// console.* 이 실패하며 uncaughtException 으로 번져 "A JavaScript error occurred" 창이 뜨던 문제
+for (const stream of [process.stdout, process.stderr]) {
+  stream?.on?.('error', (err: NodeJS.ErrnoException) => {
+    if (err.code !== 'EPIPE') throw err
+  })
+}
+
 // E2E 하네스용 userData 분리 — 실행 중인 사용자 앱의 DB 를 건드리지 않기 위해 복사본을 쓴다.
 // app.whenReady() 이전에 지정해야 하므로 모듈 최상단에서 처리한다
 const userDataOverride = process.env.SAMBA_USER_DATA
@@ -18,6 +30,19 @@ if (userDataOverride) app.setPath('userData', userDataOverride)
 
 // 개발 모드(electron.exe 직접 실행)에서도 앱 이름이 'Electron' 대신 제품명으로 보이게 한다
 app.setName('SAMBA Browser')
+
+// 같은 userData 로 두 번째 인스턴스가 뜨면 data.db 저장이 서로 충돌한다(rename EPERM).
+// 락은 userData 경로별이라 SAMBA_USER_DATA 를 나눈 E2E·검증 인스턴스는 나란히 뜰 수 있다
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  })
+}
 
 // 내부 페이지 스킴(samba://) 등록도 app.whenReady() 이전이어야 한다
 registerInternalScheme()
@@ -126,7 +151,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-// 종료 직전 금고를 먼저 잠그고 DB 를 안전하게 저장/닫는다(내부적으로 pending save 를 즉시 flush 함)
+// 종료 직전 금고를 먼저 잠그고 DB 를 안전하게 저장/닫는다(내부적으로 pending save 를 즉시 flush 함).
+// markQuitting 을 먼저 세운다 — 이 표식이 없으면 팝업 창(결제창)의 close 지연이
+// preventDefault 로 종료 자체를 취소해, DB·금고만 닫힌 좀비 앱이 남는다
 app.on('before-quit', () => {
+  markQuitting()
   shutdown()
 })

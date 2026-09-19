@@ -8,12 +8,13 @@ import {
   type TaskModels
 } from '../../shared/ai'
 
-// Claude 구독(= Claude Code) 경로는 별칭을 그대로 넘긴다. CLI 가 최신 모델로 풀어 준다
+// Claude 구독(= Claude Code) 경로도 정식 ID 로 둔다(별칭 haiku/sonnet/opus 도 여전히 통한다).
+// 목록·라벨을 API 키 경로와 같게 보여 주기 위함
 const SUBSCRIPTION_MODELS: TaskModels = {
-  fast: 'haiku',
-  standard: 'sonnet',
-  deep: 'opus',
-  visual: 'sonnet'
+  fast: 'claude-haiku-4-5-20251001',
+  standard: 'claude-sonnet-5',
+  deep: 'claude-opus-5',
+  visual: 'claude-sonnet-5'
 }
 
 // 내 API 키 경로는 별칭이 통하지 않으므로 정식 모델 ID 를 쓴다
@@ -24,8 +25,17 @@ const API_KEY_MODELS: TaskModels = {
   visual: 'claude-sonnet-5'
 }
 
+// Codex 구독(= Codex CLI) 경로는 OpenAI 모델 이름을 그대로 넘긴다(codex exec -m)
+const CODEX_MODELS: TaskModels = {
+  fast: 'gpt-5.6',
+  standard: 'gpt-5.6',
+  deep: 'gpt-5.6-pro',
+  visual: 'gpt-5.6'
+}
+
 export const DEFAULT_TASK_MODELS: Record<AiProviderId, TaskModels> = {
   claude_subscription: SUBSCRIPTION_MODELS,
+  codex_subscription: CODEX_MODELS,
   api_key: API_KEY_MODELS,
   // 서비스 크레딧은 아직 자리만 잡아 둔 카드라 내 API 키와 같은 목록을 쓴다
   service_credit: API_KEY_MODELS
@@ -33,8 +43,15 @@ export const DEFAULT_TASK_MODELS: Record<AiProviderId, TaskModels> = {
 
 // 설정 화면의 선택 후보. 사용자가 직접 입력한 값도 허용하므로 "제안 목록"에 가깝다
 const MODEL_CHOICES: Record<AiProviderId, string[]> = {
-  claude_subscription: ['haiku', 'sonnet', 'opus'],
-  api_key: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5', 'claude-fable-5-1'],
+  // Claude Code 구독은 별칭(haiku/sonnet/opus)과 정식 ID 둘 다 받는다 — 목록은 정식 ID 로 통일
+  claude_subscription: [
+    'claude-fable-5-1',
+    'claude-opus-5',
+    'claude-sonnet-5',
+    'claude-haiku-4-5-20251001'
+  ],
+  api_key: ['claude-fable-5-1', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
+  codex_subscription: ['gpt-5.6', 'gpt-5.6-pro', 'gpt-5.1-codex-max', 'gpt-5.3-codex'],
   service_credit: [
     'claude-haiku-4-5-20251001',
     'claude-sonnet-5',
@@ -59,9 +76,19 @@ export function resolveModel(
 }
 
 // 값 v 가 from 제공자의 어느 등급인지 찾는다(같은 칸을 먼저 본다)
+// Claude Code 별칭(haiku/sonnet/opus/fable)도 등급으로 풀어 준다(구버전 설정 호환)
+const ALIAS_GRADE: Record<string, TaskModelKey> = {
+  haiku: 'fast',
+  sonnet: 'standard',
+  opus: 'deep',
+  fable: 'deep'
+}
+
 function gradeOf(v: string, from: AiProviderId, key: TaskModelKey): TaskModelKey | null {
   if (DEFAULT_TASK_MODELS[from][key] === v) return key
-  return TASK_MODEL_KEYS.find((k) => DEFAULT_TASK_MODELS[from][k] === v) ?? null
+  const direct = TASK_MODEL_KEYS.find((k) => DEFAULT_TASK_MODELS[from][k] === v)
+  if (direct) return direct
+  return ALIAS_GRADE[v] ?? null
 }
 
 /**
