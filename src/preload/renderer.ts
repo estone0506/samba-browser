@@ -20,9 +20,11 @@ import {
   type ImportPasswordsResult,
   type ImportBookmarksResult,
   type BookmarkTreeDto,
+  type AiConnectResult,
   type AiProviderId,
   type AiProviderStatus,
   type ApiKeyVendor,
+  type SubscriptionProviderId,
   type TaskModelKey,
   type TaskModels,
   type SyncStatus,
@@ -245,6 +247,13 @@ const api = {
   // 이쪽으로 오는 것은 마스킹 문자열과 boolean 뿐이다
   ai: {
     providers: (): Promise<IpcResult<AiProviderStatus[]>> => invoke(IPC.aiProviders),
+    // 구독 연결. openTerminal 이면 새 터미널 창에서 `claude login`/`codex login` 을 띄운다
+    connect: (
+      provider: SubscriptionProviderId,
+      openTerminal = false
+    ): Promise<IpcResult<AiConnectResult>> => invoke(IPC.aiConnect, provider, openTerminal),
+    disconnect: (provider: SubscriptionProviderId): Promise<IpcResult<AiConnectResult>> =>
+      invoke(IPC.aiDisconnect, provider),
     setProvider: (
       id: AiProviderId
     ): Promise<
