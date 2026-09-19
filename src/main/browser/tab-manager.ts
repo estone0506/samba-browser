@@ -11,7 +11,13 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { IPC, type Layout, type TabInfo } from '../../shared/ipc'
 import type { ClosedTabRecord } from './gestures'
-import { BLOCKED_URL_MESSAGE, isAllowedUrl, isInternalUrl, NEW_TAB_URL } from '../../shared/url'
+import {
+  BLOCKED_URL_MESSAGE,
+  isAllowedUrl,
+  isExtensionUrl,
+  isInternalUrl,
+  NEW_TAB_URL
+} from '../../shared/url'
 import { attachInternalProtocol } from './internal-protocol'
 import type { PermissionMode, SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
@@ -100,15 +106,19 @@ function hardenSession(ses: Session, partition: string): void {
   installWebstoreUserAgent(ses)
 }
 
-// 리다이렉트·페이지 내 이동으로 금지 스킴에 도달하는 경로까지 막는다
-function guardNavigation(wc: WebContents): void {
+// 리다이렉트·페이지 내 이동으로 금지 스킴에 도달하는 경로까지 막는다.
+// allowExtension 은 확장 문서(옵션 페이지)를 담은 탭에만 준다 — 그 탭 안에서는
+// `chrome-extension://` 사이 이동이 정상이기 때문이다(웹 페이지 탭에는 주지 않는다)
+function guardNavigation(wc: WebContents, allowExtension: boolean): void {
+  const allowed = (url: string): boolean =>
+    isAllowedUrl(url) || (allowExtension && isExtensionUrl(url))
   wc.on('will-navigate', (e, url) => {
-    if (isAllowedUrl(url)) return
+    if (allowed(url)) return
     e.preventDefault()
     console.warn(`이동 차단: ${url}`)
   })
   wc.on('will-redirect', (e, url) => {
-    if (isAllowedUrl(url)) return
+    if (allowed(url)) return
     e.preventDefault()
     console.warn(`리다이렉트 차단: ${url}`)
   })
@@ -127,6 +137,8 @@ export class TabManager {
     viewportHeight: 0
   }
   private listeners: Array<(tabs: TabInfo[]) => void> = []
+  // 탭 전환 구독자(확장 액션 팝업을 닫는다)
+  private activatedListeners: Array<() => void> = []
   private disposed = false
   // === 홈 버튼 / 설정 페이지 (신규 추가분) ==================================
   // url 없이 탭을 생성할 때 쓸 기본 주소(설정의 홈 주소/새 탭 주소로부터 계산되어 들어온다)
@@ -174,6 +186,14 @@ export class TabManager {
 
   onChange(cb: (tabs: TabInfo[]) => void): void {
     this.listeners.push(cb)
+  }
+
+  /**
+   * 탭이 활성화될 때 알린다(확장 액션 팝업 닫기).
+   * onChange 와 나눠 둔 이유는 onChange 가 로딩·제목 변경에도 매번 불리기 때문이다
+   */
+  onActivated(cb: () => void): void {
+    this.activatedListeners.push(cb)
   }
 
   // === 홈 버튼 / 설정 페이지 (신규 추가분) ==================================
@@ -308,6 +328,7 @@ export class TabManager {
     if (this.disposed) return
     this.disposed = true
     this.listeners = []
+    this.activatedListeners = []
     this.closedListeners = []
     this.tabs = []
     this.activeId = null
@@ -358,13 +379,27 @@ export class TabManager {
   }
 
   create(
-    opts: { url?: string; profile?: string; mobile?: boolean; openerId?: string } = {}
+    opts: {
+      url?: string
+      profile?: string
+      mobile?: boolean
+      openerId?: string
+      /**
+       * 확장 문서(옵션 페이지) 탭인가. 앱이 스스로 여는 경로(툴바 액션)에서만 켠다 —
+       * 주소창 입력·웹페이지의 window.open·AI 도구는 이 값을 주지 않으므로
+       * `chrome-extension://` 은 그쪽으로는 여전히 열리지 않는다
+       */
+      extension?: boolean
+    } = {}
   ): TabInfo {
     if (this.disposed) throw new Error('window closed')
     // url 이 없으면(새 탭 버튼·첫 탭) 설정에서 계산된 기본 주소를 쓴다
     const url = opts.url ? opts.url : this.defaultUrl
+    const allowExtension = opts.extension === true
     // 탭 생성 경로(주소창·AI new_tab·페이지의 window.open)의 공통 관문
-    if (!isAllowedUrl(url)) throw new Error(`${BLOCKED_URL_MESSAGE} (${url})`)
+    if (!isAllowedUrl(url) && !(allowExtension && isExtensionUrl(url))) {
+      throw new Error(`${BLOCKED_URL_MESSAGE} (${url})`)
+    }
     const profile = opts.profile ?? 'default'
     const partition = `${this.partitionPrefix}${profile}`
     const ses = session.fromPartition(partition)
@@ -437,7 +472,7 @@ export class TabManager {
           console.warn('파비콘 저장 실패', e instanceof Error ? e.message : String(e))
         })
     })
-    guardNavigation(wc)
+    guardNavigation(wc, allowExtension)
     // 페이지 JS 대화상자(alert/confirm/prompt)는 작업 실행 중에만 자동으로 닫는다
     installDialogHandler(wc, {
       // SAMBA_E2E 환경변수는 개발 빌드에서만 인정한다(패키징된 앱에서 자동 처리 금지)
@@ -471,6 +506,8 @@ export class TabManager {
   activate(id: string): void {
     const tab = this.get(id)
     if (!tab || this.win.isDestroyed()) return
+    // 탭 뷰를 다시 얹기 전에 알린다 — 위에 떠 있던 확장 팝업이 탭 뷰 아래로 묻히지 않게
+    for (const cb of this.activatedListeners) cb()
     // 모든 탭 뷰를 창에서 제거(없으면 무시됨)한 뒤 활성 탭만 다시 추가
     for (const t of this.tabs) {
       this.win.contentView.removeChildView(t.view)

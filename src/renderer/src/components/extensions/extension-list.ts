@@ -63,11 +63,44 @@ export function permissionSummary(permissions: readonly string[]): string[] {
 }
 
 /**
- * 주소창 메뉴에 고정한 확장 id 목록을 토글한다.
- * 고정은 이 기기에서 목록을 어떻게 보여 줄지에 대한 것이라 동기화하지 않는다
+ * 주소창 툴바에 고정한 확장 id 목록을 토글한다.
+ * 고정은 이 기기에서 툴바를 어떻게 보여 줄지에 대한 것이라 동기화하지 않는다
  */
 export function togglePinned(pinned: readonly string[], id: string): string[] {
   return pinned.includes(id) ? pinned.filter((p) => p !== id) : [...pinned, id]
+}
+
+/**
+ * 예전 버전이 localStorage 에 남겨 둔 고정 목록을 설정으로 한 번만 옮긴다.
+ *
+ * 옮길 것이 없으면(예전 값이 없거나, 설정에 이미 값이 있으면) null 을 돌려준다 —
+ * 호출한 쪽은 null 이면 설정을 건드리지 않는다. 설정 쪽을 언제나 이긴 것으로 두는 이유는,
+ * 사용자가 새 버전에서 고정을 모두 풀었을 때 예전 값이 되살아나면 안 되기 때문이다
+ */
+export function migratePinned(
+  saved: readonly string[],
+  legacy: readonly string[]
+): string[] | null {
+  if (saved.length > 0) return null
+  const merged = [...new Set(legacy.filter((id) => typeof id === 'string' && id.length > 0))]
+  return merged.length > 0 ? merged : null
+}
+
+/**
+ * 툴바에 실제로 그릴 확장들 — 고정한 id 순서대로, 지금 설치돼 있고 켜져 있는 것만.
+ * 목록에서 사라졌거나 꺼 둔 확장은 고정돼 있어도 그리지 않는다(크롬과 같다)
+ */
+export function pinnedExtensions(
+  items: readonly ExtensionDto[],
+  pinned: readonly string[]
+): ExtensionDto[] {
+  const byId = new Map(items.map((e) => [e.id, e]))
+  const out: ExtensionDto[] = []
+  for (const id of pinned) {
+    const item = byId.get(id)
+    if (item && item.enabled) out.push(item)
+  }
+  return out
 }
 
 /** 고정한 확장을 위로 올린다. 같은 무리 안에서는 들어온 순서를 지킨다 */

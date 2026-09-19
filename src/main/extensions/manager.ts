@@ -10,6 +10,7 @@ import { join, sep } from 'node:path'
 import type { Settings } from '../../shared/settings'
 import type { ExtensionDto, ExtensionError, ExtensionSource } from '../../shared/extensions'
 import { pickIconPath, readIconDataUrl, resolveExtensionName } from './import-sources'
+import { resolveActionIconPath, resolveOptionsPath, resolvePopupPath } from './action'
 
 export type { ExtensionDto, ExtensionError, ExtensionSource }
 
@@ -43,6 +44,12 @@ export interface ExtensionManifest {
   permissions: string[]
   /** manifest icons 중 가장 큰 것의 상대 경로(없으면 null) */
   iconPath: string | null
+  /** 툴바에 그릴 아이콘 — action.default_icon 우선, 없으면 iconPath 와 같다 */
+  actionIconPath: string | null
+  /** 아이콘을 눌렀을 때 띄울 팝업 문서(없으면 null) */
+  popupPath: string | null
+  /** 팝업이 없을 때 새 탭으로 여는 옵션 페이지(없으면 null) */
+  optionsPath: string | null
   /** `__MSG_…__` 를 풀 때 쓰는 default_locale */
   defaultLocale?: string
 }
@@ -81,6 +88,9 @@ export function parseManifest(raw: unknown): ExtensionManifest {
     description: typeof o.description === 'string' ? o.description.trim() : '',
     permissions,
     iconPath: pickIconPath(o.icons),
+    actionIconPath: resolveActionIconPath(o),
+    popupPath: resolvePopupPath(o),
+    optionsPath: resolveOptionsPath(o),
     defaultLocale: typeof o.default_locale === 'string' ? o.default_locale : undefined
   }
 }
@@ -178,6 +188,8 @@ export class ExtensionManager {
   /** 확장을 걸어 둔 세션들. hosts[0] 은 생성자로 받은 기본 세션이다 */
   private hosts: ExtensionHost[] = []
   private failures: ExtensionError[] = []
+  /** 진행 중인 최초 로드. 새 파티션 세션에 확장을 걸기 전에 이것을 기다린다 */
+  private ready: Promise<void> = Promise.resolve()
 
   constructor(
     host: ExtensionHost,
@@ -213,9 +225,22 @@ export class ExtensionManager {
 
   /**
    * 앱 시작 시 저장된 경로를 순서대로 로드한다.
-   * 한 개가 실패해도 나머지는 그대로 로드하고, 실패한 경로는 설정에서 지운다(앱 중단 금지)
+   * 한 개가 실패해도 나머지는 그대로 로드하고, 실패한 경로는 설정에서 지운다(앱 중단 금지).
+   *
+   * 끝나기를 기다릴 수 있도록 진행 중인 작업을 ready 에 남긴다 — attachHost 가 이것을
+   * 기다리지 않으면, 첫 탭이 만들어질 때 목록이 아직 비어 있어서 그 탭의 파티션 세션에
+   * 확장이 하나도 걸리지 않는다(확장이 기본 세션에만 남아 아무 탭에서도 동작하지 않는다)
    */
-  async loadSaved(): Promise<ExtensionDto[]> {
+  loadSaved(): Promise<ExtensionDto[]> {
+    const run = this.loadSavedInto()
+    this.ready = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
+  private async loadSavedInto(): Promise<ExtensionDto[]> {
     const saved = this.settings.get().extensionPaths
     const disabled = new Set(this.settings.get().disabledExtensionIds)
     this.entries = []
@@ -262,8 +287,18 @@ export class ExtensionManager {
       description: resolveExtensionName(manifest.description, resolved, manifest.defaultLocale),
       permissions: manifest.permissions,
       enabled: true,
-      icon: readIconDataUrl(resolved, manifest.iconPath)
+      // 툴바 아이콘은 크롬과 같은 우선순위 — action.default_icon 이 있으면 그것을 쓴다
+      icon:
+        readIconDataUrl(resolved, manifest.actionIconPath) ??
+        readIconDataUrl(resolved, manifest.iconPath),
+      ...(manifest.popupPath === null ? {} : { popup: manifest.popupPath }),
+      ...(manifest.optionsPath === null ? {} : { optionsPage: manifest.optionsPath })
     }
+  }
+
+  /** id 로 목록의 한 항목을 찾는다(툴바 액션이 팝업 경로를 읽을 때 쓴다) */
+  find(id: string): ExtensionDto | null {
+    return this.entries.find((e) => e.id === id) ?? null
   }
 
   /** 모든 세션에서 확장을 걷어낸다. 한 세션이 실패해도 나머지는 계속 걷어낸다 */
@@ -355,6 +390,9 @@ export class ExtensionManager {
    */
   async attachHost(host: ExtensionHost): Promise<void> {
     this.hosts.push(host)
+    // 첫 탭은 앱이 뜨자마자 만들어지므로 저장된 확장을 아직 다 읽지 못했을 수 있다.
+    // 여기서 기다리지 않으면 그 탭 세션에는 확장이 하나도 걸리지 않는다
+    await this.ready
     for (const entry of this.entries) {
       if (!entry.enabled) continue
       try {

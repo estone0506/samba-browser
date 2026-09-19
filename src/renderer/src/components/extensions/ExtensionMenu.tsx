@@ -7,19 +7,8 @@ import { useExtensionStore } from '@renderer/stores/extensionStore'
 import { useOverlayStore } from '@renderer/stores/overlayStore'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { ExtensionImportDialog } from './ExtensionImportDialog'
-import { parsePinned, sortExtensions, sortWithPinned, togglePinned } from './extension-list'
-
-// 고정 목록은 이 기기에서 메뉴를 어떻게 보여 줄지에 대한 것이라 동기화하지 않는다
-const PINNED_KEY = 'samba.extensions.pinned'
-
-function readPinned(): string[] {
-  try {
-    return parsePinned(localStorage.getItem(PINNED_KEY))
-  } catch {
-    // 저장소를 못 쓰는 환경(사생활 보호 모드 등)에서도 메뉴는 그대로 떠야 한다
-    return []
-  }
-}
+import { anchorOf } from './anchor'
+import { sortExtensions, sortWithPinned } from './extension-list'
 
 // 주소창 오른쪽 퍼즐 아이콘 메뉴 — 크롬과 같은 자리, 같은 짜임새다.
 // 관리·가져오기 바로가기 아래에 설치된 확장을 늘어놓는다
@@ -27,11 +16,10 @@ export function ExtensionMenu(): React.JSX.Element {
   const { t } = useTranslation()
   const setView = useUiStore((s) => s.setView)
   const setWebviewHidden = useOverlayStore((s) => s.setWebviewHidden)
-  const { items, load, remove } = useExtensionStore()
+  const { items, pinned, load, loadPinned, remove, togglePin, runAction } = useExtensionStore()
   const [open, setOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [menuFor, setMenuFor] = useState<string | null>(null)
-  const [pinned, setPinned] = useState<string[]>(readPinned)
   const rootRef = useRef<HTMLDivElement>(null)
 
   // 열려 있는 동안에는 네이티브 웹뷰를 접는다 — 접지 않으면 메뉴가 그 아래로 가려진다
@@ -40,10 +28,12 @@ export function ExtensionMenu(): React.JSX.Element {
     return () => setWebviewHidden(false)
   }, [open, setWebviewHidden])
 
-  // 열 때마다 목록을 다시 읽는다. 그 사이 확장 페이지에서 지웠을 수 있다
+  // 열 때마다 목록·고정 상태를 다시 읽는다. 그 사이 확장 페이지에서 지웠을 수 있다
   useEffect(() => {
-    if (open) void load()
-  }, [open, load])
+    if (!open) return
+    void load()
+    void loadPinned()
+  }, [open, load, loadPinned])
 
   // 닫을 때는 안쪽 ⋯ 메뉴도 함께 접는다 — 다음에 열었을 때 남아 있으면 놀란다
   const close = useCallback((): void => {
@@ -67,16 +57,6 @@ export function ExtensionMenu(): React.JSX.Element {
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [open, close])
-
-  const pin = (id: string): void => {
-    const next = togglePinned(pinned, id)
-    setPinned(next)
-    try {
-      localStorage.setItem(PINNED_KEY, JSON.stringify(next))
-    } catch {
-      // 저장하지 못해도 이번 세션 동안은 그대로 쓴다
-    }
-  }
 
   const goManage = (): void => {
     close()
@@ -132,22 +112,35 @@ export function ExtensionMenu(): React.JSX.Element {
                       !item.enabled && 'opacity-50'
                     )}
                   >
-                    {item.icon ? (
-                      <img
-                        src={item.icon}
-                        alt=""
-                        draggable={false}
-                        className="h-4 w-4 shrink-0 object-contain"
-                      />
-                    ) : (
-                      <Puzzle className="h-4 w-4 shrink-0 text-[var(--text2)]" />
-                    )}
-                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--text)]">
-                      {item.name}
-                    </span>
+                    {/* 항목을 누르면 크롬처럼 확장이 실행된다(팝업 또는 옵션 페이지).
+                        팝업은 메뉴를 닫은 뒤 퍼즐 아이콘 아래에 붙인다 */}
                     <button
                       type="button"
-                      onClick={() => pin(item.id)}
+                      disabled={!item.enabled}
+                      onClick={() => {
+                        const anchor = rootRef.current ? anchorOf(rootRef.current) : null
+                        close()
+                        if (anchor) void runAction(item.id, anchor)
+                      }}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-default"
+                    >
+                      {item.icon ? (
+                        <img
+                          src={item.icon}
+                          alt=""
+                          draggable={false}
+                          className="h-4 w-4 shrink-0 object-contain"
+                        />
+                      ) : (
+                        <Puzzle className="h-4 w-4 shrink-0 text-[var(--text2)]" />
+                      )}
+                      <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--text)]">
+                        {item.name}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void togglePin(item.id)}
                       title={t('extensions.pinned')}
                       aria-label={t('extensions.pinned')}
                       aria-pressed={pinned.includes(item.id)}

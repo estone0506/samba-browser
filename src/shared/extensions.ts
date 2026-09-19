@@ -20,8 +20,48 @@ export interface ExtensionDto {
   permissions: string[]
   /** 꺼 두면 목록에는 남지만 세션에서는 걷어낸다 */
   enabled: boolean
-  /** manifest icons 중 가장 큰 것. data:image/... 형태. 없으면 기본 퍼즐 아이콘 */
+  /**
+   * 툴바에 그릴 아이콘. data:image/... 형태.
+   * action.default_icon 이 있으면 그것을, 없으면 manifest icons 중 가장 큰 것을 쓴다.
+   * 둘 다 없으면 화면에서 기본 퍼즐 아이콘으로 대신한다
+   */
   icon?: string
+  /**
+   * 아이콘을 눌렀을 때 띄울 팝업 문서의 확장 안 상대 경로.
+   * MV3 는 action.default_popup, MV2 는 browser_action/page_action.default_popup 이다
+   */
+  popup?: string
+  /** 팝업이 없는 확장을 눌렀을 때 새 탭으로 여는 옵션 페이지(options_ui.page 또는 options_page) */
+  optionsPage?: string
+}
+
+/**
+ * 툴바 아이콘을 눌렀을 때 실제로 벌어진 일.
+ * - popup: 팝업 문서를 띄웠거나(open=true) 이미 떠 있어 닫았다(open=false)
+ * - options: 옵션 페이지를 새 탭으로 열었다
+ * - none: 팝업도 옵션 페이지도 없어 아무 일도 하지 않았다
+ *   (크롬이라면 chrome.action.onClicked 가 불릴 자리인데 Electron 이 지원하지 않는다)
+ */
+export type ExtensionActionKind = 'popup' | 'options' | 'none'
+
+export interface ExtensionActionResult {
+  kind: ExtensionActionKind
+  /** 팝업이 지금 떠 있는지(kind 가 popup 일 때만 의미가 있다) */
+  open: boolean
+}
+
+/**
+ * 툴바 버튼의 위치 — 팝업을 그 아래에 붙이기 위해 렌더러가 보고한다.
+ * 좌표는 렌더러 CSS 픽셀이고, 메인이 창 콘텐츠 크기에 다시 투영한다
+ * (화면 확대 비율이 100%가 아니어도 어긋나지 않게 측정 기준 뷰포트를 함께 보낸다)
+ */
+export interface ExtensionAnchorDto {
+  x: number
+  y: number
+  width: number
+  height: number
+  viewportWidth: number
+  viewportHeight: number
 }
 
 /** 로드 실패 한 건. 앱을 멈추지 않고 화면에 표시만 한다 */

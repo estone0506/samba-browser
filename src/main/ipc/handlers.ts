@@ -73,7 +73,10 @@ import { WorkspaceService } from '../workspace/service'
 import { workspaceShortcutIndex } from '../workspace/shortcut'
 import { ExtensionManager, createSessionExtensionHost } from '../extensions/manager'
 import { createExtensionInstaller } from '../extensions/install-service'
+import { extensionPopupUrl } from '../extensions/action'
+import { ExtensionPopupHost, sessionWithExtension } from '../extensions/popup-view'
 import { WEBSTORE_HOST, isExtensionId } from '../../shared/extensions'
+import type { ExtensionActionResult, ExtensionAnchorDto } from '../../shared/extensions'
 // === 폰 연동(3단계) — child_process 는 phone/process.ts 안에만 있다 ===================
 import { createAdbRunner } from '../phone/process'
 import { PhoneRepo } from '../phone/repo'
@@ -98,6 +101,23 @@ import { registerTranslate } from '../translate/register'
 // === 사진·영상 캡처 — 배선은 capture/capture-ipc.ts 한 곳에 모여 있다 =================
 import { registerCaptureIpc } from '../capture/capture-ipc'
 import type { CaptureShortcutInput } from '../../shared/capture'
+
+/**
+ * 렌더러가 보낸 툴바 버튼 좌표를 숫자만 남긴 형태로 받는다.
+ * 값이 빠지거나 숫자가 아니면 0 으로 본다 — 팝업은 그래도 창 왼쪽 위에 뜬다
+ */
+function toExtensionAnchor(raw: unknown): ExtensionAnchorDto {
+  const o = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  return {
+    x: num(o.x),
+    y: num(o.y),
+    width: num(o.width),
+    height: num(o.height),
+    viewportWidth: num(o.viewportWidth),
+    viewportHeight: num(o.viewportHeight)
+  }
+}
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -831,6 +851,16 @@ export function registerIpc(
       .catch((e: unknown) => console.error('파티션 세션 확장 로드 실패', e))
   })
 
+  // 확장 액션 팝업(툴바 아이콘 아래에 붙는 작은 창). 창당 한 개만 떠 있는다
+  const extensionPopup = new ExtensionPopupHost({
+    win,
+    onClosed: () => send(IPC.extPopupClosed, null)
+  })
+  win.once('closed', () => extensionPopup.dispose())
+  // 팝업은 탭 뷰 위에 얹히는데, 탭을 전환하면 활성 탭 뷰가 다시 맨 위로 올라간다.
+  // 크롬도 탭을 바꾸면 팝업을 닫으므로 여기서 함께 닫는다
+  tabs.onActivated(() => extensionPopup.close())
+
   handleFromRenderer(IPC.extList, () => ({ items: extensions.list(), errors: extensions.errors() }))
   // 경로를 주지 않으면 폴더 선택 다이얼로그를 연다. 취소하면 null 을 돌려준다.
   // 렌더러가 준 경로든 다이얼로그로 고른 경로든 resolveExtensionFolder 를 반드시 지난다 —
@@ -844,10 +874,48 @@ export function registerIpc(
     }
     return extensions.add(folder)
   })
-  handleFromRenderer(IPC.extRemove, (id: string) => extensions.remove(id))
-  handleFromRenderer(IPC.extSetEnabled, (id: string, enabled: boolean) =>
-    extensions.setEnabled(id, enabled)
-  )
+  handleFromRenderer(IPC.extRemove, (id: string) => {
+    extensionPopup.close()
+    return extensions.remove(id)
+  })
+  handleFromRenderer(IPC.extSetEnabled, (id: string, enabled: boolean) => {
+    if (extensionPopup.activeId() === id) extensionPopup.close()
+    return extensions.setEnabled(id, enabled)
+  })
+
+  // 툴바 아이콘 클릭 → 크롬이 하던 일을 대신한다.
+  // Electron 39 에는 chrome.action 이 없어 확장이 팝업을 띄워 달라고 할 수 없으므로,
+  // manifest 의 default_popup 을 우리가 읽어 같은 자리에 같은 문서를 띄운다
+  handleFromRenderer(IPC.extAction, (id: unknown, rawAnchor: unknown): ExtensionActionResult => {
+    if (typeof id !== 'string') throw new Error('확장 id 가 올바르지 않아요')
+    const item = extensions.find(id)
+    if (!item) throw new Error('목록에 없는 확장이에요')
+    if (!item.enabled) throw new Error('꺼져 있는 확장이에요')
+    const anchor = toExtensionAnchor(rawAnchor)
+    if (item.popup) {
+      // 팝업은 그 확장이 로드된 세션에서 열어야 chrome.* 이 동작한다.
+      // 보통은 지금 보고 있는 탭의 파티션 세션이고, 거기에 없으면 기본 세션으로 내려간다
+      const active = tabs.active()?.view.webContents.session
+      const ses = sessionWithExtension(id, [...(active ? [active] : []), session.defaultSession])
+      if (!ses) throw new Error('확장이 올라간 세션을 찾지 못했어요')
+      const open = extensionPopup.toggle({
+        id,
+        url: extensionPopupUrl(id, item.popup),
+        session: ses,
+        anchor
+      })
+      return { kind: 'popup', open }
+    }
+    extensionPopup.close()
+    if (item.optionsPage) {
+      // 팝업이 없으면 크롬은 chrome.action.onClicked 를 보낸다. Electron 은 그 이벤트를
+      // 전달할 방법이 없어, 대신 설정 화면에 해당하는 옵션 페이지를 새 탭으로 연다
+      tabs.create({ url: extensionPopupUrl(id, item.optionsPage), extension: true })
+      return { kind: 'options', open: false }
+    }
+    return { kind: 'none', open: false }
+  })
+  handleFromRenderer(IPC.extPopupClose, () => extensionPopup.close())
 
   // 가져오기·웹스토어 설치. 결과 폴더는 항상 userData/extensions/<id> 이고, 로드는 위 관리자가 한다
   const extensionInstaller = createExtensionInstaller({

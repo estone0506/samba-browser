@@ -6,8 +6,10 @@ import {
   filterExtensions,
   isExtensionMenu,
   matchesQuery,
+  migratePinned,
   normalizeQuery,
   parsePinned,
+  pinnedExtensions,
   permissionSummary,
   sortExtensions,
   sortWithPinned,
@@ -97,6 +99,51 @@ describe('주소창 메뉴 고정', () => {
   })
 })
 
+describe('고정 목록 이전(localStorage → 설정)', () => {
+  it('설정이 비어 있고 예전 값이 있으면 그 값을 옮긴다', () => {
+    expect(migratePinned([], ['a', 'b'])).toEqual(['a', 'b'])
+  })
+
+  it('옮기면서 중복은 하나로 줄인다', () => {
+    expect(migratePinned([], ['a', 'b', 'a'])).toEqual(['a', 'b'])
+  })
+
+  it('설정에 이미 값이 있으면 예전 값은 무시한다', () => {
+    expect(migratePinned(['x'], ['a', 'b'])).toBeNull()
+  })
+
+  it('예전 값이 없으면 아무것도 하지 않는다', () => {
+    expect(migratePinned([], [])).toBeNull()
+    expect(migratePinned([], [''])).toBeNull()
+  })
+
+  it('사용자가 새 버전에서 고정을 모두 풀어도 예전 값이 되살아나지 않는다', () => {
+    // 설정이 빈 목록이면 한 번은 옮겨지지만, 옮긴 뒤 예전 키를 지우므로(호출부)
+    // 그다음부터는 예전 값이 빈 목록으로 들어와 null 이 된다
+    expect(migratePinned([], [])).toBeNull()
+  })
+})
+
+describe('툴바에 그릴 고정 확장', () => {
+  const items = [ext({ id: 'a' }), ext({ id: 'b' }), ext({ id: 'c', enabled: false })]
+
+  it('고정한 순서대로 늘어놓는다(목록 순서가 아니다)', () => {
+    expect(pinnedExtensions(items, ['b', 'a']).map((e) => e.id)).toEqual(['b', 'a'])
+  })
+
+  it('꺼 둔 확장은 고정돼 있어도 그리지 않는다', () => {
+    expect(pinnedExtensions(items, ['c']).map((e) => e.id)).toEqual([])
+  })
+
+  it('지워져서 목록에 없는 id 는 조용히 건너뛴다', () => {
+    expect(pinnedExtensions(items, ['없음', 'a']).map((e) => e.id)).toEqual(['a'])
+  })
+
+  it('고정이 없으면 빈 목록이다(툴바가 통째로 사라진다)', () => {
+    expect(pinnedExtensions(items, [])).toEqual([])
+  })
+})
+
 describe('권한 요약', () => {
   it('중복을 없애고 순서를 지킨다', () => {
     expect(permissionSummary(['tabs', 'storage', 'tabs'])).toEqual(['tabs', 'storage'])
@@ -152,7 +199,8 @@ describe('확장 화면 i18n', () => {
       'extensions.searchEmpty',
       'extensions.manage',
       'extensions.installedTitle',
-      'extensions.detailsPermissions'
+      'extensions.detailsPermissions',
+      'extensions.actionTitle'
     ]) {
       expect(koKeys).toContain(key)
       expect(enKeys).toContain(key)
