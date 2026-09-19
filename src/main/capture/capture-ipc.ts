@@ -250,7 +250,14 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
     const source = await primaryScreenSource()
     const size = source.image.getSize()
     if (rawMode !== 'videoDirect') {
-      return { sourceId: source.id, width: size.width, height: size.height, crop: null }
+      return {
+        sourceId: source.id,
+        width: size.width,
+        height: size.height,
+        crop: null,
+        viewport: null,
+        scaleFactor: source.scaleFactor
+      }
     }
     const content = deps.win.getContentBounds()
     const view = webviewRect()
@@ -266,16 +273,22 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
       width: source.bounds.width,
       height: source.bounds.height
     })
-    // 크롭은 화면 픽셀(= width/height 와 같은 좌표계)로 돌려준다
-    const crop = clamped
-      ? {
-          x: Math.round(clamped.x * source.scaleFactor),
-          y: Math.round(clamped.y * source.scaleFactor),
-          width: Math.round(clamped.width * source.scaleFactor),
-          height: Math.round(clamped.height * source.scaleFactor)
-        }
-      : null
-    return { sourceId: source.id, width: size.width, height: size.height, crop }
+    // 화면 픽셀(= width/height 와 같은 좌표계)로 돌려준다
+    const toDevice = (r: CaptureRect): CaptureRect => ({
+      x: Math.round(r.x * source.scaleFactor),
+      y: Math.round(r.y * source.scaleFactor),
+      width: Math.round(r.width * source.scaleFactor),
+      height: Math.round(r.height * source.scaleFactor)
+    })
+    return {
+      sourceId: source.id,
+      width: size.width,
+      height: size.height,
+      crop: clamped ? toDevice(clamped) : null,
+      // 선택 영역은 잘리기 전 웹뷰 왼쪽 위를 원점으로 재므로 자르지 않은 값도 함께 준다
+      viewport: toDevice(wanted),
+      scaleFactor: source.scaleFactor
+    }
   })
 
   deps.handle(IPC.captureSaveVideo, (rawBytes: unknown, rawMode: unknown): void => {
@@ -354,9 +367,16 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
     const message = await shell.openPath(assertInCaptureDir(rawPath))
     if (message) throw new Error(message)
   })
-  deps.handle(IPC.captureOpenFolder, (rawPath: unknown) => {
+  deps.handle(IPC.captureOpenFolder, async (rawPath: unknown) => {
+    // 파일을 주지 않으면(메뉴의 '열기') 저장 폴더 자체를 연다
+    if (rawPath === undefined || rawPath === null || rawPath === '') {
+      const message = await shell.openPath(targetDir())
+      if (message) throw new Error(message)
+      return
+    }
     shell.showItemInFolder(assertInCaptureDir(rawPath))
   })
+  deps.handle(IPC.captureDir, (): string => targetDir())
   deps.handle(IPC.captureCopyImage, (rawPath: unknown) => {
     const image = nativeImage.createFromPath(assertInCaptureDir(rawPath))
     if (image.isEmpty()) throw new Error('이미지를 읽지 못했습니다')
