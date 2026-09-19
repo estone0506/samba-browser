@@ -46,7 +46,7 @@ import {
   type CaptureVideoSourceDto
 } from '../../shared/capture'
 import { captureShortcutMode } from '../../shared/capture'
-import { resolveCaptureDir, uniqueCaptureFile } from './paths'
+import { resolveCaptureDir, samePath, uniqueCaptureFile } from './paths'
 import { blitRows, createCanvas, decodePng, encodePng, toDeviceStep } from './stitch'
 import type { TabManager } from '../browser/tab-manager'
 
@@ -414,7 +414,8 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   // 저장이 끝난 파일만 다룬다 — 임의 경로 열기를 막기 위해 저장 폴더 밖이면 거절한다
   const assertInCaptureDir = (rawPath: unknown): string => {
     if (typeof rawPath !== 'string' || !rawPath) throw new Error('경로가 비어 있습니다')
-    if (dirname(rawPath) !== targetDir()) throw new Error('캡처 폴더 밖의 파일입니다')
+    // 구분자·끝 구분자·대소문자 차이로 자기 폴더를 밖으로 오인하지 않게 정규화해 견준다
+    if (!samePath(dirname(rawPath), targetDir())) throw new Error('캡처 폴더 밖의 파일입니다')
     if (!existsSync(rawPath)) throw new Error('파일을 찾을 수 없습니다')
     return rawPath
   }

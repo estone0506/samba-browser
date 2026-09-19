@@ -1,6 +1,6 @@
 // 캡처 저장 폴더·파일명 결정. fs 는 주입받아 테스트할 수 있게 남긴다
 
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { captureFileName, DEFAULT_CAPTURE_FOLDER_NAME } from '../../shared/capture'
 
 export interface CapturePathFs {
@@ -33,6 +33,26 @@ export function resolveCaptureDir(input: CaptureDirInput, fs: CapturePathFs): st
   }
   if (!fs.exists(fallback)) fs.mkdir(fallback)
   return fallback
+}
+
+/**
+ * 두 경로가 같은 폴더를 가리키는가.
+ *
+ * 문자열 비교만 하면 `C:\a\b` 와 `C:/a/b/`, `c:\a\b` 가 서로 달라 보여
+ * 자기 캡처 폴더 안의 파일인데도 "폴더 밖" 으로 거절당한다.
+ * 구분자·끝 구분자·대소문자(윈도우)를 맞춰 견준다
+ */
+export function samePath(
+  a: string,
+  b: string,
+  caseInsensitive = process.platform === 'win32'
+): boolean {
+  const normalize = (p: string): string => {
+    const unified = resolve(p).replace(/[\\/]+$/, '')
+    return caseInsensitive ? unified.toLowerCase() : unified
+  }
+  if (!a || !b) return false
+  return normalize(a) === normalize(b)
 }
 
 export interface CaptureFileTarget {
