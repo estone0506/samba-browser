@@ -28,6 +28,7 @@ describe('설정 섹션 상수', () => {
       'agent',
       'ai',
       'keymaster',
+      'phone',
       'automation',
       'developer'
     ])

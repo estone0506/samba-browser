@@ -536,6 +536,7 @@
       "agent": "Agent",
       "ai": "AI connection",
       "keymaster": "Key Master",
+      "phone": "Phones",
       "automation": "Automation",
       "developer": "Developer"
     },
@@ -692,5 +693,83 @@
     "back": "Back",
     "doneBody": "A new recovery key was issued. The old one no longer works",
     "close": "Close"
+  },
+  "phone": {
+    "title": "Phones",
+    "subtitle": "Handle verification texts and payment approvals on connected phones. Up to {{n}} phones.",
+    "proTitle": "Phone linking is available on the Pro plan",
+    "proBody": "Upgrade to Pro to connect up to 3 phones and handle verification texts and payment app approvals automatically.",
+    "proAction": "See plans",
+    "findNow": "Scan now",
+    "wifiPlaceholder": "Wi-Fi address (e.g. 192.168.0.5:5555)",
+    "wifiConnect": "Connect",
+    "openSettings": "Open phone settings",
+    "dismiss": "Dismiss",
+    "empty": "No phones connected. Plug one in over USB and approve USB debugging on the phone.",
+    "recover": "Reconnect",
+    "authWaiting": "Waiting for a verification on this phone",
+    "state": {
+      "online": "Connected",
+      "unauthorized": "Awaiting approval",
+      "offline": "Not responding",
+      "disconnected": "Disconnected"
+    },
+    "transport": {
+      "usb": "USB",
+      "wifi": "Wi-Fi"
+    },
+    "badge": {
+      "still": "Snapshot mode",
+      "smsOk": "SMS readable",
+      "smsBlocked": "SMS blocked"
+    },
+    "pad": {
+      "back": "Back",
+      "home": "Home",
+      "recents": "Recents",
+      "power": "Power"
+    },
+    "screen": {
+      "canvasLabel": "{{name}} screen",
+      "starting": "Opening the screen…",
+      "failed": "Could not open the screen",
+      "unavailable": "Screen streaming is not ready yet",
+      "inputUnavailable": "Screen control is not ready yet",
+      "openWindow": "Open in a larger window"
+    },
+    "settings": {
+      "pathsTitle": "adb · scrcpy paths",
+      "pathsDesc": "They do not need to be on PATH. Enter the full executable path or detect them automatically.",
+      "adbPath": "adb path",
+      "scrcpyPath": "scrcpy path",
+      "detect": "Detect paths",
+      "detectFailed": "Could not find the paths. Please enter them manually.",
+      "listTitle": "Connected phones",
+      "labelPlaceholder": "Nickname (e.g. Work Galaxy)",
+      "limitNote": "The Pro plan supports up to {{n}} phones.",
+      "overLimit": "You are over the {{n}} phone limit. Disconnect the phones you are not using.",
+      "qualityTitle": "Screen quality",
+      "maxSize": "Resolution",
+      "maxSizeDesc": "Pixels on the long edge. Lower is lighter.",
+      "fps": "Frames per second",
+      "autoReconnect": "Auto reconnect",
+      "autoReconnectDesc": "Try to reattach once when the connection drops.",
+      "paymentTitle": "Payments",
+      "paymentDesc": "Payments above the limit always ask a human, whatever the permission mode.",
+      "paymentLimit": "Payment limit (KRW)"
+    },
+    "assign": {
+      "label": "Assigned phone",
+      "open": "Choose a phone",
+      "title": "Choose a phone",
+      "desc": "Pick which phone receives verifications for this account. If you skip it, all connected phones are watched.",
+      "none": "Not chosen",
+      "noneDesc": "Watches every connected phone",
+      "cancel": "Cancel",
+      "save": "Save",
+      "suggestion": "{{host}} was verified on {{phone}}. Make it the assigned phone?",
+      "accept": "Assign",
+      "dismiss": "Not now"
+    }
   }
 }

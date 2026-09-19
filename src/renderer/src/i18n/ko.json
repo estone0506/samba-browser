@@ -536,6 +536,7 @@
       "agent": "에이전트",
       "ai": "AI 연결",
       "keymaster": "키마스터",
+      "phone": "폰",
       "automation": "자동화",
       "developer": "개발자"
     },
@@ -692,5 +693,83 @@
     "back": "뒤로",
     "doneBody": "복구 키가 새로 발급됐어요. 이전 키는 더 이상 쓸 수 없어요",
     "close": "닫기"
+  },
+  "phone": {
+    "title": "폰",
+    "subtitle": "연결된 폰에서 본인인증 문자와 간편결제 승인을 처리합니다. 최대 {{n}}대까지 연결할 수 있어요",
+    "proTitle": "폰 연동은 Pro 요금제부터 사용할 수 있습니다",
+    "proBody": "Pro 요금제로 올리면 폰 3대까지 연결해 본인인증 문자와 간편결제 앱 승인을 자동으로 처리합니다.",
+    "proAction": "요금제 보기",
+    "findNow": "지금 찾기",
+    "wifiPlaceholder": "와이파이 주소 (예: 192.168.0.5:5555)",
+    "wifiConnect": "연결",
+    "openSettings": "폰 설정 열기",
+    "dismiss": "닫기",
+    "empty": "연결된 폰이 없어요. USB 로 연결하고 폰에서 USB 디버깅을 승인해 주세요",
+    "recover": "재연결",
+    "authWaiting": "이 폰으로 오는 인증을 기다리는 중이에요",
+    "state": {
+      "online": "연결됨",
+      "unauthorized": "승인 대기",
+      "offline": "응답 없음",
+      "disconnected": "끊김"
+    },
+    "transport": {
+      "usb": "USB",
+      "wifi": "와이파이"
+    },
+    "badge": {
+      "still": "간이 화면",
+      "smsOk": "문자 조회 가능",
+      "smsBlocked": "문자 조회 막힘"
+    },
+    "pad": {
+      "back": "뒤로",
+      "home": "홈",
+      "recents": "최근",
+      "power": "전원"
+    },
+    "screen": {
+      "canvasLabel": "{{name}} 화면",
+      "starting": "화면을 여는 중…",
+      "failed": "화면을 열지 못했어요",
+      "unavailable": "화면 기능은 아직 준비 중이에요",
+      "inputUnavailable": "화면 조작은 아직 준비 중이에요",
+      "openWindow": "큰 창으로 열기"
+    },
+    "settings": {
+      "pathsTitle": "adb · scrcpy 경로",
+      "pathsDesc": "PATH 에 등록되어 있지 않아도 됩니다. 실행 파일 전체 경로를 적거나 자동으로 찾으세요",
+      "adbPath": "adb 경로",
+      "scrcpyPath": "scrcpy 경로",
+      "detect": "경로 자동 찾기",
+      "detectFailed": "경로를 찾지 못했어요. 직접 입력해 주세요",
+      "listTitle": "연결된 폰",
+      "labelPlaceholder": "별칭 (예: 업무용 갤럭시)",
+      "limitNote": "Pro 요금제는 폰 {{n}}대까지 연결할 수 있어요",
+      "overLimit": "연결 상한 {{n}}대를 넘었어요. 쓰지 않는 폰은 연결을 끊어 주세요",
+      "qualityTitle": "화면 품질",
+      "maxSize": "해상도",
+      "maxSizeDesc": "긴 변 기준 픽셀 수예요. 낮출수록 가볍습니다",
+      "fps": "초당 프레임",
+      "autoReconnect": "자동 재연결",
+      "autoReconnectDesc": "연결이 끊기면 한 번만 다시 붙여 봐요",
+      "paymentTitle": "결제",
+      "paymentDesc": "상한을 넘는 결제는 권한 모드와 상관없이 사람 확인을 받습니다",
+      "paymentLimit": "결제 상한 (원)"
+    },
+    "assign": {
+      "label": "담당 폰",
+      "open": "담당 폰 고르기",
+      "title": "담당 폰 고르기",
+      "desc": "이 계정의 본인인증을 어느 폰으로 받을지 고르세요. 고르지 않으면 연결된 폰을 동시에 감시합니다",
+      "none": "고르지 않음",
+      "noneDesc": "연결된 폰을 동시에 감시해요",
+      "cancel": "취소",
+      "save": "저장",
+      "suggestion": "{{host}} 인증을 {{phone}} 에서 받았어요. 이 폰을 담당 폰으로 할까요?",
+      "accept": "담당 폰으로",
+      "dismiss": "괜찮아요"
+    }
   }
 }
