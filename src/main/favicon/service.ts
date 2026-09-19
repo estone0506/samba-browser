@@ -52,6 +52,8 @@ export interface FaviconServiceDeps {
   fetch: FaviconFetch
   /** 테스트에서 시간 흐름을 제어하기 위한 주입점 */
   now?: () => number
+  /** 메모리 캐시 상한. 기본값은 FAVICON_MEMORY_CACHE_LIMIT(테스트에서만 줄여 쓴다) */
+  memoryLimit?: number
 }
 
 interface CacheEntry {
@@ -116,6 +118,7 @@ export class FaviconService {
   private readonly cacheDir: string
   private readonly fetchFn: FaviconFetch
   private readonly now: () => number
+  private readonly memoryLimit: number
   // 메모리 캐시. peek() 는 여기만 본다(동기 호출자용)
   private readonly memory = new Map<string, CacheEntry>()
   // 같은 호스트에 대한 동시 요청 합치기
@@ -125,6 +128,7 @@ export class FaviconService {
     this.cacheDir = deps.cacheDir
     this.fetchFn = deps.fetch
     this.now = deps.now ?? ((): number => Date.now())
+    this.memoryLimit = deps.memoryLimit ?? FAVICON_MEMORY_CACHE_LIMIT
   }
 
   /** 메모리 캐시만 동기로 조회한다(없으면 null). 동기 호출부(새 탭 북마크)용 */
@@ -184,7 +188,7 @@ export class FaviconService {
   private setMemory(host: string, entry: CacheEntry): void {
     this.memory.delete(host)
     this.memory.set(host, entry)
-    while (this.memory.size > FAVICON_MEMORY_CACHE_LIMIT) {
+    while (this.memory.size > this.memoryLimit) {
       const oldest = this.memory.keys().next().value
       if (oldest === undefined) break
       this.memory.delete(oldest)

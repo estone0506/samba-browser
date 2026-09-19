@@ -208,14 +208,19 @@ describe('FaviconService — 캐시와 네트워크', () => {
 
   it('메모리 캐시는 상한을 넘으면 가장 오래된 항목부터 버린다(LRU)', async () => {
     const fetchFn = vi.fn<FaviconFetch>(async () => response(PNG))
-    const s = new FaviconService({ cacheDir: dir, fetch: fetchFn })
-    for (let i = 0; i < FAVICON_MEMORY_CACHE_LIMIT + 1; i++) {
+    // 상한을 3으로 줄여 넣는다 — 기본 상한(200)만큼 파일을 쓰면 느린 디스크에서
+    // 테스트가 시간 초과로 간헐 실패했다. 판정 논리는 상한 값과 무관하다
+    const limit = 3
+    const s = new FaviconService({ cacheDir: dir, fetch: fetchFn, memoryLimit: limit })
+    for (let i = 0; i < limit + 1; i++) {
       await s.get(`host${i}.example.com`)
     }
     // 가장 먼저 넣은 host0 은 밀려나 peek 이 null(메모리에는 없음)
     expect(s.peek('host0.example.com')).toBeNull()
     // 가장 최근 것은 남아 있다
-    expect(s.peek(`host${FAVICON_MEMORY_CACHE_LIMIT}.example.com`)).toContain('data:image/png')
+    expect(s.peek(`host${limit}.example.com`)).toContain('data:image/png')
+    // 기본 상한은 그대로 200 이다
+    expect(FAVICON_MEMORY_CACHE_LIMIT).toBe(200)
   })
 
   it('peek 은 캐시에 없으면 null 이고 네트워크를 타지 않는다', () => {

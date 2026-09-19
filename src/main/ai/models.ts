@@ -25,8 +25,17 @@ const API_KEY_MODELS: TaskModels = {
   visual: 'claude-sonnet-5'
 }
 
+// Codex 구독(= Codex CLI) 경로는 OpenAI 모델 이름을 그대로 넘긴다(codex exec -m)
+const CODEX_MODELS: TaskModels = {
+  fast: 'gpt-5.6',
+  standard: 'gpt-5.6',
+  deep: 'gpt-5.6-pro',
+  visual: 'gpt-5.6'
+}
+
 export const DEFAULT_TASK_MODELS: Record<AiProviderId, TaskModels> = {
   claude_subscription: SUBSCRIPTION_MODELS,
+  codex_subscription: CODEX_MODELS,
   api_key: API_KEY_MODELS,
   // 서비스 크레딧은 아직 자리만 잡아 둔 카드라 내 API 키와 같은 목록을 쓴다
   service_credit: API_KEY_MODELS
@@ -42,6 +51,7 @@ const MODEL_CHOICES: Record<AiProviderId, string[]> = {
     'claude-haiku-4-5-20251001'
   ],
   api_key: ['claude-fable-5-1', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
+  codex_subscription: ['gpt-5.6', 'gpt-5.6-pro', 'gpt-5.1-codex-max', 'gpt-5.3-codex'],
   service_credit: [
     'claude-haiku-4-5-20251001',
     'claude-sonnet-5',

@@ -35,12 +35,32 @@ import { SyncEngineHolder } from '../sync/engine'
 import { toolbarBookmarks } from '../bookmarks/newtab'
 import type { NewTabInitDto } from '../../shared/newtab'
 // === AI 연결(2b 추가분) ===============================================================
-import { isAiProviderId, isApiKeyVendor, isTaskModelKey } from '../../shared/ai'
+import {
+  connectionKeyOf,
+  isAiProviderId,
+  isApiKeyVendor,
+  isSubscriptionProviderId,
+  isTaskModelKey
+} from '../../shared/ai'
 import type { AiProviderId, ApiKeyVendor, TaskModelKey } from '../../shared/ai'
 import { ApiKeyStore } from '../ai/keys'
-import { defaultProbes, detectProviders, testApiKey } from '../ai/providers'
+import {
+  defaultProbes,
+  detectProviders,
+  readAccountFromDisk,
+  SUBSCRIPTION_CLI,
+  testApiKey
+} from '../ai/providers'
+import {
+  connectSubscription,
+  disconnectedRecord,
+  openLoginTerminal,
+  migrateAiConnections,
+  withConnection
+} from '../ai/connections'
+import { resolveAgentAuth } from '../ai/auth-route'
 import { remapOnProviderChange, resolveModel, taskModelChoices } from '../ai/models'
-import { setApiKeyResolver } from '../agent/provider'
+import { setApiKeyResolver, setAuthResolver } from '../agent/provider'
 // === AI 연결 끝 =======================================================================
 import { AuthService } from '../sync/auth'
 import { hasSupabaseEnv } from '../sync/env'
@@ -555,13 +575,71 @@ export function registerIpc(
   const apiKeys = new ApiKeyStore(join(app.getPath('userData'), 'ai-keys.bin'), safeStorage)
   const aiProbes = defaultProbes()
   // ApiKeyStore.get 의 유일한 소비자(agent/provider.ts)에 조회기를 심는다.
-  // '내 API 키' 경로를 고른 경우에만 키를 넘긴다
-  setApiKeyResolver(() =>
-    settings.get().aiProvider === 'api_key' ? apiKeys.get('anthropic') : null
-  )
-  win.once('closed', () => setApiKeyResolver(null))
+  // 실제로 키를 꺼낼지는 provider.ts 가 인증 경로('api_key')를 보고 정한다
+  setApiKeyResolver(() => apiKeys.get('anthropic'))
+  // 이번 실행에 쓸 인증 경로. **연결한 적 없는 구독은 자격 파일이 있어도 쓰지 않는다**
+  setAuthResolver(() => {
+    const s = settings.get()
+    return resolveAgentAuth({
+      provider: s.aiProvider as AiProviderId,
+      connections: s.aiConnections,
+      // 평문 키는 여기까지 오지 않는다 — 마스킹 결과로 존재 여부만 본다
+      hasApiKey: Boolean(apiKeys.masked().anthropic)
+    })
+  })
+  win.once('closed', () => {
+    setApiKeyResolver(null)
+    setAuthResolver(null)
+  })
 
-  handleFromRenderer(IPC.aiProviders, () => detectProviders(aiProbes, apiKeys.masked()))
+  // 첫 실행 1회 승계: 이미 Claude 구독으로 쓰고 있던 기존 사용자는 연결됨으로 올려 준다
+  {
+    const s = settings.get()
+    const patch = migrateAiConnections({
+      migrated: s.aiConnectionsMigrated,
+      aiProvider: s.aiProvider,
+      connections: s.aiConnections,
+      hasClaudeCredential: SUBSCRIPTION_CLI.claude_subscription.credentialPaths.some((p) =>
+        aiProbes.fileExists(p)
+      ),
+      account: readAccountFromDisk('claude_subscription') ?? undefined
+    })
+    if (patch) {
+      const inherited = patch.aiConnections.claude.connected && !s.aiConnections.claude.connected
+      settings.set(patch)
+      if (inherited) {
+        console.info('[AI] 기존 Claude 구독 사용 상태를 연결됨으로 1회 승계했습니다')
+      }
+    }
+  }
+
+  handleFromRenderer(IPC.aiProviders, () =>
+    detectProviders(aiProbes, apiKeys.masked(), settings.get().aiConnections)
+  )
+  // 연결: 자격이 있으면 연결 기록을 남기고, 없으면 이유만 돌려준다(화면이 안내를 띄운다)
+  handleFromRenderer(IPC.aiConnect, async (raw: unknown, rawOpenTerminal: unknown) => {
+    if (!isSubscriptionProviderId(raw)) throw new Error('알 수 없는 구독 경로')
+    if (rawOpenTerminal === true) {
+      // 새 터미널 창에서 로그인 명령을 띄운다(자격은 그 창에서 사용자가 직접 만든다)
+      openLoginTerminal(raw)
+      return { ok: false, reason: 'needs_login' }
+    }
+    const result = await connectSubscription(raw, aiProbes)
+    if (result.ok && result.connection) {
+      settings.set({
+        aiConnections: withConnection(settings.get().aiConnections, raw, result.connection)
+      })
+    }
+    return result
+  })
+  // 해지: 진행 중 작업이 없을 때만. 앱의 연결 기록만 지우고 CLI 로그인 파일은 두 손 대지 않는다
+  handleFromRenderer(IPC.aiDisconnect, (raw: unknown) => {
+    if (!isSubscriptionProviderId(raw)) throw new Error('알 수 없는 구독 경로')
+    if (agent.isRunning()) throw new Error('작업이 끝난 뒤에 연결을 해지할 수 있어요')
+    const next = withConnection(settings.get().aiConnections, raw, disconnectedRecord())
+    settings.set({ aiConnections: next })
+    return { ok: true, connection: next[connectionKeyOf(raw)] }
+  })
   handleFromRenderer(IPC.aiSetProvider, (raw: unknown) => {
     if (!isAiProviderId(raw)) throw new Error('알 수 없는 AI 연결 경로')
     const before = settings.get()
