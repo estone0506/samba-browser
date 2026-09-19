@@ -16,6 +16,9 @@ import { useUiStore } from './uiStore'
 export const RECORDING_BUSY_KEY = 'screenCapture.recordingBusy'
 
 let recordingHandle: RecordingHandle | null = null
+// 녹화 시작 절차가 진행 중인가. recordingMode 는 beginVideo·getUserMedia 가 끝나야
+// 세워지므로, 그 틈에 들어온 두 번째 호출(단축키 연타)은 이 표식으로 막는다
+let videoStarting = false
 // 지금 녹화의 표. 메인은 이 표가 맞는 이어 쓰기·마무리만 듣는다
 let recordingToken: string | null = null
 // 녹화 청크 이어 쓰기 대기열(중지 때 마지막 청크까지 기다린다)
@@ -107,11 +110,19 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
 
   start: async (mode) => {
     set({ error: null })
+    const video = isVideoCaptureMode(mode)
+    // 표식을 내가 세웠는가(내가 세운 것만 되돌린다 — 남의 시작을 풀면 안 된다)
+    let claimed = false
     try {
       // 녹화 중에는 새 녹화만 막는다(이미지 캡처는 녹화와 겹쳐도 된다). 조용히 무시하면
-      // "직접 지정을 눌러도 아무 일도 없다"가 되므로 이유를 보여 준다
-      if (get().recordingMode && isVideoCaptureMode(mode)) {
+      // "직접 지정을 눌러도 아무 일도 없다"가 되므로 이유를 보여 준다.
+      // 여기까지는 await 가 없어 연타로 들어온 두 번째 호출이 반드시 걸린다
+      if (video && (videoStarting || get().recordingMode)) {
         throw new Error(RECORDING_BUSY_KEY)
+      }
+      if (video) {
+        videoStarting = true
+        claimed = true
       }
       // 직접 지정(이미지·비디오)은 정지 이미지를 띄우고 드래그로 영역을 고른다
       if (mode === 'direct' || mode === 'videoDirect') {
@@ -141,6 +152,8 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
       })
     } catch (e: unknown) {
       set({ error: toMessage(e) })
+    } finally {
+      if (claimed) videoStarting = false
     }
   },
 
@@ -177,6 +190,12 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
   recordRegion: async (a, b) => {
     const source = pendingVideoSource
     if (!get().still || !source) return
+    // 시작 절차가 이미 도는 중이면(연타) 두 번째는 여기서 멈춘다
+    if (videoStarting || get().recordingMode) {
+      set({ error: RECORDING_BUSY_KEY })
+      return
+    }
+    videoStarting = true
     // 오버레이를 닫아 웹뷰를 돌려준 뒤 녹화를 시작한다(녹화 화면에 오버레이가 남지 않게)
     get().closeStill()
     try {
@@ -196,6 +215,8 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
       })
     } catch (e: unknown) {
       set({ error: toMessage(e) })
+    } finally {
+      videoStarting = false
     }
   },
 

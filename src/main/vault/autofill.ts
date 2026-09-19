@@ -80,7 +80,10 @@ export async function autofillAccount(
   )
   if (password === null) return 'secret-not-found'
 
-  let usernameFilled = true
+  // 아이디 칸이 아예 없는 화면(2단계 로그인의 비밀번호 단계)은 채울 아이디가 없는 게 정상이다.
+  // 반대로 칸이 있는데 금고 아이디가 비어 있으면 "채우지 못함"으로 본다 —
+  // 빈 아이디로 폼을 제출하면 로그인 실패·계정 잠금으로 이어진다
+  let usernameFilled = fields.username === undefined
   if (fields.username !== undefined && account.username) {
     usernameFilled = (await pageBridge.fillValue(tab, fields.username, account.username)) === 'ok'
   }

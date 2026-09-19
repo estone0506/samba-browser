@@ -75,8 +75,9 @@ export async function typeText(
   text: string
 ): Promise<'ok' | 'unsupported-text'> {
   if (!SAFE_TEXT_RE.test(text)) return 'unsupported-text'
-  // 공백은 `input text` 의 규칙대로 %s 로 바꿔 보낸다
-  const escaped = text.replace(/ /g, '%s')
+  // `input text` 에서 '%' 는 탈출 문자다. 먼저 '%%' 로 이중화해야
+  // 사용자가 친 "%s" 가 공백으로 둔갑하지 않는다. 그 다음에 공백을 %s 로 바꾼다
+  const escaped = text.replace(/%/g, '%%').replace(/ /g, '%s')
   await adb.run(shellArgs(serial, ['input', 'text', escaped]))
   return 'ok'
 }

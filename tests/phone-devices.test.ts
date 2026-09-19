@@ -73,7 +73,7 @@ interface Harness {
   manager: DeviceManager
 }
 
-function makeHarness(options: { autoReconnect?: boolean } = {}): Harness {
+function makeHarness(options: { autoReconnect?: boolean; adbPath?: () => string } = {}): Harness {
   const adb = new FakeAdb()
   const repo = new FakeRepo()
   const timer = new FakeTimer()
@@ -82,6 +82,7 @@ function makeHarness(options: { autoReconnect?: boolean } = {}): Harness {
     adb,
     repo,
     now: () => 1_000,
+    adbPath: options.adbPath,
     autoReconnect: () => options.autoReconnect !== false,
     onChange: (list, warning) => changes.push({ list, warning }),
     setInterval: timer.setInterval,
@@ -149,6 +150,62 @@ describe('DeviceManager 폴링', () => {
     const list = await h.manager.refresh()
     expect(list[0].state).toBe('unauthorized')
     expect(h.adb.calls.some((c) => c[0] === 'kill-server')).toBe(false)
+  })
+})
+
+describe('DeviceManager 실패 내성', () => {
+  it('adb 경로가 비어 있으면 adb 를 아예 부르지 않는다', async () => {
+    const h = makeHarness({ adbPath: () => '' })
+    h.manager.start()
+    await Promise.resolve()
+    h.timer.tick()
+    await Promise.resolve()
+    expect(h.adb.calls).toHaveLength(0)
+    expect(h.manager.list()).toEqual([])
+    h.manager.stop()
+  })
+
+  it('adb 실행이 던져도 refresh 는 빈 목록을 돌려주고 예외를 내보내지 않는다', async () => {
+    const h = makeHarness()
+    h.adb.run = (): Promise<never> => Promise.reject(new Error('adb path is not set'))
+    await expect(h.manager.refresh()).resolves.toEqual([])
+    expect(h.changes).toHaveLength(0)
+  })
+
+  it('한 번 실패해도 직전 목록을 지우지 않는다', async () => {
+    const h = makeHarness()
+    h.adb.reply('devices -l', ONE)
+    await h.manager.refresh()
+    const before = h.manager.list()
+    h.adb.run = (): Promise<never> => Promise.reject(new Error('adb server died'))
+    expect(await h.manager.refresh()).toEqual(before)
+    expect(h.manager.list()).toEqual(before)
+  })
+
+  it('폴링 중 adb 가 던져도 unhandledRejection 이 나지 않는다', async () => {
+    const rejections: unknown[] = []
+    const onReject = (e: unknown): void => {
+      rejections.push(e)
+    }
+    process.on('unhandledRejection', onReject)
+    try {
+      const h = makeHarness()
+      h.adb.run = (): Promise<never> => Promise.reject(new Error('adb path is not set'))
+      h.manager.start()
+      h.timer.tick()
+      // 마이크로태스크가 모두 빠진 뒤에야 미처리 거부가 보고된다
+      await new Promise((r) => setTimeout(r, 10))
+      h.manager.stop()
+    } finally {
+      process.off('unhandledRejection', onReject)
+    }
+    expect(rejections).toEqual([])
+  })
+
+  it('recover() 도 adb 가 던지면 false 를 돌려준다', async () => {
+    const h = makeHarness({ autoReconnect: false })
+    h.adb.run = (): Promise<never> => Promise.reject(new Error('adb path is not set'))
+    expect(await h.manager.recover('R3CRA05HY3R')).toBe(false)
   })
 })
 
@@ -266,7 +323,7 @@ class FakeServiceRepo extends FakeRepo implements PhoneServiceRepo {
   }
 }
 
-function makeService(): {
+function makeService(options: { adbPath?: string } = {}): {
   adb: FakeAdb
   repo: FakeServiceRepo
   emitted: { list: PhoneDto[]; warning?: string }[]
@@ -276,7 +333,8 @@ function makeService(): {
   const adb = new FakeAdb()
   const repo = new FakeServiceRepo()
   const emitted: { list: PhoneDto[]; warning?: string }[] = []
-  let settings: Settings = { ...DEFAULT_SETTINGS }
+  // 기기 감시는 adb 경로가 설정돼 있을 때만 adb 를 부른다 — 기본은 찾은 경로를 미리 넣어 둔다
+  let settings: Settings = { ...DEFAULT_SETTINGS, adbPath: options.adbPath ?? ADB_FOUND }
   const service = new PhoneService({
     adb,
     repo,
@@ -305,7 +363,7 @@ function makeService(): {
 
 describe('PhoneService', () => {
   it('detectPaths 는 찾은 경로로 비어 있는 설정을 채운다', () => {
-    const s = makeService()
+    const s = makeService({ adbPath: '' })
     const found = s.service.detectPaths()
     expect(found.adb).toBe(ADB_FOUND)
     expect(found.scrcpy).toBe('')

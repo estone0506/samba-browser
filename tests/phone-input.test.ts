@@ -69,6 +69,18 @@ describe('입력 전달', () => {
     ])
   })
 
+  it("typeText 는 '%' 를 '%%' 로 먼저 이중화한다(공백 치환에 휩쓸리지 않게)", async () => {
+    const adb = new FakeAdb()
+    expect(await typeText(adb, SERIAL, '100%')).toBe('ok')
+    expect(adb.calls[0].at(-1)).toBe('100%%')
+  })
+
+  it("사용자가 친 '%s' 는 공백으로 둔갑하지 않는다", async () => {
+    const adb = new FakeAdb()
+    expect(await typeText(adb, SERIAL, 'a%sb c')).toBe('ok')
+    expect(adb.calls[0].at(-1)).toBe('a%%sb%sc')
+  })
+
   it('한글·이모지가 섞이면 보내지 않고 unsupported-text 를 돌려준다', async () => {
     const adb = new FakeAdb()
     expect(await typeText(adb, SERIAL, '안녕하세요')).toBe('unsupported-text')

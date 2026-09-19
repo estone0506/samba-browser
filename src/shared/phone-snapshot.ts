@@ -25,6 +25,14 @@ export interface PhoneScreen {
 /** 한 화면에서 모델에게 넘기는 요소 수 상한(웹 스냅샷과 같은 취지) */
 export const MAX_PHONE_ELEMENTS = 120
 
+/**
+ * uiautomator 덤프가 실패해 화면을 읽지 못한 상태인가(크기도 요소도 없다).
+ * 이때는 비밀번호·PIN 화면인지 판정할 수 없으므로, 화면 원본을 넘기는 도구는 거부해야 한다
+ */
+export function isScreenUnknown(s: PhoneScreen): boolean {
+  return s.width === 0 && s.elements.length === 0
+}
+
 function formatElement(e: PhoneElement): string {
   const parts = [`[${e.id}] ${e.className.split('.').pop() ?? 'node'}`]
   if (e.text) parts.push(`"${e.text.slice(0, 80)}"`)
