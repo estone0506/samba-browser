@@ -305,7 +305,7 @@ describe('커서 휴리스틱 — role·onclick 없는 클릭 가능한 DIV', ()
     expect(buildSnapshot().elements.map((e) => e.text)).toEqual(['보임옵션'])
   })
 
-  it('후보 4000개·결과 600개 상한을 지킨다', () => {
+  it('결과 600개 상한을 지킨다(후보 5000개)', () => {
     const divs = Array.from(
       { length: 5000 },
       (_, i) => `<div data-cursor="pointer">옵션${i}</div>`

@@ -30,7 +30,9 @@ const SELECTOR =
 // CSS 가 cursor:pointer 를 준 "가장 안쪽" 요소만 주워 담는다.
 const CURSOR_CANDIDATES = 'div,span,li,p,img,svg'
 // 성능 상한: 후보 탐색 개수 / 최종 수집 개수 / 라벨 길이
-const CURSOR_SCAN_MAX = 4000
+// 무신사 상품 페이지는 후보가 5천 개를 넘고 옵션 목록이 4,500번째쯤에 온다 — 개수보다 시간으로 막는다
+const CURSOR_SCAN_MAX = 30000
+const CURSOR_TIME_BUDGET_MS = 120
 const CURSOR_PICK_MAX = 600
 const CURSOR_TEXT_MAX = 120
 // 그 자체로는 의미가 없는 태그들(수집됐다면 클릭 가능해서 잡힌 것이다)
@@ -185,7 +187,7 @@ function hasClickableLabel(el: HTMLElement): boolean {
  * 규칙
  * - SELECTOR 로 이미 잡힌 요소, 그리고 그런 요소를 품고 있는 요소는 제외한다(가장 안쪽만).
  * - pointer 인 조상-자손이 겹치면 안쪽(= 텍스트가 더 짧은 쪽)만 남긴다.
- * - 성능: 후보 탐색 4000개, 결과 600개까지. 비싼 검사(isVisible)는 마지막에 한다.
+ * - 성능: 후보 탐색 30000개 또는 120ms, 결과 600개까지. 비싼 검사(isVisible)는 마지막에 한다.
  */
 function collectCursorClickable(base: HTMLElement[]): HTMLElement[] {
   const body = document.body
@@ -203,8 +205,14 @@ function collectCursorClickable(base: HTMLElement[]): HTMLElement[] {
   const nodes = body.querySelectorAll<HTMLElement>(CURSOR_CANDIDATES)
   const scanned = Math.min(nodes.length, CURSOR_SCAN_MAX)
   const picked: HTMLElement[] = []
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
   for (let i = 0; i < scanned; i += 1) {
     if (picked.length >= CURSOR_PICK_MAX) break
+    // 시간 예산 — 64개마다 한 번만 시계를 본다
+    if ((i & 63) === 63) {
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+      if (now - startedAt > CURSOR_TIME_BUDGET_MS) break
+    }
     const el = nodes[i]
     // 자기 자신이 이미 수집됐거나, 안에 수집된 인터랙티브 요소가 있으면 건너뛴다(가장 안쪽만)
     if (blocked.has(el)) continue
