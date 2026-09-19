@@ -87,7 +87,6 @@ export async function startRecording(options: StartRecordingOptions): Promise<Re
     canvas.height = Math.max(2, Math.round(crop.height * ratio))
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('캔버스를 만들지 못했습니다')
-    let frame = 0
     const draw = (): void => {
       ctx.drawImage(
         video,
@@ -100,10 +99,12 @@ export async function startRecording(options: StartRecordingOptions): Promise<Re
         canvas.width,
         canvas.height
       )
-      frame = requestAnimationFrame(draw)
     }
-    frame = requestAnimationFrame(draw)
-    cleanups.push(() => cancelAnimationFrame(frame))
+    // requestAnimationFrame 은 창이 가려지면 멈춰 캔버스가 빈 채로 녹화된다(0바이트 파일).
+    // 타이머로 돌려 창이 보이든 말든 같은 속도로 프레임을 채운다
+    draw()
+    const timer = window.setInterval(draw, Math.max(1, Math.round(1000 / fps)))
+    cleanups.push(() => window.clearInterval(timer))
     cleanups.push(() => video.remove())
     recordedStream = canvas.captureStream(fps)
     cleanups.push(() => recordedStream.getTracks().forEach((t) => t.stop()))
