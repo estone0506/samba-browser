@@ -64,6 +64,9 @@ describe('pushAll', () => {
     vault = new VaultService(db, { get: settings.get })
     vault.setOutboxRecorder(createOutboxRecorder(db, outbox))
     await vault.setup(MASTER)
+    // 금고 설정이 남기는 마스터 키 재료 변경 로그는 이 파일의 관심사가 아니다
+    // (키 재료 동기화는 sync-two-pcs 가 다룬다). 전송 건수 단언을 흐리지 않게 비운다
+    outbox.clear(outbox.pendingFor('settings').map((r) => r.id))
     deps = {
       db,
       backend,
