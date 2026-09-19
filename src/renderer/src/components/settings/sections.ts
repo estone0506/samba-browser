@@ -13,7 +13,7 @@ export interface SettingsSectionDef {
 /**
  * 스펙 그대로의 순서.
  *   개인     일반 · 모양 · 계정 · 요금제(자리) · 보안
- *   에이전트 에이전트 · AI 연결 · 키마스터 · 자동화(자리) · 개발자(자리)
+ *   에이전트 에이전트 · AI 연결 · 키마스터 · 폰 · 자동화(자리) · 개발자(자리)
  */
 export const SECTIONS: readonly SettingsSectionDef[] = [
   { group: 'personal', key: 'general', labelKey: 'settingsPage.sections.general' },
@@ -24,6 +24,7 @@ export const SECTIONS: readonly SettingsSectionDef[] = [
   { group: 'agent', key: 'agent', labelKey: 'settingsPage.sections.agent' },
   { group: 'agent', key: 'ai', labelKey: 'settingsPage.sections.ai' },
   { group: 'agent', key: 'keymaster', labelKey: 'settingsPage.sections.keymaster' },
+  { group: 'agent', key: 'phone', labelKey: 'settingsPage.sections.phone' },
   { group: 'agent', key: 'automation', labelKey: 'settingsPage.sections.automation' },
   { group: 'agent', key: 'developer', labelKey: 'settingsPage.sections.developer' }
 ]

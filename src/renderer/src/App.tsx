@@ -9,6 +9,7 @@ import { ProgressBar } from '@renderer/components/browser/ProgressBar'
 import { WebArea } from '@renderer/components/browser/WebArea'
 import { PersonalInfoPage } from '@renderer/pages/PersonalInfoPage'
 import { BookmarksPage } from '@renderer/pages/BookmarksPage'
+import { PhonesPage } from '@renderer/pages/PhonesPage'
 import { SettingsPage } from '@renderer/pages/SettingsPage'
 import { useBrowserStore } from '@renderer/stores/browserStore'
 import { useUiStore } from '@renderer/stores/uiStore'
@@ -97,6 +98,8 @@ export default function App(): React.JSX.Element {
             </>
           ) : view === 'bookmarks' ? (
             <BookmarksPage />
+          ) : view === 'phones' ? (
+            <PhonesPage />
           ) : view === 'settings' ? (
             <SettingsPage />
           ) : (
