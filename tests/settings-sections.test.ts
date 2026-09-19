@@ -23,7 +23,7 @@ describe('설정 섹션 상수', () => {
       'account',
       'security'
     ])
-    expect(sectionsOfGroup('agent').map((s) => s.key)).toEqual(['behavior', 'ai'])
+    expect(sectionsOfGroup('agent').map((s) => s.key)).toEqual(['behavior', 'ai', 'notify'])
   })
 
   it('다른 화면에 이미 있는 것은 설정에 두지 않는다', () => {
