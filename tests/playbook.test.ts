@@ -133,11 +133,13 @@ describe('내장 플레이북', () => {
     }
   })
 
-  it('절차에 세 가지 원칙(배송지·결제 확인·기록 회수)이 들어 있다', () => {
+  it('절차에 절대 원칙(결제 확인·비밀번호 미입력·기록 회수)이 들어 있다', () => {
     const text = BUILTIN_PLAYBOOKS[0].instructions
-    expect(text).toContain('**배송지는 언제나 새로 입력한다.**')
     expect(text).toContain('**결제하기 직전에는 반드시 사람 확인을 받는다.**')
-    expect(text).toContain('SAMBA WAVE에 되돌려 적는다.**')
+    expect(text).toContain('**결제 비밀번호·PIN은 절대 내가 누르거나 타이핑하지 않는다.**')
+    expect(text).toContain('SAMBA WAVE에 되돌려 적는다')
+    // 개인 값(계정·주소·전화)은 내장 절차에 넣지 않는다
+    expect(text).not.toMatch(/010-\d{4}-\d{4}/)
   })
 
   it('돌려준 트리거 배열은 원본과 공유되지 않는다', () => {
