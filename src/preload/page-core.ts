@@ -33,7 +33,8 @@ const CURSOR_CANDIDATES = 'div,span,li,p,img,svg'
 // 무신사 상품 페이지는 후보가 5천 개를 넘고 옵션 목록이 4,500번째쯤에 온다 — 개수보다 시간으로 막는다
 const CURSOR_SCAN_MAX = 30000
 const CURSOR_TIME_BUDGET_MS = 120
-const CURSOR_PICK_MAX = 600
+// 무신사 상품 페이지는 pointer 요소만 1,700개다 — 600이면 옵션 목록 전에 차서 사이즈를 못 고른다
+const CURSOR_PICK_MAX = 4000
 const CURSOR_TEXT_MAX = 120
 // 그 자체로는 의미가 없는 태그들(수집됐다면 클릭 가능해서 잡힌 것이다)
 const GENERIC_TAGS = new Set(['div', 'span', 'li', 'p', 'img', 'svg'])
@@ -187,7 +188,7 @@ function hasClickableLabel(el: HTMLElement): boolean {
  * 규칙
  * - SELECTOR 로 이미 잡힌 요소, 그리고 그런 요소를 품고 있는 요소는 제외한다(가장 안쪽만).
  * - pointer 인 조상-자손이 겹치면 안쪽(= 텍스트가 더 짧은 쪽)만 남긴다.
- * - 성능: 후보 탐색 30000개 또는 120ms, 결과 600개까지. 비싼 검사(isVisible)는 마지막에 한다.
+ * - 성능: 후보 탐색 30000개 또는 120ms, 결과 4000개까지. 비싼 검사(isVisible)는 마지막에 한다.
  */
 function collectCursorClickable(base: HTMLElement[]): HTMLElement[] {
   const body = document.body
