@@ -92,7 +92,10 @@ export const SYNCED_SETTING_KEYS = [
   'vaultExcludedHosts',
   'homeUrl',
   'newTabUrl',
-  'searchEngine'
+  'searchEngine',
+  // 마우스 제스처 — 기기와 무관한 취향 설정이라 동기화 대상이다
+  'mouseGesturesEnabled',
+  'mouseGestures'
 ] as const
 
 export type SyncedSettingKey = (typeof SYNCED_SETTING_KEYS)[number]
