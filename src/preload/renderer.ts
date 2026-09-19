@@ -34,7 +34,11 @@ import {
   type ChatDto,
   type ChatDetailDto,
   type ChatMessageDto,
-  type AppendMessageInput
+  type AppendMessageInput,
+  type PhoneDto,
+  type PhoneUpdatedDto,
+  type PhoneAuthWaitingDto,
+  type AuthEventDto
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
@@ -321,6 +325,34 @@ const api = {
     // 웹스토어 주소 또는 32자 id 로 설치한다
     installWebstore: (input: string): Promise<IpcResult<ExtensionInstallResult>> =>
       invoke(IPC.extInstallWebstore, input)
+  },
+  // 폰 연동 — 결제 비밀번호·문자 본문은 이 중 어느 채널로도 오지 않는다
+  phone: {
+    list: (): Promise<IpcResult<PhoneDto[]>> => invoke(IPC.phoneList),
+    refresh: (): Promise<IpcResult<PhoneDto[]>> => invoke(IPC.phoneRefresh),
+    detectPaths: (): Promise<IpcResult<{ adb: string; scrcpy: string }>> =>
+      invoke(IPC.phoneDetectPaths),
+    connect: (address: string): Promise<IpcResult<{ ok: boolean; message: string }>> =>
+      invoke(IPC.phoneConnect, address),
+    disconnect: (serial: string): Promise<IpcResult<void>> => invoke(IPC.phoneDisconnect, serial),
+    recover: (serial: string): Promise<IpcResult<boolean>> => invoke(IPC.phoneRecover, serial),
+    setLabel: (id: number, label: string, country: string): Promise<IpcResult<void>> =>
+      invoke(IPC.phoneSetLabel, id, label, country),
+    assign: (accountId: number, phoneId: number | null): Promise<IpcResult<void>> =>
+      invoke(IPC.phoneAssign, accountId, phoneId),
+    authEvents: (limit?: number): Promise<IpcResult<AuthEventDto[]>> =>
+      invoke(IPC.phoneAuthEvents, limit),
+    // 목록·상태가 바뀔 때마다 온다. warning 은 연결 상한 초과 같은 안내 문구
+    onUpdated: (cb: (list: PhoneDto[], warning?: string) => void): (() => void) => {
+      const h = (_: unknown, dto: PhoneUpdatedDto): void => cb(dto.list, dto.warning)
+      ipcRenderer.on(IPC.phoneUpdated, h)
+      return () => ipcRenderer.off(IPC.phoneUpdated, h)
+    },
+    onAuthWaiting: (cb: (dto: PhoneAuthWaitingDto) => void): (() => void) => {
+      const h = (_: unknown, dto: PhoneAuthWaitingDto): void => cb(dto)
+      ipcRenderer.on(IPC.phoneAuthWaiting, h)
+      return () => ipcRenderer.off(IPC.phoneAuthWaiting, h)
+    }
   }
 }
 

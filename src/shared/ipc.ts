@@ -113,7 +113,26 @@ export const IPC = {
   extRemove: 'ext:remove',
   extImportSources: 'ext:importSources', // 다른 브라우저에 설치된 확장 목록
   extImportFrom: 'ext:importFrom', // 고른 확장을 앱 데이터로 복사해서 로드
-  extInstallWebstore: 'ext:installWebstore' // 웹스토어 주소 또는 32자 id
+  extInstallWebstore: 'ext:installWebstore', // 웹스토어 주소 또는 32자 id
+  // --- 폰 연동(3단계) — 값(결제 비밀번호·문자 본문)은 어느 채널에도 흐르지 않는다 ---
+  phoneList: 'phone:list',
+  phoneRefresh: 'phone:refresh', // 즉시 스캔
+  phoneDetectPaths: 'phone:detectPaths', // adb/scrcpy 경로 자동 찾기
+  phoneConnect: 'phone:connect', // 와이파이 주소로 연결
+  phoneDisconnect: 'phone:disconnect',
+  phoneRecover: 'phone:recover', // kill/start-server 1회 재시도
+  phoneSetLabel: 'phone:setLabel', // 별칭·국가
+  phoneAssign: 'phone:assign', // 계정 ↔ 폰 매핑
+  phoneScreenStart: 'phone:screenStart',
+  phoneScreenStop: 'phone:screenStop',
+  phoneScreenChunk: 'phone:screenChunk', // main → renderer 이벤트(영상 청크/스틸 이미지)
+  phoneOpenWindow: 'phone:openWindow', // scrcpy 별도 창으로 크게 보기
+  phoneTap: 'phone:tap', // 사용자가 화면을 직접 눌렀을 때
+  phoneSwipe: 'phone:swipe',
+  phoneKey: 'phone:key',
+  phoneUpdated: 'phone:updated', // main → renderer 이벤트(목록·상태)
+  phoneAuthWaiting: 'phone:authWaiting', // main → renderer 이벤트(카드 자동 펼침)
+  phoneAuthEvents: 'phone:authEvents' // KPI 목록
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -217,6 +236,17 @@ export type {
 } from './import'
 
 export type { SyncStatus, DeviceDto } from './sync'
+
+export type {
+  PhoneDto,
+  PhoneUpdatedDto,
+  AuthEventDto,
+  PhoneAuthWaitingDto,
+  PhoneCountry,
+  PhoneState,
+  PhoneTransport,
+  ScreenMode
+} from './phone'
 
 export type {
   ChatRole,

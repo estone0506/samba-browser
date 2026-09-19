@@ -30,6 +30,12 @@ export interface PhoneDto {
   screenMode: ScreenMode | null
 }
 
+// 목록 통지(메인 → 렌더러). warning 은 연결 상한 초과처럼 사용자가 알아야 할 때만 온다
+export interface PhoneUpdatedDto {
+  list: PhoneDto[]
+  warning?: string
+}
+
 export type AuthEventKind = 'sms' | 'app_approve' | 'ars'
 export type AuthEventMethod = 'sms_query' | 'visual' | 'manual'
 

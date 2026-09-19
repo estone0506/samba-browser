@@ -52,6 +52,10 @@ import { WorkspaceService } from '../workspace/service'
 import { workspaceShortcutIndex } from '../workspace/shortcut'
 import { ExtensionManager, createSessionExtensionHost } from '../extensions/manager'
 import { createExtensionInstaller } from '../extensions/install-service'
+// === 폰 연동(3단계) — child_process 는 phone/process.ts 안에만 있다 ===================
+import { createAdbRunner } from '../phone/process'
+import { PhoneRepo } from '../phone/repo'
+import { PhoneService } from '../phone/service'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -684,6 +688,34 @@ export function registerIpc(
     extensionInstaller.installWebstore(input)
   )
   // === 확장 끝 =========================================================================
+
+  // === 폰 연동(3단계) — 이 블록만 따로 추가한다 ========================================
+  // 기기 감시는 Pro 요금제에서만 돈다. 결제 비밀번호·문자 본문은 이 채널들로 흐르지 않는다
+  const phones = new PhoneService({
+    adb: createAdbRunner(() => settings.get().adbPath),
+    repo: new PhoneRepo(db),
+    settings,
+    isPro: () => auth.state().plan === 'pro',
+    emit: (list, warning) => send(IPC.phoneUpdated, { list, warning }),
+    emitAuthWaiting: (dto) => send(IPC.phoneAuthWaiting, dto)
+  })
+  phones.start()
+  win.once('closed', () => phones.dispose())
+
+  handleFromRenderer(IPC.phoneList, () => phones.list())
+  handleFromRenderer(IPC.phoneRefresh, () => phones.refresh())
+  handleFromRenderer(IPC.phoneDetectPaths, () => phones.detectPaths())
+  handleFromRenderer(IPC.phoneConnect, (address: string) => phones.connectWifi(address))
+  handleFromRenderer(IPC.phoneDisconnect, (serial: string) => phones.disconnect(serial))
+  handleFromRenderer(IPC.phoneRecover, (serial: string) => phones.recover(serial))
+  handleFromRenderer(IPC.phoneSetLabel, (id: number, label: string, country: string) =>
+    phones.setLabel(id, label, country)
+  )
+  handleFromRenderer(IPC.phoneAssign, (accountId: number, phoneId: number | null) =>
+    phones.assign(accountId, phoneId)
+  )
+  handleFromRenderer(IPC.phoneAuthEvents, (limit?: number) => phones.authEvents(limit))
+  // === 폰 연동 끝 ======================================================================
 
   return { settings, agent, db, vault, auth, sync }
 }
