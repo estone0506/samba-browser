@@ -13,6 +13,18 @@ import { isHttpUrl } from '@shared/url'
 export { SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_SECTION_KEYS }
 export type { SidebarSectionKey, SidebarSections }
 
+/**
+ * 사이드바 위쪽 이동 항목(적힌 순서가 곧 화면 순서).
+ * 눌러도 아무 데도 가지 않는 자리표시자는 두지 않는다 — 모든 항목에 갈 뷰가 있다.
+ * 아이콘은 컴포넌트가 붙이고, view 가 실제 MainView 인지도 컴포넌트에서 검사한다
+ */
+export const SIDEBAR_ITEMS = [
+  { key: 'browser', view: 'browser' },
+  { key: 'tasks', view: 'tasks' },
+  { key: 'phones', view: 'phones' },
+  { key: 'logs', view: 'logs' }
+] as const satisfies readonly { key: string; view: string }[]
+
 /** 접힌 사이드바는 사용자가 끌어 둔 폭과 무관하게 아이콘 폭으로 고정된다 */
 export function sidebarWidthOf(collapsed: boolean, width: number): number {
   return collapsed ? SIDEBAR_COLLAPSED_WIDTH : width

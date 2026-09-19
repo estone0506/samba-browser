@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronRight, Pause, Play } from 'lucide-react'
@@ -25,18 +25,9 @@ import {
   weekdayLabelKey,
   withKind
 } from './schedule-view'
+import { useNow } from '@renderer/lib/use-now'
 
 const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6]
-
-/** 상대 시간("2시간 후")이 멈춰 있지 않도록 30초마다 지금 시각을 다시 잡는다 */
-function useNow(): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000)
-    return () => clearInterval(timer)
-  }, [])
-  return now
-}
 
 /**
  * 플레이북 카드 안의 "예약" 칸.

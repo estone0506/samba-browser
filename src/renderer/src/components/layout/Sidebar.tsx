@@ -8,17 +8,21 @@ import { BookmarkTree } from './BookmarkTree'
 import { ChatList } from './ChatList'
 import { OpenTabs } from './OpenTabs'
 import { SectionHeader } from './SectionHeader'
-import { showSectionBody } from './sidebar-view'
+import { SIDEBAR_ITEMS, showSectionBody } from './sidebar-view'
 import { WorkspaceSwitcher } from '@renderer/components/workspace/WorkspaceSwitcher'
 
-// 사이드바 항목 중 아직 뷰가 없는 항목(작업)은 클릭해도 아무 일도 하지 않는다.
-// 자동화·키마스터는 설정 안으로 옮겼다(설정 → 자동화 / 키마스터)
-const ITEMS = [
-  { key: 'browser', icon: Globe, view: 'browser' },
-  { key: 'tasks', icon: ListChecks, view: null },
-  { key: 'phones', icon: Smartphone, view: 'phones' },
-  { key: 'logs', icon: ScrollText, view: 'logs' }
-] as const satisfies readonly { key: string; icon: typeof Globe; view: MainView | null }[]
+// 사이드바 위쪽 이동 항목. 목록 자체는 sidebar-view 에 있고(테스트가 지킨다) 여기서는
+// 아이콘만 붙인다. 자동화·키마스터는 설정 안으로 옮겼다(설정 → 자동화 / 키마스터)
+const ICONS: Record<(typeof SIDEBAR_ITEMS)[number]['key'], typeof Globe> = {
+  browser: Globe,
+  tasks: ListChecks,
+  phones: Smartphone,
+  logs: ScrollText
+}
+
+const ITEMS: readonly { key: string; icon: typeof Globe; view: MainView }[] = SIDEBAR_ITEMS.map(
+  (item) => ({ key: item.key, icon: ICONS[item.key], view: item.view })
+)
 
 export function Sidebar({ width }: { width: number }): React.JSX.Element {
   const { t } = useTranslation()
@@ -61,12 +65,10 @@ export function Sidebar({ width }: { width: number }): React.JSX.Element {
           type="button"
           title={t(`sidebar.${key}`)}
           aria-label={t(`sidebar.${key}`)}
-          onClick={() => itemView && setView(itemView)}
+          onClick={() => setView(itemView)}
           className={cn(
-            'flex items-center rounded-[9px] text-left',
+            'flex cursor-pointer items-center rounded-[9px] text-left hover:bg-black/5',
             collapsed ? 'h-8 w-8 justify-center' : 'gap-2 px-2 py-1.5',
-            itemView && 'cursor-pointer hover:bg-black/5',
-            !itemView && 'cursor-default',
             itemView === view && 'bg-black/5 font-medium'
           )}
         >
