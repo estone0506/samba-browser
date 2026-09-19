@@ -160,7 +160,9 @@ export function useH264Player(
       const bytes = chunk.data
       const url =
         chunk.dataUrl ??
-        (bytes ? URL.createObjectURL(new Blob([bytes], { type: 'image/png' })) : null)
+        (bytes
+          ? URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+          : null)
       if (!url) return
       const img = new Image()
       img.onload = () => {

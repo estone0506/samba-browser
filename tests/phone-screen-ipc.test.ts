@@ -20,6 +20,7 @@ interface Setup {
   spawned: string[][]
   ipc: ReturnType<typeof registerPhoneScreenIpc>
   call: (channel: string, arg: string) => unknown
+  callArgs: (channel: string, ...args: unknown[]) => unknown
 }
 
 function setup(over: Partial<Settings> = {}): Setup {
@@ -44,17 +45,34 @@ function setup(over: Partial<Settings> = {}): Setup {
     adb,
     scrcpy
   })
+  const callArgs = (channel: string, ...args: unknown[]): unknown =>
+    handlers.get(channel)?.(...(args as never[]))
   const call = (channel: string, arg: string): unknown =>
     (handlers.get(channel) as ((a: string) => unknown) | undefined)?.(arg)
-  return { adb, handlers, sent, spawned, ipc, call }
+  return { adb, handlers, sent, spawned, ipc, call, callArgs }
 }
 
 describe('registerPhoneScreenIpc', () => {
-  it('세 채널을 렌더러 전용으로 등록한다', () => {
+  it('화면 3채널과 사용자 입력 3채널을 렌더러 전용으로 등록한다', () => {
     const { handlers } = setup()
     expect([...handlers.keys()].sort()).toEqual(
-      [IPC.phoneScreenStart, IPC.phoneScreenStop, IPC.phoneOpenWindow].sort()
+      [
+        IPC.phoneScreenStart,
+        IPC.phoneScreenStop,
+        IPC.phoneOpenWindow,
+        IPC.phoneTap,
+        IPC.phoneSwipe,
+        IPC.phoneKey
+      ].sort()
     )
+  })
+
+  it('tap 은 0~1 비율 좌표를 폰 해상도로 환산해 input tap 을 보낸다', async () => {
+    const { adb, callArgs } = setup()
+    await callArgs(IPC.phoneTap, SERIAL, 0.5, 0.25)
+    const tapCall = adb.calls.find((c) => c.includes('tap'))
+    expect(tapCall).toBeDefined()
+    expect(tapCall?.slice(-2)).toEqual(['540', '600'])
   })
 
   it('screenStart 가 스트림을 열고 청크를 렌더러로 보낸다', async () => {
