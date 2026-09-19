@@ -13,11 +13,14 @@ import { openDatabase, type Db } from '../src/main/db/client'
 import { VaultService } from '../src/main/vault/service'
 import { BookmarkRepo } from '../src/main/bookmarks/repo'
 import { SyncOutbox, createOutboxRecorder } from '../src/main/sync/outbox'
+import { backfillOutbox, verifyBackfill } from '../src/main/sync/backfill'
+import { bookmarks as bookmarksTable } from '../src/main/db/schema'
 import { pushAll, type PushDeps, type SettingsAccess } from '../src/main/sync/push'
 import { pullAll } from '../src/main/sync/pull'
 import { DEFAULT_WORKSPACE_REMOTE_ID, workspaceRemoteId } from '../src/main/sync/workspace-id'
 import { createFakeBackend, FAKE_USER_ID, type FakeBackend } from './stubs/fake-backend'
 import { DEFAULT_SETTINGS, type Settings } from '../src/shared/settings'
+import { VAULT_KEY_SYNC_KEYS } from '../src/shared/sync'
 
 const MASTER = 'master-pass-1234'
 const SECRET = 'sup3rs3cret!'
@@ -40,9 +43,11 @@ interface Pc {
   bookmarks: BookmarkRepo
   outbox: SyncOutbox
   deps: PushDeps
+  /** 변경 로그 훅을 붙인다(= 로그인). 붙이기 전의 변경은 기록되지 않는다 */
+  signIn: () => void
 }
 
-function makePc(db: Db, backend: FakeBackend): Pc {
+function makePc(db: Db, backend: FakeBackend, signedIn = true): Pc {
   const outbox = new SyncOutbox(db)
   const settings = makeSettings()
   const vault = new VaultService(db, { get: settings.get })
@@ -52,16 +57,21 @@ function makePc(db: Db, backend: FakeBackend): Pc {
     localId: 1,
     remoteId: workspaceRemoteId(db, 1, true)
   })
-  const recorder = createOutboxRecorder(db, outbox, () => 1)
-  vault.setOutboxRecorder(recorder)
-  bookmarks.setOutboxRecorder(recorder)
-  return {
+  const pc: Pc = {
     db,
     vault,
     bookmarks,
     outbox,
-    deps: { db, backend, outbox, vault, settings, userId: FAKE_USER_ID, workspace }
+    deps: { db, backend, outbox, vault, settings, userId: FAKE_USER_ID, workspace },
+    // 실제 SyncConnection.attachRecorders 와 같은 훅을 붙인다
+    signIn: () => {
+      const recorder = createOutboxRecorder(db, outbox, () => 1)
+      vault.setOutboxRecorder(recorder)
+      bookmarks.setOutboxRecorder(recorder)
+    }
   }
+  if (signedIn) pc.signIn()
+  return pc
 }
 
 describe('두 번째 PC 에서 기본 작업공간이 내려온다', () => {
@@ -229,5 +239,178 @@ describe('마스터 키 재료 동기화의 경계', () => {
     pc2.vault.lock()
     expect(await pc2.vault.unlock(MASTER)).toBe(false)
     expect(await pc2.vault.unlock('another-master-9999')).toBe(true)
+  })
+})
+
+describe('첫 로그인 시 로컬 기존 데이터가 전부 올라간다', () => {
+  let backend: FakeBackend
+  let db1: Db
+  let db2: Db
+  let pc1: Pc
+  let pc2: Pc
+
+  // 로그인 전(훅 없음) 상태에서 PC1 에 데이터를 쌓아 둔다 — 실검수에서 문제가 된 상황 그대로
+  beforeEach(async () => {
+    backend = createFakeBackend()
+    db1 = await openDatabase(':memory:')
+    db2 = await openDatabase(':memory:')
+    pc1 = makePc(db1, backend, false)
+    pc2 = makePc(db2, backend)
+    await pc1.vault.setup(MASTER)
+    const account = pc1.vault.upsertAccount({
+      host: 'old.example',
+      username: 'before-login',
+      label: '로그인 전 계정'
+    })
+    pc1.vault.putItem({ accountId: account.id, type: 'login', label: '로그인', value: SECRET })
+    pc1.bookmarks.createLink(null, '로그인 전 북마크', 'https://old.example/page')
+  })
+
+  afterEach(() => {
+    pc1.vault.dispose()
+    pc2.vault.dispose()
+    db1.close()
+    db2.close()
+  })
+
+  it('훅이 없던 동안의 변경은 변경 로그에 한 줄도 없다(문제 재현)', () => {
+    expect(pc1.outbox.count()).toBe(0)
+  })
+
+  it('로그인하면 기존 계정·금고·북마크·키 재료가 올라가고 PC2 로 내려온다', async () => {
+    pc1.signIn()
+    const result = backfillOutbox(db1, pc1.deps.workspace(), pc1.vault)
+
+    expect(result.skipped).toBe(false)
+    expect(result.accounts).toBe(1)
+    expect(result.vaultItems).toBe(1)
+    expect(result.bookmarks).toBe(1)
+    // 동기화 대상 설정 + 금고 키 재료 세 키가 함께 올라간다
+    expect(result.settings).toBeGreaterThanOrEqual(VAULT_KEY_SYNC_KEYS.length)
+
+    const pushed = await pushAll(pc1.deps)
+    expect(pushed.failed).toBe(0)
+    expect(backend.rows('accounts_sync')).toHaveLength(1)
+    expect(backend.rows('vault_items_sync')).toHaveLength(1)
+    expect(backend.rows('bookmarks_sync')).toHaveLength(1)
+
+    // PC2 는 같은 마스터 비밀번호로 열고, 내려온 데이터를 그대로 본다
+    await pullAll(pc2.deps)
+    expect(await pc2.vault.unlock(MASTER)).toBe(true)
+    await pullAll(pc2.deps)
+
+    pc2.vault.setWorkspaceScope({ id: 1, isDefault: true })
+    const accounts = pc2.vault.listAccounts('old.example')
+    expect(accounts).toHaveLength(1)
+    expect(accounts[0].label).toBe('로그인 전 계정')
+    const items = pc2.vault.listItems(accounts[0].id)
+    expect(pc2.vault.reveal(items[0].id)).toBe(SECRET)
+
+    pc2.bookmarks.setWorkspaceScope({ id: 1, isDefault: true })
+    expect(pc2.bookmarks.tree().links.map((l) => l.url)).toEqual(['https://old.example/page'])
+  })
+
+  it('두 번 불러도 같은 행을 두 번 넣지 않는다', () => {
+    pc1.signIn()
+    backfillOutbox(db1, pc1.deps.workspace(), pc1.vault)
+    const afterFirst = pc1.outbox.count()
+
+    const second = backfillOutbox(db1, pc1.deps.workspace(), pc1.vault)
+    expect(second.skipped).toBe(true)
+    expect(pc1.outbox.count()).toBe(afterFirst)
+
+    // 플래그를 무시하는 재검사도 이미 대기 중인 행은 건너뛴다
+    const verified = verifyBackfill(db1, pc1.deps.workspace(), pc1.vault)
+    expect(verified.accounts + verified.vaultItems + verified.bookmarks).toBe(0)
+    expect(pc1.outbox.count()).toBe(afterFirst)
+  })
+
+  it('전송이 끝난 뒤의 재검사는 같은 행을 다시 올리지 않는다', async () => {
+    pc1.signIn()
+    backfillOutbox(db1, pc1.deps.workspace(), pc1.vault)
+    await pushAll(pc1.deps)
+    expect(pc1.outbox.count()).toBe(0)
+
+    const verified = verifyBackfill(db1, pc1.deps.workspace(), pc1.vault)
+    expect(verified.accounts + verified.vaultItems + verified.bookmarks + verified.settings).toBe(0)
+    expect(pc1.outbox.count()).toBe(0)
+  })
+
+  it('재검사가 변경 로그를 놓친 행을 보충한다', async () => {
+    pc1.signIn()
+    backfillOutbox(db1, pc1.deps.workspace(), pc1.vault)
+    await pushAll(pc1.deps)
+
+    // 훅이 없던 시점의 가져오기처럼, 변경 로그 없이 북마크가 하나 더 생긴 상황
+    pc1.bookmarks.setOutboxRecorder(null)
+    pc1.bookmarks.createLink(null, '놓친 북마크', 'https://missed.example')
+    pc1.signIn()
+    expect(pc1.outbox.count()).toBe(0)
+
+    const verified = verifyBackfill(db1, pc1.deps.workspace(), pc1.vault)
+    expect(verified.bookmarks).toBe(1)
+    await pushAll(pc1.deps)
+    expect(backend.rows('bookmarks_sync')).toHaveLength(2)
+  })
+
+  it('금고가 잠겨 있으면 금고 항목만 보류했다가 해제 뒤에 올린다', async () => {
+    pc1.signIn()
+    backfillOutbox(db1, pc1.deps.workspace(), pc1.vault)
+    pc1.vault.lock()
+
+    const locked = await pushAll(pc1.deps)
+    expect(locked.skipped).toBe(1)
+    expect(backend.rows('accounts_sync')).toHaveLength(1)
+    expect(backend.rows('bookmarks_sync')).toHaveLength(1)
+    // 금고 항목은 서버에 없지만 변경 로그에는 그대로 남아 있다
+    expect(backend.rows('vault_items_sync')).toHaveLength(0)
+    expect(pc1.outbox.pendingFor('vault_items')).toHaveLength(1)
+
+    expect(await pc1.vault.unlock(MASTER)).toBe(true)
+    const unlocked = await pushAll(pc1.deps)
+    expect(unlocked.sent).toBe(1)
+    expect(backend.rows('vault_items_sync')).toHaveLength(1)
+    expect(pc1.outbox.pendingFor('vault_items')).toHaveLength(0)
+  })
+
+  it('작업공간을 새로 붙이면 그 작업공간에 대해서도 한 번 더 돈다', () => {
+    pc1.signIn()
+    backfillOutbox(db1, pc1.deps.workspace(), pc1.vault)
+
+    // 두 번째 작업공간의 북마크는 기본 작업공간 범위에 들지 않아 아직 대기열에 없다
+    db1.drizzle
+      .insert(bookmarksTable)
+      .values({
+        folderId: null,
+        title: '작업공간2',
+        url: 'https://ws2.example',
+        position: 0,
+        workspaceId: 2
+      })
+      .run()
+    expect(verifyBackfill(db1, pc1.deps.workspace(), pc1.vault).bookmarks).toBe(0)
+
+    const second = backfillOutbox(db1, { localId: 2, remoteId: 'ws-2-uuid' }, pc1.vault)
+    expect(second.skipped).toBe(false)
+    expect(second.bookmarks).toBe(1)
+  })
+
+  it('수천 행도 몇 초 안에 대기열에 오른다', () => {
+    const rows = Array.from({ length: 2000 }, (_, i) => ({
+      folderId: null,
+      title: `대량 ${i}`,
+      url: `https://bulk.example/${i}`,
+      position: i,
+      workspaceId: null
+    }))
+    db1.drizzle.insert(bookmarksTable).values(rows).run()
+
+    pc1.signIn()
+    const started = Date.now()
+    const result = backfillOutbox(db1, pc1.deps.workspace(), pc1.vault)
+    const elapsed = Date.now() - started
+
+    expect(result.bookmarks).toBe(2001)
+    expect(elapsed).toBeLessThan(5000)
   })
 })
