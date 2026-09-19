@@ -17,6 +17,7 @@ import { isDiscordWebhook, isSlackWebhook, isTelegramChatId, isTelegramToken } f
 import { isSupabaseAnonKey, isSupabaseProjectUrl } from './sync'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 import { playbookListSchema, type PlaybookDto } from './playbook'
+import { RECOMMEND_MAX, type DismissedRecommendation } from './activity-patterns'
 
 // 도구 호출 상한 허용 범위
 export const MIN_TOOL_CALLS = 1
@@ -192,6 +193,13 @@ export const DEFAULT_SETTINGS = {
   // 표를 따로 만들지 않고 설정 한 칸에 담아 기존 설정 동기화 경로를 그대로 탄다
   playbooks: [] as PlaybookDto[],
   // === 자동화 플레이북 끝 ===================================================
+  // === 활동 기록·추천(기기 로컬) ============================================
+  // 활동 기록은 이 PC 에서 일어난 일이고 파일도 userData 안에만 있다 —
+  // SYNCED_SETTING_KEYS 에 넣지 않는다(다른 PC 의 기록과 섞이면 판정이 뒤틀린다)
+  activityRecording: true,
+  // 사용자가 [숨기기] 를 누른 추천 후보. 30일이 지나면 다시 나타난다
+  dismissedRecommendations: [] as DismissedRecommendation[],
+  // === 활동 기록·추천 끝 ====================================================
   // === Supabase 연결(기기 로컬) =============================================
   // 설정 → 계정에서 사용자가 자기 Supabase 프로젝트를 붙여넣는 자리.
   // 기기마다 다를 수 있고 서버에 올릴 이유도 없어 SYNCED_SETTING_KEYS 에 넣지 않는다.
@@ -356,6 +364,13 @@ export const settingsSchema = z.object({
   // === 캡처 끝 ================================================================
   // === 자동화 플레이북 — 한 칸이라도 깨지면 목록 전체를 비운다(저장소가 내장을 다시 채운다) ===
   playbooks: playbookListSchema.catch(() => []),
+  // === 활동 기록·추천 — 깨진 값은 통째로 비운다(기록은 복구할 가치가 낮다) ====
+  activityRecording: z.boolean().catch(DEFAULT_SETTINGS.activityRecording),
+  dismissedRecommendations: z
+    .array(z.object({ key: z.string().min(1).max(400), at: z.number() }))
+    // 후보 자체가 한 번에 몇 개뿐이라 숨김도 이만큼이면 넉넉하다
+    .max(RECOMMEND_MAX * 20)
+    .catch(() => []),
   // === Supabase 연결 — 형식이 어긋난 값은 빈 문자열로 되돌린다 ================
   syncSupabaseUrl: z
     .string()

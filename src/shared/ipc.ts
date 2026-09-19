@@ -194,7 +194,12 @@ export const IPC = {
   scheduleChanged: 'schedule:changed', // main → renderer 이벤트(목록 다시 읽기)
   // main → renderer 이벤트. "이 문구를 채팅에 넣어라" — 실행은 사용자가 직접 칠 때와
   // 같은 경로(chat → agent:run)를 그대로 탄다
-  scheduleDispatch: 'schedule:dispatch'
+  scheduleDispatch: 'schedule:dispatch',
+  // --- 활동 기록·추천 — 기록 파일은 이 PC 안에만 있고 화면으로는 후보만 나간다 ---
+  activityRecommend: 'activity:recommend', // 설정 → 자동화 상단의 추천 목록
+  activityDismiss: 'activity:dismiss', // [숨기기](30일 뒤 다시 나타난다)
+  activityApply: 'activity:apply', // [예약 만들기]
+  activityClear: 'activity:clear' // "지금까지 기록 지우기"
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -358,6 +363,13 @@ export type {
   ScheduleStatusDto,
   ScheduleUiState
 } from './schedule'
+
+export type {
+  RecommendApplyDto,
+  RecommendCandidate,
+  RecommendDto,
+  RecommendKind
+} from './activity-patterns'
 
 /** schedule:dispatch 로 가는 실행 요청. 토큰은 이 실행이 그 예약의 것임을 잇는 표식이다 */
 export interface ScheduleDispatchDto {

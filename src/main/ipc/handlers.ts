@@ -29,6 +29,9 @@ import { PlaybookStore } from '../playbooks/store'
 import type { PlaybookInput } from '../../shared/playbook'
 import { ScheduleRunStore } from '../schedule/runs'
 import { PlaybookScheduler } from '../schedule/scheduler'
+import { ActivityStore } from '../activity/store'
+import { ActivityRecorder } from '../activity/recorder'
+import { RecommendService } from '../activity/recommend'
 import { RECENT_CHAT_LIMIT, type AppendMessageInput } from '../../shared/chat'
 import { VaultCaptureGate } from './vault-capture'
 import { watchLoginSuccess } from './login-watch'
@@ -179,16 +182,27 @@ export function registerIpc(
     settings: () => settings.get(),
     fetchImpl: (url, init) => net.fetch(url, init)
   })
+  // 활동 기록. 파일은 이 PC 의 userData 안에만 있고 동기화 대상이 아니다.
+  // 기록 여부는 설정 한 칸(activityRecording)으로 매번 다시 읽는다 — 끄면 곧바로 멈춘다
+  const activityStore = new ActivityStore(join(app.getPath('userData'), 'activity'))
+  activityStore.prune()
+  const activity = new ActivityRecorder({
+    store: activityStore,
+    enabled: () => settings.get().activityRecording
+  })
   const agent = new AgentRunner(
     tabs,
     settings,
     (ev) => {
       scheduler.noteAgentEvent(ev)
+      activity.observeAgent(ev)
       send(IPC.agentEvent, ev)
       notifier.observe(ev)
     },
     vault
   )
+  // 탭이 옮겨 가면 **호스트 한 조각**만 기록기로 넘어간다(전체 URL·검색어는 넘기지 않는다)
+  tabs.onVisit((host) => activity.noteVisit(host))
   // AI 채팅 기록. 러너가 작업 완료 시점에 이 저장소로 대화를 남긴다
   const chats = new ChatRepo(db)
   agent.setTranscript((chatId, entry) => {
@@ -210,6 +224,12 @@ export function registerIpc(
     onChanged: () => send(IPC.scheduleChanged, null)
   })
   scheduler.start()
+  // 추천 — 기록 파일 + 숨김 설정 + 플레이북 목록을 잇기만 한다(판정은 순수 함수)
+  const recommend = new RecommendService({
+    runs: activityStore,
+    settings,
+    playbooks
+  })
   // 페이지 JS 대화상자는 AI 작업이 도는 동안에만 자동 처리한다
   tabs.setAgentRunningProvider(() => agent.isRunning())
   // guard 모드에서 confirm/beforeunload 는 사용자 확인 카드를 거쳐야 '예' 가 된다
@@ -276,6 +296,8 @@ export function registerIpc(
     ipcMain.removeAllListeners(IPC.pageGesture)
     ipcMain.removeAllListeners(IPC.pageWebstoreInstall)
     scheduler.stop()
+    // 열려 있던 방문 한 건을 마무리해 머문 시간이 통째로 사라지지 않게 한다
+    activity.flush()
     sync.current()?.stop()
     sync.release()
     vault.dispose()
@@ -300,6 +322,8 @@ export function registerIpc(
   handleFromRenderer(IPC.agentRun, (prompt: string, chatId?: number, scheduleToken?: string) => {
     // 알림 요약의 "작업:" 줄에 쓸 사용자 지시(비밀값 마스킹은 메시지 조립 때 한다)
     notifier.setPrompt(prompt)
+    // 활동 기록도 같은 자리에서 지시를 받아 둔다(마스킹은 저장 직전에 한다)
+    activity.notePrompt(prompt)
     const overrides = scheduler.claimOverrides(scheduleToken)
     void agent
       .run(prompt, chatId, overrides)
@@ -331,6 +355,17 @@ export function registerIpc(
   handleFromRenderer(IPC.scheduleSetPaused, (playbookId: string, paused: boolean) =>
     scheduler.setPaused(playbookId, paused)
   )
+  // --- 활동 기록·추천 — 기록은 이 PC 안에만 있고 화면으로는 후보만 나간다 ----
+  handleFromRenderer(IPC.activityRecommend, () => recommend.list())
+  handleFromRenderer(IPC.activityDismiss, (key: string) => recommend.dismiss(key))
+  handleFromRenderer(IPC.activityApply, (key: string) => recommend.apply(key))
+  handleFromRenderer(IPC.activityClear, () => {
+    // 열려 있던 방문을 먼저 닫아 둔다. 그러지 않으면 지운 뒤에 그 방문이
+    // 옛 시각 그대로 다시 쓰여 "지웠는데 남아 있다" 가 된다
+    activity.flush()
+    return activityStore.clear()
+  })
+
   onFromRenderer(IPC.agentConfirmReply, (requestId: string, approved: boolean) =>
     agent.resolveConfirm(requestId, approved)
   )

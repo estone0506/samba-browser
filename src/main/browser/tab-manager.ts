@@ -18,6 +18,7 @@ import {
   isInternalUrl,
   NEW_TAB_URL
 } from '../../shared/url'
+import { normalizeHost } from '../../shared/host'
 import { attachInternalProtocol } from './internal-protocol'
 import type { PermissionMode, SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
@@ -152,6 +153,8 @@ export class TabManager {
   private listeners: Array<(tabs: TabInfo[]) => void> = []
   // 탭 전환 구독자(확장 액션 팝업을 닫는다)
   private activatedListeners: Array<() => void> = []
+  // 방문 구독자(활동 기록). **호스트 한 조각만** 넘긴다 — 전체 URL·검색어는 넘기지 않는다
+  private visitListeners: Array<(host: string) => void> = []
   private disposed = false
   // === 홈 버튼 / 설정 페이지 (신규 추가분) ==================================
   // url 없이 탭을 생성할 때 쓸 기본 주소(설정의 홈 주소/새 탭 주소로부터 계산되어 들어온다)
@@ -207,6 +210,23 @@ export class TabManager {
    */
   onActivated(cb: () => void): void {
     this.activatedListeners.push(cb)
+  }
+
+  /**
+   * 활성 탭이 어떤 사이트를 보고 있는지 알린다(활동 기록).
+   * 넘기는 값은 정규화된 **호스트 문자열 하나**뿐이다. 내부 페이지·빈 페이지는 알리지 않는다
+   */
+  onVisit(cb: (host: string) => void): void {
+    this.visitListeners.push(cb)
+  }
+
+  /** 주소에서 호스트만 뽑아 구독자에게 알린다 */
+  private noteVisit(url: string): void {
+    if (this.visitListeners.length === 0) return
+    if (!/^https?:\/\//i.test(url)) return
+    const host = normalizeHost(url)
+    if (host === '') return
+    for (const cb of this.visitListeners) cb(host)
   }
 
   // === 홈 버튼 / 설정 페이지 (신규 추가분) ==================================
@@ -470,7 +490,11 @@ export class TabManager {
     wc.on('did-start-loading', () => this.emit())
     wc.on('did-stop-loading', () => this.emit())
     wc.on('page-title-updated', () => this.emit())
-    wc.on('did-navigate', () => this.emit())
+    wc.on('did-navigate', () => {
+      // 활성 탭에서 다른 사이트로 옮겨 갔을 때만 방문으로 센다(뒤 탭의 자동 이동은 세지 않는다)
+      if (this.activeId === tab.id) this.noteVisit(wc.getURL())
+      this.emit()
+    })
     // 로드 실패는 원인 파악이 어려우므로 항상 로그로 남긴다(내부 페이지·차단된 주소 진단용)
     // 내부 페이지의 콘솔 오류는 메인 로그로 넘긴다(개발자 도구 없이 진단)
     wc.on('console-message', (ev) => {
@@ -556,6 +580,7 @@ export class TabManager {
     }
     this.win.contentView.addChildView(tab.view)
     this.activeId = id
+    this.noteVisit(tab.view.webContents.getURL())
     this.applyBounds()
     this.emit()
   }

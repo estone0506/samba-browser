@@ -68,6 +68,20 @@ export function candidateKey(run: Pick<ActivityRunRecord, 'prompt' | 'playbook'>
   return `prompt:${normalizeInstruction(run.prompt)}`
 }
 
+/** 화면으로 나가는 추천 한 줄 — 후보에 이 PC 의 플레이북 id 를 붙인 것이다 */
+export interface RecommendDto extends RecommendCandidate {
+  /** 같은 이름의 플레이북이 이미 있으면 그 id */
+  playbookId?: string
+}
+
+/** [예약 만들기] 결과. created 면 렌더러가 편집기를 연다 */
+export interface RecommendApplyDto {
+  playbookId: string
+  created: boolean
+  /** 예약까지 걸었는가(frequent 는 예약 없이 플레이북만 만든다) */
+  scheduled: boolean
+}
+
 /** 두 시각(자정부터의 분) 사이의 가장 짧은 거리. 23:50 과 00:10 은 20분이다 */
 function circularDiff(a: number, b: number): number {
   const raw = (((a - b) % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY
