@@ -3,6 +3,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import i18n from '@renderer/i18n'
 import { ImportPanel } from '@renderer/components/vault/ImportPanel'
+import { CaptureSettingsCard } from './CaptureSettingsCard'
 import { isHttpUrl, isInternalUrl } from '@shared/url'
 import type { NewTabUrlMode, SearchEngine } from '@shared/settings'
 import {
@@ -94,6 +95,8 @@ export function GeneralSection({ settings, update }: SectionProps): React.JSX.El
           ]}
         />
       </SettingsSection>
+
+      <CaptureSettingsCard settings={settings} update={update} />
 
       <SettingsSection
         title={t('settingsPage.general.importTitle')}
