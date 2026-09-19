@@ -50,10 +50,17 @@ function setup(over: Partial<Settings> = {}): Setup {
 }
 
 describe('registerPhoneScreenIpc', () => {
-  it('세 채널을 렌더러 전용으로 등록한다', () => {
+  it('화면·수동 조작 채널을 렌더러 전용으로 등록한다', () => {
     const { handlers } = setup()
     expect([...handlers.keys()].sort()).toEqual(
-      [IPC.phoneScreenStart, IPC.phoneScreenStop, IPC.phoneOpenWindow].sort()
+      [
+        IPC.phoneScreenStart,
+        IPC.phoneScreenStop,
+        IPC.phoneOpenWindow,
+        IPC.phoneTap,
+        IPC.phoneSwipe,
+        IPC.phoneKey
+      ].sort()
     )
   })
 
