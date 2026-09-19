@@ -10,7 +10,9 @@
     "phones": "Phones",
     "logs": "Logs",
     "settings": "Settings",
-    "chats": "Chats"
+    "chats": "Chats",
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar"
   },
   "workspace": {
     "title": "Workspace",
@@ -32,7 +34,11 @@
     "home": "Home"
   },
   "tab": {
-    "new": "New Tab"
+    "new": "New Tab",
+    "close": "Close tab",
+    "openTabs": "Open tabs",
+    "empty": "No open tabs",
+    "untitled": "Untitled"
   },
   "newtab": {
     "title": "New Tab",
@@ -54,7 +60,19 @@
     "empty": "No saved chats",
     "untitled": "Untitled chat",
     "delete": "Delete chat",
-    "deleteConfirm": "Delete"
+    "deleteConfirm": "Delete",
+    "modelMenu": "Model",
+    "effortMenu": "Reasoning effort",
+    "effort": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High"
+    },
+    "effortDesc": {
+      "low": "Answers quickly with little thinking",
+      "medium": "Balances speed and care",
+      "high": "Thinks carefully before acting"
+    }
   },
   "confirm": {
     "title": "Confirmation required",
