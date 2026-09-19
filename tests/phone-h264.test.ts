@@ -1,7 +1,13 @@
 // H.264 Annex-B 파싱 테스트. 실제 폰도 adb 도 쓰지 않고 손으로 만든 바이트만 다룬다
 
 import { describe, it, expect } from 'vitest'
-import { splitAnnexB, nalType, hasKeyframe, toAnnexB, AnnexBAssembler } from '../src/main/phone/h264'
+import {
+  splitAnnexB,
+  nalType,
+  hasKeyframe,
+  toAnnexB,
+  AnnexBAssembler
+} from '../src/main/phone/h264'
 
 /** 4바이트 시작 코드 + 페이로드 */
 function nal4(type: number, ...rest: number[]): Buffer {

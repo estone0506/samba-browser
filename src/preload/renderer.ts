@@ -34,7 +34,9 @@ import {
   type ChatDto,
   type ChatDetailDto,
   type ChatMessageDto,
-  type AppendMessageInput
+  type AppendMessageInput,
+  type PhoneScreenChunkDto,
+  type PhoneScreenModeDto
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
@@ -321,6 +323,23 @@ const api = {
     // 웹스토어 주소 또는 32자 id 로 설치한다
     installWebstore: (input: string): Promise<IpcResult<ExtensionInstallResult>> =>
       invoke(IPC.extInstallWebstore, input)
+  },
+  // 폰 화면 — 영상 바이트(h264) 또는 PNG 만 오간다. 비밀값은 이 길로 지나지 않는다
+  phone: {
+    screenStart: (serial: string): Promise<IpcResult<void>> => invoke(IPC.phoneScreenStart, serial),
+    screenStop: (serial: string): Promise<IpcResult<void>> => invoke(IPC.phoneScreenStop, serial),
+    // scrcpy 큰 창으로 열기(앱 안 임베드와 별개다)
+    openWindow: (serial: string): Promise<IpcResult<void>> => invoke(IPC.phoneOpenWindow, serial),
+    onScreenChunk: (cb: (chunk: PhoneScreenChunkDto) => void): (() => void) => {
+      const h = (_: unknown, chunk: PhoneScreenChunkDto): void => cb(chunk)
+      ipcRenderer.on(IPC.phoneScreenChunk, h)
+      return () => ipcRenderer.off(IPC.phoneScreenChunk, h)
+    },
+    onScreenMode: (cb: (dto: PhoneScreenModeDto) => void): (() => void) => {
+      const h = (_: unknown, dto: PhoneScreenModeDto): void => cb(dto)
+      ipcRenderer.on(IPC.phoneScreenMode, h)
+      return () => ipcRenderer.off(IPC.phoneScreenMode, h)
+    }
   }
 }
 

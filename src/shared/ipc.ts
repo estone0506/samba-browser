@@ -113,7 +113,13 @@ export const IPC = {
   extRemove: 'ext:remove',
   extImportSources: 'ext:importSources', // 다른 브라우저에 설치된 확장 목록
   extImportFrom: 'ext:importFrom', // 고른 확장을 앱 데이터로 복사해서 로드
-  extInstallWebstore: 'ext:installWebstore' // 웹스토어 주소 또는 32자 id
+  extInstallWebstore: 'ext:installWebstore', // 웹스토어 주소 또는 32자 id
+  // --- 폰 화면(3단계 Task 5) — 영상 바이트만 오간다. 비밀값은 지나지 않는다 ---------
+  phoneScreenStart: 'phone:screenStart',
+  phoneScreenStop: 'phone:screenStop',
+  phoneScreenChunk: 'phone:screenChunk', // main → renderer 이벤트(h264 조각 또는 PNG)
+  phoneScreenMode: 'phone:screenMode', // main → renderer 이벤트(video ↔ still 전환)
+  phoneOpenWindow: 'phone:openWindow' // scrcpy 큰 창으로 열기
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -217,6 +223,8 @@ export type {
 } from './import'
 
 export type { SyncStatus, DeviceDto } from './sync'
+
+export type { ScreenMode, PhoneScreenChunkDto, PhoneScreenModeDto } from './phone'
 
 export type {
   ChatRole,

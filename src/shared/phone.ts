@@ -30,6 +30,21 @@ export interface PhoneDto {
   screenMode: ScreenMode | null
 }
 
+// 폰 화면 조각(메인 → 렌더러). video 면 H.264 Annex-B, still 이면 PNG 바이트다.
+// 구조화 복제로 넘어가므로 렌더러에서는 Uint8Array 로 도착한다(Buffer 도 Uint8Array 다)
+export interface PhoneScreenChunkDto {
+  serial: string
+  mode: ScreenMode
+  keyframe: boolean
+  data: Uint8Array
+}
+
+// 전송 방식이 바뀌었다는 통지. null 은 전송을 멈췄다는 뜻이다
+export interface PhoneScreenModeDto {
+  serial: string
+  mode: ScreenMode | null
+}
+
 export type AuthEventKind = 'sms' | 'app_approve' | 'ars'
 export type AuthEventMethod = 'sms_query' | 'visual' | 'manual'
 

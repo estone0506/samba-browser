@@ -52,6 +52,7 @@ import { WorkspaceService } from '../workspace/service'
 import { workspaceShortcutIndex } from '../workspace/shortcut'
 import { ExtensionManager, createSessionExtensionHost } from '../extensions/manager'
 import { createExtensionInstaller } from '../extensions/install-service'
+import { registerPhoneScreenIpc } from '../phone/screen-ipc'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -684,6 +685,16 @@ export function registerIpc(
     extensionInstaller.installWebstore(input)
   )
   // === 확장 끝 =========================================================================
+
+  // === 폰 화면(3단계 Task 5) ===========================================================
+  // 화면 전송과 scrcpy 큰 창. 배선은 phone/screen-ipc.ts 한 곳에 모여 있다
+  const phoneScreen = registerPhoneScreenIpc({
+    handle: handleFromRenderer,
+    send,
+    settings: () => settings.get()
+  })
+  win.once('closed', () => phoneScreen.dispose())
+  // === 폰 화면 끝 ======================================================================
 
   return { settings, agent, db, vault, auth, sync }
 }

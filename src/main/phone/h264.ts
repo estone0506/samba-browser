@@ -63,10 +63,10 @@ export function toAnnexB(nals: Buffer[]): Buffer {
  * 마지막(아직 끝을 모르는) NAL 은 다음 push 까지 꼬리로 보관한다
  */
 export class AnnexBAssembler {
-  private tail = Buffer.alloc(0)
+  private tail: Buffer = Buffer.alloc(0)
 
   push(chunk: Buffer): Buffer[] {
-    const buf = this.tail.length > 0 ? Buffer.concat([this.tail, chunk]) : chunk
+    const buf: Buffer = this.tail.length > 0 ? Buffer.concat([this.tail, chunk]) : chunk
     const last = buf.lastIndexOf(START_CODE_3)
     if (last < 0) {
       this.tail = buf
