@@ -390,6 +390,11 @@ export class TabManager {
        * `chrome-extension://` 은 그쪽으로는 여전히 열리지 않는다
        */
       extension?: boolean
+      /**
+       * 페이지의 window.open 이 만든 뷰(setWindowOpenHandler 의 createWindow 경로).
+       * 이미 만들어진 뷰를 탭으로 등록만 하고, 로드는 Electron 이 하므로 loadURL 을 부르지 않는다
+       */
+      view?: WebContentsView
     } = {}
   ): TabInfo {
     if (this.disposed) throw new Error('window closed')
@@ -411,14 +416,16 @@ export class TabManager {
       this.partitionSessions.set(partition, ses)
       this.sessionHook?.(ses, partition)
     }
-    const view = new WebContentsView({
-      webPreferences: {
-        session: ses,
-        preload: join(__dirname, '../preload/page.js'),
-        sandbox: true,
-        contextIsolation: true
-      }
-    })
+    const view =
+      opts.view ??
+      new WebContentsView({
+        webPreferences: {
+          session: ses,
+          preload: join(__dirname, '../preload/page.js'),
+          sandbox: true,
+          contextIsolation: true
+        }
+      })
     // WebContentsView 는 네이티브 레이어라 CSS overflow-hidden 으로 잘리지 않는다.
     // setBorderRadius 는 4개 모서리를 한 번에 같은 값으로만 설정할 수 있어(상단만 둥글게 불가),
     // 카드가 상단만 둥글고(rounded-t-2xl) 하단은 창 바닥에 닿는 edge-to-edge 레이아웃에서는
@@ -488,17 +495,36 @@ export class TabManager {
         return { action: 'deny' }
       }
       // 새 창은 탭 목록에 등록해 스냅샷·조작 대상에 넣는다.
-      // 팝업은 부모 탭과 같은 profile 을 써야 로그인 세션·쿠키가 이어진다(결제창 필수)
-      try {
-        this.create({ url: target, profile, mobile: tab.mobile, openerId: tab.id })
-      } catch (e: unknown) {
-        // 여기서 던지면 페이지의 window.open 호출이 통째로 깨진다 — 로그만 남기고 막는다
-        console.warn('새 창 등록 실패', e instanceof Error ? e.message : String(e))
+      // 'deny' 하고 URL 만 따로 열면 페이지가 받는 window 참조가 null 이 되어,
+      // 결제창처럼 about:blank 팝업을 먼저 열고 폼을 target 으로 보내는 흐름이 통째로 깨진다.
+      // 그래서 뷰를 우리가 만들어 돌려주고(createWindow) 그 뷰를 탭으로 등록한다.
+      // 팝업은 부모 탭과 같은 profile(세션)을 써야 로그인 세션·쿠키가 이어진다(결제창 필수)
+      return {
+        action: 'allow',
+        createWindow: (options) => {
+          const popup = new WebContentsView({
+            webPreferences: {
+              ...options.webPreferences,
+              session: ses,
+              preload: join(__dirname, '../preload/page.js'),
+              sandbox: true,
+              contextIsolation: true,
+              nodeIntegration: false
+            }
+          })
+          try {
+            this.create({ url: target, profile, mobile: tab.mobile, openerId: tab.id, view: popup })
+          } catch (e: unknown) {
+            // 등록에 실패해도 뷰는 돌려줘야 페이지의 window.open 이 깨지지 않는다
+            console.warn('새 창 등록 실패', e instanceof Error ? e.message : String(e))
+          }
+          return popup.webContents
+        }
       }
-      return { action: 'deny' }
     })
     if (tab.mobile) void applyMobileEmulation(wc)
-    void wc.loadURL(url)
+    // 팝업 뷰는 Electron 이 window.open 의 주소를 직접 로드한다
+    if (!opts.view) void wc.loadURL(url)
     this.activate(tab.id)
     return this.list().find((t) => t.id === tab.id)!
   }
