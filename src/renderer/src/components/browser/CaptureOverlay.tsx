@@ -1,22 +1,40 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useCaptureStore } from '@renderer/stores/captureStore'
-import { normalizeDragRect } from '@shared/capture'
+import { MIN_VIDEO_REGION_SIZE, normalizeDragRect } from '@shared/capture'
 
-// 캡처 '직접 지정' 오버레이.
+// 클릭에 가까운 아주 작은 이미지 선택은 실수로 본다
+const MIN_IMAGE_REGION_SIZE = 4
+
+// 캡처 '직접 지정' 오버레이(이미지·비디오 공용).
 // 웹뷰를 먼저 한 장 찍어 둔 정지 이미지를 웹뷰가 있던 자리에 그대로 띄우고,
-// 그 위에서 드래그로 사각 영역을 고른다(네이티브 웹뷰는 그동안 접혀 있다)
+// 그 위에서 드래그로 사각 영역을 고른다(네이티브 웹뷰는 그동안 접혀 있다).
+// 이미지면 그 영역을 저장하고, 비디오면 그 영역만 녹화하기 시작한다
 export function CaptureOverlay(): React.JSX.Element | null {
   const { t } = useTranslation()
   const still = useCaptureStore((s) => s.still)
+  const stillMode = useCaptureStore((s) => s.stillMode)
   const closeStill = useCaptureStore((s) => s.closeStill)
   const cropAndSave = useCaptureStore((s) => s.cropAndSave)
+  const recordRegion = useCaptureStore((s) => s.recordRegion)
   const surfaceRef = useRef<HTMLDivElement>(null)
   const [origin, setOrigin] = useState<{ x: number; y: number } | null>(null)
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null)
 
+  // Esc 취소. 오버레이에 포커스가 없어도 듣도록 창 전체에 건다
+  useEffect(() => {
+    if (!still) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') closeStill()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [still, closeStill])
+
   if (!still) return null
+  const forVideo = stillMode === 'videoDirect'
+  const minSize = forVideo ? MIN_VIDEO_REGION_SIZE : MIN_IMAGE_REGION_SIZE
 
   // 화면 좌표 → 정지 이미지 안의 CSS 픽셀 좌표
   const toLocal = (e: React.PointerEvent): { x: number; y: number } => {
@@ -63,12 +81,13 @@ export function CaptureOverlay(): React.JSX.Element | null {
           setCursor(null)
           if (!from) return
           const rect = normalizeDragRect(from, end)
-          // 클릭에 가까운 아주 작은 영역은 실수로 본다 — 저장하지 않고 오버레이만 닫는다
-          if (rect.width < 4 || rect.height < 4) {
+          // 너무 작은 영역은 실수로 본다 — 아무것도 하지 않고 오버레이만 닫는다
+          if (rect.width < minSize || rect.height < minSize) {
             closeStill()
             return
           }
-          void cropAndSave(from, end)
+          if (forVideo) void recordRegion(from, end)
+          else void cropAndSave(from, end)
         }}
       >
         <img
@@ -96,7 +115,7 @@ export function CaptureOverlay(): React.JSX.Element | null {
         )}
         {!selection && (
           <div className="pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1.5 text-[12px] font-medium text-white">
-            {t('screenCapture.dragHint')}
+            {forVideo ? t('screenCapture.dragHintVideo') : t('screenCapture.dragHint')}
           </div>
         )}
       </div>

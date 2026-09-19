@@ -200,6 +200,7 @@
       "videoScreen": "Full screen"
     },
     "dragHint": "Drag the area you want to capture",
+    "dragHintVideo": "Drag the area you want to record",
     "cancel": "Cancel",
     "stop": "Stop",
     "saved": "Saved",
@@ -209,6 +210,8 @@
     "dismiss": "Dismiss",
     "folder": "Save folder",
     "changeFolder": "Change folder",
+    "folderChange": "Change",
+    "folderOpen": "Open",
     "format": "Image format",
     "microphone": "Record microphone audio",
     "microphoneDesc": "Include microphone audio in video captures",

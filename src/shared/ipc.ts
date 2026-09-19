@@ -171,7 +171,8 @@ export const IPC = {
   captureEndVideo: 'capture:endVideo', // 마무리(완료 이벤트)
   captureCopyImage: 'capture:copyImage', // 저장된 이미지를 클립보드로
   captureOpenFile: 'capture:openFile',
-  captureOpenFolder: 'capture:openFolder',
+  captureOpenFolder: 'capture:openFolder', // 인자가 없으면 저장 폴더 자체를 연다
+  captureDir: 'capture:dir', // 지금 쓰는 저장 폴더 경로(메뉴에 보여 준다)
   capturePickDir: 'capture:pickDir', // 저장 폴더 선택 다이얼로그
   captureShortcut: 'capture:shortcut', // main → renderer 이벤트(Alt+1~6)
   captureDone: 'capture:done', // main → renderer 이벤트(캡처 완료 → 토스트)

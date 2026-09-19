@@ -475,10 +475,13 @@ const api = {
     copyImage: (filePath: string): Promise<IpcResult<void>> =>
       invoke(IPC.captureCopyImage, filePath),
     openFile: (filePath: string): Promise<IpcResult<void>> => invoke(IPC.captureOpenFile, filePath),
-    openFolder: (filePath: string): Promise<IpcResult<void>> =>
-      invoke(IPC.captureOpenFolder, filePath),
+    // 경로를 주면 그 파일을 탐색기에서 고르고, 주지 않으면 저장 폴더를 연다
+    openFolder: (filePath?: string): Promise<IpcResult<void>> =>
+      invoke(IPC.captureOpenFolder, filePath ?? ''),
     // 저장 폴더 선택. 고르면 메인이 설정에 반영하고 그 경로를 돌려준다
     pickDir: (): Promise<IpcResult<string | null>> => invoke(IPC.capturePickDir),
+    // 지금 쓰는 저장 폴더 경로(설정이 비어 있으면 기본 폴더)
+    dir: (): Promise<IpcResult<string>> => invoke(IPC.captureDir),
     onShortcut: (cb: (mode: CaptureMode) => void): (() => void) => {
       const h = (_: unknown, dto: { mode: CaptureMode }): void => cb(dto.mode)
       ipcRenderer.on(IPC.captureShortcut, h)

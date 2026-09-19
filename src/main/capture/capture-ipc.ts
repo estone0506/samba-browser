@@ -250,7 +250,14 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
     const source = await primaryScreenSource()
     const size = source.image.getSize()
     if (rawMode !== 'videoDirect') {
-      return { sourceId: source.id, width: size.width, height: size.height, crop: null }
+      return {
+        sourceId: source.id,
+        width: size.width,
+        height: size.height,
+        crop: null,
+        viewport: null,
+        scaleFactor: source.scaleFactor
+      }
     }
     const content = deps.win.getContentBounds()
     const view = webviewRect()
@@ -266,16 +273,22 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
       width: source.bounds.width,
       height: source.bounds.height
     })
-    // 크롭은 화면 픽셀(= width/height 와 같은 좌표계)로 돌려준다
-    const crop = clamped
-      ? {
-          x: Math.round(clamped.x * source.scaleFactor),
-          y: Math.round(clamped.y * source.scaleFactor),
-          width: Math.round(clamped.width * source.scaleFactor),
-          height: Math.round(clamped.height * source.scaleFactor)
-        }
-      : null
-    return { sourceId: source.id, width: size.width, height: size.height, crop }
+    // 화면 픽셀(= width/height 와 같은 좌표계)로 돌려준다
+    const toDevice = (r: CaptureRect): CaptureRect => ({
+      x: Math.round(r.x * source.scaleFactor),
+      y: Math.round(r.y * source.scaleFactor),
+      width: Math.round(r.width * source.scaleFactor),
+      height: Math.round(r.height * source.scaleFactor)
+    })
+    return {
+      sourceId: source.id,
+      width: size.width,
+      height: size.height,
+      crop: clamped ? toDevice(clamped) : null,
+      // 선택 영역은 잘리기 전 웹뷰 왼쪽 위를 원점으로 재므로 자르지 않은 값도 함께 준다
+      viewport: toDevice(wanted),
+      scaleFactor: source.scaleFactor
+    }
   })
 
   deps.handle(IPC.captureSaveVideo, (rawBytes: unknown, rawMode: unknown): void => {
@@ -304,6 +317,11 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   // MediaRecorder(webm) 청크는 순서대로 이어 붙이면 그대로 재생 가능한 파일이 된다.
   // 렌더러가 죽거나 앱이 크래시해도 마지막 청크까지는 디스크에 남는다
   let streaming: { fd: number; filePath: string; fileName: string } | null = null
+  // 렌더러는 웹뷰에 가려 '보이지 않는 창' 으로 취급되어 타이머·rAF 가 초당 한두 번으로
+  // 묶인다. 녹화 중에는 크롭 캔버스를 그 속도로 그리면 영상이 뚝뚝 끊기므로 잠시 풀어 준다
+  const setThrottling = (allowed: boolean): void => {
+    if (!deps.win.isDestroyed()) deps.win.webContents.setBackgroundThrottling(allowed)
+  }
   deps.handle(IPC.captureBeginVideo, (): string => {
     if (streaming) {
       closeSync(streaming.fd)
@@ -313,6 +331,7 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
     const target = uniqueCaptureFile(dir, new Date(), 'webm', (p) => existsSync(p))
     const fd = openSync(target.filePath, 'w')
     streaming = { fd, filePath: target.filePath, fileName: target.fileName }
+    setThrottling(false)
     return target.fileName
   })
   deps.handle(IPC.captureAppendVideo, (rawBytes: unknown): void => {
@@ -328,6 +347,7 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   })
   deps.handle(IPC.captureEndVideo, (rawMode: unknown): void => {
     const mode: CaptureMode = isCaptureMode(rawMode) ? rawMode : 'videoScreen'
+    setThrottling(true)
     if (!streaming) return
     const { fd, filePath, fileName } = streaming
     streaming = null
@@ -354,9 +374,16 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
     const message = await shell.openPath(assertInCaptureDir(rawPath))
     if (message) throw new Error(message)
   })
-  deps.handle(IPC.captureOpenFolder, (rawPath: unknown) => {
+  deps.handle(IPC.captureOpenFolder, async (rawPath: unknown) => {
+    // 파일을 주지 않으면(메뉴의 '열기') 저장 폴더 자체를 연다
+    if (rawPath === undefined || rawPath === null || rawPath === '') {
+      const message = await shell.openPath(targetDir())
+      if (message) throw new Error(message)
+      return
+    }
     shell.showItemInFolder(assertInCaptureDir(rawPath))
   })
+  deps.handle(IPC.captureDir, (): string => targetDir())
   deps.handle(IPC.captureCopyImage, (rawPath: unknown) => {
     const image = nativeImage.createFromPath(assertInCaptureDir(rawPath))
     if (image.isEmpty()) throw new Error('이미지를 읽지 못했습니다')
@@ -401,6 +428,7 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   return {
     handleShortcut,
     dispose: () => {
+      setThrottling(true)
       ipcMain.removeListener(IPC.captureElementRect, onElementRect)
       for (const wc of regionTargets) {
         if (!wc.isDestroyed()) wc.send(IPC.captureRegionMode, { active: false })

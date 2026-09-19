@@ -40,6 +40,9 @@ export interface Tab {
  * Electron 의 createWindow 는 BrowserWindow 를 기대하므로 WebContentsView 로 만들면 네이티브 크래시가 난다.
  * 탭 목록에는 넣지 않고 따로 추적해, 부모 탭이 결제 결과를 확인할 때 찾는다
  */
+/** 팝업 창이 닫힐 때 실제 파괴를 미루는 시간 */
+const POPUP_CLOSE_DELAY_MS = 2500
+
 interface Popup {
   id: string
   win: BrowserWindow
@@ -574,6 +577,19 @@ export class TabManager {
       return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true } }
     })
     wc.on('did-create-window', (child) => this.registerPopup(child, openerId, profile))
+    // 팝업이 스스로 닫히는(window.close) 순간 부모 탭이 결제 처리 주소로 이동하면
+    // 브라우저 프로세스가 죽는 크래시가 있었다(결제창 흐름). 창은 즉시 숨기고 실제 파괴는
+    // 잠시 뒤로 미뤄, 부모의 내비게이션과 자식 파괴가 같은 순간에 겹치지 않게 한다
+    let deferredClose = false
+    win.on('close', (event) => {
+      if (deferredClose || win.isDestroyed()) return
+      event.preventDefault()
+      deferredClose = true
+      win.hide()
+      setTimeout(() => {
+        if (!win.isDestroyed()) win.close()
+      }, POPUP_CLOSE_DELAY_MS)
+    })
     win.once('closed', () => {
       this.popups = this.popups.filter((p) => p !== popup)
     })
