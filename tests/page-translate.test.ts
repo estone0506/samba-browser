@@ -12,14 +12,30 @@ import {
   splitBatches,
   wrapTextNodes
 } from '../src/preload/page-translate'
-import { TRANSLATE_MAX_CHARS, TRANSLATE_MAX_NODES } from '../src/preload/page-constants'
-import { TRANSLATE_MAX_CHARS as SHARED_CHARS } from '../src/shared/translate'
-import { TRANSLATE_MAX_NODES as SHARED_NODES } from '../src/shared/translate'
+import {
+  TRANSLATE_CONCURRENCY,
+  TRANSLATE_MAX_CHARS,
+  TRANSLATE_MAX_NODES
+} from '../src/preload/page-constants'
+import {
+  TRANSLATE_CONCURRENCY as SHARED_CONCURRENCY,
+  TRANSLATE_MAX_CHARS as SHARED_CHARS,
+  TRANSLATE_MAX_NODES as SHARED_NODES
+} from '../src/shared/translate'
 
 describe('page-constants 의 번역 상한은 shared 원본과 같다', () => {
   it('노드 수·문자 수 상한이 일치한다', () => {
     expect(TRANSLATE_MAX_NODES).toBe(SHARED_NODES)
     expect(TRANSLATE_MAX_CHARS).toBe(SHARED_CHARS)
+  })
+
+  it('동시 실행 수가 일치한다', () => {
+    expect(TRANSLATE_CONCURRENCY).toBe(SHARED_CONCURRENCY)
+  })
+
+  it('첫 배치가 빨리 뜨도록 상한을 작게 유지한다', () => {
+    expect(SHARED_NODES).toBeLessThanOrEqual(30)
+    expect(SHARED_CHARS).toBeLessThanOrEqual(1200)
   })
 })
 

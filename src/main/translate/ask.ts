@@ -8,8 +8,8 @@
 import { runQuery } from '../agent/provider'
 import type { AskText } from './service'
 
-// 한 배치(최대 100노드·4KB)의 번역에 넉넉히 주는 시간
-const ASK_TIMEOUT_MS = 60_000
+// 한 배치(최대 30노드·1200자)의 번역에 주는 시간. 배치가 작아진 만큼 대기도 짧게 끊는다
+const ASK_TIMEOUT_MS = 30_000
 
 export function createSdkAsk(): AskText {
   return async ({ model, system, prompt }) => {

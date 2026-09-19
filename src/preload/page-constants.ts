@@ -9,7 +9,7 @@
 //   - PAGE_IPC.gesture/gestureConfig ← 같은 파일의 IPC.pageGesture/pageGestureConfig
 //   - GESTURE_ACTION_LABELS 의 키 집합 ← src/shared/gestures.ts 의 GESTURE_ACTIONS
 //   - PAGE_IPC.pageTranslate ← 같은 파일의 IPC.pageTranslate
-//   - TRANSLATE_MAX_NODES/TRANSLATE_MAX_CHARS ← src/shared/translate.ts 의 동명 상수
+//   - TRANSLATE_MAX_NODES/TRANSLATE_MAX_CHARS/TRANSLATE_CONCURRENCY ← src/shared/translate.ts 의 동명 상수
 //   - PAGE_IPC.captureRegionMode/captureElementRect ← 같은 파일의 IPC 동명 채널
 //   - INTERNAL_PROTOCOL ← src/shared/url.ts 의 INTERNAL_SCHEME + ':'
 //
@@ -44,9 +44,11 @@ export const PAGE_IPC = {
   captureElementRect: 'capture:elementRect'
 } as const
 
-// 번역 배치 상한 사본 ← src/shared/translate.ts 의 TRANSLATE_MAX_NODES / TRANSLATE_MAX_CHARS
-export const TRANSLATE_MAX_NODES = 100
-export const TRANSLATE_MAX_CHARS = 4096
+// 번역 배치 상한·동시 실행 수 사본
+// ← src/shared/translate.ts 의 TRANSLATE_MAX_NODES / TRANSLATE_MAX_CHARS / TRANSLATE_CONCURRENCY
+export const TRANSLATE_MAX_NODES = 30
+export const TRANSLATE_MAX_CHARS = 1200
+export const TRANSLATE_CONCURRENCY = 3
 
 // 자동 채움 피커 문구(ko/en). page.ts 는 settings.language 를 IPC 로 물어본 뒤
 // 이 표에서 골라 쓴다(격리 월드에는 i18n 모듈을 쓸 수 없어 여기 복제해 둔다)

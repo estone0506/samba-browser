@@ -19,9 +19,13 @@ export const TRANSLATE_LANG_NAMES: Record<TranslateLang, string> = {
   zh: 'Simplified Chinese'
 }
 
-// 한 요청에 담는 최대 노드 수와 텍스트 총량(바이트가 아니라 문자 수)
-export const TRANSLATE_MAX_NODES = 100
-export const TRANSLATE_MAX_CHARS = 4096
+// 한 요청에 담는 최대 노드 수와 텍스트 총량(바이트가 아니라 문자 수).
+// 배치가 작을수록 첫 번역문이 화면에 빨리 뜬다(호출 1회 = CLI 왕복 1회라 배치가 크면 그만큼 늦다)
+export const TRANSLATE_MAX_NODES = 30
+export const TRANSLATE_MAX_CHARS = 1200
+
+// 동시에 띄우는 번역 호출 수. 너무 올리면 CLI 프로세스가 그만큼 늘어난다
+export const TRANSLATE_CONCURRENCY = 3
 
 // 디스크 캐시 최대 보관 건수(LRU)
 export const TRANSLATE_CACHE_LIMIT = 10000
