@@ -75,7 +75,6 @@ interface Built {
 function build(
   opts: {
     mode?: PhoneToolContext['mode']
-    isPro?: boolean
     confirmResult?: boolean
     phones?: PhoneDto[]
     screen?: PhoneScreen
@@ -104,7 +103,6 @@ function build(
   const ctx: PhoneToolContext = {
     phones: ops as unknown as PhoneOps,
     mode: opts.mode ?? 'guard',
-    isPro: () => opts.isPro ?? true,
     assigned: () => null,
     confirm,
     tick: opts.tick ?? ((): string | null => null),
@@ -167,19 +165,6 @@ describe('권한 모드(read_only)', () => {
 
     const shot = await get(tools, 'phone_screenshot').handler({})
     expect(shot.content.some((c) => c.type === 'image')).toBe(true)
-  })
-})
-
-describe('Pro 게이트', () => {
-  it('Pro 가 아니면 전부 거부한다', async () => {
-    const { tools, ops } = build({ isPro: false, mode: 'full' })
-    for (const t of tools) {
-      const r = await t.handler(ARGS[t.name])
-      expect(textOut(r)).toBe('refused: phone requires Pro plan')
-    }
-    expect(ops.screen).not.toHaveBeenCalled()
-    expect(ops.screenshot).not.toHaveBeenCalled()
-    expect(ops.tap).not.toHaveBeenCalled()
   })
 })
 
@@ -335,7 +320,6 @@ describe('금고 비접근', () => {
     expect(Object.keys(ctx).sort()).toEqual([
       'assigned',
       'confirm',
-      'isPro',
       'mode',
       'onStep',
       'phones',

@@ -160,9 +160,6 @@ export const DEFAULT_SETTINGS = {
   // 켜면 키패드 화면 원본이 AI 제공자로 전송되므로 기본은 꺼짐이고,
   // 꺼져 있으면 UI 트리로 못 읽은 키패드는 사람에게 넘긴다
   phoneKeypadVisual: false,
-  // 개발·검증용 Pro 게이트 우회(기기 로컬·설정 UI 없음·동기화 안 함).
-  // 환경변수 SAMBA_PHONE_PRO_OVERRIDE=1 로도 켜지고, 배포판에서는 통째로 무시된다
-  phoneDevOverridePro: false,
   // === 폰 연동 끝 ===========================================================
   // === 마우스 제스처 ========================================================
   // 오른쪽 버튼 드래그 제스처 사용 여부와 시퀀스→동작 매핑(웨일 기본값 16종)
@@ -308,7 +305,6 @@ export const settingsSchema = z.object({
   phoneAutoReconnect: z.boolean().catch(DEFAULT_SETTINGS.phoneAutoReconnect),
   paymentLimitKrw: z.number().int().min(0).catch(DEFAULT_SETTINGS.paymentLimitKrw),
   phoneKeypadVisual: z.boolean().catch(DEFAULT_SETTINGS.phoneKeypadVisual),
-  phoneDevOverridePro: z.boolean().catch(DEFAULT_SETTINGS.phoneDevOverridePro),
   // === 폰 연동 끝 =============================================================
   // === 마우스 제스처 ==========================================================
   mouseGesturesEnabled: z.boolean().catch(DEFAULT_SETTINGS.mouseGesturesEnabled),

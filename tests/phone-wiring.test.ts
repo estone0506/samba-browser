@@ -1,4 +1,4 @@
-// 3단계 배선 조각들 — Pro 게이트·비밀 화면 표식·진행 로그 중계·앱 실행·성공 판정·인증번호 읽기
+// 3단계 배선 조각들 — 비밀 화면 표식·진행 로그 중계·앱 실행·성공 판정·인증번호 읽기
 
 import { describe, it, expect, vi } from 'vitest'
 import {
@@ -9,7 +9,6 @@ import {
   createLaunchApp,
   isPaySuccessUrl,
   monkeyArgs,
-  phoneProEnabled,
   SECRET_SCREEN_TTL_MS,
   SecretScreenGate
 } from '../src/main/phone/wiring'
@@ -18,33 +17,6 @@ import { FakeAdb } from './stubs/fake-adb'
 import type { PhoneScreen } from '../src/shared/phone-snapshot'
 
 const SERIAL = 'R3CRA05HY3R'
-
-describe('phoneProEnabled — Pro 게이트와 개발 우회', () => {
-  it('Pro 계정은 언제나 허용된다', () => {
-    expect(phoneProEnabled({ plan: 'pro', devOverride: false, packaged: true })).toBe(true)
-  })
-
-  it('free 계정은 기본적으로 막힌다', () => {
-    expect(phoneProEnabled({ plan: 'free', devOverride: false, packaged: false })).toBe(false)
-  })
-
-  it('개발 중에는 설정이나 환경변수로 열 수 있다', () => {
-    expect(phoneProEnabled({ plan: 'free', devOverride: true, packaged: false })).toBe(true)
-    expect(phoneProEnabled({ plan: 'free', devOverride: false, env: '1', packaged: false })).toBe(
-      true
-    )
-    // 1 이 아닌 값은 켜지 않는다
-    expect(phoneProEnabled({ plan: 'free', devOverride: false, env: '0', packaged: false })).toBe(
-      false
-    )
-  })
-
-  it('배포판에서는 우회를 통째로 무시한다', () => {
-    expect(phoneProEnabled({ plan: 'free', devOverride: true, env: '1', packaged: true })).toBe(
-      false
-    )
-  })
-})
 
 describe('SecretScreenGate — 비밀번호 화면 프레임 차단', () => {
   it('표식이 없으면 막지 않는다', () => {

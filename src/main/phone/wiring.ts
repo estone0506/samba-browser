@@ -34,27 +34,6 @@ import {
   type PayRunDeps
 } from './pay'
 
-// --- Pro 게이트 --------------------------------------------------------------
-
-/** 개발·검증용 우회를 켜는 환경변수 */
-export const PRO_OVERRIDE_ENV = 'SAMBA_PHONE_PRO_OVERRIDE'
-
-/**
- * 폰 기능을 써도 되는가. Pro 계정이면 언제나 참이다.
- * 개발 중에는 설정(phoneDevOverridePro)이나 환경변수로 우회할 수 있지만,
- * 배포판(app.isPackaged)에서는 우회를 통째로 무시한다
- */
-export function phoneProEnabled(input: {
-  plan: string
-  devOverride: boolean
-  env?: string
-  packaged: boolean
-}): boolean {
-  if (input.plan === 'pro') return true
-  if (input.packaged) return false
-  return input.devOverride || input.env === '1'
-}
-
 // --- 비밀 화면 차단(T5 ScreenStream 훅) ---------------------------------------
 
 /** 비밀번호 화면으로 본 뒤 이 시간 동안은 프레임을 내보내지 않는다 */
@@ -301,7 +280,7 @@ export interface PhoneWiringDeps {
   sleep?: (ms: number) => Promise<void>
 }
 
-/** 폰 도구가 받는 두 함수. 나머지(phones/isPro/assigned)는 handlers 가 직접 넘긴다 */
+/** 폰 도구가 받는 두 함수. 나머지(phones/assigned)는 handlers 가 직접 넘긴다 */
 export interface PhoneAgentBridge {
   waitForSmsCode: (ctx: PhoneRunContext, host?: string) => Promise<SmsCodeOutcome>
   approvePayment: (ctx: PhoneRunContext, req: PayToolRequest) => Promise<PayResult>

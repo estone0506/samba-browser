@@ -120,8 +120,8 @@ export const SMS_POLL_INTERVAL_MS = 1000
 export const AUTH_TIMEOUT_MS = 3 * 60 * 1000
 /** 인증번호로 인정하는 문자 수신 최대 경과 시간 3분 */
 export const SMS_RECENT_MS = 3 * 60 * 1000
-/** Pro 요금제 폰 연결 상한 3대 */
-export const PHONE_LIMIT_PRO = 3
+/** 동시에 다룰 수 있는 폰 수의 기술 상한 3대(요금제와 무관하다) */
+export const PHONE_LIMIT = 3
 /** 화면 해상도 선택지(긴 변 기준) */
 export const SCREEN_SIZES = [720, 1080] as const
 export type ScreenSize = (typeof SCREEN_SIZES)[number]

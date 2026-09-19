@@ -1,4 +1,4 @@
-// 폰 기능의 조립 지점. 기기 감시(DeviceManager)·저장소·설정·요금제를 한데 묶어
+// 폰 기능의 조립 지점. 기기 감시(DeviceManager)·저장소·설정을 한데 묶어
 // IPC 핸들러가 이 파일 하나만 보게 한다. 비밀값은 이 층을 지나가지 않는다
 
 import { existsSync } from 'node:fs'
@@ -31,7 +31,6 @@ export interface PhoneServiceDeps {
   adb: AdbRunner
   repo: PhoneServiceRepo
   settings: PhoneSettingsLike
-  isPro: () => boolean
   emit: (list: PhoneDto[], warning?: string) => void
   emitAuthWaiting: (dto: PhoneAuthWaitingDto) => void
   /** 채팅 진행 로그(ARS 안내처럼 사용자가 봐야 하는 한 줄). 없으면 통지만 한다 */
@@ -58,7 +57,6 @@ export class PhoneService {
       adb: deps.adb,
       repo: deps.repo,
       now: deps.now ?? ((): number => Date.now()),
-      isPro: deps.isPro,
       autoReconnect: () => deps.settings.get().phoneAutoReconnect,
       onChange: (list, warning) => {
         deps.emit(list, warning)
@@ -67,7 +65,6 @@ export class PhoneService {
     })
   }
 
-  /** Pro 요금제일 때만 실제로 폴링이 돈다(게이트는 DeviceManager 안에도 한 번 더 있다) */
   start(): void {
     // 승계 1회 — 이미 도구가 깔린 PC 라면 설정이 비어 있어도 첫 실행에서 한 번 찾아 저장한다
     this.detectPaths()

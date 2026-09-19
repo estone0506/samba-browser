@@ -1,7 +1,7 @@
 // 폰 화면의 순수 표시 로직. React·window 를 쓰지 않아 그대로 테스트할 수 있다
 
 import {
-  PHONE_LIMIT_PRO,
+  PHONE_LIMIT,
   type PhoneCountry,
   type PhoneDto,
   type PhoneState,
@@ -9,8 +9,8 @@ import {
   type ScreenMode
 } from '@shared/phone'
 
-/** 화면에 한 번에 보여 주는 폰 카드 수(Pro 연결 상한과 같다) */
-export const PHONE_GRID_MAX = PHONE_LIMIT_PRO
+/** 화면에 한 번에 보여 주는 폰 카드 수(동시 연결 상한과 같다) */
+export const PHONE_GRID_MAX = PHONE_LIMIT
 
 /** 배지 색조 — StatusBadge 의 tone 과 같은 값 집합을 쓴다 */
 export type PhoneBadgeTone = 'neutral' | 'strong' | 'warn'
@@ -108,7 +108,7 @@ export function isSwipe(x1: number, y1: number, x2: number, y2: number): boolean
   return Math.hypot(x2 - x1, y2 - y1) > SWIPE_THRESHOLD_PX
 }
 
-/** 연결 상한을 넘겼는가(Pro 3대). 넘기면 설정에 안내를 띄운다 */
+/** 동시 연결 상한(3대)을 넘겼는가. 넘기면 설정에 안내를 띄운다 */
 export function isOverPhoneLimit(count: number): boolean {
-  return count > PHONE_LIMIT_PRO
+  return count > PHONE_LIMIT
 }

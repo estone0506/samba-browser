@@ -77,7 +77,10 @@ describe('parseUiXml', () => {
 describe('dumpScreen', () => {
   it('현재 앱을 읽고 덤프를 떠서 파싱한다', async () => {
     const adb = new FakeAdb()
-    adb.reply('dumpsys window displays', '  mCurrentFocus=Window{a b viva.republica.toss/com.toss.MainAct}')
+    adb.reply(
+      'dumpsys window displays',
+      '  mCurrentFocus=Window{a b viva.republica.toss/com.toss.MainAct}'
+    )
     adb.reply('uiautomator dump', 'UI hierchary dumped to: /sdcard/samba-ui.xml')
     adb.reply('cat /sdcard/samba-ui.xml', XML)
     const screen = await dumpScreen(adb, 'R3CRA05HY3R')

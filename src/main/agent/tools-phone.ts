@@ -25,7 +25,6 @@ import { dumpScreen } from '../phone/uitree'
 import { isSecretScreen, PAY_PROVIDERS, type PayProvider, type PayResult } from '../phone/pay'
 
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
-const NOT_PRO = 'refused: phone requires Pro plan'
 const NO_PHONE = 'no phone connected'
 const NOT_FOUND = 'not found'
 const SECRET_SCREEN = 'refused: secret screen'
@@ -94,7 +93,6 @@ export interface PhoneToolContext {
   // 주의: vault 필드가 없다 — 폰 도구는 금고 값에 접근할 수 없다(테스트로 단언)
   phones: PhoneOps
   mode: PermissionMode
-  isPro: () => boolean
   // 배정된 폰 serial. 없으면 연결된 첫 폰
   assigned: () => string | null
   confirm: (action: string, kind?: 'danger' | 'finish') => Promise<boolean>
@@ -142,7 +140,7 @@ export function createPhoneTools(ctx: PhoneToolContext): PhoneTool[] {
 
   /**
    * 모든 폰 도구가 지나는 관문.
-   * 호출 상한 → Pro 요금제 → 권한 모드 → 폰 선택 → (guard) 결제 앱 확인 순으로 본다
+   * 호출 상한 → 권한 모드 → 폰 선택 → (guard) 결제 앱 확인 순으로 본다
    */
   const enter = async (write: boolean): Promise<Gate> => {
     const over = ctx.tick()
@@ -153,7 +151,6 @@ export function createPhoneTools(ctx: PhoneToolContext): PhoneTool[] {
       }
       return { ok: false, message: over, silent: true }
     }
-    if (!ctx.isPro()) return { ok: false, message: NOT_PRO }
     if (write && ctx.mode === 'read_only') return { ok: false, message: READ_ONLY_REFUSAL }
     const serial = resolveSerial()
     if (!serial) return { ok: false, message: NO_PHONE }
@@ -387,7 +384,6 @@ export interface PayToolRequest {
 }
 
 export interface PayToolContext {
-  isPro: () => boolean
   tick: () => string | null
   onStep: (label: string, ok: boolean) => void
   // 결제 실행기(배선부가 runPayApproval 에 금고·폰·확인 카드를 묶어 넣는다)
@@ -413,10 +409,6 @@ export function createPayTool(ctx: PayToolContext): PhoneTool {
       const over = ctx.tick()
       // 상한 도달은 실행기까지 가지 않는다(별도 step 은 폰 도구 쪽에서 이미 남는다)
       if (over) return text(over)
-      if (!ctx.isPro()) {
-        ctx.onStep(label, false)
-        return text(NOT_PRO)
-      }
       try {
         const r = await ctx.run({
           provider: args.provider,

@@ -94,8 +94,6 @@ import {
   createCodeReader,
   createKeypadReader,
   createPhoneAgentBridge,
-  phoneProEnabled,
-  PRO_OVERRIDE_ENV,
   SecretScreenGate
 } from '../phone/wiring'
 // === 화면 번역 · 이미지 번역 — 배선은 translate/register.ts 한 곳에 모여 있다 ==========
@@ -971,19 +969,11 @@ export function registerIpc(
   // === 확장 끝 =========================================================================
 
   // === 폰 연동(3단계) — 이 블록만 따로 추가한다 ========================================
-  // 기기 감시는 Pro 요금제에서만 돈다. 결제 비밀번호·문자 본문은 이 채널들로 흐르지 않는다
+  // 결제 비밀번호·문자 본문은 이 채널들로 흐르지 않는다
   const phoneAdb = createAdbRunner(() => settings.get().adbPath)
   // 원클릭 설치본이 들어가는 자리(%APPDATA%/SAMBA Browser/phone-tools)
   const phoneToolsRoot = join(app.getPath('userData'), 'phone-tools')
   const phoneRepo = new PhoneRepo(db)
-  // 요금제 게이트. 개발·검증용 우회는 배포판에서 통째로 무시된다
-  const phoneIsPro = (): boolean =>
-    phoneProEnabled({
-      plan: auth.state().plan,
-      devOverride: settings.get().phoneDevOverridePro,
-      env: process.env[PRO_OVERRIDE_ENV],
-      packaged: app.isPackaged
-    })
   // 비밀번호 화면 표식(결제 실행기가 갱신 → 화면 전송이 참조)과 ARS 진행 로그 중계
   const phoneSecretGate = new SecretScreenGate()
   const phoneProgress = new AgentProgressRelay()
@@ -992,7 +982,6 @@ export function registerIpc(
     repo: phoneRepo,
     settings,
     toolsRoot: phoneToolsRoot,
-    isPro: phoneIsPro,
     emit: (list, warning) => send(IPC.phoneUpdated, { list, warning }),
     emitAuthWaiting: (dto) => send(IPC.phoneAuthWaiting, dto),
     onProgress: (t) => phoneProgress.emit(t)
@@ -1066,7 +1055,6 @@ export function registerIpc(
   })
   agent.setPhones({
     phones: phoneOps,
-    isPro: phoneIsPro,
     assigned: () => phones.list().find((p) => p.state === 'online')?.serial ?? null,
     waitForSmsCode: phoneBridge.waitForSmsCode,
     approvePayment: phoneBridge.approvePayment

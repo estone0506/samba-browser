@@ -329,7 +329,6 @@ describe('통합 ① 웹 폼 → wait_for_sms_code → 문자 도착 → 자동 
     const tools = createPhoneTools({
       phones: h.deps.ops,
       mode: 'guard',
-      isPro: () => true,
       assigned: () => SERIAL,
       confirm: h.ctx.confirm,
       tick: () => null,
@@ -593,7 +592,6 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     h.paySuccess.value = true
     const bridge = createPhoneAgentBridge(h.deps)
     const payTool = createPayTool({
-      isPro: () => true,
       tick: () => null,
       onStep: h.ctx.onStep,
       run: (req) => bridge.approvePayment(h.ctx, req)
