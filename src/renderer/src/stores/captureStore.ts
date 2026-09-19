@@ -10,6 +10,9 @@ import { cropDataUrl, startRecording, type RecordingHandle } from '@renderer/lib
 import { useUiStore } from './uiStore'
 
 // 녹화 중인 작업. 핸들은 스토어 상태에 넣지 않는다(리렌더 대상이 아니다)
+// 녹화 중 새 녹화를 시작하려 할 때의 오류 표식(렌더러가 i18n 문구로 바꿔 보여 준다)
+export const RECORDING_BUSY_KEY = 'screenCapture.recordingBusy'
+
 let recordingHandle: RecordingHandle | null = null
 // 녹화 청크 이어 쓰기 대기열(중지 때 마지막 청크까지 기다린다)
 let appendQueue: () => Promise<unknown> = () => Promise.resolve()
@@ -55,8 +58,11 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
   start: async (mode) => {
     set({ error: null })
     try {
-      // 녹화 중에 다른 캡처를 시작하지 않는다(먼저 중지해야 한다)
-      if (get().recordingMode) return
+      // 녹화 중에는 새 녹화만 막는다(이미지 캡처는 녹화와 겹쳐도 된다). 조용히 무시하면
+      // "직접 지정을 눌러도 아무 일도 없다"가 되므로 이유를 보여 준다
+      if (get().recordingMode && isVideoCaptureMode(mode)) {
+        throw new Error(RECORDING_BUSY_KEY)
+      }
       if (mode === 'direct') {
         const r = await window.samba.capture.still()
         if (!r.ok) throw new Error(r.error)

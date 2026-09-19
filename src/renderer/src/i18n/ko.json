@@ -216,7 +216,8 @@
     "clipboardDesc": "이미지 캡처에만 적용돼요",
     "shortcuts": "단축키",
     "shortcutsDesc": "Alt+1~6 이 기본값이에요. 비워 두면 단축키를 쓰지 않아요",
-    "shortcutInvalid": "단축키 표기를 알아볼 수 없어요 (예: Alt+1)"
+    "shortcutInvalid": "단축키 표기를 알아볼 수 없어요 (예: Alt+1)",
+    "recordingBusy": "녹화 중에는 새 녹화를 시작할 수 없어요. 먼저 중지해 주세요 (이미지 캡처는 가능)"
   },
   "bookmark": {
     "title": "북마크",

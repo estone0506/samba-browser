@@ -216,7 +216,8 @@
     "clipboardDesc": "Applies to image captures only",
     "shortcuts": "Shortcuts",
     "shortcutsDesc": "Alt+1 to Alt+6 by default. Leave blank to disable a shortcut",
-    "shortcutInvalid": "That shortcut could not be read (for example: Alt+1)"
+    "shortcutInvalid": "That shortcut could not be read (for example: Alt+1)",
+    "recordingBusy": "Stop the current recording before starting another (image captures still work)"
   },
   "bookmark": {
     "title": "Bookmarks",

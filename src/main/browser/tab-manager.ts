@@ -534,22 +534,12 @@ export class TabManager {
       }
       // 창 크기를 지정한 window.open(결제창·인증창) 은 별도 창으로 띄운다.
       // 'deny' 하고 URL 만 따로 열면 페이지가 받는 window 참조가 null 이 되어,
-      // about:blank 팝업을 먼저 열고 폼을 target 으로 보내는 결제 흐름이 통째로 깨진다
-      return {
-        action: 'allow',
-        // 자식 webContents 는 부모 설정(세션·샌드박스)을 물려받는다. preload 는 세션에 등록돼 있다
-        // 자식 webContents 는 부모 설정(세션·샌드박스·contextIsolation)을 그대로 물려받는다.
-        // 미리 만들어진 webContents 에 webPreferences 를 다시 덮어쓰면(세션 재지정 등) 창이 닫힐 때
-        // 브라우저 프로세스가 죽는다 — 옵션은 Electron 이 준 그대로 쓴다. preload 는 세션에 등록돼 있다
-        overrideBrowserWindowOptions: { autoHideMenuBar: true },
-        createWindow: (options) => {
-          // Electron 이 미리 만들어 넘긴 webContents(options.webContents)로 창을 만들어야 한다
-          const popupWin = new BrowserWindow(options)
-          this.registerPopup(popupWin, tab.id, profile)
-          return popupWin.webContents
-        }
-      }
+      // about:blank 팝업을 먼저 열고 폼을 target 으로 보내는 결제 흐름이 통째로 깨진다.
+      // 창은 Electron 의 표준 경로에 맡기고(직접 createWindow 로 만들면 부모 탭이 이동하는 순간
+      // 브라우저 프로세스가 죽는 경우가 있었다), did-create-window 에서 받아 추적만 한다
+      return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true } }
     })
+    wc.on('did-create-window', (popupWin) => this.registerPopup(popupWin, tab.id, profile))
     if (tab.mobile) void applyMobileEmulation(wc)
     void wc.loadURL(url)
     this.activate(tab.id)
@@ -581,16 +571,9 @@ export class TabManager {
     // 팝업이 또 창을 열면(결제 → 인증창) 같은 규칙으로 창을 만든다
     wc.setWindowOpenHandler(({ url: target }) => {
       if (!isAllowedUrl(target)) return { action: 'deny' }
-      return {
-        action: 'allow',
-        overrideBrowserWindowOptions: { autoHideMenuBar: true },
-        createWindow: (options) => {
-          const child = new BrowserWindow(options)
-          this.registerPopup(child, openerId, profile)
-          return child.webContents
-        }
-      }
+      return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true } }
     })
+    wc.on('did-create-window', (child) => this.registerPopup(child, openerId, profile))
     win.once('closed', () => {
       this.popups = this.popups.filter((p) => p !== popup)
     })

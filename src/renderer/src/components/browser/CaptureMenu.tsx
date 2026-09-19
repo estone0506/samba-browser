@@ -3,7 +3,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Camera, Settings as SettingsIcon, Square } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@renderer/components/ui/popover'
-import { useCaptureStore, formatElapsed } from '@renderer/stores/captureStore'
+import { useCaptureStore, formatElapsed, RECORDING_BUSY_KEY } from '@renderer/stores/captureStore'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { CaptureOverlay } from './CaptureOverlay'
 import { CaptureToast } from './CaptureToast'
@@ -132,7 +132,11 @@ export function CaptureMenu(): React.JSX.Element {
               setView('settings')
             }}
           />
-          {error && <p className="px-2 py-1.5 text-[11px] text-red-500">{error}</p>}
+          {error && (
+            <p className="px-2 py-1.5 text-[11px] text-red-500">
+              {error === RECORDING_BUSY_KEY ? t(RECORDING_BUSY_KEY) : error}
+            </p>
+          )}
         </PopoverContent>
       </Popover>
       <CaptureOverlay />
