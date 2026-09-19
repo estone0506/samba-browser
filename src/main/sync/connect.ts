@@ -20,6 +20,7 @@ import { DeviceRevokedError, DeviceService } from './devices'
 import { SyncEngine, SyncEngineHolder } from './engine'
 import { SyncLocal } from './local'
 import { createOutboxRecorder, settingUpdatedAtKey, SyncOutbox } from './outbox'
+import { VAULT_KEY_SYNC_KEYS } from '../../shared/sync'
 import type { SettingsAccess, VaultAccess, WorkspaceRef } from './push'
 
 /** 변경 로그 훅을 받아 주는 저장소(금고·설정·북마크가 모두 이 모양이다) */
@@ -167,8 +168,13 @@ export class SyncConnection {
         // 설정은 최초 업로드에서 빼 두고, **풀을 한 번 돌린 뒤** 서버에 없던 키만 올린다.
         // 로그인 직후 곧바로 올리면 두 번째 PC 의 첫 로그인이 첫 PC 의 설정을
         // 자기 기본값으로 덮어쓴다(3차 리뷰 C1)
-        onAfterPull: () => {
-          this.runBackfill(backfillSettings)
+        onAfterPull: (pulled) => {
+          // 키 재료 불일치면 setup 이 미리 넣어 둔 salt/verifier 항목도 걷어낸다 —
+          // 그대로 푸시하면 첫 PC 의 금고를 다른 PC 에서 못 열게 된다(4차 리뷰 N1)
+          if (pulled.vaultKeyMismatch) this.outbox.dropPendingSettingKeys(VAULT_KEY_SYNC_KEYS)
+          this.runBackfill((db, ws, vault) =>
+            backfillSettings(db, ws, vault, { skipKeyMaterial: pulled.vaultKeyMismatch })
+          )
         },
         onAuthExpired: () => {
           this.expire()

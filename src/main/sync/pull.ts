@@ -269,13 +269,16 @@ async function pullVaultItems(
       applied.push({ updatedAt: remote.updatedAt, id: raw.id })
       // 원격 id 로 먼저 찾고, 없으면 (계정, 종류, 라벨) 이 같고 아직 올라간 적 없는
       // 로컬 항목에 붙인다 — 두 PC 가 같은 CSV 를 각자 가져온 경우 중복을 만들지 않는다(I1)
+      // 원격 계정이 있는데 로컬에 아직 없으면(계정 표가 다음 페이지·다음 주기) identity 매칭을
+      // 하지 않는다 — null 계정으로 떨어져 무관한 항목에 붙는 사고 방지(4차 리뷰 N2)
+      const accountLocalId =
+        remote.accountRemoteId === null ? null : local.accountIdByRemote(remote.accountRemoteId)
+      const identityAllowed = remote.accountRemoteId === null || accountLocalId !== null
       const localId =
         local.vaultItemIdByRemote(remote.remoteId) ??
-        local.vaultItemIdByIdentity(
-          remote.accountRemoteId === null ? null : local.accountIdByRemote(remote.accountRemoteId),
-          remote.type,
-          remote.label
-        )
+        (identityAllowed
+          ? local.vaultItemIdByIdentity(accountLocalId, remote.type, remote.label)
+          : null)
       if (localId === null) {
         if (remote.deletedAt !== null) continue
         local.applyVaultItem(remote, null)

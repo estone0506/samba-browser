@@ -8,7 +8,7 @@ import { SYNC_TABLES, VAULT_KEY_MISMATCH_ERROR } from '../../shared/sync'
 import { AuthExpiredError } from './backend'
 import { SyncLocal } from './local'
 import { remoteTableOf } from './mappers'
-import { LAST_PULLED_AT_KEY, pullAll } from './pull'
+import { LAST_PULLED_AT_KEY, pullAll, type PullResult } from './pull'
 import { pushAll, type PushDeps } from './push'
 
 export const SYNC_POLL_INTERVAL_MS = 60_000
@@ -24,7 +24,8 @@ export interface EngineDeps extends PushDeps {
    * 설정 최초 업로드가 여기 붙는다 — "서버에 이 키가 있었는가" 는 풀을 한 번 돌려 봐야
    * 알 수 있고, 여기서 변경 로그에 얹으면 바로 이어지는 푸시가 같은 주기에 보낸다(C1)
    */
-  onAfterPull?: () => void
+  // 풀 결과를 넘긴다 — 키 재료 불일치 주기에는 호출부가 키 재료 업로드를 건너뛰어야 한다
+  onAfterPull?: (pulled: PullResult) => void
   /**
    * 인증이 만료됐을 때 한 번 불린다. 로그아웃·금고 잠금 연결은 호출부(Task 9)가 한다 —
    * 엔진은 여기서 아무것도 스스로 정리하지 않는다
@@ -106,7 +107,7 @@ export class SyncEngine {
       await this.deps.onCycleStart?.()
       // 먼저 받고(pull) 나서 보낸다(push) — 로컬 변경이 원격 최신본 위에 얹히도록
       const pulled = await pullAll(this.deps)
-      this.deps.onAfterPull?.()
+      this.deps.onAfterPull?.(pulled)
       await pushAll(this.deps)
       this.online = true
       // 키 재료 불일치는 통신 실패가 아니다 — 연결은 살아 있고 경고만 상태에 싣는다

@@ -17,6 +17,7 @@ import { SyncLocal } from '../src/main/sync/local'
 import { workspaceRemoteId } from '../src/main/sync/workspace-id'
 import { createFakeBackend, FAKE_USER_ID, type FakeBackend } from './stubs/fake-backend'
 import { DEFAULT_SETTINGS, type Settings } from '../src/shared/settings'
+import { VAULT_KEY_SYNC_KEYS } from '../src/shared/sync'
 import { vaultItems as vaultItemsTable } from '../src/main/db/schema'
 
 const MASTER = 'master-pass-1234'
@@ -170,6 +171,29 @@ describe('C2 — 키 불일치 주기에는 vault_items 커서가 움직이지 �
     pc2.vault.dispose()
     pc1.db.close()
     pc2.db.close()
+  })
+
+  it('키 재료 불일치 주기에는 로컬 salt/verifier 를 서버에 올리지 않는다(4차 N1)', async () => {
+    await pc1.vault.setup(MASTER)
+    backfillSettings(pc1.db, pc1.deps.workspace(), pc1.vault)
+    await pushAll(pc1.deps)
+    const before = backend
+      .keyedRows('settings_sync')
+      .find((r) => String(r.key) === 'vault.verifier')
+    expect(before).toBeDefined()
+
+    // PC2 는 다른 마스터로 금고를 만든 상태 → 풀에서 불일치
+    await pc2.vault.setup('전혀-다른-비밀번호')
+    const pulled = await pullAll(pc2.deps)
+    expect(pulled.vaultKeyMismatch).toBe(true)
+    // 불일치면 setup 이 넣어 둔 키 재료 항목을 걷어내고 backfill 도 건너뛴다 → PC1 의 verifier 가 그대로
+    if (pulled.vaultKeyMismatch) pc2.outbox.dropPendingSettingKeys(VAULT_KEY_SYNC_KEYS)
+    backfillSettings(pc2.db, pc2.deps.workspace(), pc2.vault, {
+      skipKeyMaterial: pulled.vaultKeyMismatch
+    })
+    await pushAll(pc2.deps)
+    const after = backend.keyedRows('settings_sync').find((r) => String(r.key) === 'vault.verifier')
+    expect(after?.value).toEqual(before?.value)
   })
 
   it('키를 맞추기 전에는 커서가 그대로고, 맞춘 뒤 다음 주기에 내려온다', async () => {

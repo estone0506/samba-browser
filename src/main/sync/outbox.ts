@@ -103,6 +103,31 @@ export class SyncOutbox {
     this.db.scheduleSave()
   }
 
+  /**
+   * 아직 보내지 않은 설정 키 항목을 지운다. 키 재료 불일치 주기에 로컬 salt/verifier 가
+   * 첫 PC 의 값을 덮지 않도록 푸시 전에 걷어낸다(4차 리뷰 N1). 지운 개수를 돌려준다
+   */
+  dropPendingSettingKeys(keys: readonly string[]): number {
+    if (keys.length === 0) return 0
+    const rows = this.d
+      .select({ id: syncOutbox.id })
+      .from(syncOutbox)
+      .where(and(eq(syncOutbox.table, 'settings'), inArray(syncOutbox.rowId, [...keys])))
+      .all()
+    if (rows.length === 0) return 0
+    this.d
+      .delete(syncOutbox)
+      .where(
+        inArray(
+          syncOutbox.id,
+          rows.map((r) => r.id)
+        )
+      )
+      .run()
+    this.db.scheduleSave()
+    return rows.length
+  }
+
   /** 전송에 실패한 건을 남겨 두고 사유만 적는다. 다음 주기에 다시 시도한다 */
   markFailed(ids: number[], error: string): void {
     if (ids.length === 0) return

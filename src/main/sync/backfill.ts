@@ -122,7 +122,9 @@ export function verifyBackfill(
 export function backfillSettings(
   db: Db,
   workspace: WorkspaceRef,
-  vault?: BackfillVault
+  vault?: BackfillVault,
+  // 키 재료 불일치 주기에는 로컬 salt/verifier 를 올리면 첫 PC 의 금고를 다른 PC 에서 못 열게 된다(4차 리뷰 N1)
+  options: { skipKeyMaterial?: boolean } = {}
 ): BackfillResult {
   const result = emptyResult(false)
   if (db.isClosed) return emptyResult(true)
@@ -148,6 +150,7 @@ export function backfillSettings(
   // 금고 키 재료는 설정 store 가 아니라 vault_meta 에서 온다. 금고가 아직 설정 전이면
   // 올릴 값이 없으므로 기록하지 않는다(설정하는 순간 금고가 스스로 기록한다)
   for (const key of VAULT_KEY_SYNC_KEYS) {
+    if (options.skipKeyMaterial) break
     if (local.getStateNumber(settingUpdatedAtKey(key)) !== null) continue
     if (vault && (vault.readKeyMaterial?.(key) ?? null) === null) continue
     add(key)
