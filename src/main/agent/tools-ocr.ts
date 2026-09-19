@@ -4,6 +4,7 @@ import { OcrEngine } from '../ocr/engine'
 import { clipText } from '../ocr/postprocess'
 // 순환 import 를 피하려고 타입만 가져온다(런타임 코드는 남지 않는다)
 import type { ToolContext } from './tools'
+import { secretKeypadGate } from './secret-page'
 
 // 응답 길이 상한 — 캡처 전체가 글자일 때 컨텍스트를 잡아먹지 않게 한다
 const MAX_RESULT_CHARS = 4000
@@ -11,6 +12,8 @@ const MAX_RESULT_CHARS = 4000
 const DOWNLOADING = 'downloading ~18MB model once… call again in 30s'
 // 설정에서 OCR 을 끈 경우
 const OCR_DISABLED = 'refused: OCR is disabled in settings'
+// 결제 비밀번호 키패드 화면(폰 도구와 같은 톤). 숫자 배치를 모델에게 읽어 주지 않는다
+const SECRET_SCREEN = 'refused: secret screen'
 // UI 스텝 라벨
 const STEP_LABEL = 'OCR'
 
@@ -66,6 +69,12 @@ export function createOcrTool(ctx: ToolContext): SdkMcpToolDefinition<typeof ocr
         if (!tab || !bounds || bounds.width === 0 || bounds.height === 0) {
           ctx.onStep(STEP_LABEL, false)
           return textResult('no visible page')
+        }
+
+        // 비밀 키패드 화면은 글자도 읽어 주지 않는다(숫자 배치 노출 방지)
+        if (await secretKeypadGate.check(tab)) {
+          ctx.onStep(STEP_LABEL, false)
+          return textResult(SECRET_SCREEN)
         }
 
         const ocr = getEngine()

@@ -1,7 +1,7 @@
 // [규칙] 이 파일은 page.ts 와 함께 sandbox preload 로 번들된다.
 // src/shared/* 에서 **값(value)** 을 import 하지 말 것 — Rollup 청크 분리로 require() 가 생겨
 // preload 로드가 실패한다. 타입은 `import type` 만 사용(번들에 남지 않음), 값은 ./page-constants 에서.
-import type { PageElement, PageSnapshot } from '../shared/snapshot'
+import type { KeypadSignals, PageElement, PageSnapshot } from '../shared/snapshot'
 import { MAX_ELEMENTS } from './page-constants'
 import {
   detectLoginFields,
@@ -74,28 +74,86 @@ function labelOf(el: HTMLElement): string {
   return ''
 }
 
-export function buildSnapshot(): PageSnapshot {
+/** 요소 하나를 스냅샷 항목으로 만든다(id 는 registry 순서 그대로) */
+function describeElement(el: HTMLElement, id: number): PageElement {
+  const input = el as HTMLInputElement
+  const inputType = el.tagName === 'INPUT' ? input.type : undefined
+  return {
+    id,
+    tag: el.tagName.toLowerCase(),
+    role: roleOf(el),
+    text: labelOf(el),
+    name: input.name || undefined,
+    href: (el as HTMLAnchorElement).getAttribute?.('href') || undefined,
+    inputType,
+    isSecret: inputType === 'password'
+  }
+}
+
+/** 지금 화면(뷰포트) 안에 들어와 있는 요소인가. 좌표를 못 구하면 false(문서 순으로 밀린다) */
+function isInViewport(el: HTMLElement): boolean {
+  const rect = el.getBoundingClientRect?.()
+  if (!rect) return false
+  if (rect.width === 0 && rect.height === 0) return false
+  const height = window.innerHeight || document.documentElement.clientHeight || 0
+  const width = window.innerWidth || document.documentElement.clientWidth || 0
+  return rect.bottom > 0 && rect.right > 0 && rect.top < height && rect.left < width
+}
+
+/** 검색어가 요소의 라벨·name·href·placeholder 에 들어 있는가(대소문자 무시 부분일치) */
+function matchesQuery(el: HTMLElement, item: PageElement, query: string): boolean {
+  const haystack = [
+    item.text,
+    item.name ?? '',
+    item.href ?? '',
+    el.getAttribute('placeholder') ?? '',
+    el.getAttribute('aria-label') ?? '',
+    el.getAttribute('value') ?? ''
+  ]
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(query)
+}
+
+export interface SnapshotOptions {
+  /** 주면 라벨·name·href·placeholder 가 부분일치하는 요소만 나열한다(id 는 그대로) */
+  query?: string
+}
+
+/**
+ * 페이지 스냅샷.
+ *
+ * registry(= click/type 이 쓰는 id 표)에는 **보이는 요소를 전부** 담는다 —
+ * 150개로 잘라 버리면 뒤쪽 버튼(사이즈 선택·장바구니)을 영영 누를 수 없다.
+ * 나열(elements)만 MAX_ELEMENTS 개로 자르고, 기본 순서는 "뷰포트 안 먼저, 그다음 문서 순"이다.
+ * query 를 주면 일치하는 요소만 원래 id 그대로 돌려준다(find_elements).
+ */
+export function buildSnapshot(options: SnapshotOptions = {}): PageSnapshot {
   const all = Array.from(document.querySelectorAll<HTMLElement>(SELECTOR)).filter(isVisible)
-  registry = all.slice(0, MAX_ELEMENTS)
-  const elements: PageElement[] = registry.map((el, i) => {
-    const input = el as HTMLInputElement
-    const inputType = el.tagName === 'INPUT' ? input.type : undefined
-    return {
-      id: i + 1,
-      tag: el.tagName.toLowerCase(),
-      role: roleOf(el),
-      text: labelOf(el),
-      name: input.name || undefined,
-      href: (el as HTMLAnchorElement).getAttribute?.('href') || undefined,
-      inputType,
-      isSecret: inputType === 'password'
-    }
-  })
+  // id 는 문서 순서로 매기고 registry 에는 전부 남긴다(나열 순서가 바뀌어도 id 는 안정적이다)
+  registry = all
+  const described = all.map((el, i) => describeElement(el, i + 1))
+  const query = options.query?.trim().toLowerCase()
+  let picked: PageElement[]
+  let total: number
+  if (query) {
+    const hits = described.filter((item, i) => matchesQuery(all[i], item, query))
+    total = hits.length
+    picked = hits.slice(0, MAX_ELEMENTS)
+  } else {
+    // 지금 화면에 보이는 것부터 — 모델이 필요한 버튼을 먼저 만나게 한다
+    const inView: PageElement[] = []
+    const rest: PageElement[] = []
+    described.forEach((item, i) => (isInViewport(all[i]) ? inView : rest).push(item))
+    total = described.length
+    picked = inView.concat(rest).slice(0, MAX_ELEMENTS)
+  }
   return {
     url: location.href,
     title: document.title,
     text: (document.body.innerText || document.body.textContent || '').replace(/\s+/g, ' ').trim(),
-    elements
+    elements: picked,
+    total
   }
 }
 
@@ -237,6 +295,46 @@ export function signedInHint(): SignedInHint {
 // 캡차·2FA 징후를 돌려준다. 푸는 것은 언제나 사용자 몫이다
 export function captchaHint(): CaptchaHint {
   return detectCaptchaHint()
+}
+
+// --- 결제 비밀번호 키패드 신호 ---------------------------------------------
+
+// 문구 판정에만 쓰므로 페이지 텍스트는 앞부분만 본다(결제 팝업은 짧다)
+const KEYPAD_TEXT_MAX = 8000
+// 결제 비밀번호 칸으로 볼 자릿수 범위(간편결제 PIN 은 보통 4~6자리)
+const PIN_MAXLENGTH_MIN = 4
+const PIN_MAXLENGTH_MAX = 6
+
+/**
+ * 결제 비밀번호 키패드 판정에 필요한 신호만 모은다.
+ * 입력칸의 **값은 절대 읽지 않는다** — 있는지·몇 개인지만 센다.
+ * 실제 판정은 메인 쪽 순수 함수(main/agent/secret-page.ts)가 한다
+ */
+export function keypadSignals(): KeypadSignals {
+  let digitButtons = 0
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>(SELECTOR))) {
+    const label = (el.textContent ?? '').trim()
+    if (label.length !== 1 || label < '0' || label > '9') continue
+    if (!isVisible(el)) continue
+    digitButtons += 1
+  }
+  const pinField = Array.from(document.querySelectorAll<HTMLInputElement>('input')).some((el) => {
+    // 평문 입력칸(문자 인증번호 등)은 대상이 아니다 — 비밀 입력칸만 본다
+    if (el.type !== 'password') return false
+    const max = el.maxLength
+    const short = max >= PIN_MAXLENGTH_MIN && max <= PIN_MAXLENGTH_MAX
+    const numeric = (el.getAttribute('inputmode') ?? '').toLowerCase() === 'numeric'
+    // maxlength 가 없어도(-1) 숫자 전용 비밀 입력칸이면 결제 비밀번호로 본다
+    return short || (numeric && (max === -1 || max <= PIN_MAXLENGTH_MAX))
+  })
+  const body = document.body
+  const text = ((body?.innerText || body?.textContent) ?? '').replace(/\s+/g, ' ').trim()
+  return {
+    url: location.href,
+    text: text.slice(0, KEYPAD_TEXT_MAX),
+    digitButtons,
+    pinField
+  }
 }
 
 // --- 로그인 상태 유지 체크박스 ---------------------------------------------

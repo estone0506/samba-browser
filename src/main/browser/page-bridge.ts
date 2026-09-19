@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import { z } from 'zod'
-import type { PageElement, PageSnapshot } from '../../shared/snapshot'
+import type { KeypadSignals, PageElement, PageSnapshot } from '../../shared/snapshot'
 import { findCodeField as pickCodeField } from '../phone/auth-flow'
 import type { Tab } from './tab-manager'
 
@@ -23,7 +23,16 @@ const snapshotSchema = z.object({
   url: z.string(),
   title: z.string(),
   text: z.string(),
-  elements: z.array(elementSchema)
+  elements: z.array(elementSchema),
+  total: z.number().int().optional()
+})
+
+// 결제 비밀번호 키패드 판정용 신호. 값은 담기지 않는다(개수·존재 여부만)
+const keypadSignalsSchema = z.object({
+  url: z.string(),
+  text: z.string(),
+  digitButtons: z.number().int(),
+  pinField: z.boolean()
 })
 
 // 행동 도구(click/type/select/scroll/textOf)는 결과가 항상 문자열이어야 한다
@@ -66,9 +75,25 @@ async function call<T>(wc: WebContents, expr: string, schema: z.ZodType<T>): Pro
   return parsed.data
 }
 
+// query 는 code 문자열 안에 들어간다. JSON.stringify 가 이스케이프하지 않는
+// U+2028/U+2029(줄 구분자)는 미리 걷어내 code 가 깨지지 않게 한다
+const LINE_SEPARATORS = [String.fromCharCode(0x2028), String.fromCharCode(0x2029)]
+
+function encodeQuery(query: string): string {
+  const clean = Array.from(query)
+    .filter((ch) => !LINE_SEPARATORS.includes(ch))
+    .join('')
+  return JSON.stringify(clean)
+}
+
 export const pageBridge = {
-  snapshot: (tab: Tab): Promise<PageSnapshot> =>
-    call(tab.view.webContents, '__samba.snapshot()', snapshotSchema),
+  // query 를 주면 라벨·name·href·placeholder 가 일치하는 요소만 나열한다(id 는 그대로)
+  snapshot: (tab: Tab, query?: string): Promise<PageSnapshot> =>
+    call(
+      tab.view.webContents,
+      `__samba.snapshot(${query === undefined ? '' : encodeQuery(query)})`,
+      snapshotSchema
+    ),
   // 요소 [id] 의 실제 페이지 텍스트. 없으면 빈 문자열
   textOf: (tab: Tab, id: number): Promise<string> =>
     call(tab.view.webContents, `__samba.textOf(${id})`, resultSchema),
@@ -114,6 +139,9 @@ export const pageBridge = {
   // 이미 로그인된 상태인지 힌트(로그인 폼을 못 찾았을 때만 쓴다)
   signedInHint: (tab: Tab): Promise<SignedInHintResult> =>
     call(tab.view.webContents, '__samba.signedInHint()', signedInHintSchema),
+  // 결제 비밀번호 키패드 신호(비밀 화면 판정용). 입력 내용은 읽지 않는다
+  keypadSignals: (tab: Tab): Promise<KeypadSignals> =>
+    call(tab.view.webContents, '__samba.keypadSignals()', keypadSignalsSchema),
   // 캡차·2FA 징후 감지(사용자 넘김 판단용)
   captchaHint: (tab: Tab): Promise<CaptchaHintResult> =>
     call(tab.view.webContents, '__samba.captchaHint()', captchaHintSchema),

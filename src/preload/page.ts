@@ -36,6 +36,7 @@ import {
   checkKeepSignedIn,
   submitForm,
   isSecretField,
+  keypadSignals,
   installCaptureListener
 } from './page-core'
 import {
@@ -57,7 +58,8 @@ if (window.self === window.top) {
   // 메인 프로세스는 executeJavaScriptInIsolatedWorld(999, '__samba.snapshot()') 로 호출한다.
   // → 적대 페이지가 __samba 를 가로채거나 프로토타입 오염으로 결과를 왜곡할 수 없다.
   const api = {
-    snapshot: () => buildSnapshot(),
+    // query 를 주면 일치하는 요소만 나열한다(find_elements). id 는 언제나 문서 순서다
+    snapshot: (query?: string) => buildSnapshot({ query }),
     // 요소의 실제 텍스트 조회(위험 행동 판정용)
     textOf: (id: number) => textOf(id),
     click: (id: number) => performClick(id),
@@ -75,7 +77,9 @@ if (window.self === window.top) {
     checkKeepSignedIn: (anchorId?: number) => checkKeepSignedIn(anchorId),
     submitForm: (id: number) => submitForm(id),
     // 최신 스냅샷 기준으로 요소가 비밀 입력칸(type=password)인지 확인(fill_secret 대상 검증용)
-    isSecretField: (id: number) => isSecretField(id)
+    isSecretField: (id: number) => isSecretField(id),
+    // 결제 비밀번호 키패드 판정용 신호(값은 담기지 않는다)
+    keypadSignals: () => keypadSignals()
   }
 
   // globalThis 에 직접 대입(any 없이 타입 안전하게)

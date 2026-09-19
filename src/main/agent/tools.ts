@@ -29,6 +29,7 @@ import {
   type PhoneToolContext
 } from './tools-phone'
 import { handoffToolResult, type HandoffResult } from './handoff'
+import { secretKeypadGate } from './secret-page'
 import { knownLoginUrl, isLikelyLoginUrl } from '../../shared/site-rules'
 import { BLOCKED_URL_MESSAGE, isInternalUrl } from '../../shared/url'
 
@@ -73,6 +74,18 @@ const FILL_HOST_MISMATCH = 'refused: HOST_MISMATCH — page moved to another dom
 const ALREADY_SIGNED_IN = 'already signed in'
 // 캡차·2FA 를 사용자에게 넘길 수 없을 때(넘김 콜백 미주입) 돌려주는 문자열
 const NEEDS_USER_CAPTCHA = 'needs_user: captcha'
+// 웹 결제 비밀번호 키패드에서 조작 도구(click/type/select/scroll)를 거부할 때 돌려주는 문자열.
+// 모델은 비밀번호를 모르므로 숫자를 맞출 수 없고, 잘못 누르면 계정이 잠긴다
+export const PAYMENT_KEYPAD_REFUSAL =
+  'refused: payment keypad — the app enters the payment password itself; ' +
+  'call fill_secret with itemType "password" and provider, or stop and tell the user'
+// 비밀 키패드 화면에서 화면 읽기(screenshot·ocr)를 거부할 때 돌려주는 문자열(폰 도구와 같은 톤).
+// 숫자 배치를 모델에게 보여 주지 않는다
+export const SECRET_SCREEN_REFUSAL = 'refused: secret screen'
+// 비밀 키패드 화면에서 fill_secret 이 사람에게 넘길 때의 안내
+export const KEYPAD_HANDOFF_MESSAGE = '결제 비밀번호는 직접 눌러 주세요'
+// 넘김 카드에 표시할 근거 문구(값이 아니라 화면 종류만 담는다)
+const KEYPAD_HANDOFF_MATCHED = '결제 비밀번호 키패드'
 // progress 도구가 말이 안 되는 숫자를 받았을 때 돌려주는 문자열
 export const PROGRESS_INVALID = 'refused: progress needs 0 <= done <= total and total >= 1'
 // 진행 라벨 표시 상한(상품명이 길어도 진행 배지가 무너지지 않게)
@@ -418,6 +431,28 @@ ${raw}`
   }
 
   /**
+   * 웹 결제 비밀번호 키패드를 사용자에게 넘긴다.
+   * 아직 웹 키패드에 자동으로 눌러 주는 경로는 없다 — 사용자가 직접 누르고 "계속" 하면 이어간다.
+   * 비밀값은 어디에도 오가지 않는다
+   */
+  const keypadHandoff = async (tab: Tab): Promise<string> => {
+    if (!ctx.handoff) return `handoff: ${KEYPAD_HANDOFF_MESSAGE}`
+    try {
+      const result = await ctx.handoff({
+        matched: KEYPAD_HANDOFF_MATCHED,
+        currentUrl: () => currentUrl(tab),
+        stillBlocked: async () => (await secretKeypadGate.check(tab, { fresh: true })) !== null
+      })
+      return `handoff: ${KEYPAD_HANDOFF_MESSAGE}
+${handoffToolResult(result)}`
+    } catch (e: unknown) {
+      const reason = e instanceof Error ? e.message : String(e)
+      console.warn('결제 키패드 넘김이 끊겼습니다(탭 종료 등)', reason)
+      return `handoff: ${KEYPAD_HANDOFF_MESSAGE}`
+    }
+  }
+
+  /**
    * 제출 직전 "로그인 상태 유지" 체크박스를 켠다(설정으로 끌 수 있다).
    * 로그인 세션을 재사용하면 재로그인이 줄어 캡차도 덜 뜬다. 실패해도 로그인은 계속한다
    */
@@ -430,22 +465,46 @@ ${raw}`
     }
   }
 
+  /**
+   * 대상 탭이 웹 결제 비밀번호 키패드 화면이면 거부 문구를, 아니면 null 을 돌려준다.
+   * 스캔은 도구 호출당 1회다(secret-page 의 500ms 캐시)
+   */
+  const keypadRefusal = async (tab: Tab, refusal: string): Promise<string | null> =>
+    (await secretKeypadGate.check(tab)) === null ? null : refusal
+
   const getPage = tool(
     'get_page',
-    'Read the current page: URL, title, numbered interactive elements, visible text.',
-    {},
-    () =>
-      guard('페이지 읽기', async () => {
+    'Read the current page: URL, title, numbered interactive elements, visible text. ' +
+      'At most 150 elements are listed; pass query to list only the ones matching that text.',
+    { query: z.string().optional() },
+    ({ query }) =>
+      guard(query ? `페이지 읽기: ${query}` : '페이지 읽기', async () => {
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
         await pageBridge.waitForLoad(tab)
-        const snapshot = serializeSnapshot(await pageBridge.snapshot(tab))
+        const snapshot = serializeSnapshot(await pageBridge.snapshot(tab, query))
         // 사람의 추가 확인이 필요하면 **알리기만** 한다 — 읽기 도구가 최장 10분 막히면
         // 모델이 다음 수를 두지 못한다. 실제 넘김·대기는 login 같은 행동 도구가 건다
         const notice = await captchaNotice(tab)
         if (!notice) return snapshot
         return `${notice}
 ${snapshot}`
+      })
+  )
+
+  // 나열 상한(150개) 때문에 필요한 버튼이 목록에서 빠졌을 때 되찾는 통로.
+  // registry 는 보이는 요소를 전부 들고 있으므로 150 이후 id 도 click/type 이 된다
+  const findElements = tool(
+    'find_elements',
+    "Search interactive elements by visible text/name/href when read_page's list is truncated; returns matching element ids to use with click/type",
+    { query: z.string() },
+    ({ query }) =>
+      guard(`요소 찾기: ${query}`, async () => {
+        const tab = activeOr(ctx)
+        if (!tab) return 'no active tab'
+        const snapshot = await pageBridge.snapshot(tab, query)
+        if (snapshot.elements.length === 0) return `no element matches "${query}"`
+        return serializeSnapshot({ ...snapshot, text: '' })
       })
   )
 
@@ -472,6 +531,11 @@ ${snapshot}`
         if (!tab || !bounds || bounds.width === 0 || bounds.height === 0) {
           ctx.onStep('화면 캡처', false)
           return text('no visible page')
+        }
+        // 비밀 키패드 화면은 캡처하지 않는다 — 숫자 배치를 모델에게 보여 주지 않는다
+        if (await secretKeypadGate.check(tab)) {
+          ctx.onStep('화면 캡처', false)
+          return text(SECRET_SCREEN_REFUSAL)
         }
         const image = await tab.view.webContents.capturePage()
         const { width, height } = image.getSize()
@@ -524,6 +588,9 @@ ${snapshot}`
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
+        // 결제 비밀번호 키패드에서는 숫자를 누르지 않는다
+        const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
+        if (keypad) return keypad
         // 위험 판정 근거는 페이지의 실제 텍스트. AI 가 준 label 은 기록용일 뿐 신뢰하지 않는다
         const pageText = await pageBridge.textOf(tab, id)
         // full 모드는 위험 단어 확인을 생략한다(SECRET 거부·URL 허용목록·호출 상한은 그대로 유지)
@@ -546,6 +613,9 @@ ${snapshot}`
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
+        // 결제 비밀번호 키패드에서는 입력하지 않는다(숫자칸·키패드 모두)
+        const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
+        if (keypad) return keypad
         // 입력값 자체와 대상 입력칸의 실제 텍스트를 함께 판정
         const pageText = await pageBridge.textOf(tab, id)
         if (ctx.mode !== 'full' && isDangerous(`${pageText} ${t}`, ctx.dangerWords)) {
@@ -566,7 +636,10 @@ ${snapshot}`
       guard(`선택: ${value} (#${id})`, async () => {
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
-        return tab ? pageBridge.select(tab, id, value) : 'no active tab'
+        if (!tab) return 'no active tab'
+        const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
+        if (keypad) return keypad
+        return pageBridge.select(tab, id, value)
       })
   )
 
@@ -577,7 +650,10 @@ ${snapshot}`
     ({ direction }) =>
       guard(`스크롤 ${direction}`, async () => {
         const tab = activeOr(ctx)
-        return tab ? pageBridge.scroll(tab, direction) : 'no active tab'
+        if (!tab) return 'no active tab'
+        const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
+        if (keypad) return keypad
+        return pageBridge.scroll(tab, direction)
       })
   )
 
@@ -683,6 +759,8 @@ ${snapshot}`
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
+        // 웹 결제 키패드에는 자동으로 넣을 수 있는 입력칸이 없다 — 사람에게 넘긴다
+        if (await secretKeypadGate.check(tab)) return await keypadHandoff(tab)
         const host = currentHost(tab)
         // 평문(http) 페이지에는 비밀값을 절대 채우지 않는다(네트워크 도청·다운그레이드 방어)
         const blocked = gateRefusal(currentUrl(tab))
@@ -891,6 +969,7 @@ ${snapshot}`
     version: '0.1.0',
     tools: [
       getPage,
+      findElements,
       screenshot,
       createOcrTool(ctx),
       navigate,
@@ -914,6 +993,7 @@ ${snapshot}`
 
 export const SAMBA_TOOL_NAMES = [
   'get_page',
+  'find_elements',
   'screenshot',
   'ocr',
   'navigate',

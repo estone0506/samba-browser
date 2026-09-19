@@ -16,6 +16,13 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const { pageBridge } = vi.hoisted(() => ({
   pageBridge: {
+    // 결제 비밀번호 키패드 판정 — 기본은 '평범한 화면'
+    keypadSignals: vi.fn(async () => ({
+      url: 'https://shop.example/',
+      text: '',
+      digitButtons: 0,
+      pinField: false
+    })),
     snapshot: vi.fn(async () => ({
       url: 'https://shop.example/',
       title: '',
