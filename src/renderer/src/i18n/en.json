@@ -72,7 +72,9 @@
       "low": "Answers quickly with little thinking",
       "medium": "Balances speed and care",
       "high": "Thinks carefully before acting"
-    }
+    },
+    "collapsePanel": "Collapse AI panel",
+    "expandPanel": "Expand AI panel"
   },
   "confirm": {
     "title": "Confirmation required",

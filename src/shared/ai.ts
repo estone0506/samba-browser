@@ -42,3 +42,18 @@ export function isApiKeyVendor(v: unknown): v is ApiKeyVendor {
 export function isTaskModelKey(v: unknown): v is TaskModelKey {
   return typeof v === 'string' && (TASK_MODEL_KEYS as readonly string[]).includes(v)
 }
+
+// 모델 ID·별칭을 사람이 읽는 이름으로. 모르는 값은 그대로 보여 준다
+const MODEL_LABELS: Record<string, string> = {
+  'claude-fable-5-1': 'Fable 5.1',
+  'claude-opus-5': 'Opus 5',
+  'claude-sonnet-5': 'Sonnet 5',
+  'claude-haiku-4-5-20251001': 'Haiku 4.5',
+  fable: 'Fable 5.1',
+  opus: 'Opus 5',
+  sonnet: 'Sonnet 5',
+  haiku: 'Haiku 4.5'
+}
+export function modelLabel(model: string): string {
+  return MODEL_LABELS[model] ?? model
+}

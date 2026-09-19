@@ -205,9 +205,11 @@ export function BookmarkTree(): React.JSX.Element {
   }, [load])
 
   const isEmpty = !tree || (tree.folders.length === 0 && tree.links.length === 0)
-  // 북마크 바(isToolbar) 폴더는 항상 맨 앞에 오도록 안정 정렬한다
+  // 북마크 바(isToolbar) 폴더는 "북마크" 섹션 바로 아래 한 겹 더 접혀 보여 이중 구조가 된다 —
+  // 그 폴더의 내용은 최상위로 펼치고(폴더 행 생략), 나머지 최상위 폴더는 그 뒤에 둔다
+  const toolbar = tree?.folders.find((f) => f.isToolbar) ?? null
   const folders = tree
-    ? [...tree.folders].sort((a, b) => (a.isToolbar === b.isToolbar ? 0 : a.isToolbar ? -1 : 1))
+    ? [...(toolbar?.folders ?? []), ...tree.folders.filter((f) => !f.isToolbar)]
     : []
 
   return (
@@ -235,7 +237,7 @@ export function BookmarkTree(): React.JSX.Element {
           {folders.map((f) => (
             <FolderRow key={f.id} folder={f} depth={0} />
           ))}
-          {tree?.links.map((l) => (
+          {[...(toolbar?.links ?? []), ...(tree?.links ?? [])].map((l) => (
             <LinkRow key={l.id} link={l} depth={0} />
           ))}
         </div>

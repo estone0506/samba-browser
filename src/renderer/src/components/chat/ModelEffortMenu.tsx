@@ -1,6 +1,7 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { modelLabel } from '@shared/ai'
 import { Check, ChevronDown } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@renderer/components/ui/popover'
 import { cn } from '@renderer/lib/utils'
@@ -75,7 +76,7 @@ export function ModelEffortMenu(): React.JSX.Element {
             title={t('chat.modelMenu')}
             className="min-w-0 rounded-l-full px-2.5 py-1 transition-colors hover:bg-black/[.03]"
           >
-            <span className="block max-w-[140px] truncate">{model}</span>
+            <span className="block max-w-[140px] truncate">{modelLabel(model)}</span>
           </button>
         </PopoverTrigger>
         <PopoverContent>
@@ -84,7 +85,12 @@ export function ModelEffortMenu(): React.JSX.Element {
           </div>
           <div className="flex flex-col gap-0.5">
             {choices.map((m) => (
-              <OptionRow key={m} label={m} selected={m === model} onClick={() => choose(m)} />
+              <OptionRow
+                key={m}
+                label={modelLabel(m)}
+                selected={m === model}
+                onClick={() => choose(m)}
+              />
             ))}
           </div>
         </PopoverContent>
@@ -99,7 +105,7 @@ export function ModelEffortMenu(): React.JSX.Element {
             title={t('chat.effortMenu')}
             className="inline-flex items-center gap-1 rounded-r-full px-2.5 py-1 transition-colors hover:bg-black/[.03]"
           >
-            {t(`chat.effort.${effort}`)}
+            {t(`chat.effort.${effort ?? 'medium'}`)}
             <ChevronDown className="h-3 w-3" />
           </button>
         </PopoverTrigger>

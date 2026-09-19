@@ -12,7 +12,11 @@ const aiTaskModels = vi.fn(
     IpcResult<{ provider: AiProviderId; taskModels: TaskModels; choices: string[] }>
   > => ({
     ok: true,
-    data: { provider: 'claude_subscription', taskModels, choices: ['haiku', 'sonnet', 'opus'] }
+    data: {
+      provider: 'claude_subscription',
+      taskModels,
+      choices: ['claude-fable-5-1', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001']
+    }
   })
 )
 const setTaskModel = vi.fn(async (key: string, model: string): Promise<IpcResult<TaskModels>> => {
@@ -51,8 +55,13 @@ describe('채팅 입력줄 모델·추론 강도', () => {
 
   it('작업별 모델 표의 표준 칸과 후보 목록을 읽어 온다', async () => {
     await useChatStore.getState().loadModelMenu()
-    expect(useChatStore.getState().model).toBe('sonnet')
-    expect(useChatStore.getState().modelChoices).toEqual(['haiku', 'sonnet', 'opus'])
+    expect(useChatStore.getState().model).toBe('claude-sonnet-5')
+    expect(useChatStore.getState().modelChoices).toEqual([
+      'claude-fable-5-1',
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'claude-haiku-4-5-20251001'
+    ])
   })
 
   it('저장된 추론 강도를 읽어 온다', async () => {

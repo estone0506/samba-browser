@@ -72,7 +72,9 @@
       "low": "적게 생각하고 빠르게 답해요",
       "medium": "속도와 신중함의 중간이에요",
       "high": "행동 전에 꼼꼼히 생각해요"
-    }
+    },
+    "collapsePanel": "AI 패널 접기",
+    "expandPanel": "AI 패널 펼치기"
   },
   "confirm": {
     "title": "확인이 필요합니다",

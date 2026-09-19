@@ -92,10 +92,10 @@ export const DEFAULT_SETTINGS = {
   // AI 연결 경로와 작업별 모델
   aiProvider: 'claude_subscription' as AiProviderId,
   taskModels: {
-    fast: 'haiku',
-    standard: 'sonnet',
-    deep: 'opus',
-    visual: 'sonnet'
+    fast: 'claude-haiku-4-5-20251001',
+    standard: 'claude-sonnet-5',
+    deep: 'claude-opus-5',
+    visual: 'claude-sonnet-5'
   } as TaskModels,
   // 에이전트 동작
   agentNotify: true,
@@ -115,6 +115,8 @@ export const DEFAULT_SETTINGS = {
   sidebarShowChat: true,
   // 사이드바 접기(아이콘 폭) 여부와 섹션별 펼침 상태 — 기기 로컬이라 동기화하지 않는다
   sidebarCollapsed: false,
+  // 오른쪽 AI 패널 접힘(기기 로컬)
+  panelCollapsed: false,
   sidebarSections: { tabs: true, chat: true, bookmarks: true } as SidebarSections,
   // 에이전트 추론 강도(채팅 입력줄에서 고른다). 기기 간 같은 값을 쓰도록 동기화한다
   agentEffort: 'medium' as AgentEffort,
@@ -206,6 +208,7 @@ export const settingsSchema = z.object({
   sidebarShowBookmarks: z.boolean().catch(DEFAULT_SETTINGS.sidebarShowBookmarks),
   sidebarShowChat: z.boolean().catch(DEFAULT_SETTINGS.sidebarShowChat),
   sidebarCollapsed: z.boolean().catch(DEFAULT_SETTINGS.sidebarCollapsed),
+  panelCollapsed: z.boolean().catch(DEFAULT_SETTINGS.panelCollapsed),
   // 섹션 중 하나만 망가져도 그 칸만 기본값(펼침)으로 되돌린다
   sidebarSections: z
     .object({

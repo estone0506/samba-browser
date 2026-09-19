@@ -18,6 +18,10 @@ interface UiState {
   sidebarWidth: number
   // 사이드바를 아이콘 폭으로 접었는가(설정에 영속, 기기 로컬)
   sidebarCollapsed: boolean
+  // 오른쪽 AI 패널 접힘
+  panelCollapsed: boolean
+  setPanelCollapsed: (v: boolean) => void
+  togglePanel: () => boolean
   // 사이드바 안 섹션(열린 탭·채팅·북마크)의 펼침 상태(설정에 영속)
   sidebarSections: SidebarSections
   panelWidth: number
@@ -45,6 +49,7 @@ interface UiState {
 export const useUiStore = create<UiState>((set, get) => ({
   sidebarWidth: 232,
   sidebarCollapsed: DEFAULT_SETTINGS.sidebarCollapsed,
+  panelCollapsed: DEFAULT_SETTINGS.panelCollapsed,
   sidebarSections: { ...DEFAULT_SETTINGS.sidebarSections },
   panelWidth: 380,
   view: 'browser',
@@ -53,6 +58,13 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSidebarWidth: (w) =>
     set({ sidebarWidth: Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, w)) }),
   setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
+  setPanelCollapsed: (v) => set({ panelCollapsed: v }),
+  togglePanel: () => {
+    const next = !get().panelCollapsed
+    set({ panelCollapsed: next })
+    void window.samba.settings.set({ panelCollapsed: next })
+    return next
+  },
   toggleSidebar: () => {
     const next = !get().sidebarCollapsed
     set({ sidebarCollapsed: next })

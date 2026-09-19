@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Sidebar } from '@renderer/components/layout/Sidebar'
-import { RightPanel } from '@renderer/components/layout/RightPanel'
+import { RightPanel, CollapsedPanelStrip } from '@renderer/components/layout/RightPanel'
 import { TabBar } from '@renderer/components/browser/TabBar'
 import { AddressBar } from '@renderer/components/browser/AddressBar'
 import { ProgressBar } from '@renderer/components/browser/ProgressBar'
@@ -24,6 +24,7 @@ export default function App(): React.JSX.Element {
   const {
     sidebarWidth,
     sidebarCollapsed,
+    panelCollapsed,
     panelWidth,
     view,
     setSidebarWidth,
@@ -52,6 +53,7 @@ export default function App(): React.JSX.Element {
       setSidebarWidth(r.data.sidebarWidth)
       setPanelWidth(r.data.panelWidth)
       setSidebarCollapsed(r.data.sidebarCollapsed)
+      useUiStore.getState().setPanelCollapsed(r.data.panelCollapsed)
       setSidebarSections(r.data.sidebarSections)
     })
   }, [setSidebarWidth, setPanelWidth, setSidebarCollapsed, setSidebarSections])
@@ -122,15 +124,17 @@ export default function App(): React.JSX.Element {
           )}
         </div>
       </main>
-      <ResizeHandle
-        side="left"
-        getWidth={() => useUiStore.getState().panelWidth}
-        onWidth={setPanelWidth}
-        onEnd={() =>
-          void window.samba.settings.set({ panelWidth: useUiStore.getState().panelWidth })
-        }
-      />
-      <RightPanel width={panelWidth} />
+      {!panelCollapsed && (
+        <ResizeHandle
+          side="left"
+          getWidth={() => useUiStore.getState().panelWidth}
+          onWidth={setPanelWidth}
+          onEnd={() =>
+            void window.samba.settings.set({ panelWidth: useUiStore.getState().panelWidth })
+          }
+        />
+      )}
+      {panelCollapsed ? <CollapsedPanelStrip /> : <RightPanel width={panelWidth} />}
     </div>
   )
 }
