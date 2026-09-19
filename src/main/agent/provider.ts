@@ -1,4 +1,4 @@
-import { query, type Options, type Query } from '@anthropic-ai/claude-agent-sdk'
+import { query, startup, type Options, type Query } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentEffort } from '../../shared/settings'
 import type { AgentAuth } from '../ai/auth-route'
 import { runCodex, type CodexEvent, type CodexInput } from './provider-codex'
@@ -116,6 +116,53 @@ export function runQuery(input: ProviderInput): Query {
     prompt: input.prompt,
     options: buildQueryOptions(input, env)
   })
+}
+
+/**
+ * 미리 띄워 둔 CLI 프로세스 하나. 프롬프트를 써 넣는 순간 바로 응답이 시작된다
+ * (spawn + 초기화 시간을 호출보다 앞에서 미리 치른다)
+ */
+export interface WarmSession {
+  /** 한 번만 쓸 수 있다(쓰고 나면 그 프로세스는 이 대화로 끝난다) */
+  query: (prompt: string) => Query
+  /** 이 프로세스를 멈추는 신호(호출부의 시간 초과가 이것을 쓴다) */
+  abort: AbortController
+  /** 쓰지 않고 버릴 때 */
+  close: () => void
+}
+
+/**
+ * 프롬프트 없이 CLI 프로세스만 먼저 띄운다. 연결 경로가 없거나 실패하면 null 이며,
+ * 그때는 호출부가 평소처럼 runQuery 로 돌면 된다(기능이 죽지는 않는다)
+ */
+export async function startWarmSession(
+  input: Omit<ProviderInput, 'prompt' | 'abort'>
+): Promise<WarmSession | null> {
+  const auth = currentAuth()
+  // 연결이 없으면 프로세스를 띄우지 않는다(남아 있는 CLI 자격을 몰래 쓰지 않기 위함)
+  if (auth.mode === 'none') return null
+  const env = resolveEnv(auth)
+  if (auth.mode === 'api_key' && !env) return null
+  const abort = new AbortController()
+  try {
+    const warm = await startup({
+      options: buildQueryOptions({ ...input, prompt: '', abort }, env)
+    })
+    return {
+      query: (prompt: string) => warm.query(prompt),
+      abort,
+      close: () => {
+        try {
+          warm.close()
+        } catch {
+          // 이미 끝난 프로세스를 닫는 것은 문제가 아니다
+        }
+      }
+    }
+  } catch {
+    // 미리 띄우기는 있으면 좋은 것이지 필수가 아니다(사유는 남기지 않는다)
+    return null
+  }
 }
 
 // 인증 없음으로 볼 문구. SDK 의 SDKAssistantMessageError 값과 실제 401 응답 문구를 모두 포함

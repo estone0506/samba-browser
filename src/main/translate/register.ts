@@ -54,17 +54,19 @@ export interface TranslateHandle {
 
 export function registerTranslate(deps: RegisterTranslateDeps): TranslateHandle {
   const cache = new TranslateCache(join(deps.userDataDir, 'translate-cache.json'))
-  const ask = createSdkAsk()
+  // 번역은 늘 Fast 등급(Haiku 급) 모델로 돈다 — 문장 치환에 비싼 모델을 쓸 이유가 없다
+  const fastModel = (): string => {
+    const s = deps.settings()
+    return resolveModel(s.taskModels, 'fast', s.aiProvider)
+  }
+  const sdkAsk = createSdkAsk(fastModel)
   let ocrEngine: OcrEngine | null = null
 
   // AI 연결이 없으면(내 API 키 경로인데 키가 없음) 호출하지 않고 안내로 떨어뜨린다
   const translator = (): Translator | null => {
     const s = deps.settings()
     if (s.aiProvider === 'api_key' && !deps.apiKeys.hasAny()) return null
-    return new AiTranslator({
-      ask,
-      model: () => resolveModel(s.taskModels, 'fast', s.aiProvider)
-    })
+    return new AiTranslator({ ask: sdkAsk.ask, model: fastModel })
   }
   const service = new TranslateService({ translator, cache })
 
@@ -104,8 +106,11 @@ export function registerTranslate(deps: RegisterTranslateDeps): TranslateHandle 
   })
 
   // --- 페이지 번역 / 원문 보기 ----------------------------------------------
-  const runPage = (wc: WebContents, lang: TranslateLang): Promise<string> =>
-    callPage(wc, `__sambaTranslate.run(${JSON.stringify(lang)})`)
+  const runPage = (wc: WebContents, lang: TranslateLang): Promise<string> => {
+    // 노드를 모으는 동안 예비 프로세스를 띄워 두면 첫 배치가 그만큼 빨리 답한다
+    sdkAsk.prewarm()
+    return callPage(wc, `__sambaTranslate.run(${JSON.stringify(lang)})`)
+  }
   const restorePage = (wc: WebContents): Promise<string> =>
     callPage(wc, '__sambaTranslate.restore()')
 
@@ -149,6 +154,8 @@ export function registerTranslate(deps: RegisterTranslateDeps): TranslateHandle 
     // Visual 폴백조차 못 쓰는 상태(키 없음)였는지 — "글자 없음" 과 "AI 연결 없음" 을 구분한다
     let visualUnavailable = false
     emit({ running: true })
+    // 글자를 읽는 동안 번역용 예비 프로세스를 띄워 둔다
+    sdkAsk.prewarm()
     try {
       const response = await wc.session.fetch(srcUrl)
       if (!response.ok) {
@@ -237,6 +244,7 @@ export function registerTranslate(deps: RegisterTranslateDeps): TranslateHandle 
   return {
     dispose: () => {
       cache.flush()
+      sdkAsk.dispose()
       ipcMain.removeHandler(IPC.pageTranslate)
       ipcMain.removeListener(IPC.pageTranslateProgress, onPageProgress)
     }

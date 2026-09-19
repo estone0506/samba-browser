@@ -32,12 +32,19 @@ describe('진행률 DTO', () => {
       done: 12,
       total: 398
     })
-    expect(toTranslateProgress('page', { running: false, done: 398, total: 398 }).phase).toBe('done')
+    expect(toTranslateProgress('page', { running: false, done: 398, total: 398 }).phase).toBe(
+      'done'
+    )
   })
 
   it('오류가 있으면 phase 는 error 이고 사유 코드가 붙는다', () => {
     expect(
-      toTranslateProgress('image', { running: false, done: 0, total: 0, error: 'translate:needs-ai' })
+      toTranslateProgress('image', {
+        running: false,
+        done: 0,
+        total: 0,
+        error: 'translate:needs-ai'
+      })
     ).toEqual({ kind: 'image', phase: 'error', done: 0, total: 0, reason: 'needsAi' })
   })
 
