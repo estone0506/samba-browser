@@ -92,7 +92,11 @@ export const SYNCED_SETTING_KEYS = [
   'vaultExcludedHosts',
   'homeUrl',
   'newTabUrl',
-  'searchEngine'
+  'searchEngine',
+  // 번역 기본 대상 언어·자동 번역 도메인은 PC 가 달라도 같아야 한다.
+  // (번역 캐시는 기기 로컬 파일이라 동기화 대상이 아니다)
+  'translateTargetLang',
+  'translateAutoDomains'
 ] as const
 
 export type SyncedSettingKey = (typeof SYNCED_SETTING_KEYS)[number]

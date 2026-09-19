@@ -3,6 +3,7 @@ import { AI_PROVIDERS, type AiProviderId, type TaskModels } from './ai'
 import { DEFAULT_DANGER_WORDS, mergeDangerWords } from './danger'
 import { EXTENSION_SOURCES, type ExtensionSource } from './extensions'
 import { DEFAULT_PAYMENT_LIMIT_KRW, type ScreenFps, type ScreenSize } from './phone'
+import { DEFAULT_TRANSLATE_LANG, TRANSLATE_LANGS, type TranslateLang } from './translate'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 
 // 도구 호출 상한 허용 범위
@@ -111,8 +112,14 @@ export const DEFAULT_SETTINGS = {
   // 끊겼을 때 kill-server/start-server 로 1회 자동 복구할지
   phoneAutoReconnect: true,
   // 결제 상한(원). 초과하면 권한 모드와 무관하게 사람 확인을 받는다
-  paymentLimitKrw: DEFAULT_PAYMENT_LIMIT_KRW
+  paymentLimitKrw: DEFAULT_PAYMENT_LIMIT_KRW,
   // === 폰 연동 끝 ===========================================================
+  // === 번역(화면·이미지) ====================================================
+  // 번역 결과의 기본 대상 언어
+  translateTargetLang: DEFAULT_TRANSLATE_LANG as TranslateLang,
+  // 열자마자 자동으로 번역할 도메인 목록(정규화된 host 문자열)
+  translateAutoDomains: [] as string[]
+  // === 번역 끝 ==============================================================
 }
 
 // 손상된 config.json 이어도 앱이 뜨도록 필드마다 catch 로 기본값으로 되돌린다
@@ -198,8 +205,12 @@ export const settingsSchema = z.object({
     .union([z.literal(10), z.literal(15), z.literal(30)])
     .catch(DEFAULT_SETTINGS.phoneScreenFps),
   phoneAutoReconnect: z.boolean().catch(DEFAULT_SETTINGS.phoneAutoReconnect),
-  paymentLimitKrw: z.number().int().min(0).catch(DEFAULT_SETTINGS.paymentLimitKrw)
+  paymentLimitKrw: z.number().int().min(0).catch(DEFAULT_SETTINGS.paymentLimitKrw),
   // === 폰 연동 끝 =============================================================
+  // === 번역 — 손상된 값은 기본 언어·빈 목록으로 되돌린다 ======================
+  translateTargetLang: z.enum(TRANSLATE_LANGS).catch(DEFAULT_SETTINGS.translateTargetLang),
+  translateAutoDomains: z.array(z.string()).catch(DEFAULT_SETTINGS.translateAutoDomains)
+  // === 번역 끝 ================================================================
 })
 
 export type Settings = z.infer<typeof settingsSchema>

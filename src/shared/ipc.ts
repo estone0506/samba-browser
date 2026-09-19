@@ -133,7 +133,12 @@ export const IPC = {
   phoneKey: 'phone:key',
   phoneUpdated: 'phone:updated', // main → renderer 이벤트(목록·상태)
   phoneAuthWaiting: 'phone:authWaiting', // main → renderer 이벤트(카드 자동 펼침)
-  phoneAuthEvents: 'phone:authEvents' // KPI 목록
+  phoneAuthEvents: 'phone:authEvents', // KPI 목록
+  // --- 번역(화면·이미지) — 원문/번역문만 오간다. 입력값·비밀번호는 실리지 않는다 ---
+  pageTranslate: 'page:translate', // preload(격리 월드) → 메인, 탭 전용 게이트
+  translateRun: 'translate:run', // 렌더러 → 메인, 활성 탭 화면 번역 시작
+  translateRestore: 'translate:restore', // 렌더러 → 메인, 원문 보기
+  translateCacheClear: 'translate:cacheClear' // 렌더러 → 메인, 번역 캐시 비우기
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -237,6 +242,8 @@ export type {
 } from './import'
 
 export type { SyncStatus, DeviceDto } from './sync'
+
+export type { TranslateLang, TranslateRequest, ImageTextBox, ImageTranslateDto } from './translate'
 
 export type {
   PhoneDto,
