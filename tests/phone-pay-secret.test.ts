@@ -17,7 +17,9 @@ const SECRET = '149072'
 const SECRET_RE = /149072/
 
 /** 숫자 d 의 키패드 좌표는 (d*10, 100+d) 로 둔다 — 좌표 일치 단언을 쉽게 하기 위해서다 */
-function layoutOf(digits: string[] = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']): KeypadLayout {
+function layoutOf(
+  digits: string[] = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+): KeypadLayout {
   const map: Record<string, { x: number; y: number }> = {}
   for (const d of digits) map[d] = { x: Number(d) * 10, y: 100 + Number(d) }
   return { digits: map }
@@ -30,7 +32,15 @@ function fakeVault(opts: { state?: VaultState; secret?: string | null } = {}): P
   }
 }
 
-function build(opts: { state?: VaultState; secret?: string | null; layout?: KeypadLayout } = {}) {
+interface SecretHarness {
+  deps: Parameters<typeof tapPaymentPassword>[0]
+  tap: ReturnType<typeof vi.fn>
+  steps: Array<{ label: string; ok: boolean }>
+}
+
+function build(
+  opts: { state?: VaultState; secret?: string | null; layout?: KeypadLayout } = {}
+): SecretHarness {
   const tap = vi.fn(async () => {})
   const steps: Array<{ label: string; ok: boolean }> = []
   const deps = {
@@ -104,9 +114,8 @@ describe('tapPaymentPassword', () => {
   it('비밀번호 문자열을 받는 매개변수가 없다', async () => {
     type Deps = Parameters<typeof tapPaymentPassword>[0]
     // 값으로 넘기는 통로가 타입에 존재하지 않는다(있으면 컴파일이 깨진다)
-    type HasSecretKey = Extract<keyof Deps, 'password' | 'secret' | 'pin' | 'value'> extends never
-      ? true
-      : false
+    type HasSecretKey =
+      Extract<keyof Deps, 'password' | 'secret' | 'pin' | 'value'> extends never ? true : false
     const noSecretParam: HasSecretKey = true
     expect(noSecretParam).toBe(true)
     // 인자는 deps 객체 하나뿐이다
