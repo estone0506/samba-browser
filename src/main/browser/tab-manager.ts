@@ -564,10 +564,24 @@ export class TabManager {
     this.emit()
   }
 
+  /** 팝업 창을 부모(메인) 창 가운데로 옮긴다. 화면 밖으로 나가지 않게 최소 0 으로 붙잡는다 */
+  private centerPopup(win: BrowserWindow): void {
+    if (this.win.isDestroyed() || win.isDestroyed()) return
+    const parent = this.win.getBounds()
+    const size = win.getSize()
+    const x = Math.max(0, Math.round(parent.x + (parent.width - size[0]) / 2))
+    const y = Math.max(0, Math.round(parent.y + (parent.height - size[1]) / 2))
+    win.setPosition(x, y)
+  }
+
   /** 팝업 창을 추적 목록에 넣고, 닫히면 뺀다. 페이지 조작 훅은 탭과 같은 것을 붙인다 */
   private registerPopup(win: BrowserWindow, openerId: string, profile: string): void {
     const popup: Popup = { id: randomUUID(), win, openerId, profile }
     this.popups.push(popup)
+    // 크롬처럼 부모 창 가운데에 띄운다(기본값은 화면 왼쪽 위라 결제창이 엉뚱한 곳에 떴다).
+    // 페이지가 left/top 을 지정했으면 Electron 이 이미 반영했으므로 그 경우는 두고,
+    // 아니면 부모 창 기준으로 가운데 정렬한다
+    this.centerPopup(win)
     const wc = win.webContents
     this.contextMenuHook?.(wc)
     wc.on('dom-ready', () => this.sendGestureConfig(wc))
