@@ -12,6 +12,18 @@
     "settings": "Settings",
     "chats": "Chats"
   },
+  "workspace": {
+    "title": "Workspace",
+    "add": "New workspace",
+    "namePlaceholder": "Workspace name",
+    "rename": "Rename",
+    "delete": "Delete",
+    "cancel": "Cancel",
+    "save": "Save",
+    "shortcutHint": "Ctrl+Alt+1–9 to switch",
+    "switchedNotice": "Switched workspace. Already open tabs keep their old session; new tabs use the new one.",
+    "settingsHint": "Workspaces are managed from the sidebar"
+  },
   "address": {
     "placeholder": "Search or enter URL",
     "pc": "PC",
@@ -37,7 +49,12 @@
     "apiRetry": "Waiting for AI (retry {{n}} · {{reason}})",
     "done": "Done",
     "failed": "Failed",
-    "toolCalls": "Tool calls {{n}} / {{max}}"
+    "toolCalls": "Tool calls {{n}} / {{max}}",
+    "new": "New chat",
+    "empty": "No saved chats",
+    "untitled": "Untitled chat",
+    "delete": "Delete chat",
+    "deleteConfirm": "Delete"
   },
   "confirm": {
     "title": "Confirmation required",
@@ -47,6 +64,19 @@
     "finish": "Finish the task?",
     "continue": "Keep going",
     "finishOk": "Finish"
+  },
+  "handoff": {
+    "title": "The site needs your check",
+    "body": "The site is asking for an extra check. Enter it on screen and the task continues",
+    "skip": "Skip and continue",
+    "abort": "Stop the task",
+    "waiting": "Waiting for you to finish the check…",
+    "step": {
+      "resumed": "Check done -> resumed",
+      "skipped": "Check skipped, continuing",
+      "aborted": "Stopped by you",
+      "timeout": "Timed out waiting for the check"
+    }
   },
   "permission": {
     "title": "Permission",
@@ -64,7 +94,27 @@
   },
   "settings": {
     "model": "Model",
-    "language": "Language"
+    "language": "Language",
+    "ai": {
+      "title": "AI connection",
+      "claudeSubscription": "Claude subscription",
+      "apiKey": "My API key",
+      "serviceCredit": "Service credit",
+      "serviceCreditSoon": "Coming with the Pro plan",
+      "connected": "Connected",
+      "needsLogin": "Sign-in required",
+      "notInstalled": "Not installed",
+      "unset": "Not connected",
+      "keyKept": "Your key is encrypted on this PC only and is never synced",
+      "testKey": "Test key",
+      "taskModels": "Models by task",
+      "fast": "Fast",
+      "standard": "Standard",
+      "deep": "Deep",
+      "visual": "Visual",
+      "use": "Use this path",
+      "inUse": "In use"
+    }
   },
   "capture": {
     "title": "Save your {{host}} account info?",
@@ -142,6 +192,7 @@
       "failed": "Couldn't create KeyMaster"
     },
     "unlock": {
+      "fromSync": "Enter the master password you set on your other PC",
       "title": "Unlock",
       "desc": "Enter your master password",
       "placeholder": "Master password",
@@ -189,7 +240,7 @@
       "accessAlways": "Always allow",
       "accessAlwaysDesc": "Auto-unlock with this PC's remembered key even when locked",
       "accessWhileUnlocked": "While unlocked",
-      "accessWhileUnlockedDesc": "AI can only fill values while the vault is unlocked",
+      "accessWhileUnlockedDesc": "AI can only fill values while KeyMaster is unlocked",
       "accessNever": "Never allow",
       "accessNeverDesc": "AI can never fill KeyMaster values",
       "autoSubmit": "Auto-submit after autofill",
@@ -200,7 +251,9 @@
       "rememberDesc": "Turning this off deletes the stored device key immediately",
       "excludedHosts": "Excluded domains",
       "excludedHostsDesc": "Comma-separated list (e.g. bank.example.com, gov.example.com)",
-      "excludedHostsPlaceholder": "example.com, another.com"
+      "excludedHostsPlaceholder": "example.com, another.com",
+      "keepSignedIn": "Tick “keep me signed in”",
+      "keepSignedInDesc": "Turns on the “keep me signed in” checkbox when signing in, so the session lasts longer and fewer captchas appear. Turn it off on a shared PC — the next person would land on your signed-in session"
     },
     "detail": {
       "openInBrowser": "Open in browser",
@@ -288,6 +341,26 @@
         "bookmarksExportSteps": "Chrome·Whale·Edge·Aside: Bookmark Manager › ⋮ › Export Bookmarks (HTML)",
         "bookmarksSupports": "Netscape format auto-detected"
       }
+    },
+    "export": {
+      "title": "Export KeyMaster",
+      "settingsDesc": "Export saved items to a CSV or JSON file",
+      "open": "Export",
+      "warning": "The exported file contains your passwords in plain text. Move it somewhere safe and delete the original afterwards.",
+      "format": "Format",
+      "formatCsv": "CSV (Chrome compatible)",
+      "formatCsvDesc": "Only login items that have both a username and a password",
+      "formatJson": "JSON",
+      "formatJsonDesc": "Every item and field, including cards and notes",
+      "master": "Re-enter master password",
+      "masterPlaceholder": "Master password",
+      "submit": "Export",
+      "running": "Exporting…",
+      "done": "Saved {{count}} items to {{path}}",
+      "lockedError": "KeyMaster is locked. Unlock it first",
+      "invalidMaster": "That master password is not correct",
+      "cancelled": "Export cancelled",
+      "failed": "Export failed"
     },
     "add": {
       "menu": "Add",
@@ -414,6 +487,210 @@
       "description": "KeyMaster save/lock policy",
       "descriptionDetail": "Configure auto-lock, AI access policy, auto-submit, and more",
       "open": "Open KeyMaster settings"
+    },
+    "extensions": {
+      "title": "Extensions",
+      "add": "Install an extension",
+      "addDesc": "Install straight from the Chrome Web Store, import the extensions already in another browser, or load an unpacked folder yourself",
+      "addButton": "Load folder",
+      "adding": "Loading…",
+      "empty": "No extensions loaded",
+      "remove": "Remove",
+      "cancel": "Cancel",
+      "storeButton": "Install from Web Store",
+      "storeTitle": "Install from the Chrome Web Store",
+      "storeDesc": "Paste the extension's store URL or its 32-character id. The extension files are kept in the app data folder",
+      "storePlaceholder": "https://chromewebstore.google.com/detail/…  or a 32-character id",
+      "storeSubmit": "Install",
+      "installing": "Installing…",
+      "importButton": "Import from another browser",
+      "importTitle": "Import from another browser",
+      "importDesc": "Copies extensions installed in Chrome, Whale, Edge or Brave into the app data folder and loads them. The originals stay untouched",
+      "importScanning": "Looking for installed browsers…",
+      "importEmpty": "No extensions available to import",
+      "importSubmit": "Import {{count}}",
+      "importing": "Importing…",
+      "importFailed": "Extensions that could not be imported",
+      "sourceStore": "Store",
+      "sourceImported": "Imported",
+      "sourceFolder": "Folder",
+      "failedTitle": "Extensions that failed to load",
+      "limitsTitle": "Good to know",
+      "limitMv3": "Some Manifest V3 APIs are not supported yet",
+      "limitServiceWorker": "Background service workers are limited, so an extension may not behave as expected",
+      "limitNoAutoUpdate": "Extensions are never auto-updated. Install again or reload the folder to pick up a new version",
+      "limitMv2": "Manifest V2 extensions cannot be installed from the Web Store",
+      "limitPartition": "Per-profile separation happens only per workspace (session partition)"
+    },
+    "placeholder": "Coming in a later stage",
+    "groups": {
+      "personal": "Personal",
+      "agent": "Agent"
+    },
+    "sections": {
+      "general": "General",
+      "appearance": "Appearance",
+      "account": "Account",
+      "plan": "Plan",
+      "security": "Security",
+      "agent": "Agent",
+      "ai": "AI connection",
+      "keymaster": "Key Master",
+      "automation": "Automation",
+      "developer": "Developer"
+    },
+    "general": {
+      "searchTitle": "Search",
+      "startupTitle": "Startup",
+      "importTitle": "Import",
+      "importDesc": "Bring in password CSV and bookmark HTML exported from another browser"
+    },
+    "appearance": {
+      "themeTitle": "Theme",
+      "themeSystem": "System",
+      "themeLight": "Light",
+      "themeDark": "Dark",
+      "zoomTitle": "Display size",
+      "zoom": "Zoom {{percent}}%",
+      "zoomDesc": "Choose between {{min}}% and {{max}}%",
+      "sidebarTitle": "Sidebar",
+      "sidebarBookmarks": "Show bookmarks",
+      "sidebarBookmarksDesc": "Show the bookmark list in the sidebar",
+      "sidebarChat": "Show chat",
+      "sidebarChatDesc": "Show the AI chat shortcut in the sidebar",
+      "shortcutsTitle": "Shortcuts",
+      "shortcutsDesc": "Read-only for now",
+      "shortcutNewTab": "New tab",
+      "shortcutCloseTab": "Close tab",
+      "shortcutAddressBar": "Focus address bar",
+      "shortcutReload": "Reload",
+      "shortcutWorkspace": "Switch workspace"
+    },
+    "agent": {
+      "notifyTitle": "Notifications",
+      "notify": "Notify when done",
+      "notifyDesc": "Let you know when the agent finishes a task",
+      "sound": "Completion sound",
+      "soundDesc": "Play a short sound with the notification",
+      "queueTitle": "Follow-up instructions",
+      "queue": "Queue while running",
+      "queueDesc": "Queue new instructions while the agent is busy and run them in order",
+      "cleanupTitle": "Tab cleanup",
+      "cleanup": "Auto-close tabs opened by the agent",
+      "cleanupDesc": "Close agent-opened tabs after the chosen time",
+      "cleanupOff": "Off",
+      "cleanupMinutes": "{{n}} min"
+    },
+    "security": {
+      "autofillTitle": "Autofill"
+    },
+    "keymaster": {
+      "open": "Open Key Master",
+      "export": "Export",
+      "exportUnavailable": "Export is coming in a later stage"
     }
+  },
+  "account": {
+    "title": "Account",
+    "signedIn": "Signed in",
+    "signInTitle": "Sign in",
+    "signUpTitle": "Sign up",
+    "signInDesc": "Signing in syncs settings, bookmarks and KeyMaster across your devices",
+    "email": "Email",
+    "password": "Password",
+    "signIn": "Sign in",
+    "signUp": "Sign up",
+    "toSignUp": "Sign up",
+    "toSignIn": "I already have an account",
+    "signOut": "Sign out",
+    "continueWithGoogle": "Continue with Google",
+    "googleWaiting": "Finish the Google sign-in in your browser",
+    "googleWaitingDetail": "We wait up to 5 minutes. If you closed the window, cancel and try again",
+    "googleCancel": "Cancel",
+    "planFree": "Free",
+    "planPro": "Pro",
+    "notConfigured": "Sync needs Supabase to be configured",
+    "notConfiguredDetail": "Follow the document below to fill SAMBA_SUPABASE_URL and SAMBA_SUPABASE_ANON_KEY in .env",
+    "devicesTitle": "Devices",
+    "devicesDesc": "Devices signed in with this account",
+    "devicesLoading": "Loading",
+    "devicesEmpty": "No devices yet",
+    "devicesUnavailable": "The device list is not ready yet",
+    "thisDevice": "This device",
+    "deviceRevoked": "Signed out",
+    "lastSeen": "Last seen",
+    "revokeDevice": "Sign out remotely",
+    "dangerTitle": "Danger zone",
+    "dangerDesc": "Deleting the account removes all synced data from the server",
+    "deleteConfirmLabel": "Type {{word}} to confirm",
+    "deleteAccount": "Delete account",
+    "deleteAccountUnavailable": "Account deletion is not ready yet",
+    "errors": {
+      "invalidCredentials": "Email or password is incorrect",
+      "emailNotConfirmed": "Email not confirmed yet. Click the link in the email we sent",
+      "alreadyRegistered": "This email is already registered. Please sign in",
+      "weakPassword": "Password is too short or too simple (8+ characters)",
+      "rateLimited": "Too many attempts. Please try again shortly",
+      "network": "Cannot reach the server. Check your internet connection",
+      "generic": "Sign-in failed. Please try again shortly"
+    }
+  },
+  "sync": {
+    "title": "Sync",
+    "connection": "Connection",
+    "online": "Online",
+    "offline": "Offline",
+    "pending": "Unsent changes",
+    "lastPulledAt": "Last pulled",
+    "lastError": "Last error",
+    "syncNow": "Sync now",
+    "syncing": "Syncing"
+  },
+  "ai": {
+    "claudeSubscriptionDesc": "Reuses the Claude Code login already on this PC",
+    "claudeInstallHint": "Claude Code is not installed. Install it in a terminal and check again",
+    "claudeLoginHint": "Run claude login in a terminal",
+    "noKey": "No key saved",
+    "keyPlaceholder": "Paste a key to save it right away",
+    "testOk": "The key works",
+    "testFail": "Could not verify the key",
+    "vendor": {
+      "anthropic": "Claude (Anthropic)",
+      "openai": "OpenAI",
+      "gemini": "Gemini"
+    },
+    "taskTable": {
+      "fastPurpose": "Short judgements and sorting",
+      "fastUsedIn": "URL checks, quick summaries",
+      "standardPurpose": "Everyday task execution",
+      "standardUsedIn": "Default agent runs",
+      "deepPurpose": "Long reasoning, hard tasks",
+      "deepUsedIn": "Complex multi-step work",
+      "visualPurpose": "Screen and image understanding",
+      "visualUsedIn": "Screenshot reading, captcha checks",
+      "remapped": "Switching connection path remapped these models: {{list}}",
+      "dismiss": "Got it"
+    }
+  },
+  "recovery": {
+    "title": "Reissue recovery key",
+    "sectionTitle": "Recovery key",
+    "sectionDesc": "The last way into KeyMaster if you forget the master password",
+    "reissue": "Reissue recovery key",
+    "warnBody": "Creating a new recovery key makes the previous one stop working immediately",
+    "warnDetail": "If you lose both the master password and the recovery key, KeyMaster cannot be recovered",
+    "issue": "Create a new recovery key",
+    "cancel": "Cancel",
+    "showBody": "Store this key somewhere safe. You cannot see it again after closing this screen",
+    "showDetail": "24 characters in 6 groups of 4. Case and hyphens are ignored",
+    "copy": "Copy",
+    "print": "Print",
+    "next": "Next",
+    "confirmBody": "Type the recovery key you saved, exactly",
+    "confirmFailed": "Confirmation failed. Please try again",
+    "done": "Done",
+    "back": "Back",
+    "doneBody": "A new recovery key was issued. The old one no longer works",
+    "close": "Close"
   }
 }

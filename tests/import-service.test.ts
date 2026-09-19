@@ -217,6 +217,35 @@ describe('ImportService', () => {
       expect(audit.some((r) => r.action === 'import')).toBe(false)
     })
 
+    it('로그인 상태에서는 가져온 북마크마다 변경 로그를 남긴다', async () => {
+      // 예전에는 대량 가져오기 경로(insertTree)만 훅을 건너뛰어, 수백 개가 다른 PC 로 넘어가지 않았다
+      const recorded: { table: string; rowId: string; op: string }[] = []
+      const service = new ImportService(db, vault, makeDialogs(), {
+        readFile: async () => BOOKMARK_HTML
+      })
+      service.setOutboxRecorder((table, rowId, op) => {
+        recorded.push({ table, rowId, op })
+      })
+
+      const result = await service.importBookmarks('bookmarks.html')
+
+      expect(result.bookmarks).toBe(2)
+      expect(recorded).toHaveLength(2)
+      expect(recorded.every((r) => r.table === 'bookmarks' && r.op === 'upsert')).toBe(true)
+      // 행마다 서로 다른 로컬 id 가 실린다
+      expect(new Set(recorded.map((r) => r.rowId)).size).toBe(2)
+    })
+
+    it('로그아웃 상태(훅 없음)의 가져오기는 변경 로그를 남기지 않는다', async () => {
+      const service = new ImportService(db, vault, makeDialogs(), {
+        readFile: async () => BOOKMARK_HTML
+      })
+      // 훅을 붙이지 않았으므로 아무 일도 일어나지 않는다 — 이 경우는 backfill 이 뒤에 챙긴다
+      await expect(service.importBookmarks('bookmarks.html')).resolves.toMatchObject({
+        bookmarks: 2
+      })
+    })
+
     it('트리 DTO JSON 에 비밀번호 문자열이 없다(가져온 계정과 무관한 데이터임을 확인)', async () => {
       const service = new ImportService(db, vault, makeDialogs(), {
         readFile: async () => BOOKMARK_HTML

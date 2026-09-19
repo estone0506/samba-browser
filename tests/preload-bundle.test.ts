@@ -42,16 +42,24 @@ describe('page-constants 는 shared 원본과 동기화되어야 한다', () => 
 })
 
 describe('out/preload/page.js 번들', () => {
-  it.skipIf(!existsSync(BUNDLE))('공용 청크를 require 하지 않는다', () => {
-    const code = readFileSync(BUNDLE, 'utf-8')
-    expect(code).not.toMatch(/require\(["'][^"']*chunks/)
-  })
+  // 번들이 없다고 조용히 skip 하면 CI 가 이 검증 없이 그냥 통과해버린다.
+  // 번들이 없으면 명시적으로 실패시켜 pnpm build 실행을 강제한다
+  if (!existsSync(BUNDLE)) {
+    it('번들이 존재해야 한다', () => {
+      throw new Error('out/preload/page.js 번들이 없습니다. 먼저 pnpm build 를 실행하세요')
+    })
+  } else {
+    it('공용 청크를 require 하지 않는다', () => {
+      const code = readFileSync(BUNDLE, 'utf-8')
+      expect(code).not.toMatch(/require\(["'][^"']*chunks/)
+    })
 
-  it.skipIf(!existsSync(BUNDLE))("'electron' 외의 require 가 없다", () => {
-    const code = readFileSync(BUNDLE, 'utf-8')
-    const specifiers = Array.from(code.matchAll(/require\(\s*["']([^"']+)["']\s*\)/g)).map(
-      (m) => m[1]
-    )
-    expect(specifiers.filter((s) => s !== 'electron')).toEqual([])
-  })
+    it("'electron' 외의 require 가 없다", () => {
+      const code = readFileSync(BUNDLE, 'utf-8')
+      const specifiers = Array.from(code.matchAll(/require\(\s*["']([^"']+)["']\s*\)/g)).map(
+        (m) => m[1]
+      )
+      expect(specifiers.filter((s) => s !== 'electron')).toEqual([])
+    })
+  }
 })

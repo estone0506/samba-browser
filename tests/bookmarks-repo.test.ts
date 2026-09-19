@@ -1,6 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { openDatabase, type Db } from '../src/main/db/client'
+import { bookmarks } from '../src/main/db/schema'
 import { BookmarkRepo } from '../src/main/bookmarks/repo'
+import { SyncOutbox, createOutboxRecorder } from '../src/main/sync/outbox'
 
 describe('BookmarkRepo', () => {
   let db: Db
@@ -128,6 +130,52 @@ describe('BookmarkRepo', () => {
       const tree = repo.tree()
       expect(tree.folders).toHaveLength(1)
       expect(tree.folders[0].id).toBe(b)
+    })
+
+    it('하위 링크마다 삭제 표식을 변경 로그에 남긴다', () => {
+      // 기록이 없으면 다른 PC 가 다음 풀에서 같은 북마크를 되살린다(좀비 북마크)
+      const outbox = new SyncOutbox(db)
+      repo.setOutboxRecorder(createOutboxRecorder(db, outbox))
+      const parent = repo.createFolder(null, '부모')
+      const child = repo.createFolder(parent, '자식')
+      const parentLink = repo.createLink(parent, '부모 링크', 'https://a.example.com')
+      const childLink = repo.createLink(child, '자식 링크', 'https://b.example.com')
+
+      repo.removeFolder(parent)
+
+      const deletes = outbox.pendingFor('bookmarks').filter((r) => r.op === 'delete')
+      expect(deletes.map((r) => r.rowId).sort()).toEqual(
+        [String(parentLink), String(childLink)].sort()
+      )
+      // 삭제 표식을 원격에 올리려면 url 같은 NOT NULL 컬럼이 payload 에 들어 있어야 한다
+      for (const row of deletes) {
+        expect(row.payload).toBeTruthy()
+        expect(JSON.parse(row.payload!)).toMatchObject({ url: expect.any(String) })
+      }
+    })
+
+    it('삭제가 실패하면 삭제 표식도 남지 않는다', () => {
+      // New-M2 — 기록이 트랜잭션 밖에 있으면 "지우지도 않았는데 표식만 올라가"
+      // 다른 PC 의 북마크가 사라진다
+      const outbox = new SyncOutbox(db)
+      repo.setOutboxRecorder(createOutboxRecorder(db, outbox))
+      const folder = repo.createFolder(null, '부모')
+      repo.createLink(folder, '링크', 'https://a.example.com')
+
+      const original = db.drizzle.delete.bind(db.drizzle)
+      const spy = vi
+        .spyOn(db.drizzle, 'delete')
+        .mockImplementation((table: Parameters<typeof original>[0]) => {
+          if (table === bookmarks) throw new Error('삭제 실패')
+          return original(table)
+        })
+      expect(() => repo.removeFolder(folder)).toThrow('삭제 실패')
+      spy.mockRestore()
+
+      expect(outbox.pendingFor('bookmarks').filter((r) => r.op === 'delete')).toHaveLength(0)
+      // 폴더·링크도 그대로 남아 있다(전부 되돌아갔다)
+      expect(repo.tree().folders).toHaveLength(1)
+      expect(repo.tree().folders[0].links).toHaveLength(1)
     })
   })
 

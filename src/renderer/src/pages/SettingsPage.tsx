@@ -1,275 +1,139 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import i18n from '@renderer/i18n'
 import { cn } from '@renderer/lib/utils'
-import { VaultSettingsPanel } from '@renderer/components/vault/VaultSettingsPanel'
-import { Switch } from '@renderer/components/ui/switch'
-import { isHttpUrl, isInternalUrl } from '@shared/url'
-import type { NewTabUrlMode, PermissionMode, SearchEngine, Settings } from '@shared/settings'
+import { GeneralSection } from '@renderer/components/settings/GeneralSection'
+import { AppearanceSection } from '@renderer/components/settings/AppearanceSection'
+import { AccountSection } from '@renderer/components/settings/AccountSection'
+import { SecuritySection } from '@renderer/components/settings/SecuritySection'
+import { AgentSection } from '@renderer/components/settings/AgentSection'
+import { AiSection } from '@renderer/components/settings/AiSection'
+import { KeymasterSection } from '@renderer/components/settings/KeymasterSection'
+import { PlaceholderSection } from '@renderer/components/settings/PlaceholderSection'
+import { ExtensionsSection } from '@renderer/components/settings/ExtensionsSection'
+import {
+  DEFAULT_SECTION_KEY,
+  SECTIONS,
+  SETTINGS_GROUPS,
+  groupLabelKey,
+  resolveSectionKey,
+  sectionsOfGroup,
+  type SettingsSectionDef
+} from '@renderer/components/settings/sections'
+import type { Settings } from '@shared/settings'
 
-// 설정 페이지 전체에서 쓰는 애플 스타일 섹션 카드(흰 배경·얇은 선)
-function SettingsSection({
-  title,
-  children
-}: {
-  title: string
-  children: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <section className="rounded-2xl border border-[var(--line)] bg-white p-4">
-      <h2 className="mb-3 text-[13px] font-semibold text-[var(--text)]">{title}</h2>
-      <div className="flex flex-col gap-4">{children}</div>
-    </section>
-  )
-}
-
-function SettingsRow({
-  label,
-  description,
-  children
-}: {
-  label: string
-  description?: string
-  children: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div>
-        <div className="text-[12.5px] font-medium text-[var(--text)]">{label}</div>
-        {description && (
-          <div className="text-[11px] leading-snug text-[var(--text2)]">{description}</div>
-        )}
-      </div>
-      {children}
-    </div>
-  )
-}
-
-// 옵션 버튼 그룹(검은 배경 선택 스타일) — 모델·권한모드·새탭주소·검색엔진·언어 공용
-function SegmentedGroup<T extends string>({
-  value,
-  options,
-  onChange
-}: {
-  value: T
-  options: { value: T; label: string }[]
-  onChange: (v: T) => void
-}): React.JSX.Element {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          onClick={() => onChange(o.value)}
-          className={cn(
-            'h-[28px] rounded-[8px] border px-2.5 text-[12px]',
-            value === o.value
-              ? 'border-[var(--text)] bg-[var(--text)] font-medium text-white'
-              : 'border-[var(--line)] text-[var(--text2)]'
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-// 설정 페이지 — 브라우저 / AI / 키마스터 섹션. 애플 스타일(흰 카드·얇은 선·검정 기본 버튼).
-// 모든 변경은 저장 버튼 없이 즉시 window.samba.settings.set 으로 반영한다(VaultSettingsPanel 과 동일 패턴)
+// 설정 페이지 — 좌측 240px 섹션 목록 + 우측 패널.
+// 모든 변경은 저장 버튼 없이 즉시 window.samba.settings.set 으로 반영한다
 export function SettingsPage(): React.JSX.Element {
   const { t } = useTranslation()
-  const [loaded, setLoaded] = useState(false)
-  const [homeUrlText, setHomeUrlText] = useState('')
-  const [homeUrlError, setHomeUrlError] = useState(false)
-  const [newTabUrl, setNewTabUrl] = useState<NewTabUrlMode>('home')
-  const [searchEngine, setSearchEngine] = useState<SearchEngine>('google')
-  const [language, setLanguage] = useState<'ko' | 'en'>('ko')
-  const [model, setModel] = useState<Settings['model']>('sonnet')
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>('guard')
-  const [ocrEnabled, setOcrEnabled] = useState(true)
-  const [vaultSettingsOpen, setVaultSettingsOpen] = useState(false)
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [active, setActive] = useState<string>(DEFAULT_SECTION_KEY)
 
   useEffect(() => {
     void window.samba.settings.get().then((r) => {
-      if (!r.ok) return
-      setHomeUrlText(r.data.homeUrl)
-      setNewTabUrl(r.data.newTabUrl)
-      setSearchEngine(r.data.searchEngine)
-      setLanguage(r.data.language)
-      setModel(r.data.model)
-      setPermissionMode(r.data.permissionMode)
-      setOcrEnabled(r.data.ocrEnabled)
-      setLoaded(true)
+      if (r.ok) setSettings(r.data)
     })
   }, [])
 
-  const commitHomeUrl = (): void => {
-    const value = homeUrlText.trim()
-    if (!isHttpUrl(value) && !isInternalUrl(value)) {
-      setHomeUrlError(true)
-      return
-    }
-    setHomeUrlError(false)
-    void window.samba.settings.set({ homeUrl: value })
-  }
+  // 낙관적 반영 후 메인이 정규화한 값으로 덮어쓴다(범위를 벗어난 값이 화면에 남지 않게)
+  const update = useCallback((patch: Partial<Settings>): void => {
+    setSettings((prev) => (prev ? { ...prev, ...patch } : prev))
+    void window.samba.settings.set(patch).then((r) => {
+      if (r.ok) setSettings(r.data)
+    })
+  }, [])
 
-  const chooseNewTabUrl = (v: NewTabUrlMode): void => {
-    setNewTabUrl(v)
-    void window.samba.settings.set({ newTabUrl: v })
-  }
-  const chooseSearchEngine = (v: SearchEngine): void => {
-    setSearchEngine(v)
-    void window.samba.settings.set({ searchEngine: v })
-  }
-  const chooseLanguage = (v: 'ko' | 'en'): void => {
-    setLanguage(v)
-    void i18n.changeLanguage(v)
-    void window.samba.settings.set({ language: v })
-  }
-  const chooseModel = (v: Settings['model']): void => {
-    setModel(v)
-    void window.samba.settings.set({ model: v })
-  }
-  const choosePermissionMode = (v: PermissionMode): void => {
-    setPermissionMode(v)
-    void window.samba.settings.set({ permissionMode: v })
-  }
-  const toggleOcrEnabled = (v: boolean): void => {
-    setOcrEnabled(v)
-    void window.samba.settings.set({ ocrEnabled: v })
-  }
-
-  if (!loaded) return <div className="flex min-h-0 flex-1" />
+  const select = (key: string): void => setActive(resolveSectionKey(key))
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-auto bg-[var(--bg)]">
-      <div className="mx-auto flex w-full max-w-[520px] flex-col gap-4 p-6">
-        <h1 className="text-[15px] font-semibold text-[var(--text)]">{t('settingsPage.title')}</h1>
-
-        {/* 브라우저 */}
-        <SettingsSection title={t('settingsPage.browser.title')}>
-          <SettingsRow label={t('settingsPage.browser.homeUrl')}>
-            <div className="flex items-center gap-2">
-              <input
-                value={homeUrlText}
-                onChange={(e) => {
-                  setHomeUrlText(e.target.value)
-                  setHomeUrlError(false)
-                }}
-                onBlur={commitHomeUrl}
-                placeholder="https://"
-                className={cn(
-                  'h-9 flex-1 rounded-[9px] border bg-[var(--bg)] px-2.5 text-[13px] text-[var(--text)] outline-none',
-                  homeUrlError ? 'border-red-500' : 'border-[var(--line)]'
-                )}
-              />
-              <button
-                type="button"
-                onClick={commitHomeUrl}
-                className="h-9 rounded-[9px] bg-[var(--text)] px-3 text-[12.5px] font-medium text-white"
-              >
-                {t('settingsPage.browser.save')}
-              </button>
-            </div>
-            {homeUrlError && (
-              <p className="text-[11px] text-red-500">{t('settingsPage.browser.homeUrlError')}</p>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)] min-[769px]:flex-row">
+      {/* 모바일 폭(≤768px) — 상단 가로 스크롤 탭 */}
+      <nav className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-[var(--line)] px-3 py-2 min-[769px]:hidden">
+        {SECTIONS.map((s) => (
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => select(s.key)}
+            className={cn(
+              'h-[28px] shrink-0 rounded-[8px] border px-2.5 text-[12px]',
+              active === s.key
+                ? 'border-[var(--text)] bg-[var(--text)] font-medium text-white'
+                : 'border-[var(--line)] text-[var(--text2)]'
             )}
-          </SettingsRow>
-
-          <SettingsRow label={t('settingsPage.browser.newTabUrl')}>
-            <SegmentedGroup
-              value={newTabUrl}
-              onChange={chooseNewTabUrl}
-              options={[
-                { value: 'home', label: t('settingsPage.browser.newTabUrlHome') },
-                { value: 'blank', label: t('settingsPage.browser.newTabUrlBlank') }
-              ]}
-            />
-          </SettingsRow>
-
-          <SettingsRow label={t('settingsPage.browser.searchEngine')}>
-            <SegmentedGroup
-              value={searchEngine}
-              onChange={chooseSearchEngine}
-              options={[
-                { value: 'google', label: t('settingsPage.browser.searchEngineGoogle') },
-                { value: 'naver', label: t('settingsPage.browser.searchEngineNaver') }
-              ]}
-            />
-          </SettingsRow>
-
-          <SettingsRow label={t('settingsPage.browser.language')}>
-            <SegmentedGroup
-              value={language}
-              onChange={chooseLanguage}
-              options={[
-                { value: 'ko', label: t('settingsPage.browser.languageKo') },
-                { value: 'en', label: t('settingsPage.browser.languageEn') }
-              ]}
-            />
-          </SettingsRow>
-        </SettingsSection>
-
-        {/* AI */}
-        <SettingsSection title={t('settingsPage.ai.title')}>
-          <SettingsRow label={t('settingsPage.ai.model')}>
-            <SegmentedGroup
-              value={model}
-              onChange={chooseModel}
-              options={[
-                { value: 'sonnet', label: 'Sonnet' },
-                { value: 'opus', label: 'Opus' },
-                { value: 'haiku', label: 'Haiku' }
-              ]}
-            />
-          </SettingsRow>
-
-          <SettingsRow label={t('settingsPage.ai.permissionMode')}>
-            <SegmentedGroup
-              value={permissionMode}
-              onChange={choosePermissionMode}
-              options={[
-                { value: 'read_only', label: t('settingsPage.ai.permissionReadOnly') },
-                { value: 'guard', label: t('settingsPage.ai.permissionGuard') },
-                { value: 'full', label: t('settingsPage.ai.permissionFull') }
-              ]}
-            />
-          </SettingsRow>
-
-          <div className="flex items-center justify-between">
-            <span>
-              <span className="block text-[12.5px] font-medium text-[var(--text)]">
-                {t('settingsPage.ai.ocrEnabled')}
-              </span>
-              <span className="block text-[11px] text-[var(--text2)]">
-                {t('settingsPage.ai.ocrEnabledDesc')}
-              </span>
-            </span>
-            <Switch checked={ocrEnabled} onCheckedChange={toggleOcrEnabled} />
-          </div>
-        </SettingsSection>
-
-        {/* 키마스터 */}
-        <SettingsSection title={t('settingsPage.vault.title')}>
-          <SettingsRow
-            label={t('settingsPage.vault.description')}
-            description={t('settingsPage.vault.descriptionDetail')}
           >
-            <button
-              type="button"
-              onClick={() => setVaultSettingsOpen(true)}
-              className="h-9 w-fit rounded-[9px] border border-[var(--line)] px-3 text-[12.5px] font-medium text-[var(--text)] hover:bg-black/5"
-            >
-              {t('settingsPage.vault.open')}
-            </button>
-          </SettingsRow>
-        </SettingsSection>
-      </div>
+            {t(s.labelKey)}
+          </button>
+        ))}
+      </nav>
 
-      <VaultSettingsPanel open={vaultSettingsOpen} onOpenChange={setVaultSettingsOpen} />
+      {/* 데스크톱 폭 — 좌측 240px 섹션 목록 */}
+      <aside className="hidden w-[240px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-[var(--line)] p-4 min-[769px]:flex">
+        <h1 className="text-[15px] font-semibold text-[var(--text)]">{t('settingsPage.title')}</h1>
+        {SETTINGS_GROUPS.map((group) => (
+          <div key={group} className="flex flex-col gap-0.5">
+            <div className="px-2 pb-1 text-[11px] font-medium text-[var(--text2)]">
+              {t(groupLabelKey(group))}
+            </div>
+            {sectionsOfGroup(group).map((s: SettingsSectionDef) => (
+              <button
+                key={s.key}
+                type="button"
+                onClick={() => select(s.key)}
+                className={cn(
+                  'h-8 rounded-[8px] px-2 text-left text-[12.5px]',
+                  active === s.key
+                    ? 'bg-black/[.06] font-medium text-[var(--text)]'
+                    : 'text-[var(--text2)] hover:bg-black/[.03]'
+                )}
+              >
+                {t(s.labelKey)}
+              </button>
+            ))}
+          </div>
+        ))}
+      </aside>
+
+      {/* 우측 패널 */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex w-full max-w-[560px] flex-col gap-4 p-6">
+          {settings && <SectionBody active={active} settings={settings} update={update} />}
+        </div>
+      </div>
     </div>
   )
+}
+
+// 섹션 키 → 컴포넌트. 자리만 잡아 둔 섹션은 PlaceholderSection 하나로 처리한다
+function SectionBody({
+  active,
+  settings,
+  update
+}: {
+  active: string
+  settings: Settings
+  update: (patch: Partial<Settings>) => void
+}): React.JSX.Element {
+  const labelKey =
+    SECTIONS.find((s) => s.key === active)?.labelKey ?? 'settingsPage.sections.general'
+  switch (active) {
+    case 'general':
+      return <GeneralSection settings={settings} update={update} />
+    case 'appearance':
+      return <AppearanceSection settings={settings} update={update} />
+    case 'account':
+      return <AccountSection />
+    case 'security':
+      return <SecuritySection settings={settings} update={update} />
+    case 'agent':
+      return <AgentSection settings={settings} update={update} />
+    case 'ai':
+      return <AiSection />
+    case 'keymaster':
+      return <KeymasterSection />
+    // 개발자 섹션: 압축 해제된 크롬 확장 폴더 관리(Task 15)
+    case 'developer':
+      return <ExtensionsSection />
+    default:
+      return <PlaceholderSection titleKey={labelKey} />
+  }
 }

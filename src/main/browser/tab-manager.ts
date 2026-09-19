@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   WebContentsView,
   session,
+  type Input,
   type Session,
   type WebContents
 } from 'electron'
@@ -124,6 +125,14 @@ export class TabManager {
   private defaultUrl = DEFAULT_URL
   // 주소창 검색어 → URL 변환에 쓸 기본 검색엔진
   private searchEngine: SearchEngine = 'google'
+  // 탭 세션 파티션 접두사. 작업공간이 바뀌면 handlers 가 갈아 끼운다.
+  // 이미 열려 있는 탭의 세션은 건드리지 않고, 새로 여는 탭부터 새 파티션을 쓴다
+  private partitionPrefix = 'persist:'
+  // 이 창이 실제로 만든 파티션 세션. 새 파티션이 생기면 확장 관리자에게 알려 준다
+  private partitionSessions = new Map<string, Session>()
+  private sessionHook: ((ses: Session, partition: string) => void) | null = null
+  // 창 안에서만 듣는 키 입력 처리기(작업공간 Ctrl+Alt+1~9). true 를 돌려주면 페이지로 넘기지 않는다
+  private inputHandler: ((input: Input) => boolean) | null = null
   // === 신규 추가분 끝 ========================================================
   // AI 작업이 실행 중인지 알려 주는 판정기(handlers 가 AgentRunner 를 연결한다).
   // 페이지 JS 대화상자는 작업 실행 중에만 자동 처리한다
@@ -160,6 +169,39 @@ export class TabManager {
 
   setSearchEngine(engine: SearchEngine): void {
     this.searchEngine = engine
+  }
+
+  /**
+   * 탭 세션 파티션 접두사를 바꾼다(작업공간 전환).
+   * 열려 있는 탭은 그대로 두고 새 탭부터 적용된다 — 진행 중인 로그인 세션을 끊지 않기 위해서다
+   */
+  setPartitionPrefix(prefix: string): void {
+    this.partitionPrefix = prefix
+  }
+
+  /**
+   * 파티션 세션이 처음 만들어질 때 호출될 처리기를 연결한다(확장 재로드용).
+   * 이미 만들어 둔 세션에는 곧바로 한 번씩 적용한다
+   */
+  setSessionHook(fn: (ses: Session, partition: string) => void): void {
+    this.sessionHook = fn
+    for (const [partition, ses] of this.partitionSessions) fn(ses, partition)
+  }
+
+  /**
+   * 창 안에서만 동작하는 키 입력 처리기를 연결한다(작업공간 전환 단축키).
+   * 처리기가 true 를 돌려주면 그 입력은 페이지로 전달되지 않는다
+   */
+  setInputHandler(fn: (input: Input) => boolean): void {
+    this.inputHandler = fn
+    // 이미 열려 있는 탭에도 소급 적용한다
+    for (const tab of this.tabs) this.attachInputHandler(tab.view.webContents)
+  }
+
+  private attachInputHandler(wc: WebContents): void {
+    wc.on('before-input-event', (e, input) => {
+      if (this.inputHandler?.(input)) e.preventDefault()
+    })
   }
 
   /** AI 작업 실행 여부 판정기를 연결한다(대화상자 자동 처리 조건) */
@@ -247,11 +289,16 @@ export class TabManager {
     // 탭 생성 경로(주소창·AI new_tab·페이지의 window.open)의 공통 관문
     if (!isAllowedUrl(url)) throw new Error(`${BLOCKED_URL_MESSAGE} (${url})`)
     const profile = opts.profile ?? 'default'
-    const partition = `persist:${profile}`
+    const partition = `${this.partitionPrefix}${profile}`
     const ses = session.fromPartition(partition)
     hardenSession(ses, partition)
     // 파티션 세션에도 samba:// 핸들러를 붙인다(기본 세션 등록만으로는 탭에서 안 열림)
     attachInternalProtocol(ses)
+    // 처음 보는 파티션이면 확장 관리자에게 알려 같은 확장을 이 세션에도 걸게 한다
+    if (!this.partitionSessions.has(partition)) {
+      this.partitionSessions.set(partition, ses)
+      this.sessionHook?.(ses, partition)
+    }
     const view = new WebContentsView({
       webPreferences: {
         session: ses,
@@ -268,6 +315,7 @@ export class TabManager {
     const tab: Tab = { id: randomUUID(), view, profile, mobile: opts.mobile ?? false }
     this.tabs.push(tab)
     const wc = view.webContents
+    this.attachInputHandler(wc)
     // 상태 변화 이벤트마다 리스너에 통지 (개별 등록: on() 오버로드가 유니온 리터럴을 받지 않음)
     wc.on('did-start-loading', () => this.emit())
     wc.on('did-stop-loading', () => this.emit())

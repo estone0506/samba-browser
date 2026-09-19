@@ -27,3 +27,17 @@ export function isFromRenderer(win: RendererWindowLike, sender: SenderLike | nul
 export function assertFromRenderer(win: RendererWindowLike, sender: SenderLike | null): void {
   if (!isFromRenderer(win, sender)) throw new Error('forbidden: renderer-only channel')
 }
+
+/**
+ * settings:get 응답을 발신자에 따라 좁힌다.
+ * 페이지 preload(격리 월드)도 이 채널을 쓰므로 발신자 검증 없이 전체 설정을 내주면
+ * OCR·검색엔진 등 사용자 설정이 웹페이지로 새어나간다. 렌더러 창이면 전체를,
+ * 페이지면 preload 가 실제로 쓰는 language 하나만 돌려준다
+ */
+export function settingsForSender<S extends { language: unknown }>(
+  full: S,
+  win: RendererWindowLike,
+  sender: SenderLike | null
+): S | { language: S['language'] } {
+  return isFromRenderer(win, sender) ? full : { language: full.language }
+}

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { AgentEvent } from '@shared/ipc'
+import type { AgentEvent, ChatDto, ChatMessageDto } from '@shared/ipc'
+import { RECENT_CHAT_LIMIT, titleFromMessage } from '@shared/chat'
 
 export interface ChatMessage {
   id: string
@@ -10,6 +11,15 @@ export interface ChatMessage {
 export interface Step {
   label: string
   ok: boolean
+  // 번역 키. 있으면 화면에서 i18n 문구로 바꿔 보여 준다(메인이 보내는 label 은 그대로 표시)
+  key?: string
+}
+
+// 캡차·2FA 사용자 넘김 카드 상태
+export interface Handoff {
+  requestId: string
+  matched: string
+  url: string
 }
 
 // SDK 재시도 대기 표시용 (진행 띠 라벨은 i18n 으로 화면에서 조립)
@@ -20,6 +30,10 @@ export interface Retry {
 
 interface ChatState {
   messages: ChatMessage[]
+  // 사이드바에 걸리는 최근 대화 목록
+  chats: ChatDto[]
+  // 지금 열려 있는 대화. null 이면 아직 저장되지 않은 새 대화다
+  activeChatId: number | null
   // 실행 세대 번호. 이전 작업의 늦은 IPC 응답이 새 작업 UI 를 덮지 않게 한다
   runSeq: number
   status: 'idle' | 'running' | 'done' | 'failed' | 'stopped'
@@ -27,10 +41,22 @@ interface ChatState {
   currentLabel: string
   retry: Retry | null
   confirm: { requestId: string; action: string; kind: 'danger' | 'finish' } | null
+  // 사이트가 사람의 추가 확인을 요구해 작업이 멈춰 있는 상태
+  handoff: Handoff | null
   authError: 'missing' | 'limit' | null
+  // 최근 대화 목록을 다시 읽는다(앱 시작·작업 종료 후)
+  loadChats: () => Promise<void>
+  // 저장된 대화를 열어 메시지를 화면에 올린다
+  openChat: (chatId: number) => Promise<void>
+  // 화면을 비우고 새 대화를 시작한다(대화 행은 첫 전송 때 만들어진다)
+  newChat: () => void
+  // 대화를 지운다(삭제 표식). 화면에 열려 있었으면 새 대화로 돌아간다
+  removeChat: (chatId: number) => Promise<void>
   send: (text: string) => Promise<void>
   stop: () => Promise<void>
   reply: (requestId: string, approved: boolean) => void
+  // 넘김 카드 응답 — skip=true 는 건너뛰고 계속, false 는 작업 중단
+  replyHandoff: (requestId: string, skip: boolean) => void
   handleEvent: (e: AgentEvent) => void
 }
 
@@ -40,13 +66,56 @@ const nid = (): string => String(++seq)
 // 진행 로그(step)는 마지막 AI 메시지에 붙인다
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
+  chats: [],
+  activeChatId: null,
   runSeq: 0,
   status: 'idle',
   toolCalls: 0,
   currentLabel: '',
   retry: null,
   confirm: null,
+  handoff: null,
   authError: null,
+  loadChats: async () => {
+    const r = await window.samba.chats?.list(RECENT_CHAT_LIMIT)
+    if (r?.ok) set({ chats: r.data })
+  },
+  openChat: async (chatId) => {
+    if (get().status === 'running') return
+    const r = await window.samba.chats?.get(chatId)
+    if (!r?.ok || r.data === null) return
+    set({
+      activeChatId: chatId,
+      messages: r.data.messages.map(toChatMessage),
+      status: 'idle',
+      toolCalls: 0,
+      currentLabel: '',
+      retry: null,
+      confirm: null,
+      handoff: null,
+      authError: null
+    })
+  },
+  newChat: () => {
+    if (get().status === 'running') return
+    set({
+      activeChatId: null,
+      messages: [],
+      status: 'idle',
+      toolCalls: 0,
+      currentLabel: '',
+      retry: null,
+      confirm: null,
+      handoff: null,
+      authError: null
+    })
+  },
+  removeChat: async (chatId) => {
+    const r = await window.samba.chats?.remove(chatId)
+    if (!r?.ok) return
+    set((s) => ({ chats: s.chats.filter((c) => c.id !== chatId) }))
+    if (get().activeChatId === chatId) get().newChat()
+  },
   send: async (text) => {
     if (get().status === 'running') return
     const seq = get().runSeq + 1
@@ -62,11 +131,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
       currentLabel: '',
       retry: null,
       confirm: null,
+      handoff: null,
       authError: null
     }))
+    // 아직 저장되지 않은 새 대화면 여기서 대화 행을 만든다(제목은 첫 메시지에서 짓는다).
+    // 저장은 메인(러너)이 작업 완료 시점에 한 번에 한다
+    let chatId = get().activeChatId
+    if (chatId === null) {
+      const created = await window.samba.chats?.create(titleFromMessage(text) || text.slice(0, 40))
+      if (created?.ok) {
+        chatId = created.data.id
+        set((s) => ({ activeChatId: created.data.id, chats: [created.data, ...s.chats] }))
+      }
+    }
     // 메인은 "시작 접수" ack 만 즉시 돌려준다. 완료·실패는 status 이벤트로 온다.
     // 늦게 도착한 이전 세대의 응답은 버린다
-    const r = await window.samba.agent.run(text)
+    const r =
+      chatId === null
+        ? await window.samba.agent.run(text)
+        : await window.samba.agent.run(text, chatId)
     if (!r.ok && get().runSeq === seq) set({ status: 'failed', currentLabel: r.error, retry: null })
   },
   stop: async () => {
@@ -75,6 +158,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   reply: (requestId, approved) => {
     window.samba.agent.confirmReply(requestId, approved)
     set({ confirm: null })
+  },
+  // 넘김 카드도 확인 카드와 같은 응답 채널을 쓴다(승인=건너뛰고 계속, 거부=작업 중단)
+  replyHandoff: (requestId, skip) => {
+    window.samba.agent.confirmReply(requestId, skip)
+    set({ handoff: null })
+    // '작업 중단'은 응답만으로 끝나지 않는다 — 실행 자체를 멈춘다
+    if (!skip) void window.samba.agent.stop()
   },
   handleEvent: (e) => {
     const msgs = get().messages
@@ -90,6 +180,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (e.type === 'progress') set({ retry: { attempt: e.attempt, reason: e.reason } })
     if (e.type === 'confirm')
       set({ confirm: { requestId: e.requestId, action: e.action, kind: e.kind ?? 'danger' } })
+    if (e.type === 'handoff') {
+      set({ handoff: { requestId: e.requestId, matched: e.matched, url: e.url } })
+      if (last?.role === 'ai') {
+        patchLast({
+          steps: [...(last.steps ?? []), { label: '', ok: true, key: 'handoff.waiting' }]
+        })
+      }
+    }
+    if (e.type === 'handoffDone') {
+      // 자동 재개·시간 초과로 끝났을 수도 있으므로 카드를 항상 닫는다
+      set({ handoff: null })
+      if (last?.role === 'ai') {
+        patchLast({
+          steps: [
+            ...(last.steps ?? []),
+            {
+              label: '',
+              ok: e.outcome !== 'aborted' && e.outcome !== 'timeout',
+              key: `handoff.step.${e.outcome}`
+            }
+          ]
+        })
+      }
+    }
     if (e.type === 'status') {
       // 중단·실패·완료 뒤에 뒤늦게 도착한 running 은 무시한다.
       // send() 가 실행을 시작할 때 status 를 먼저 running 으로 바꾸므로 정상 시작은 통과한다
@@ -98,14 +212,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ? (e.message.slice(5) as 'missing' | 'limit')
         : null
       const done = e.state === 'done' || e.state === 'failed' || e.state === 'stopped'
+      // 작업이 끝나면 메인이 방금 기록을 남겼다 — 목록의 제목·순서를 다시 읽는다
+      if (done) void get().loadChats()
       set({
         status: e.state,
         authError: auth,
         toolCalls: e.toolCalls ?? get().toolCalls,
         retry: e.state === 'running' ? get().retry : null,
-        // 중단 후 응답 불가능한 확인 카드가 남지 않도록 정리
-        confirm: done ? null : get().confirm
+        // 중단 후 응답 불가능한 확인·넘김 카드가 남지 않도록 정리
+        confirm: done ? null : get().confirm,
+        handoff: done ? null : get().handoff
       })
     }
   }
 }))
+
+/** 저장된 메시지 한 줄을 화면 메시지로 바꾼다(system 은 AI 말풍선으로 보여 준다) */
+function toChatMessage(row: ChatMessageDto): ChatMessage {
+  return {
+    id: `db-${row.id}`,
+    role: row.role === 'user' ? 'user' : 'ai',
+    text: row.content,
+    steps: row.steps ?? undefined
+  }
+}

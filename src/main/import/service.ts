@@ -11,6 +11,7 @@ import { toNetscapeHtml } from './bookmarks-export'
 import { normalizeHost } from '../../shared/host'
 import { correctLoginUrl } from '../../shared/site-rules'
 import type { ImportPasswordsResult, ImportBookmarksResult } from '../../shared/import'
+import type { OutboxRecorder, WorkspaceScope } from '../../shared/sync'
 
 // dialog.showOpenDialog/showSaveDialog 를 감싼 최소 인터페이스 — 테스트에서 파일 선택을 흉내낼 수 있게 주입한다.
 // 취소되면 undefined 를 반환한다
@@ -62,6 +63,16 @@ export class ImportService {
     this.bookmarkRepo = new BookmarkRepo(db)
     this.readFileImpl = options.readFile ?? ((p) => fsReadFile(p, 'utf8'))
     this.writeFileImpl = options.writeFile ?? ((p, content) => fsWriteFile(p, content, 'utf8'))
+  }
+
+  /** 활성 작업공간을 북마크 저장소에 알려 준다(조회 범위 필터 + 새 링크에 붙일 작업공간) */
+  /** 북마크 변경 로그 훅을 붙인다(로그인 상태에서만) */
+  setOutboxRecorder(recorder: OutboxRecorder | null): void {
+    this.bookmarkRepo.setOutboxRecorder(recorder)
+  }
+
+  setWorkspaceScope(scope: WorkspaceScope | null): void {
+    this.bookmarkRepo.setWorkspaceScope(scope)
   }
 
   /**

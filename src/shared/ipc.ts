@@ -17,10 +17,18 @@ export const IPC = {
   agentStop: 'agent:stop',
   agentEvent: 'agent:event', // main → renderer 이벤트
   agentConfirmReply: 'agent:confirmReply',
+  // --- AI 채팅 기록 — 본문은 평문이지만 비밀값은 담기지 않는다(진행 로그는 라벨만) ----
+  chatList: 'chat:list',
+  chatCreate: 'chat:create',
+  chatGet: 'chat:get',
+  chatAppend: 'chat:append',
+  chatRename: 'chat:rename',
+  chatDelete: 'chat:delete',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   // 금고 — vaultReveal 만이 비밀값(평문)을 돌려주는 유일한 채널이다
   vaultState: 'vault:state',
+  vaultKeyFromSync: 'vault:keyFromSync', // 키 재료가 다른 PC 에서 내려왔는가(안내 문구용)
   vaultSetup: 'vault:setup',
   vaultUnlock: 'vault:unlock',
   vaultLock: 'vault:lock',
@@ -35,6 +43,12 @@ export const IPC = {
   vaultDeleteAccounts: 'vault:deleteAccounts',
   vaultUndoDelete: 'vault:undoDelete',
   vaultAudit: 'vault:audit',
+  // 내보내기 — 잠금 해제 + 마스터 재입력 검증을 통과해야만 실행된다(응답은 개수·경로뿐)
+  vaultExport: 'vault:export',
+  // 복구 키 — recoveryCreate 응답만 평문 복구 키를 돌려준다(화면 표시 1회용)
+  vaultRecoveryCreate: 'vault:recoveryCreate',
+  vaultRecoveryConfirm: 'vault:recoveryConfirm',
+  vaultRecoveryUnlock: 'vault:recoveryUnlock',
   vaultStateChanged: 'vault:stateChanged', // main → renderer 이벤트
   vaultCapturePrompt: 'vault:capturePrompt', // main → renderer 이벤트 (비밀번호 제외)
   vaultCaptureDecision: 'vault:captureDecision', // renderer → main
@@ -61,10 +75,45 @@ export const IPC = {
   bookmarksExport: 'bookmarks:export',
   // 파비콘 — 사이트 자체에서만 받아온 dataUrl 을 돌려준다(제3자 전송 없음)
   faviconGet: 'favicon:get',
+  // --- 작업공간(브라우저 프로필) ---------------------------------------------
+  workspaceList: 'workspace:list',
+  workspaceCreate: 'workspace:create',
+  workspaceSwitch: 'workspace:switch',
+  workspaceRename: 'workspace:rename',
+  workspaceDelete: 'workspace:delete',
+  workspaceChanged: 'workspace:changed', // main → renderer 이벤트
+  // --- 동기화(2b) — 상태 조회·즉시 동기화. 토큰·비밀값은 오가지 않는다 ---------
+  syncStatus: 'sync:status',
+  syncNow: 'sync:now',
+  syncStatusChanged: 'sync:statusChanged', // main → renderer 이벤트
+  // --- 기기(2b) — 목록과 원격 로그아웃. 토큰은 오가지 않는다 -------------------
+  devicesList: 'devices:list',
+  devicesRevoke: 'devices:revoke',
   // --- 자체 새 탭 페이지(samba://newtab) — preload(격리 월드) → 메인 -----------
   newTabInit: 'newtab:init', // invoke, 언어 + 북마크 바 상위 항목
   newTabSearch: 'newtab:search', // send, 검색어/URL 을 보낸 탭에서 연다
-  newTabOpen: 'newtab:open' // send, 북마크 URL 을 보낸 탭에서 연다
+  newTabOpen: 'newtab:open', // send, 북마크 URL 을 보낸 탭에서 연다
+  // --- AI 연결(2b) — 응답에 평문 API 키가 담기는 채널은 하나도 없다 -----------
+  aiProviders: 'ai:providers', // 제공자 카드 3종 상태(마스킹 문자열만)
+  aiSetProvider: 'ai:setProvider', // 제공자 전환 + 작업별 모델 자동 대체
+  aiSetApiKey: 'ai:setApiKey', // 렌더러 → 메인 한 방향으로만 평문 키가 흐른다
+  aiTestKey: 'ai:testKey', // 모델 목록 1회 호출로 확인, {ok} 만 반환
+  aiTaskModels: 'ai:taskModels',
+  aiSetTaskModel: 'ai:setTaskModel',
+  // --- 계정 인증(2b) — 토큰·비밀번호는 어느 방향으로도 돌려주지 않는다 --------
+  authState: 'auth:state',
+  authSignUp: 'auth:signUp',
+  authSignIn: 'auth:signIn',
+  authSignInGoogle: 'auth:signInGoogle', // 브라우저를 열고 루프백 콜백까지 기다린다
+  authSignOut: 'auth:signOut',
+  authStateChanged: 'auth:stateChanged', // main → renderer 이벤트
+  // --- 확장(2b) — 폴더 불러오기 + 다른 브라우저 가져오기 + 웹스토어 설치 ------
+  extList: 'ext:list',
+  extLoad: 'ext:load', // 경로를 안 주면 메인에서 폴더 선택 다이얼로그를 연다
+  extRemove: 'ext:remove',
+  extImportSources: 'ext:importSources', // 다른 브라우저에 설치된 확장 목록
+  extImportFrom: 'ext:importFrom', // 고른 확장을 앱 데이터로 복사해서 로드
+  extInstallWebstore: 'ext:installWebstore' // 웹스토어 주소 또는 32자 id
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -103,6 +152,15 @@ export type AgentEvent =
   | { type: 'confirm'; requestId: string; action: string; kind?: 'danger' | 'finish' }
   // 진행 상황만 알리는 이벤트(도구 호출 아님). 지금은 SDK 재시도 대기 표시에 쓴다
   | { type: 'progress'; kind: 'apiRetry'; attempt: number; reason: string }
+  // 캡차·2FA 를 사용자에게 넘김. 응답은 agentConfirmReply 채널을 그대로 쓴다
+  // (approved=true → 건너뛰고 계속, false → 작업 중단)
+  | { type: 'handoff'; requestId: string; kind: 'captcha'; matched: string; url: string }
+  // 넘김 종료(사용자 처리 감지로 자동 재개 포함). 카드를 닫고 진행 로그를 남긴다
+  | {
+      type: 'handoffDone'
+      requestId: string
+      outcome: 'resumed' | 'skipped' | 'aborted' | 'timeout'
+    }
   | {
       type: 'status'
       state: 'running' | 'done' | 'failed' | 'stopped'
@@ -132,9 +190,39 @@ export type {
 } from './vault'
 
 export type {
+  AiProviderId,
+  AiProviderState,
+  AiProviderStatus,
+  ApiKeyVendor,
+  TaskModelKey,
+  TaskModels
+} from './ai'
+
+export type {
+  ExtensionDto,
+  ExtensionError,
+  ExtensionInstallResult,
+  ExtensionListDto,
+  ExtensionSource,
+  ImportBrowserDto,
+  ImportExtensionDto
+} from './extensions'
+
+export type {
   ImportPasswordsResult,
   ImportBookmarksResult,
   BookmarkTreeDto,
   BookmarkFolderDto,
   BookmarkLinkDto
 } from './import'
+
+export type { SyncStatus, DeviceDto } from './sync'
+
+export type {
+  ChatRole,
+  ChatStepDto,
+  ChatDto,
+  ChatMessageDto,
+  ChatDetailDto,
+  AppendMessageInput
+} from './chat'

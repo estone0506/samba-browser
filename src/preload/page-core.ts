@@ -5,8 +5,13 @@ import type { PageElement, PageSnapshot } from '../shared/snapshot'
 import { MAX_ELEMENTS } from './page-constants'
 import {
   detectLoginFields,
+  detectSignedInHint,
+  detectCaptchaHint,
+  labelTextOf,
   usernameElementFor as detectUsernameElementFor,
-  type LoginFields
+  type CaptchaHint,
+  type LoginFields,
+  type SignedInHint
 } from './login-detect'
 
 // 스냅샷 id → 실제 DOM 요소 매핑 (스냅샷마다 갱신)
@@ -222,6 +227,55 @@ const LOGIN_TEXT = /로그인하기|로그인|login|sign in/i
 export function findLoginFields(): LoginFields {
   buildSnapshot()
   return detectLoginFields(registry)
+}
+
+// 이미 로그인된 상태인지 힌트를 돌려준다(판정은 login-detect 모듈)
+export function signedInHint(): SignedInHint {
+  return detectSignedInHint()
+}
+
+// 캡차·2FA 징후를 돌려준다. 푸는 것은 언제나 사용자 몫이다
+export function captchaHint(): CaptchaHint {
+  return detectCaptchaHint()
+}
+
+// --- 로그인 상태 유지 체크박스 ---------------------------------------------
+
+// "로그인 상태 유지" 류 체크박스 라벨(ko/en). 같은 세션을 오래 유지해 캡차 발생을 줄인다
+export const KEEP_SIGNED_IN_RE =
+  /로그인\s?상태\s?유지|자동\s?로그인|로그인\s?유지|keep\s?me\s?signed\s?in|keep\s?signed\s?in|remember\s?me|stay\s?signed\s?in|remember\s?this\s?device/i
+
+/** 라벨 문구가 "로그인 상태 유지" 체크박스인지(순수 함수) */
+export function matchKeepSignedIn(label: string): boolean {
+  return KEEP_SIGNED_IN_RE.test(label)
+}
+
+/**
+ * 로그인 폼 제출 직전에 "로그인 상태 유지" 체크박스를 켠다.
+ * anchorId(비밀번호·제출 버튼)를 주면 그 요소가 속한 form 안에서만 찾고,
+ * form 이 없으면 문서 전체에서 찾는다. 이미 켜져 있으면 건드리지 않는다
+ */
+export function checkKeepSignedIn(anchorId?: number): string {
+  const anchor = anchorId === undefined ? null : get(anchorId)
+  const form = anchor ? formOf(anchor) : null
+  const root: ParentNode = form ?? document
+  const boxes = Array.from(
+    root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
+  ).filter((el) => isVisible(el) && !el.disabled)
+  for (const box of boxes) {
+    const label = labelTextOf(box)
+    if (!matchKeepSignedIn(label)) continue
+    if (box.checked) return `already: ${label.slice(0, 40)}`
+    box.click()
+    // click 이 막힌 폼(라벨만 처리하는 커스텀 UI) 대비 — 값과 이벤트를 직접 맞춘다
+    if (!box.checked) {
+      box.checked = true
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+      box.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    return box.checked ? `checked: ${label.slice(0, 40)}` : 'none'
+  }
+  return 'none'
 }
 
 // 요소의 form 이 있으면 requestSubmit, 없으면 click 으로 제출(둘 다 실제 제출 동작을 유발)

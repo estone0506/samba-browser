@@ -8,12 +8,16 @@ import { registerIpc } from './ipc/handlers'
 import { registerFaviconIpc } from './ipc/favicon'
 import { openDatabase, type Db } from './db/client'
 import type { VaultService } from './vault/service'
+import type { SyncEngineHolder } from './sync/engine'
 import { runLoginHarness, writeVaultLocked } from './e2e/login-harness'
 
 // E2E 하네스용 userData 분리 — 실행 중인 사용자 앱의 DB 를 건드리지 않기 위해 복사본을 쓴다.
 // app.whenReady() 이전에 지정해야 하므로 모듈 최상단에서 처리한다
 const userDataOverride = process.env.SAMBA_USER_DATA
 if (userDataOverride) app.setPath('userData', userDataOverride)
+
+// 개발 모드(electron.exe 직접 실행)에서도 앱 이름이 'Electron' 대신 제품명으로 보이게 한다
+app.setName('SAMBA Browser')
 
 // 내부 페이지 스킴(samba://) 등록도 app.whenReady() 이전이어야 한다
 registerInternalScheme()
@@ -26,6 +30,7 @@ process.on('unhandledRejection', (reason) => {
 // 종료 정리(shutdown)에서 써야 하므로 모듈 스코프로 올려둔다
 let db: Db | undefined
 let vault: VaultService | undefined
+let sync: SyncEngineHolder | undefined
 
 // 종료 순서: vault.dispose()(lock 포함, DB 조회 발생) → db.close() 순으로 해야 한다.
 // 반대로 하면(예전 버그) db.close() 뒤에 창이 닫히며 vault.dispose() → lock() →
@@ -36,6 +41,13 @@ let shuttingDown = false
 function shutdown(): void {
   if (shuttingDown) return
   shuttingDown = true
+  try {
+    // 폴링·Realtime 구독을 먼저 끊는다 — 닫히는 DB 에 질의가 더 날아가지 않게
+    sync?.current()?.stop()
+    sync?.release()
+  } catch (e: unknown) {
+    console.error('동기화 종료 실패', e)
+  }
   try {
     vault?.dispose()
   } catch (e: unknown) {
@@ -68,6 +80,7 @@ app
     db = await openDatabase(join(app.getPath('userData'), 'data.db'))
     const ipc = registerIpc(win, tabs, db)
     vault = ipc.vault
+    sync = ipc.sync
     // 하네스 모드: 저장된 사이트를 순회하며 자동 로그인을 검증하고 끝나면 앱을 종료한다.
     // 환경변수 스위치는 개발 빌드에서만 인정한다 — 패키징된 앱에서는 무시한다
     const e2eTarget = app.isPackaged ? undefined : process.env.SAMBA_E2E_LOGIN

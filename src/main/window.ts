@@ -7,6 +7,8 @@ import { isHttpUrl } from '../shared/url'
 export function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     title: 'SAMBA Browser',
+    // 작업표시줄·알트탭에 삼바 로고가 보이게(개발 모드에서도 electron 기본 아이콘 대신)
+    icon: join(__dirname, '../../resources/icon.ico'),
     width: 1440,
     height: 900,
     minWidth: 1000,

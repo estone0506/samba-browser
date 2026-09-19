@@ -25,6 +25,7 @@ import {
   type StoredField,
   type StoredSection
 } from './fields'
+import type { ExportRow } from './export'
 import {
   randomBytes,
   deriveKey,
@@ -39,6 +40,13 @@ import {
   resolveDefaultKdfParams,
   type KdfParams
 } from './crypto'
+import {
+  generateRecoveryKey,
+  isValidRecoveryKey,
+  normalizeRecoveryKey,
+  unwrapMasterKey,
+  wrapMasterKey
+} from './recovery'
 import type {
   AccountDto,
   AgentAccess,
@@ -51,6 +59,15 @@ import type {
   VaultState
 } from '../../shared/vault'
 import type { Settings } from '../../shared/settings'
+import {
+  VAULT_KEY_SYNC_KEYS,
+  type OutboxRecorder,
+  type SyncOp,
+  type SyncTable,
+  type VaultKeyApplyResult,
+  type VaultKeySyncKey,
+  type WorkspaceScope
+} from '../../shared/sync'
 import { normalizeHost, registrableDomain } from '../../shared/host'
 
 // electron safeStorage 중 실제로 쓰는 부분만 좁혀 둔 인터페이스(테스트에서 스텁 주입)
@@ -142,6 +159,15 @@ const META_VERIFIER_CT = 'verifier_ct'
 const META_VERIFIER_IV = 'verifier_iv'
 const META_KDF_PARAMS = 'kdf_params'
 const META_DEVICE_KEY = 'device_wrapped_key'
+const META_RECOVERY_SALT = 'recovery_salt'
+const META_RECOVERY_CT = 'recovery_wrapped_key'
+const META_RECOVERY_IV = 'recovery_wrapped_iv'
+// 이 금고의 키 재료가 다른 PC 에서 내려온 것인가(잠금 해제 화면 안내 문구 분기용).
+// 한 번이라도 마스터 키를 채택하면(applyKey) 지운다
+const META_KEY_FROM_SYNC = 'key_from_sync'
+
+// 발급한 복구 키를 재입력 확인까지 메모리에 들고 있는 시간
+const RECOVERY_PENDING_TTL_MS = 10 * 60_000
 
 // 되돌리기 유효 시간(ms) — 계정 삭제 스냅샷과 자동 비밀번호 갱신 모두 60초(스펙)
 const UNDO_TTL_MS = 60_000
@@ -156,6 +182,8 @@ export class VaultService {
   // 마스터 키. 잠금 해제 상태에서만 값이 있고, lock() 이 0으로 덮어쓴다
   private key: Buffer | null = null
   private autoLockTimer: ReturnType<typeof setTimeout> | undefined
+  // 발급했지만 아직 재입력 확인을 못 받은 복구 키(정규화된 값). 10분 뒤 스스로 버린다
+  private pendingRecovery: { compact: string; expiresAt: number } | null = null
   private captureTimer: ReturnType<typeof setTimeout> | undefined
   private pending: (PendingCapture & { expiresAt: number }) | null = null
   private listeners = new Set<(state: VaultState) => void>()
@@ -167,6 +195,8 @@ export class VaultService {
   private disposed = false
   // 삭제 되돌리기 버퍼(토큰 → 스냅샷). 암호문이 들어 있어 메인 메모리에만 둔다
   private undoBuffer = new Map<string, { snapshots: AccountSnapshot[]; timer: NodeJS.Timeout }>()
+  // 동기화 변경 로그 훅. 주입하지 않으면 아무 일도 하지 않는다(동기화를 끈 상태)
+  private outbox: OutboxRecorder | null = null
 
   constructor(
     private readonly db: Db,
@@ -176,6 +206,101 @@ export class VaultService {
     this.repo = new VaultRepo(db)
     this.safeStorage = options.safeStorage
     this.tryDeviceUnlock()
+  }
+
+  // --- 동기화 연결 -------------------------------------------------------
+
+  /** 변경 로그 훅을 붙인다(로그인 상태에서만). 붙이지 않으면 기록하지 않는다 */
+  setOutboxRecorder(recorder: OutboxRecorder | null): void {
+    this.outbox = recorder
+  }
+
+  /** 삭제는 행이 사라지기 전에 기록해야 한다 — 호출 순서에 주의 */
+  private record(table: SyncTable, rowId: number, op: SyncOp): void {
+    this.outbox?.(table, String(rowId), op)
+  }
+
+  /**
+   * 동기화 전용 — 잠금 해제 상태에서만 마스터 키를 빌려 준다.
+   * 키 자체를 반환하지 않고 콜백 안에서만 쓰게 해, 호출부가 키를 보관하지 못하게 한다
+   */
+  useMasterKey<T>(fn: (key: Buffer) => T): T | null {
+    if (!this.key) return null
+    return fn(this.key)
+  }
+
+  // --- 마스터 키 재료 동기화 ---------------------------------------------
+  //
+  // 새 PC 에서 같은 마스터 비밀번호로 금고를 열 수 있게, salt·KDF 파라미터·검증자를
+  // settings 표에 얹어 나른다. 셋 다 비밀이 아니다 — 이것만으로는 아무 값도 열리지 않고,
+  // 같은 비밀번호에서 같은 키를 다시 유도하는 데만 쓰인다
+
+  /** 동기화가 올릴 값. 금고가 아직 설정 전이면 null */
+  readKeyMaterial(key: VaultKeySyncKey): string | null {
+    if (this.db.isClosed || !this.isInitialized()) return null
+    if (key === 'vault.salt') {
+      const salt = this.repo.getMeta(META_SALT)
+      return salt ? salt.toString('base64') : null
+    }
+    if (key === 'vault.kdf') return JSON.stringify(this.readKdfParams())
+    const ct = this.repo.getMeta(META_VERIFIER_CT)
+    const iv = this.repo.getMeta(META_VERIFIER_IV)
+    if (!ct || !iv) return null
+    return JSON.stringify({ ct: ct.toString('base64'), iv: iv.toString('base64') })
+  }
+
+  /**
+   * 원격에서 받은 키 재료를 로컬에 심는다.
+   * 로컬 금고가 아직 설정 전일 때만 심는다 — 이미 설정돼 있는데 값이 다르면
+   * 덮어쓰지 않고 'mismatch' 를 돌려준다(덮으면 이 PC 의 기존 암호문이 영영 안 열린다)
+   */
+  applyKeyMaterial(values: Partial<Record<VaultKeySyncKey, string>>): VaultKeyApplyResult {
+    if (this.db.isClosed) return 'incomplete'
+    const parsed = parseKeyMaterial(values)
+    if (!parsed) return 'incomplete'
+
+    if (this.isInitialized()) {
+      const salt = this.repo.getMeta(META_SALT)
+      const ct = this.repo.getMeta(META_VERIFIER_CT)
+      const iv = this.repo.getMeta(META_VERIFIER_IV)
+      const same =
+        !!salt &&
+        !!ct &&
+        !!iv &&
+        salt.equals(parsed.salt) &&
+        ct.equals(parsed.verifierCt) &&
+        iv.equals(parsed.verifierIv)
+      return same ? 'unchanged' : 'mismatch'
+    }
+
+    this.repo.setMeta(META_SALT, parsed.salt)
+    this.repo.setMeta(META_KDF_PARAMS, Buffer.from(JSON.stringify(parsed.kdf), 'utf8'))
+    this.repo.setMeta(META_VERIFIER_CT, parsed.verifierCt)
+    this.repo.setMeta(META_VERIFIER_IV, parsed.verifierIv)
+    this.repo.setMeta(META_KEY_FROM_SYNC, Buffer.from('1', 'utf8'))
+    // 'uninitialized' → 'locked' 로 바뀐 것을 화면이 곧바로 따라오게 한다
+    this.emit()
+    return 'applied'
+  }
+
+  /** 이 금고의 키 재료가 다른 PC 에서 내려온 것인가(잠금 해제 화면 안내 문구용) */
+  isKeyFromSync(): boolean {
+    if (this.db.isClosed) return false
+    return this.repo.getMeta(META_KEY_FROM_SYNC) !== null
+  }
+
+  /** 키 재료 세 키를 변경 로그에 올린다(금고 설정 직후) */
+  private recordKeyMaterial(): void {
+    for (const key of VAULT_KEY_SYNC_KEYS) this.outbox?.('settings', key, 'upsert')
+  }
+
+  /**
+   * 로그인 직후 한 번 — 로그아웃 상태에서 설정한 금고는 키 재료를 기록할 훅이 없었다.
+   * 그대로 두면 이 PC 의 마스터 비밀번호로는 다른 PC 에서 금고를 열 수 없다
+   */
+  ensureKeyMaterialRecorded(): void {
+    if (this.db.isClosed || !this.isInitialized()) return
+    this.recordKeyMaterial()
   }
 
   // --- 상태 -------------------------------------------------------------
@@ -229,6 +354,8 @@ export class VaultService {
     this.repo.setMeta(META_VERIFIER_CT, verifier.ciphertext)
     this.repo.setMeta(META_VERIFIER_IV, verifier.iv)
 
+    // 다른 PC 가 같은 마스터 비밀번호로 이 금고를 열 수 있도록 키 재료를 함께 올린다
+    this.recordKeyMaterial()
     this.applyKey(key)
   }
 
@@ -258,6 +385,8 @@ export class VaultService {
       clearTimeout(this.autoLockTimer)
       this.autoLockTimer = undefined
     }
+    // 확인 못 받은 복구 키는 잠그는 순간 버린다(마스터 키가 없으면 감쌀 수도 없다)
+    this.pendingRecovery = null
     // 키 zeroize 는 DB 상태와 무관하게 항상 수행한다(메모리에 평문 키를 남기지 않는 것이 최우선)
     if (this.key) {
       zeroize(this.key)
@@ -333,6 +462,10 @@ export class VaultService {
     // 이미 채택된 키가 있으면(예: unlock 을 다시 호출) 새 키로 덮어쓰기 전에 메모리에서 지운다
     if (this.key) zeroize(this.key)
     this.key = key
+    // 한 번이라도 열었으면 "다른 PC 에서 설정됨" 안내는 더 이상 필요 없다
+    if (!this.db.isClosed && this.repo.getMeta(META_KEY_FROM_SYNC)) {
+      this.repo.deleteMeta(META_KEY_FROM_SYNC)
+    }
     this.syncDeviceWrappedKey()
     this.restartAutoLock()
     this.emit()
@@ -417,10 +550,102 @@ export class VaultService {
     return this.unlockWithDeviceKey()
   }
 
+  // --- 복구 키 -----------------------------------------------------------
+
+  /** 복구 키가 이미 등록돼 있는가(값은 절대 돌려주지 않는다) */
+  hasRecoveryKey(): boolean {
+    if (this.db.isClosed) return false
+    return this.repo.getMeta(META_RECOVERY_CT) !== null
+  }
+
+  /**
+   * 새 복구 키를 발급한다. 반환값은 화면 표시 전용이며 여기서는 저장하지 않는다 —
+   * 사용자가 재입력해 confirmRecoveryKey() 를 통과해야 감싼 마스터 키가 DB 에 남는다.
+   * 발급 값은 메모리에만 10분 머문다
+   */
+  createRecoveryKey(): string {
+    if (!this.key) throw new Error('금고가 잠겨 있습니다')
+    const key = generateRecoveryKey()
+    this.pendingRecovery = {
+      compact: normalizeRecoveryKey(key),
+      expiresAt: Date.now() + RECOVERY_PENDING_TTL_MS
+    }
+    return key
+  }
+
+  /**
+   * 사용자가 옮겨 적은 복구 키를 확인한다. 정확히 일치할 때만 마스터 키를
+   * 복구 키로 감싸 vault_meta 에 저장하고 true 를 돌려준다.
+   * 틀렸거나 발급 기록이 없거나 10분이 지났으면 아무것도 저장하지 않고 false 다
+   */
+  async confirmRecoveryKey(input: string): Promise<boolean> {
+    const pending = this.pendingRecovery
+    if (!pending || !this.key) return false
+    if (Date.now() > pending.expiresAt) {
+      this.pendingRecovery = null
+      return false
+    }
+    if (!this.matchesPendingRecovery(input, pending.compact)) return false
+
+    const salt = randomBytes(SALT_BYTES)
+    const blob = await wrapMasterKey(this.key, pending.compact, salt)
+    this.repo.setMeta(META_RECOVERY_SALT, salt)
+    this.repo.setMeta(META_RECOVERY_CT, blob.ciphertext)
+    this.repo.setMeta(META_RECOVERY_IV, blob.iv)
+    // 2b 에서 복구 키(recovery_wrapped_key)는 이 기기 로컬에만 둔다 — vault_meta 에만 있고
+    // 변경 로그에는 아무것도 남기지 않는다(푸시 화이트리스트 밖이라 어차피 드롭됐다).
+    // 다른 PC 복구는 2c
+    // 확인이 끝난 발급 값은 곧바로 버린다(재사용 방지)
+    this.pendingRecovery = null
+    this.logAudit('recovery_create', 'user')
+    return true
+  }
+
+  /** 입력값을 발급 값과 상수 시간으로 비교한다(길이 차이는 먼저 걸러낸다) */
+  private matchesPendingRecovery(input: string, expected: string): boolean {
+    if (!isValidRecoveryKey(input)) return false
+    const given = Buffer.from(normalizeRecoveryKey(input), 'utf8')
+    const want = Buffer.from(expected, 'utf8')
+    if (given.length !== want.length) return false
+    return timingSafeEqual(given, want)
+  }
+
+  /** 복구 키로 금고를 해제한다. 마스터 비밀번호를 잊었을 때의 마지막 수단이다 */
+  async unlockWithRecoveryKey(input: string): Promise<boolean> {
+    if (!this.isInitialized()) return false
+    if (!isValidRecoveryKey(input)) return false
+    const salt = this.repo.getMeta(META_RECOVERY_SALT)
+    const ct = this.repo.getMeta(META_RECOVERY_CT)
+    const iv = this.repo.getMeta(META_RECOVERY_IV)
+    const verifierCt = this.repo.getMeta(META_VERIFIER_CT)
+    const verifierIv = this.repo.getMeta(META_VERIFIER_IV)
+    if (!salt || !ct || !iv || !verifierCt || !verifierIv) return false
+
+    let key: Buffer
+    try {
+      key = await unwrapMasterKey({ ciphertext: ct, iv }, input, salt)
+    } catch {
+      // 복구 키가 틀리면 GCM 인증이 실패한다
+      return false
+    }
+    if (!checkVerifier(key, { ciphertext: verifierCt, iv: verifierIv })) {
+      zeroize(key)
+      return false
+    }
+    this.applyKey(key)
+    this.logAudit('recovery_unlock', 'user')
+    return true
+  }
+
   // --- 조회 -------------------------------------------------------------
 
   listSites(): SiteDto[] {
     return this.repo.listSites()
+  }
+
+  /** 활성 작업공간을 저장소에 알려 준다(조회 범위 필터 + 새 행에 붙일 작업공간) */
+  setWorkspaceScope(scope: WorkspaceScope | null): void {
+    this.repo.setWorkspaceScope(scope)
   }
 
   listAccounts(host?: string): AccountDto[] {
@@ -510,6 +735,7 @@ export class VaultService {
     const normalized = normalizeHost(input.host)
     const host = normalized || input.host
     const row = this.repo.upsertAccount({ ...input, host })
+    this.record('accounts', row.id, 'upsert')
     const types = this.repo.itemTypesByAccount()
     return {
       id: row.id,
@@ -552,6 +778,7 @@ export class VaultService {
       return this.repo.itemMeta(id)
     })
     if (!meta) throw new Error('항목을 저장하지 못했습니다')
+    this.record('vault_items', meta.id, 'upsert')
     this.touch()
     return meta
   }
@@ -642,6 +869,9 @@ export class VaultService {
         const snapshot = this.repo.accountSnapshot(id)
         if (!snapshot) continue
         snapshots.push(snapshot)
+        // 삭제 표식을 만들려면 행이 남아 있어야 한다 — 반드시 지우기 전에 기록한다
+        for (const item of snapshot.items) this.record('vault_items', item.id, 'delete')
+        this.record('accounts', id, 'delete')
         this.repo.deleteAccountCascade(id)
         this.repo.insertAudit({ itemId: null, accountId: id, action: 'delete', source: 'user' })
       }
@@ -663,7 +893,11 @@ export class VaultService {
     this.undoBuffer.delete(token)
     if (!this.key) return false
     this.repo.transaction(() => {
-      for (const snapshot of entry.snapshots) this.repo.restoreSnapshot(snapshot)
+      for (const snapshot of entry.snapshots) {
+        this.repo.restoreSnapshot(snapshot)
+        this.record('accounts', snapshot.account.id, 'upsert')
+        for (const item of snapshot.items) this.record('vault_items', item.id, 'upsert')
+      }
       return null
     })
     this.touch()
@@ -675,6 +909,8 @@ export class VaultService {
     // 삭제 전에 계정 id 를 스냅샷으로 떠 둔다 — 삭제 후에는 vault_items 조인이 안 되어
     // 계정별 사용 기록에서 삭제 기록 자체가 보이지 않았다
     const meta = this.repo.itemMeta(id)
+    // 삭제 표식을 만들려면 행이 남아 있어야 한다 — 반드시 지우기 전에 기록한다
+    this.record('vault_items', id, 'delete')
     this.repo.deleteItem(id)
     this.repo.insertAudit({
       itemId: id,
@@ -776,6 +1012,85 @@ export class VaultService {
     } catch {
       return false
     }
+  }
+
+  /**
+   * 잠금 해제 상태에서 마스터 비밀번호를 한 번 더 확인한다(내보내기 같은 위험 작업 전용).
+   * 저장된 salt·kdf_params 로 키를 다시 유도해 verifier 를 확인하고, 현재 들고 있는
+   * 마스터 키와 상수 시간으로 비교한다. 잠겨 있으면 항상 false 다
+   */
+  async verifyMaster(master: string): Promise<boolean> {
+    if (!this.key) return false
+    const salt = this.repo.getMeta(META_SALT)
+    const ct = this.repo.getMeta(META_VERIFIER_CT)
+    const iv = this.repo.getMeta(META_VERIFIER_IV)
+    if (!salt || !ct || !iv) return false
+
+    const params = this.readKdfParams()
+    const candidate = await deriveKey(master, salt, {
+      memoryKiB: params.memoryKiB,
+      iterations: params.iterations,
+      parallelism: params.parallelism
+    })
+    try {
+      if (!checkVerifier(candidate, { ciphertext: ct, iv })) return false
+      if (candidate.length !== this.key.length) return false
+      return timingSafeEqual(candidate, this.key)
+    } finally {
+      zeroize(candidate)
+    }
+  }
+
+  /**
+   * 내보내기용 평문 행 목록 — **메인 프로세스 내부에서만** 호출한다.
+   * IPC 로 노출하지 않으며, 호출부(export.ts)가 파일을 쓴 직후 배열을 비운다.
+   * 복호화에 실패한 필드는 조용히 건너뛴다(항목 자체는 살린다)
+   */
+  exportRows(): ExportRow[] {
+    const key = this.requireKey()
+    const accounts = new Map(this.repo.listAccounts().map((a) => [a.id, a]))
+    const rows: ExportRow[] = []
+
+    // 계정별 항목 + 계정에 딸리지 않은 전역 항목(accountId = null)
+    const itemIds = [
+      ...[...accounts.keys()].flatMap((id) => this.repo.listItems(id).map((m) => m.id)),
+      ...this.repo.listItems(null).map((m) => m.id)
+    ]
+
+    for (const itemId of itemIds) {
+      const item = this.repo.getItemRow(itemId)
+      if (!item) continue
+      const account = item.accountId === null ? undefined : accounts.get(item.accountId)
+      const fields: Record<string, string> = {}
+      for (const section of item.sections) {
+        for (const field of section.fields) {
+          if (!isSecretField(field)) {
+            if (field.value !== undefined) fields[field.key] = field.value
+            continue
+          }
+          try {
+            fields[field.key] = decrypt(
+              key,
+              Buffer.from(field.ciphertext, 'base64'),
+              Buffer.from(field.iv, 'base64'),
+              aadFor(item.id, field)
+            )
+          } catch {
+            // 이 필드만 건너뛴다
+          }
+        }
+      }
+      rows.push({
+        type: item.type,
+        label: account?.label || item.label,
+        host: account?.host ?? '',
+        url: account?.urls[0] ?? '',
+        username: account?.username ?? '',
+        note: fields.note ?? '',
+        fields
+      })
+    }
+    return rows
   }
 
   private requireKey(): Buffer {
@@ -905,5 +1220,63 @@ export class VaultService {
     if (Date.now() > pending.expiresAt) return null
     const { host, username, password, isNew, locked } = pending
     return { host, username, password, isNew, locked }
+  }
+}
+
+/** base64 문자열을 버퍼로. 값이 없거나 형식이 아니면 null */
+function fromBase64(value: unknown): Buffer | null {
+  if (typeof value !== 'string' || value.length === 0) return null
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return null
+  const buf = Buffer.from(value, 'base64')
+  return buf.length > 0 ? buf : null
+}
+
+/**
+ * 원격에서 받은 키 재료 세 키를 검사해 버퍼로 푼다.
+ * 하나라도 빠졌거나 형식이 어긋나면 null — 반쪽만 심어 금고를 못 여는 상태를 만들지 않는다
+ */
+function parseKeyMaterial(values: Partial<Record<VaultKeySyncKey, string>>): {
+  salt: Buffer
+  kdf: KdfParams
+  verifierCt: Buffer
+  verifierIv: Buffer
+} | null {
+  const salt = fromBase64(values['vault.salt'])
+  if (!salt || salt.length !== SALT_BYTES) return null
+
+  const rawVerifier = values['vault.verifier']
+  const rawKdf = values['vault.kdf']
+  if (typeof rawVerifier !== 'string' || typeof rawKdf !== 'string') return null
+
+  let verifier: unknown
+  let kdf: unknown
+  try {
+    verifier = JSON.parse(rawVerifier)
+    kdf = JSON.parse(rawKdf)
+  } catch {
+    return null
+  }
+  if (typeof verifier !== 'object' || verifier === null) return null
+  if (typeof kdf !== 'object' || kdf === null) return null
+
+  const { ct, iv } = verifier as { ct?: unknown; iv?: unknown }
+  const verifierCt = fromBase64(ct)
+  const verifierIv = fromBase64(iv)
+  if (!verifierCt || !verifierIv) return null
+
+  // 원격 값이 변조돼도 허용 범위를 벗어나지 못하게 한다(unlock 의 readKdfParams 와 같은 규칙)
+  const p = kdf as Partial<KdfParams>
+  const fallback = resolveDefaultKdfParams()
+  return {
+    salt,
+    kdf: {
+      memoryKiB: typeof p.memoryKiB === 'number' ? clampMemoryKiB(p.memoryKiB) : fallback.memoryKiB,
+      iterations:
+        typeof p.iterations === 'number' ? clampIterations(p.iterations) : fallback.iterations,
+      parallelism:
+        typeof p.parallelism === 'number' ? clampParallelism(p.parallelism) : fallback.parallelism
+    },
+    verifierCt,
+    verifierIv
   }
 }

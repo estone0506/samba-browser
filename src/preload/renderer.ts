@@ -19,8 +19,25 @@ import {
   type AuditLogDto,
   type ImportPasswordsResult,
   type ImportBookmarksResult,
-  type BookmarkTreeDto
+  type BookmarkTreeDto,
+  type AiProviderId,
+  type AiProviderStatus,
+  type ApiKeyVendor,
+  type TaskModelKey,
+  type TaskModels,
+  type SyncStatus,
+  type ExtensionDto,
+  type ExtensionInstallResult,
+  type ExtensionListDto,
+  type ImportBrowserDto,
+  type DeviceDto,
+  type ChatDto,
+  type ChatDetailDto,
+  type ChatMessageDto,
+  type AppendMessageInput
 } from '../shared/ipc'
+import type { AuthState, WorkspaceDto } from '../shared/sync'
+import type { ExportRequest, ExportResult } from '../shared/vault'
 
 // 북마크 관리자 페이지용 요청 입력 타입
 interface BookmarkMoveInput {
@@ -105,7 +122,9 @@ const api = {
   },
   agent: {
     // 반환은 "시작 접수" ack 뿐. 완료·실패는 onEvent 의 status 이벤트로 온다
-    run: (prompt: string): Promise<IpcResult<AgentRunAck>> => invoke(IPC.agentRun, prompt),
+    // chatId 를 주면 메인이 완료 시점에 그 대화에 기록을 남긴다
+    run: (prompt: string, chatId?: number): Promise<IpcResult<AgentRunAck>> =>
+      invoke(IPC.agentRun, prompt, chatId),
     stop: (): Promise<IpcResult<void>> => invoke(IPC.agentStop),
     confirmReply: (requestId: string, approved: boolean): void => {
       ipcRenderer.send(IPC.agentConfirmReply, requestId, approved)
@@ -116,6 +135,17 @@ const api = {
       return () => ipcRenderer.off(IPC.agentEvent, h)
     }
   },
+  // AI 채팅 기록 — 본문은 평문이지만 비밀값은 담기지 않는다(진행 로그는 라벨만)
+  chats: {
+    list: (limit?: number): Promise<IpcResult<ChatDto[]>> => invoke(IPC.chatList, limit),
+    create: (title: string): Promise<IpcResult<ChatDto>> => invoke(IPC.chatCreate, title),
+    get: (chatId: number): Promise<IpcResult<ChatDetailDto | null>> => invoke(IPC.chatGet, chatId),
+    append: (input: AppendMessageInput): Promise<IpcResult<ChatMessageDto | null>> =>
+      invoke(IPC.chatAppend, input),
+    rename: (chatId: number, title: string): Promise<IpcResult<ChatDto | null>> =>
+      invoke(IPC.chatRename, chatId, title),
+    remove: (chatId: number): Promise<IpcResult<boolean>> => invoke(IPC.chatDelete, chatId)
+  },
   settings: {
     get: (): Promise<IpcResult<Settings>> => invoke(IPC.settingsGet),
     set: (patch: Partial<Settings>): Promise<IpcResult<Settings>> => invoke(IPC.settingsSet, patch)
@@ -123,9 +153,17 @@ const api = {
   // 금고 — reveal 만이 평문을 돌려준다. 나머지는 상태·메타뿐이다
   vault: {
     state: (): Promise<IpcResult<VaultState>> => invoke(IPC.vaultState),
+    // 이 금고가 다른 PC 에서 내려온 키 재료로 만들어졌는가(잠금 해제 화면 안내 문구용)
+    keyFromSync: (): Promise<IpcResult<boolean>> => invoke(IPC.vaultKeyFromSync),
     setup: (master: string): Promise<IpcResult<void>> => invoke(IPC.vaultSetup, master),
     unlock: (master: string): Promise<IpcResult<boolean>> => invoke(IPC.vaultUnlock, master),
     lock: (): Promise<IpcResult<void>> => invoke(IPC.vaultLock),
+    // 복구 키 — create 응답의 평문은 화면에 보여 준 뒤 확인 완료 즉시 렌더러 상태에서 버린다
+    recoveryCreate: (): Promise<IpcResult<string>> => invoke(IPC.vaultRecoveryCreate),
+    recoveryConfirm: (input: string): Promise<IpcResult<boolean>> =>
+      invoke(IPC.vaultRecoveryConfirm, input),
+    recoveryUnlock: (input: string): Promise<IpcResult<boolean>> =>
+      invoke(IPC.vaultRecoveryUnlock, input),
     sites: (): Promise<IpcResult<SiteDto[]>> => invoke(IPC.vaultSites),
     accounts: (host?: string): Promise<IpcResult<AccountDto[]>> => invoke(IPC.vaultAccounts, host),
     items: (accountId: number | null): Promise<IpcResult<VaultItemMeta[]>> =>
@@ -148,6 +186,9 @@ const api = {
     // 사용 기록(감사 로그). accountId 생략 시 전체(최근 200건), 계정 지정 시 해당 계정 항목만
     audit: (accountId?: number, limit?: number): Promise<IpcResult<AuditLogDto[]>> =>
       invoke(IPC.vaultAudit, accountId, limit),
+    // 내보내기. master(재입력 값)는 메인 방향으로만 흐르고, 응답에는 개수·경로만 온다
+    exportVault: (req: ExportRequest): Promise<IpcResult<ExportResult>> =>
+      invoke(IPC.vaultExport, req),
     onStateChanged: (cb: (state: VaultState) => void): (() => void) => {
       const h = (_: unknown, state: VaultState): void => cb(state)
       ipcRenderer.on(IPC.vaultStateChanged, h)
@@ -193,10 +234,93 @@ const api = {
       invoke(IPC.bookmarksSort, { folderId, by: 'name' }),
     export: (): Promise<IpcResult<string | undefined>> => invoke(IPC.bookmarksExport)
   },
+  // AI 연결 — 평문 키는 setApiKey 로 들어가기만 하고 되돌아오지 않는다.
+  // 이쪽으로 오는 것은 마스킹 문자열과 boolean 뿐이다
+  ai: {
+    providers: (): Promise<IpcResult<AiProviderStatus[]>> => invoke(IPC.aiProviders),
+    setProvider: (
+      id: AiProviderId
+    ): Promise<
+      IpcResult<{ provider: AiProviderId; taskModels: TaskModels; changed: TaskModelKey[] }>
+    > => invoke(IPC.aiSetProvider, id),
+    setApiKey: (
+      vendor: ApiKeyVendor,
+      key: string
+    ): Promise<IpcResult<Partial<Record<ApiKeyVendor, string>>>> =>
+      invoke(IPC.aiSetApiKey, vendor, key),
+    testKey: (vendor: ApiKeyVendor, key: string): Promise<IpcResult<{ ok: boolean }>> =>
+      invoke(IPC.aiTestKey, vendor, key),
+    taskModels: (): Promise<
+      IpcResult<{ provider: AiProviderId; taskModels: TaskModels; choices: string[] }>
+    > => invoke(IPC.aiTaskModels),
+    setTaskModel: (key: TaskModelKey, model: string): Promise<IpcResult<TaskModels>> =>
+      invoke(IPC.aiSetTaskModel, key, model)
+  },
+  // 계정 — 응답은 언제나 AuthState 뿐이다(토큰·비밀번호는 메인에 남는다)
+  auth: {
+    state: (): Promise<IpcResult<AuthState>> => invoke(IPC.authState),
+    signUp: (email: string, password: string): Promise<IpcResult<AuthState>> =>
+      invoke(IPC.authSignUp, email, password),
+    signIn: (email: string, password: string): Promise<IpcResult<AuthState>> =>
+      invoke(IPC.authSignIn, email, password),
+    // 기본 브라우저가 열리고, 사용자가 구글 로그인을 마쳐야 응답이 온다(최대 5분)
+    signInGoogle: (): Promise<IpcResult<AuthState>> => invoke(IPC.authSignInGoogle),
+    signOut: (): Promise<IpcResult<AuthState>> => invoke(IPC.authSignOut),
+    onStateChanged: (cb: (state: AuthState) => void): (() => void) => {
+      const h = (_: unknown, state: AuthState): void => cb(state)
+      ipcRenderer.on(IPC.authStateChanged, h)
+      return () => ipcRenderer.off(IPC.authStateChanged, h)
+    }
+  },
   // 파비콘 — 메인이 사이트 자체에서 받아 온 dataUrl. 호스트는 제3자로 나가지 않는다
   favicon: {
     get: (host: string): Promise<IpcResult<{ dataUrl: string | null }>> =>
       invoke(IPC.faviconGet, host)
+  },
+  // 작업공간(브라우저 프로필) — 전환은 메인이 세션 파티션·조회 범위를 함께 바꾼다
+  workspace: {
+    list: (): Promise<IpcResult<WorkspaceDto[]>> => invoke(IPC.workspaceList),
+    create: (name: string, color?: string): Promise<IpcResult<WorkspaceDto>> =>
+      invoke(IPC.workspaceCreate, { name, color }),
+    switch: (id: number): Promise<IpcResult<WorkspaceDto>> => invoke(IPC.workspaceSwitch, id),
+    rename: (id: number, name: string): Promise<IpcResult<WorkspaceDto>> =>
+      invoke(IPC.workspaceRename, { id, name }),
+    remove: (id: number): Promise<IpcResult<void>> => invoke(IPC.workspaceDelete, id),
+    // 단축키(Ctrl+Alt+1~9)로 바뀐 경우에도 렌더러가 따라오도록 메인이 밀어 준다
+    onChanged: (cb: (w: WorkspaceDto) => void): (() => void) => {
+      const h = (_: unknown, w: WorkspaceDto): void => cb(w)
+      ipcRenderer.on(IPC.workspaceChanged, h)
+      return () => ipcRenderer.off(IPC.workspaceChanged, h)
+    }
+  },
+  // 기기 — 목록과 원격 로그아웃. 취소된 PC 는 다음 동기화 주기에 스스로 로그아웃한다
+  devices: {
+    list: (): Promise<IpcResult<DeviceDto[]>> => invoke(IPC.devicesList),
+    revoke: (id: string): Promise<IpcResult<void>> => invoke(IPC.devicesRevoke, id)
+  },
+  // 동기화 — 상태 표시줄용. 토큰·비밀값은 오지 않는다
+  sync: {
+    status: (): Promise<IpcResult<SyncStatus>> => invoke(IPC.syncStatus),
+    now: (): Promise<IpcResult<SyncStatus>> => invoke(IPC.syncNow),
+    onStatusChanged: (cb: (status: SyncStatus) => void): (() => void) => {
+      const h = (_: unknown, status: SyncStatus): void => cb(status)
+      ipcRenderer.on(IPC.syncStatusChanged, h)
+      return () => ipcRenderer.off(IPC.syncStatusChanged, h)
+    }
+  },
+  // 확장 — 압축 해제된 폴더만 다룬다. load 를 인자 없이 부르면 메인이 폴더 선택창을 연다
+  extensions: {
+    list: (): Promise<IpcResult<ExtensionListDto>> => invoke(IPC.extList),
+    load: (path?: string): Promise<IpcResult<ExtensionDto | null>> => invoke(IPC.extLoad, path),
+    remove: (id: string): Promise<IpcResult<void>> => invoke(IPC.extRemove, id),
+    // 다른 브라우저(크롬·웨일·엣지·브레이브)에 설치된 확장 목록
+    importSources: (): Promise<IpcResult<ImportBrowserDto[]>> => invoke(IPC.extImportSources),
+    // 고른 확장을 앱 데이터로 복사한 뒤 로드한다(항목별 성공·실패)
+    importFrom: (ids: string[]): Promise<IpcResult<ExtensionInstallResult[]>> =>
+      invoke(IPC.extImportFrom, ids),
+    // 웹스토어 주소 또는 32자 id 로 설치한다
+    installWebstore: (input: string): Promise<IpcResult<ExtensionInstallResult>> =>
+      invoke(IPC.extInstallWebstore, input)
   }
 }
 

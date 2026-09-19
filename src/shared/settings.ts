@@ -1,5 +1,7 @@
 import { z } from 'zod'
+import { AI_PROVIDERS, type AiProviderId, type TaskModels } from './ai'
 import { DEFAULT_DANGER_WORDS, mergeDangerWords } from './danger'
+import { EXTENSION_SOURCES, type ExtensionSource } from './extensions'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 
 // 도구 호출 상한 허용 범위
@@ -7,8 +9,11 @@ export const MIN_TOOL_CALLS = 1
 export const MAX_TOOL_CALLS = 200
 
 // 오른쪽 패널 폭 허용 범위
-const MIN_PANEL_WIDTH = 280
-const MAX_PANEL_WIDTH = 900
+// 패널 폭 한계(렌더러 uiStore 와 공유)
+export const MIN_SIDEBAR_WIDTH = 180
+export const MAX_SIDEBAR_WIDTH = 420
+export const MIN_PANEL_WIDTH = 280
+export const MAX_PANEL_WIDTH = 900
 
 // 자동 잠금 대기 시간(분) 허용 범위. 상한(43200 = 30일)은 "안 함"에 해당하는 매우 긴 시간이다
 export const MIN_VAULT_AUTO_LOCK_MINUTES = 1
@@ -17,6 +22,14 @@ export const MAX_VAULT_AUTO_LOCK_MINUTES = 43200
 // 키마스터 AI 에이전트 접근 정책: 항상 허용 · 잠금 해제 중에만 허용 · 절대 허용 안 함
 export const VAULT_ACCESS_POLICIES = ['always', 'while_unlocked', 'never'] as const
 export type VaultAccessPolicy = (typeof VAULT_ACCESS_POLICIES)[number]
+
+// 화면 테마: 시스템 따라감 · 밝게 · 어둡게
+export const THEME_MODES = ['system', 'light', 'dark'] as const
+export type ThemeMode = (typeof THEME_MODES)[number]
+
+// 화면 확대 비율(%) 허용 범위
+export const MIN_UI_ZOOM = 80
+export const MAX_UI_ZOOM = 150
 
 // 사용 권한 모드: 읽기 전용(read_only) · 위험 행동 확인(guard) · 자동(full)
 export const PERMISSION_MODES = ['read_only', 'guard', 'full'] as const
@@ -36,6 +49,8 @@ export const DEFAULT_SETTINGS = {
   model: 'sonnet' as const,
   language: 'ko' as const,
   panelWidth: 380,
+  // 왼쪽 환경 탭(사이드바) 폭. 기기별 값이라 동기화하지 않는다
+  sidebarWidth: 232,
   lastUrl: NEW_TAB_URL,
   dangerWords: DEFAULT_DANGER_WORDS,
   maxToolCalls: 40,
@@ -46,6 +61,8 @@ export const DEFAULT_SETTINGS = {
   vaultRememberDevice: true,
   vaultAccessPolicy: 'while_unlocked' as const,
   vaultAutoSubmit: true,
+  // 로그인 폼의 "로그인 상태 유지" 체크박스를 자동으로 켤지(세션 재사용 → 캡차 감소)
+  vaultKeepSignedIn: true,
   // 저장된 값과 다른 값으로 로그인에 성공하면 묻지 않고 자동으로 비밀번호를 갱신할지 여부
   vaultAutoUpdatePassword: true,
   vaultExcludedHosts: [] as string[],
@@ -55,8 +72,34 @@ export const DEFAULT_SETTINGS = {
   // 기본 홈 주소는 자체 새 탭 페이지. 사용자가 config.json 에 저장해 둔 값이 있으면 그대로 유지된다
   homeUrl: NEW_TAB_URL,
   newTabUrl: 'home' as const,
-  searchEngine: 'google' as const
+  searchEngine: 'google' as const,
   // === 신규 추가분 끝 =======================================================
+  // === AI 연결 / 에이전트 / 작업공간 (2b 추가분) ============================
+  // AI 연결 경로와 작업별 모델
+  aiProvider: 'claude_subscription' as AiProviderId,
+  taskModels: {
+    fast: 'haiku',
+    standard: 'sonnet',
+    deep: 'opus',
+    visual: 'sonnet'
+  } as TaskModels,
+  // 에이전트 동작
+  agentNotify: true,
+  agentSound: false,
+  // 에이전트가 연 탭을 몇 분 뒤 정리할지(0 이면 정리 안 함)
+  agentTabCleanupMinutes: 15,
+  // 작업공간(기기 로컬 — 동기화하지 않는다)
+  activeWorkspaceId: 0,
+  // 확장 폴더 경로(로컬 전용)
+  extensionPaths: [] as string[],
+  // 확장 경로별 출처(스토어/가져옴/폴더). 기록이 없으면 'folder' 로 본다
+  extensionSources: {} as Record<string, ExtensionSource>,
+  // 모양(기기 로컬 — 동기화하지 않는다)
+  theme: 'system' as ThemeMode,
+  uiZoom: 100,
+  sidebarShowBookmarks: true,
+  sidebarShowChat: true
+  // === 2b 추가분 끝 =========================================================
 }
 
 // 손상된 config.json 이어도 앱이 뜨도록 필드마다 catch 로 기본값으로 되돌린다
@@ -68,6 +111,11 @@ export const settingsSchema = z.object({
     .min(MIN_PANEL_WIDTH)
     .max(MAX_PANEL_WIDTH)
     .catch(DEFAULT_SETTINGS.panelWidth),
+  sidebarWidth: z
+    .number()
+    .min(MIN_SIDEBAR_WIDTH)
+    .max(MAX_SIDEBAR_WIDTH)
+    .catch(DEFAULT_SETTINGS.sidebarWidth),
   lastUrl: z.string().min(1).catch(DEFAULT_SETTINGS.lastUrl),
   dangerWords: z.array(z.string()).catch([]),
   maxToolCalls: z.number().catch(DEFAULT_SETTINGS.maxToolCalls),
@@ -86,6 +134,8 @@ export const settingsSchema = z.object({
   vaultAccessPolicy: z.enum(VAULT_ACCESS_POLICIES).catch(DEFAULT_SETTINGS.vaultAccessPolicy),
   // 자동 채움 후 자동 제출 여부
   vaultAutoSubmit: z.boolean().catch(DEFAULT_SETTINGS.vaultAutoSubmit),
+  // 로그인 상태 유지 체크박스 자동 체크 여부
+  vaultKeepSignedIn: z.boolean().catch(DEFAULT_SETTINGS.vaultKeepSignedIn),
   // 로그인 성공 감지 시 비밀번호 자동 갱신 여부(끄면 기존 "갱신할까요?" 프롬프트로 동작)
   vaultAutoUpdatePassword: z.boolean().catch(DEFAULT_SETTINGS.vaultAutoUpdatePassword),
   // 제외 도메인(정규화된 host 문자열 목록). 손상된 값은 빈 배열로 되돌린다
@@ -99,8 +149,32 @@ export const settingsSchema = z.object({
     .refine((v) => isHttpUrl(v) || isInternalUrl(v))
     .catch(DEFAULT_SETTINGS.homeUrl),
   newTabUrl: z.enum(NEW_TAB_URL_MODES).catch(DEFAULT_SETTINGS.newTabUrl),
-  searchEngine: z.enum(SEARCH_ENGINES).catch(DEFAULT_SETTINGS.searchEngine)
+  searchEngine: z.enum(SEARCH_ENGINES).catch(DEFAULT_SETTINGS.searchEngine),
   // === 신규 추가분 끝 =========================================================
+  // === AI 연결 / 에이전트 / 작업공간 (2b 추가분) ==============================
+  aiProvider: z.enum(AI_PROVIDERS).catch(DEFAULT_SETTINGS.aiProvider),
+  taskModels: z
+    .object({
+      fast: z.string(),
+      standard: z.string(),
+      deep: z.string(),
+      visual: z.string()
+    })
+    .catch(DEFAULT_SETTINGS.taskModels),
+  agentNotify: z.boolean().catch(DEFAULT_SETTINGS.agentNotify),
+  agentSound: z.boolean().catch(DEFAULT_SETTINGS.agentSound),
+  agentTabCleanupMinutes: z.number().int().min(0).catch(DEFAULT_SETTINGS.agentTabCleanupMinutes),
+  activeWorkspaceId: z.number().int().min(0).catch(DEFAULT_SETTINGS.activeWorkspaceId),
+  extensionPaths: z.array(z.string()).catch(DEFAULT_SETTINGS.extensionPaths),
+  extensionSources: z
+    .record(z.string(), z.enum(EXTENSION_SOURCES))
+    .catch(DEFAULT_SETTINGS.extensionSources),
+  // 모양 — 범위를 벗어나거나 타입이 틀리면 기본값으로 되돌린다
+  theme: z.enum(THEME_MODES).catch(DEFAULT_SETTINGS.theme),
+  uiZoom: z.number().int().min(MIN_UI_ZOOM).max(MAX_UI_ZOOM).catch(DEFAULT_SETTINGS.uiZoom),
+  sidebarShowBookmarks: z.boolean().catch(DEFAULT_SETTINGS.sidebarShowBookmarks),
+  sidebarShowChat: z.boolean().catch(DEFAULT_SETTINGS.sidebarShowChat)
+  // === 2b 추가분 끝 ===========================================================
 })
 
 export type Settings = z.infer<typeof settingsSchema>

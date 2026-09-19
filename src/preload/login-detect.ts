@@ -20,6 +20,20 @@
 // 탐지 단계. 2단계 로그인(아이디 화면 → 비밀번호 화면)을 호출부가 구분할 수 있게 한다
 export type LoginStage = 'single' | 'username-only' | 'password-only' | 'none'
 
+// 이미 로그인된 상태인지에 대한 힌트(로그인 폼이 없을 때만 의미가 있다)
+export interface SignedInHint {
+  signedIn: boolean
+  // 판정 근거가 된 문구(모델·로그에 남긴다). 못 찾으면 빈 문자열
+  matched: string
+}
+
+// 사람이 직접 처리해야 하는 추가 확인(캡차·2FA) 징후.
+// AI 가 대신 풀지 않는다 — 사용자에게 넘기기 위한 "감지" 전용 정보다
+export interface CaptchaHint {
+  needsUser: boolean
+  matched: string
+}
+
 export interface LoginFields {
   username?: number
   password?: number
@@ -69,6 +83,25 @@ export const SUBMIT_TEXT_RE = /로그인하기|로그인|login|log.?in|sign.?in|
 
 // 허니팟(봇 함정) 이름 패턴
 const HONEYPOT_RE = /honey|\btrap\b|nospam|no.?bot|bot.?field|fake.?(field|input)/i
+
+// 로그인된 사용자에게만 보이는 링크·버튼 문구(ko/en)
+export const SIGNED_IN_RE =
+  /로그아웃|마이\s?페이지|내\s?정보|내\s?계정|내\s?정보\s?관리|주문\s?내역|sign\s?out|log\s?out|logout|my\s?page|my\s?account|my\s?info|my\s?profile/i
+
+// 로그인 화면임을 알리는 문구. 이런 링크만 있으면 로그인된 상태로 보지 않는다
+export const SIGNED_OUT_RE = /로그인|회원가입|sign\s?in|sign\s?up|log\s?in|create\s?account/i
+
+// 사람이 직접 풀어야 하는 확인의 강한 징후 — 이 문구 하나로 넘김을 결정한다
+export const CAPTCHA_STRONG_RE =
+  /캡차|captcha|보안을?\s?위해\s?추가\s?확인|추가\s?인증이?\s?필요|로봇이\s?아닙니다|i'?m\s?not\s?a\s?robot|security\s?check/i
+
+// 약한 징후 — 일상적인 주문·영수증 화면에도 나오는 말이라
+// 입력칸(인증번호 칸)이 함께 있을 때만 넘김으로 본다
+export const CAPTCHA_WEAK_RE =
+  /인증번호|영수증|2단계|2차\s?인증|verification\s?code|one.?time\s?code|two.?factor/i
+
+// 캡차 위젯 iframe 의 주소 패턴
+export const CAPTCHA_FRAME_RE = /recaptcha|hcaptcha|turnstile|funcaptcha|geetest/i
 
 // --- DOM 유틸 --------------------------------------------------------------
 
@@ -355,4 +388,82 @@ export function detectLoginFields(registry: HTMLElement[]): LoginFields {
   }
 
   return { stage: 'none', confidence: 0, iframe }
+}
+
+// --- 로그인 상태 힌트 -------------------------------------------------------
+
+/**
+ * 링크·버튼 문구 목록에서 "이미 로그인됨" 근거를 찾는다(순수 함수).
+ * 로그아웃/마이페이지 류가 하나라도 있으면 로그인된 것으로 본다.
+ * 반대로 로그인/회원가입 링크만 있으면 로그인 전 화면이다
+ */
+export function matchSignedInText(texts: string[]): SignedInHint {
+  for (const raw of texts) {
+    const t = raw.replace(/\s+/g, ' ').trim()
+    if (!t || t.length > 40) continue
+    if (SIGNED_IN_RE.test(t)) return { signedIn: true, matched: t }
+  }
+  return { signedIn: false, matched: '' }
+}
+
+/**
+ * 현재 문서가 로그인된 상태로 보이는지. 로그인 폼이 남아 있으면 무조건 아니다.
+ * 호출부(login 도구)는 findLoginFields 가 폼을 못 찾았을 때만 이 값을 쓴다
+ */
+export function detectSignedInHint(): SignedInHint {
+  if (passwordElement()) return { signedIn: false, matched: '' }
+  const nodes = Array.from(
+    document.querySelectorAll<HTMLElement>('a, button, [role="button"], [role="link"]')
+  ).filter(isVisible)
+  const texts = nodes.map(
+    (el) => el.getAttribute('aria-label') || el.innerText || el.textContent || ''
+  )
+  return matchSignedInText(texts)
+}
+
+// --- 캡차·2FA 징후 ----------------------------------------------------------
+
+/**
+ * 캡차·2FA 징후 판정(순수 함수).
+ * - 강한 문구나 캡차 iframe 은 그 자체로 넘김 대상
+ * - 약한 문구(인증번호·영수증 등)는 인증번호 입력칸이 함께 있을 때만 넘김 대상
+ * 캡차를 푸는 것은 언제나 사용자 몫이다. 이 함수는 "사람이 필요하다"만 판정한다
+ */
+export function matchCaptchaSigns(input: {
+  text: string
+  frameSources: string[]
+  hasCodeInput: boolean
+}): CaptchaHint {
+  const frame = input.frameSources.find((src) => CAPTCHA_FRAME_RE.test(src))
+  if (frame) return { needsUser: true, matched: `captcha frame (${frame.slice(0, 60)})` }
+  const strong = CAPTCHA_STRONG_RE.exec(input.text)
+  if (strong) return { needsUser: true, matched: strong[0] }
+  if (input.hasCodeInput) {
+    const weak = CAPTCHA_WEAK_RE.exec(input.text)
+    if (weak) return { needsUser: true, matched: weak[0] }
+  }
+  return { needsUser: false, matched: '' }
+}
+
+// 인증번호(1회용 비밀번호) 입력칸으로 보이는 칸이 있는가
+function hasCodeInput(): boolean {
+  return allInputs().some((el) => {
+    if (!isVisible(el)) return false
+    if (el.type === 'password') return false
+    if (ONE_TIME_PASSWORD_RE.test(labelTextOf(el))) return true
+    const len = Number(el.getAttribute('maxlength'))
+    return el.inputMode === 'numeric' && Number.isFinite(len) && len > 0 && len <= 8
+  })
+}
+
+/** 현재 문서에 캡차·2FA 징후가 있는지 */
+export function detectCaptchaHint(): CaptchaHint {
+  const text = (document.body?.innerText || document.body?.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 5000)
+  const frameSources = Array.from(document.querySelectorAll('iframe')).map(
+    (f) => f.getAttribute('src') || f.getAttribute('title') || ''
+  )
+  return matchCaptchaSigns({ text, frameSources, hasCodeInput: hasCodeInput() })
 }

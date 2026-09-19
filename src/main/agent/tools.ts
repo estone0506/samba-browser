@@ -20,6 +20,7 @@ import {
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
 import { formatDialogNote } from '../browser/dialogs'
 import { createOcrTool } from './tools-ocr'
+import { handoffToolResult, type HandoffResult } from './handoff'
 import { knownLoginUrl, isLikelyLoginUrl } from '../../shared/site-rules'
 import { BLOCKED_URL_MESSAGE, isInternalUrl } from '../../shared/url'
 
@@ -55,6 +56,10 @@ const LIST_ACCOUNTS_HOST_EXCLUDED = 'refused: host excluded'
 const INSECURE_PAGE = 'refused: insecure page (https required)'
 // 값을 채우기 직전, 페이지가 계정과 다른 등록 도메인으로 옮겨 갔을 때 돌려주는 문자열
 const FILL_HOST_MISMATCH = 'refused: HOST_MISMATCH — page moved to another domain'
+// 이미 로그인돼 있을 때 돌려주는 문자열(다시 로그인하면 세션이 끊겨 캡차가 늘어난다)
+const ALREADY_SIGNED_IN = 'already signed in'
+// 캡차·2FA 를 사용자에게 넘길 수 없을 때(넘김 콜백 미주입) 돌려주는 문자열
+const NEEDS_USER_CAPTCHA = 'needs_user: captcha'
 
 // https·제외 도메인·접근 정책 판정은 하네스·자동 채움과 공유한다(vault/access-gate.ts)
 export { isSecurePageUrl, effectiveAccess }
@@ -120,6 +125,16 @@ export interface ToolContext {
   vaultAccessPolicy?: VaultAccessPolicy
   // 자동 채움 후 자동 제출 여부. 미지정 시 true(기존 동작)로 동작한다
   vaultAutoSubmit?: boolean
+  // 로그인 폼의 "로그인 상태 유지" 체크박스를 자동으로 켤지. 미지정 시 켠다.
+  // 세션을 오래 유지하면 재로그인이 줄어 캡차도 덜 뜬다
+  vaultKeepSignedIn?: boolean
+  // 캡차·2FA 를 사용자에게 넘기고 처리될 때까지 작업을 일시정지한다.
+  // 주입되지 않은 실행(구버전 호출부·테스트)에서는 도구가 needs_user 문자열만 돌려준다
+  handoff?: (req: {
+    matched: string
+    currentUrl: () => string
+    stillBlocked: () => Promise<boolean>
+  }) => Promise<HandoffResult>
   // 제외 도메인(정규화된 host 문자열). 미지정 시 빈 목록으로 동작한다
   vaultExcludedHosts?: string[]
 }
@@ -163,9 +178,11 @@ async function clickLoginLink(tab: Tab): Promise<boolean> {
 export async function findLoginFieldsWithFallback(
   tabs: TabManager,
   tab: Tab,
-  host: string
+  host: string,
+  // 이미 한 번 탐지해 봤으면 그 결과를 넘겨 중복 호출을 줄인다
+  initial?: LoginFieldsResult
 ): Promise<LoginFieldsResult> {
-  let fields = await pageBridge.findLoginFields(tab)
+  let fields = initial ?? (await pageBridge.findLoginFields(tab))
   if (fields.stage !== 'none') return fields
 
   // 1) 지금 페이지가 로그인 페이지로 보이지 않을 때만 알려진 로그인 URL 로 옮겨 간다
@@ -300,6 +317,70 @@ ${raw}`
 
   // 계정을 특정하지 않는 경로(현재는 없음)를 위한 전역 정책 게이트
 
+  /**
+   * 캡차·2FA 징후만 살펴 안내 문자열을 만든다(기다리지 않는다).
+   * 징후가 없으면 null
+   */
+  const captchaNotice = async (tab: Tab): Promise<string | null> => {
+    let hint: { needsUser: boolean; matched: string }
+    try {
+      hint = await pageBridge.captchaHint(tab)
+    } catch {
+      // 페이지를 읽지 못하면 넘김 판단을 하지 않는다(기존 흐름 유지)
+      return null
+    }
+    if (!hint.needsUser) return null
+    return `${NEEDS_USER_CAPTCHA} (${hint.matched}): ask the user to complete it on screen`
+  }
+
+  /**
+   * 캡차·2FA 징후가 있으면 사용자에게 화면을 넘기고, 처리될 때까지 작업을 멈춘다.
+   * 징후가 없으면 null 을 돌려준다.
+   * AI 는 캡차를 대신 풀지 않는다 — 입력은 언제나 사용자가 한다.
+   *
+   * **읽기 도구(get_page)에서는 부르지 않는다** — 화면을 한 번 읽어 보려던 호출이
+   * 최장 10분 막혀 버린다. 넘김은 login·click 처럼 사용자가 행동을 지시한 경로에서만 건다
+   */
+  const captchaHandoff = async (tab: Tab): Promise<string | null> => {
+    let hint: { needsUser: boolean; matched: string }
+    try {
+      hint = await pageBridge.captchaHint(tab)
+    } catch {
+      return null
+    }
+    if (!hint.needsUser) return null
+    if (!ctx.handoff) {
+      return `${NEEDS_USER_CAPTCHA} (${hint.matched}): ask the user to complete it on screen`
+    }
+    try {
+      const result = await ctx.handoff({
+        matched: hint.matched,
+        currentUrl: () => currentUrl(tab),
+        stillBlocked: async () => (await pageBridge.captchaHint(tab)).needsUser
+      })
+      return handoffToolResult(result)
+    } catch (e: unknown) {
+      // 감시 중에 탭이 사라지면 currentUrl 이 던진다 — 넘김만 접고 도구는 계속 답한다
+      // (여기서 전파하면 도구 호출 전체가 예외로 끝나 모델이 아무 정보도 받지 못한다)
+      const reason = e instanceof Error ? e.message : String(e)
+      console.warn('캡차 넘김이 끊겼습니다(탭 종료 등)', reason)
+      return `${NEEDS_USER_CAPTCHA} (${hint.matched}): handoff was cancelled; the tab may have closed`
+    }
+  }
+
+  /**
+   * 제출 직전 "로그인 상태 유지" 체크박스를 켠다(설정으로 끌 수 있다).
+   * 로그인 세션을 재사용하면 재로그인이 줄어 캡차도 덜 뜬다. 실패해도 로그인은 계속한다
+   */
+  const keepSignedIn = async (tab: Tab, anchorId?: number): Promise<void> => {
+    if (ctx.vaultKeepSignedIn === false) return
+    try {
+      await pageBridge.checkKeepSignedIn(tab, anchorId)
+    } catch {
+      // 체크박스가 없거나 페이지를 못 읽어도 로그인 자체는 진행한다
+    }
+  }
+
   const getPage = tool(
     'get_page',
     'Read the current page: URL, title, numbered interactive elements, visible text.',
@@ -309,7 +390,13 @@ ${raw}`
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
         await pageBridge.waitForLoad(tab)
-        return serializeSnapshot(await pageBridge.snapshot(tab))
+        const snapshot = serializeSnapshot(await pageBridge.snapshot(tab))
+        // 사람의 추가 확인이 필요하면 **알리기만** 한다 — 읽기 도구가 최장 10분 막히면
+        // 모델이 다음 수를 두지 못한다. 실제 넘김·대기는 login 같은 행동 도구가 건다
+        const notice = await captchaNotice(tab)
+        if (!notice) return snapshot
+        return `${notice}
+${snapshot}`
       })
   )
 
@@ -599,8 +686,22 @@ ${raw}`
           const available = vaultAvailable()
           if (typeof available === 'string') return available
           label = `로그인: ${host}`
+          // 이미 로그인돼 있으면 다시 로그인하지 않는다 — 재로그인은 세션을 새로 만들어
+          // 캡차·추가 인증을 불러오기 때문이다. 폼이 없을 때만 상태 힌트를 본다
+          const first = await pageBridge.findLoginFields(tab)
+          if (first.stage === 'none') {
+            try {
+              const hint = await pageBridge.signedInHint(tab)
+              if (hint.signedIn) {
+                label = `이미 로그인됨: ${host}`
+                return `${ALREADY_SIGNED_IN} (${hint.matched})`
+              }
+            } catch {
+              // 힌트를 못 읽으면 평소대로 로그인 절차를 계속한다
+            }
+          }
           // 폼이 없으면 알려진 로그인 URL 이동 → 페이지 내 로그인 링크 클릭까지 한 번에 시도한다
-          let fields = await findLoginFieldsWithFallback(ctx.tabs, tab, host)
+          let fields = await findLoginFieldsWithFallback(ctx.tabs, tab, host, first)
           if (fields.stage === 'none') {
             return 'fields not found: navigate to the login page first'
           }
@@ -632,6 +733,7 @@ ${raw}`
             if (ctx.vaultAutoSubmit === false) {
               return 'filled: submit is disabled by setting; ask the user to press login'
             }
+            await keepSignedIn(tab, fields.submit ?? fields.username)
             const idSubmitted = await pageBridge.submitForm(tab, fields.submit ?? fields.username)
             if (idSubmitted !== 'ok') return idSubmitted
             await pageBridge.waitForLoad(tab)
@@ -659,9 +761,14 @@ ${raw}`
           if (ctx.vaultAutoSubmit === false) {
             return 'filled: submit is disabled by setting; ask the user to press login'
           }
+          // 제출 직전 "로그인 상태 유지"를 켠다 — 세션이 오래가면 재로그인·캡차가 줄어든다
+          await keepSignedIn(tab, fields.submit ?? fields.password)
           const submitted = await pageBridge.submitForm(tab, fields.submit ?? fields.password)
           if (submitted !== 'ok') return submitted
           await pageBridge.waitForLoad(tab)
+          // 사이트가 캡차·2FA 를 요구하면 사용자에게 넘기고 처리될 때까지 기다린다
+          const handed = await captchaHandoff(tab)
+          if (handed) return handed
           return 'submitted: check the page for success or captcha/2FA'
         }
       )

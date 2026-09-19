@@ -1,4 +1,16 @@
-import { dialog, ipcMain, safeStorage, type BrowserWindow, type WebContents } from 'electron'
+import {
+  app,
+  dialog,
+  ipcMain,
+  net,
+  safeStorage,
+  session,
+  shell,
+  type BrowserWindow,
+  type WebContents
+} from 'electron'
+import { join } from 'node:path'
+import * as os from 'node:os'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import { defaultTabUrl } from '../../shared/settings'
 import type { TabManager } from '../browser/tab-manager'
@@ -7,16 +19,39 @@ import { setOcrEnabled } from '../agent/tools-ocr'
 import { AgentRunner } from '../agent/runner'
 import type { Db } from '../db/client'
 import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vault/service'
+import { exportVault, writeOwnerOnlyFile, type ExportRequest } from '../vault/export'
 import { ImportService, type ImportDialogs } from '../import/service'
+import { ChatRepo } from '../chat/repo'
+import { RECENT_CHAT_LIMIT, type AppendMessageInput } from '../../shared/chat'
 import { VaultCaptureGate } from './vault-capture'
 import { watchLoginSuccess } from './login-watch'
 import { VaultPickerGate } from './vault-picker'
 import { autofillAccount, type AutofillDeps } from '../vault/autofill'
-import { assertFromRenderer, isFromRenderer } from './sender'
+import { assertFromRenderer, isFromRenderer, settingsForSender } from './sender'
 import { normalizeHost } from '../../shared/host'
 import { isAllowedExternalUrl, isInternalUrl } from '../../shared/url'
+import { SyncEngineHolder } from '../sync/engine'
 import { toolbarBookmarks } from '../bookmarks/newtab'
 import type { NewTabInitDto } from '../../shared/newtab'
+// === AI 연결(2b 추가분) ===============================================================
+import { isAiProviderId, isApiKeyVendor, isTaskModelKey } from '../../shared/ai'
+import type { AiProviderId, ApiKeyVendor, TaskModelKey } from '../../shared/ai'
+import { ApiKeyStore } from '../ai/keys'
+import { defaultProbes, detectProviders, testApiKey } from '../ai/providers'
+import { remapOnProviderChange, taskModelChoices } from '../ai/models'
+import { setApiKeyResolver } from '../agent/provider'
+// === AI 연결 끝 =======================================================================
+import { AuthService } from '../sync/auth'
+import { hasSupabaseEnv } from '../sync/env'
+import { createSessionStore } from '../sync/session-store'
+import { createSupabaseBackend } from '../sync/supabase-backend'
+import { SyncConnection } from '../sync/connect'
+import { workspaceRemoteId } from '../sync/workspace-id'
+import type { DeviceService } from '../sync/devices'
+import { WorkspaceService } from '../workspace/service'
+import { workspaceShortcutIndex } from '../workspace/shortcut'
+import { ExtensionManager, createSessionExtensionHost } from '../extensions/manager'
+import { createExtensionInstaller } from '../extensions/install-service'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -33,8 +68,17 @@ export function registerIpc(
   win: BrowserWindow,
   tabs: TabManager,
   db: Db
-): { settings: SettingsStore; agent: AgentRunner; db: Db; vault: VaultService } {
+): {
+  settings: SettingsStore
+  agent: AgentRunner
+  db: Db
+  vault: VaultService
+  auth: AuthService
+  sync: SyncEngineHolder
+} {
   const settings = new SettingsStore()
+  // 동기화 엔진이 붙을 자리. 로그인 전에도 IPC 가 상태를 답할 수 있게 한다
+  const sync = new SyncEngineHolder()
   // === 홈 버튼 / 설정 페이지 (신규 추가분) ===================================
   // newTabUrl(홈과 동일/빈 페이지) + homeUrl 을 조합해 tab-manager 가 쓸 최종
   // 기본 주소를 계산한다. tab-manager 는 이 enum 을 몰라도 되게 분리했다
@@ -54,6 +98,12 @@ export function registerIpc(
   const vault = new VaultService(db, settings, { safeStorage })
   // AI 도구(list_accounts/fill_secret/login)가 쓸 수 있도록 금고를 넘긴다
   const agent = new AgentRunner(tabs, settings, (ev) => send(IPC.agentEvent, ev), vault)
+  // AI 채팅 기록. 러너가 작업 완료 시점에 이 저장소로 대화를 남긴다
+  const chats = new ChatRepo(db)
+  agent.setTranscript((chatId, entry) => {
+    chats.append({ chatId, role: 'user', content: entry.prompt })
+    chats.append({ chatId, role: 'assistant', content: entry.text, steps: entry.steps })
+  })
   // 페이지 JS 대화상자는 AI 작업이 도는 동안에만 자동 처리한다
   tabs.setAgentRunningProvider(() => agent.isRunning())
   // guard 모드에서 confirm/beforeunload 는 사용자 확인 카드를 거쳐야 '예' 가 된다
@@ -117,6 +167,8 @@ export function registerIpc(
     ipcMain.removeAllListeners(IPC.vaultCaptureDecision)
     ipcMain.removeAllListeners(IPC.vaultCapture)
     ipcMain.removeAllListeners(IPC.vaultUndoPasswordUpdate)
+    sync.current()?.stop()
+    sync.release()
     vault.dispose()
   })
 
@@ -135,16 +187,28 @@ export function registerIpc(
 
   // 실행 시작만 즉시 확인해 주고, 완료·실패는 status 이벤트로만 알린다.
   // (예전처럼 완료까지 기다리면 늦게 끝난 이전 작업의 응답이 새 작업 UI 를 덮어썼다)
-  handleFromRenderer(IPC.agentRun, (prompt: string) => {
-    void agent.run(prompt).catch((e: unknown) => console.error('작업 실행 실패', e))
+  handleFromRenderer(IPC.agentRun, (prompt: string, chatId?: number) => {
+    void agent.run(prompt, chatId).catch((e: unknown) => console.error('작업 실행 실패', e))
     return { started: true }
   })
+
+  // --- AI 채팅 기록 -------------------------------------------------------
+  handleFromRenderer(IPC.chatList, (limit?: number) => chats.list(limit ?? RECENT_CHAT_LIMIT))
+  handleFromRenderer(IPC.chatCreate, (title: string) => chats.create(title))
+  handleFromRenderer(IPC.chatGet, (chatId: number) => chats.get(chatId))
+  handleFromRenderer(IPC.chatAppend, (input: AppendMessageInput) => chats.append(input))
+  handleFromRenderer(IPC.chatRename, (chatId: number, title: string) => chats.rename(chatId, title))
+  handleFromRenderer(IPC.chatDelete, (chatId: number) => chats.remove(chatId))
   handleFromRenderer(IPC.agentStop, () => agent.stop())
   onFromRenderer(IPC.agentConfirmReply, (requestId: string, approved: boolean) =>
     agent.resolveConfirm(requestId, approved)
   )
 
-  ipcMain.handle(IPC.settingsGet, () => wrap(() => settings.get()))
+  // 렌더러 창(메인 UI)에는 전체 설정을, 탭 안의 페이지 preload(언어 표기용)에는
+  // language 하나만 돌려준다. 분기 로직 자체는 sender.ts 의 순수 함수(settingsForSender)에 있다
+  ipcMain.handle(IPC.settingsGet, (e) =>
+    wrap(() => settingsForSender(settings.get(), win, e.sender))
+  )
   handleFromRenderer(IPC.settingsSet, (patch: Partial<Settings>) => {
     const s = settings.set(patch)
     // 홈 주소·새 탭 주소·검색엔진이 바뀌면 tab-manager 도 즉시 반영한다
@@ -156,9 +220,14 @@ export function registerIpc(
   // --- 금고 ---------------------------------------------------------------
   // 비밀값(평문)을 돌려주는 채널은 vault:reveal 하나뿐이다. 나머지는 전부 메타/상태만 보낸다.
   handleFromRenderer(IPC.vaultState, () => vault.state())
+  handleFromRenderer(IPC.vaultKeyFromSync, () => vault.isKeyFromSync())
   handleFromRenderer(IPC.vaultSetup, (master: string) => vault.setup(master))
   handleFromRenderer(IPC.vaultUnlock, (master: string) => vault.unlock(master))
   handleFromRenderer(IPC.vaultLock, () => vault.lock())
+  // 복구 키 — 발급 응답만 평문을 돌려주고, 확인을 통과해야 감싼 키가 저장된다
+  handleFromRenderer(IPC.vaultRecoveryCreate, () => vault.createRecoveryKey())
+  handleFromRenderer(IPC.vaultRecoveryConfirm, (input: string) => vault.confirmRecoveryKey(input))
+  handleFromRenderer(IPC.vaultRecoveryUnlock, (input: string) => vault.unlockWithRecoveryKey(input))
   handleFromRenderer(IPC.vaultSites, () => {
     vault.touch()
     return vault.listSites()
@@ -183,6 +252,27 @@ export function registerIpc(
   // 사용 기록(감사 로그). accountId 를 주면 그 계정 소유 항목만, 아니면 전체를 반환한다
   handleFromRenderer(IPC.vaultAudit, (accountId?: number, limit?: number) =>
     vault.listAudit(accountId, limit)
+  )
+  // 내보내기 — 평문은 사용자가 고른 파일에만 들어가고, 응답에는 개수·경로만 담긴다
+  handleFromRenderer(IPC.vaultExport, (req: ExportRequest) =>
+    exportVault(
+      {
+        vault,
+        showSaveDialog: async (prompt) => {
+          const result = await dialog.showSaveDialog(win, {
+            defaultPath: prompt.defaultPath,
+            filters: prompt.filters,
+            message: prompt.message,
+            nameFieldLabel: prompt.nameFieldLabel
+          })
+          if (result.canceled || !result.filePath) return undefined
+          return result.filePath
+        },
+        // 평문이 담기는 파일이다 — 소유자만 읽을 수 있게 한다(0o600)
+        writeFile: (filePath, content) => writeOwnerOnlyFile(filePath, content)
+      },
+      req
+    )
   )
   // 페이지(preload 격리 월드)가 감지한 로그인 폼 제출.
   // 검증·레이트리밋·호스트 대조는 전부 VaultCaptureGate 안에 있다(테스트 가능하도록 분리)
@@ -372,5 +462,228 @@ export function registerIpc(
   })
   // === 자체 새 탭 페이지 끝 =============================================================
 
-  return { settings, agent, db, vault }
+  // === AI 연결(2b 추가분 — 병합 편의를 위해 이 블록만 별도로 추가) ======================
+  // 평문 API 키는 이 저장소와 agent/provider.ts 안에만 머문다. 렌더러로 나가는 것은
+  // 마스킹 문자열(sk-ant-••••1234)과 boolean 뿐이다
+  const apiKeys = new ApiKeyStore(join(app.getPath('userData'), 'ai-keys.bin'), safeStorage)
+  const aiProbes = defaultProbes()
+  // ApiKeyStore.get 의 유일한 소비자(agent/provider.ts)에 조회기를 심는다.
+  // '내 API 키' 경로를 고른 경우에만 키를 넘긴다
+  setApiKeyResolver(() =>
+    settings.get().aiProvider === 'api_key' ? apiKeys.get('anthropic') : null
+  )
+  win.once('closed', () => setApiKeyResolver(null))
+
+  handleFromRenderer(IPC.aiProviders, () => detectProviders(aiProbes, apiKeys.masked()))
+  handleFromRenderer(IPC.aiSetProvider, (raw: unknown) => {
+    if (!isAiProviderId(raw)) throw new Error('알 수 없는 AI 연결 경로')
+    const before = settings.get()
+    const { models, changed } = remapOnProviderChange(
+      before.taskModels,
+      before.aiProvider as AiProviderId,
+      raw
+    )
+    const after = settings.set({ aiProvider: raw, taskModels: models })
+    return { provider: after.aiProvider, taskModels: after.taskModels, changed }
+  })
+  // 평문 키는 렌더러 → 메인 한 방향으로만 흐른다. 응답은 마스킹뿐이다
+  handleFromRenderer(IPC.aiSetApiKey, (rawVendor: unknown, rawKey: unknown) => {
+    if (!isApiKeyVendor(rawVendor)) throw new Error('알 수 없는 API 키 제공자')
+    const key = typeof rawKey === 'string' ? rawKey : ''
+    if (key.trim()) apiKeys.set(rawVendor as ApiKeyVendor, key)
+    else apiKeys.remove(rawVendor as ApiKeyVendor)
+    return apiKeys.masked()
+  })
+  // 확인은 모델 목록 1회 호출. 응답 본문은 읽지도 로그에 남기지도 않는다
+  handleFromRenderer(IPC.aiTestKey, async (rawVendor: unknown, rawKey: unknown) => {
+    if (!isApiKeyVendor(rawVendor)) throw new Error('알 수 없는 API 키 제공자')
+    const key = typeof rawKey === 'string' ? rawKey : ''
+    return testApiKey(rawVendor as ApiKeyVendor, key)
+  })
+  handleFromRenderer(IPC.aiTaskModels, () => {
+    const s = settings.get()
+    return {
+      provider: s.aiProvider,
+      taskModels: s.taskModels,
+      choices: taskModelChoices(s.aiProvider as AiProviderId)
+    }
+  })
+  handleFromRenderer(IPC.aiSetTaskModel, (rawKey: unknown, rawModel: unknown) => {
+    if (!isTaskModelKey(rawKey)) throw new Error('알 수 없는 작업 등급')
+    if (typeof rawModel !== 'string' || !rawModel.trim()) throw new Error('모델 이름이 비어 있음')
+    const key = rawKey as TaskModelKey
+    const next = { ...settings.get().taskModels, [key]: rawModel.trim() }
+    return settings.set({ taskModels: next }).taskModels
+  })
+  // === AI 연결 끝 =======================================================================
+
+  // === 계정 인증(2b) ===================================================================
+  // .env 가 비어 있으면 백엔드를 아예 만들지 않는다(설정 전에도 앱은 그대로 돈다).
+  // refresh token 은 safeStorage 로 감싼 파일에만 남고 렌더러로는 나가지 않는다
+  const syncConfigured = hasSupabaseEnv()
+  const sessionStore = createSessionStore(
+    join(app.getPath('userData'), 'sync-session.bin'),
+    safeStorage
+  )
+  const syncBackend = syncConfigured ? createSupabaseBackend(sessionStore) : null
+  const auth = new AuthService({
+    backend: syncBackend,
+    configured: syncConfigured,
+    openExternal: (url) => shell.openExternal(url)
+  })
+  auth.onStateChanged((state) => send(IPC.authStateChanged, state))
+  // 구글 로그인을 기다리는 중에 창이 닫히면 루프백 서버가 최대 5분 남는다
+  win.once('closed', () => auth.dispose())
+  // 저장된 세션이 있으면 조용히 되살린다(실패는 로그아웃으로 본다)
+  void auth.restore()
+
+  handleFromRenderer(IPC.authState, () => auth.state())
+  handleFromRenderer(IPC.authSignUp, (email: string, password: string) =>
+    auth.signUp(email, password)
+  )
+  handleFromRenderer(IPC.authSignIn, (email: string, password: string) =>
+    auth.signIn(email, password)
+  )
+  // 브라우저에서 구글 로그인을 마칠 때까지(최대 5분) 응답이 늦게 온다
+  handleFromRenderer(IPC.authSignInGoogle, () => auth.signInGoogle())
+  handleFromRenderer(IPC.authSignOut, () => auth.signOut())
+  // === 계정 인증 끝 ====================================================================
+
+  // === 작업공간(브라우저 프로필) — 이 블록만 따로 추가한다 =============================
+  const workspace = new WorkspaceService(db, settings)
+  // 첫 실행이면 '기본' 작업공간을 만들고, 저장소·탭 파티션을 현재 작업공간에 맞춘다
+  const applyWorkspace = (notify: boolean): void => {
+    const current = workspace.ensureDefault()
+    const scope = workspace.scope()
+    vault.setWorkspaceScope(scope)
+    importService.setWorkspaceScope(scope)
+    chats.setWorkspaceScope(scope)
+    // 열려 있는 탭의 세션은 그대로 두고, 새로 여는 탭부터 새 파티션을 쓴다
+    tabs.setPartitionPrefix(workspace.partitionPrefix())
+    if (notify) send(IPC.workspaceChanged, current)
+  }
+  applyWorkspace(false)
+  workspace.onChanged(() => applyWorkspace(true))
+
+  // Ctrl+Alt+1~9 — 전역 단축키가 아니라 이 창(렌더러 UI + 탭 페이지)에서만 듣는다
+  const handleWorkspaceShortcut = (input: {
+    type: string
+    key: string
+    control: boolean
+    alt: boolean
+    shift: boolean
+    meta: boolean
+  }): boolean => {
+    const index = workspaceShortcutIndex(input)
+    if (index === null) return false
+    try {
+      return workspace.switchToIndex(index) !== null
+    } catch (e) {
+      console.error('작업공간 전환 실패', e)
+      return false
+    }
+  }
+  win.webContents.on('before-input-event', (e, input) => {
+    if (handleWorkspaceShortcut(input)) e.preventDefault()
+  })
+  tabs.setInputHandler(handleWorkspaceShortcut)
+
+  handleFromRenderer(IPC.workspaceList, () => workspace.list())
+  handleFromRenderer(IPC.workspaceCreate, (o: { name: string; color?: string }) =>
+    workspace.create(o.name, o.color)
+  )
+  handleFromRenderer(IPC.workspaceSwitch, (id: number) => workspace.switchTo(id))
+  handleFromRenderer(IPC.workspaceRename, (o: { id: number; name: string }) =>
+    workspace.rename(o.id, o.name)
+  )
+  handleFromRenderer(IPC.workspaceDelete, (id: number) => workspace.remove(id))
+  // === 작업공간 끝 =====================================================================
+
+  // === 동기화(2b) ======================================================================
+  // 엔진은 로그인 이후에 만들어져 holder 에 붙는다. 붙기 전에는 오프라인 상태를 답한다
+  handleFromRenderer(IPC.syncStatus, () => sync.status())
+  sync.onStatusChanged((status) => send(IPC.syncStatusChanged, status))
+  // 로그인하면 이 PC 를 기기 목록에 올리고, 저장소에 변경 로그 훅을 붙인 뒤 엔진을 돌린다.
+  // 로그아웃·토큰 만료·기기 원격 로그아웃은 모두 같은 정리 경로(엔진 정지·훅 해제·금고 잠금)를 탄다
+  const connection = new SyncConnection({
+    db,
+    backend: syncBackend,
+    auth,
+    holder: sync,
+    vault,
+    settings,
+    bookmarks: importService,
+    chats,
+    // 주기마다 다시 불린다 — 작업공간을 바꿔도 다음 주기부터 새 uuid 로 올라간다.
+    // 기본 작업공간만 기기 간 공유 대상이라 고정 uuid 를 쓴다(2b 범위)
+    workspace: () => {
+      const scope = workspace.scope()
+      return { localId: scope.id, remoteId: workspaceRemoteId(db, scope.id, scope.isDefault) }
+    },
+    device: {
+      hostname: () => os.hostname(),
+      osLabel: () => `${os.type()} ${os.release()}`,
+      appVersion: () => app.getVersion()
+    }
+  })
+  // 수동 동기화는 연결을 거친다 — 최초 업로드가 놓친 행을 먼저 보충하고 한 주기를 돈다
+  handleFromRenderer(IPC.syncNow, () => connection.syncNow())
+  // 세션 복구가 이 시점보다 먼저 끝났을 수 있다 — 지금 상태를 한 번 반영한다
+  void connection.refresh()
+  win.once('closed', () => connection.dispose())
+
+  const requireDevices = (): DeviceService => {
+    const devices = connection.devices()
+    if (!devices) throw new Error('로그인이 필요합니다')
+    return devices
+  }
+  handleFromRenderer(IPC.devicesList, () => requireDevices().list())
+  handleFromRenderer(IPC.devicesRevoke, (deviceId: string) => requireDevices().revoke(deviceId))
+  // === 동기화 끝 =======================================================================
+
+  // === 확장(압축 해제된 크롬 확장 폴더) — 이 블록만 따로 추가한다 ======================
+  // 기본 세션에 걸고, 작업공간 파티션 세션이 새로 생기면 같은 확장을 그 세션에도 건다.
+  // 로드 실패는 항목별 오류 문자열로만 남고 앱을 멈추지 않는다
+  const extensions = new ExtensionManager(
+    createSessionExtensionHost(session.defaultSession),
+    settings
+  )
+  void extensions.loadSaved().catch((e: unknown) => console.error('저장된 확장 로드 실패', e))
+  tabs.setSessionHook((ses) => {
+    void extensions
+      .attachHost(createSessionExtensionHost(ses))
+      .catch((e: unknown) => console.error('파티션 세션 확장 로드 실패', e))
+  })
+
+  handleFromRenderer(IPC.extList, () => ({ items: extensions.list(), errors: extensions.errors() }))
+  // 경로를 주지 않으면 폴더 선택 다이얼로그를 연다. 취소하면 null 을 돌려준다.
+  // 렌더러가 준 경로든 다이얼로그로 고른 경로든 resolveExtensionFolder 를 반드시 지난다 —
+  // realpath 로 푼 실제 디렉터리이고 manifest.json 검증을 통과해야만 세션에 넘어간다
+  handleFromRenderer(IPC.extLoad, async (rawPath?: unknown) => {
+    let folder = typeof rawPath === 'string' ? rawPath : ''
+    if (!folder) {
+      const picked = await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
+      if (picked.canceled || picked.filePaths.length === 0) return null
+      folder = picked.filePaths[0]
+    }
+    return extensions.add(folder)
+  })
+  handleFromRenderer(IPC.extRemove, (id: string) => extensions.remove(id))
+
+  // 가져오기·웹스토어 설치. 결과 폴더는 항상 userData/extensions/<id> 이고, 로드는 위 관리자가 한다
+  const extensionInstaller = createExtensionInstaller({
+    manager: extensions,
+    extensionsRoot: join(app.getPath('userData'), 'extensions'),
+    localAppData: process.env.LOCALAPPDATA ?? '',
+    chromiumVersion: process.versions.chrome ?? '120.0.0.0',
+    fetchImpl: (url, init) => net.fetch(url, init)
+  })
+  handleFromRenderer(IPC.extImportSources, () => extensionInstaller.importSources())
+  handleFromRenderer(IPC.extImportFrom, (ids: string[]) => extensionInstaller.importFrom(ids))
+  handleFromRenderer(IPC.extInstallWebstore, (input: string) =>
+    extensionInstaller.installWebstore(input)
+  )
+  // === 확장 끝 =========================================================================
+
+  return { settings, agent, db, vault, auth, sync }
 }

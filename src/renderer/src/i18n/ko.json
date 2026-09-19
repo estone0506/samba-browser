@@ -12,6 +12,18 @@
     "settings": "설정",
     "chats": "채팅"
   },
+  "workspace": {
+    "title": "작업공간",
+    "add": "새 작업공간",
+    "namePlaceholder": "작업공간 이름",
+    "rename": "이름 변경",
+    "delete": "삭제",
+    "cancel": "취소",
+    "save": "저장",
+    "shortcutHint": "Ctrl+Alt+1~9 로 전환",
+    "switchedNotice": "작업공간을 바꿨습니다. 이미 열려 있는 탭은 이전 세션을 그대로 쓰고, 새로 여는 탭부터 새 세션을 씁니다.",
+    "settingsHint": "작업공간은 사이드바에서 관리해요"
+  },
   "address": {
     "placeholder": "검색어 또는 URL 입력",
     "pc": "PC",
@@ -37,7 +49,12 @@
     "apiRetry": "AI 응답 대기 중 (재시도 {{n}}회 · {{reason}})",
     "done": "완료",
     "failed": "실패",
-    "toolCalls": "도구 호출 {{n}} / {{max}}"
+    "toolCalls": "도구 호출 {{n}} / {{max}}",
+    "new": "새 대화",
+    "empty": "저장된 대화가 없습니다",
+    "untitled": "제목 없는 대화",
+    "delete": "대화 삭제",
+    "deleteConfirm": "삭제"
   },
   "confirm": {
     "title": "확인이 필요합니다",
@@ -47,6 +64,19 @@
     "finish": "작업을 완료할까요?",
     "continue": "계속 진행",
     "finishOk": "완료"
+  },
+  "handoff": {
+    "title": "추가 확인이 필요해요",
+    "body": "사이트가 추가 확인을 요구해요. 화면에서 직접 입력하면 이어서 진행해요",
+    "skip": "건너뛰고 계속",
+    "abort": "작업 중단",
+    "waiting": "사용자 확인 대기 중…",
+    "step": {
+      "resumed": "사용자 확인 완료 → 재개",
+      "skipped": "확인을 건너뛰고 계속",
+      "aborted": "사용자가 작업을 중단함",
+      "timeout": "사용자 확인 대기 시간 초과"
+    }
   },
   "permission": {
     "title": "사용 권한",
@@ -64,7 +94,27 @@
   },
   "settings": {
     "model": "모델",
-    "language": "언어"
+    "language": "언어",
+    "ai": {
+      "title": "AI 연결",
+      "claudeSubscription": "Claude 구독",
+      "apiKey": "내 API 키",
+      "serviceCredit": "서비스 크레딧",
+      "serviceCreditSoon": "Pro 요금제에서 제공 예정",
+      "connected": "연결됨",
+      "needsLogin": "로그인 필요",
+      "notInstalled": "설치되지 않음",
+      "unset": "연결 안 됨",
+      "keyKept": "키는 이 PC 에만 암호화되어 저장되며 동기화되지 않아요",
+      "testKey": "키 확인",
+      "taskModels": "작업별 모델",
+      "fast": "빠르게",
+      "standard": "표준",
+      "deep": "깊게",
+      "visual": "화면 인식",
+      "use": "이 경로 쓰기",
+      "inUse": "사용 중"
+    }
   },
   "capture": {
     "title": "{{host}} 계정 정보를 저장할까요?",
@@ -74,7 +124,7 @@
     "skip": "이번만 건너뛰기",
     "save": "저장",
     "unlockToSave": "잠금 해제 후 저장",
-    "lockedNotice": "금고가 잠겨 있어요. 잠금을 풀면 저장할 수 있어요",
+    "lockedNotice": "키마스터가 잠겨 있어요. 잠금을 풀면 저장할 수 있어요",
     "updated": "{{host}} 비밀번호가 갱신됐어요",
     "undo": "되돌리기"
   },
@@ -142,6 +192,7 @@
       "failed": "키마스터를 만들지 못했어요"
     },
     "unlock": {
+      "fromSync": "다른 PC 에서 설정한 마스터 비밀번호를 입력하세요",
       "title": "잠금 해제",
       "desc": "마스터 비밀번호를 입력하세요",
       "placeholder": "마스터 비밀번호",
@@ -189,7 +240,7 @@
       "accessAlways": "항상 허용",
       "accessAlwaysDesc": "잠겨 있어도 이 PC 기억 키로 자동 해제해서 채워요",
       "accessWhileUnlocked": "잠금 해제 중에만",
-      "accessWhileUnlockedDesc": "금고가 열려 있을 때만 AI 가 채울 수 있어요",
+      "accessWhileUnlockedDesc": "키마스터가 열려 있을 때만 AI 가 채울 수 있어요",
       "accessNever": "절대 허용 안 함",
       "accessNeverDesc": "AI 는 키마스터 값을 채울 수 없어요",
       "autoSubmit": "자동 채움 후 자동 제출",
@@ -200,7 +251,9 @@
       "rememberDesc": "끄면 저장된 기기 키를 즉시 삭제해요",
       "excludedHosts": "제외 도메인",
       "excludedHostsDesc": "쉼표로 구분해서 입력하세요 (예: bank.example.com, gov.example.com)",
-      "excludedHostsPlaceholder": "example.com, another.com"
+      "excludedHostsPlaceholder": "example.com, another.com",
+      "keepSignedIn": "로그인 상태 유지 자동 체크",
+      "keepSignedInDesc": "로그인할 때 '로그인 상태 유지' 체크박스를 켭니다. 세션이 오래 유지돼 재로그인과 캡차가 줄어듭니다. 공용 PC 에서는 다음 사람이 로그인된 화면을 그대로 보게 되니 꺼 두세요"
     },
     "detail": {
       "openInBrowser": "브라우저에서 열기",
@@ -288,6 +341,26 @@
         "bookmarksExportSteps": "크롬·웨일·엣지·Aside: 북마크 관리자 › ⋮ › 북마크 내보내기(HTML)",
         "bookmarksSupports": "Netscape 형식 자동 인식"
       }
+    },
+    "export": {
+      "title": "키마스터 내보내기",
+      "settingsDesc": "저장된 항목을 CSV·JSON 파일로 내보내요",
+      "open": "내보내기",
+      "warning": "내보낸 파일에는 비밀번호가 평문으로 들어갑니다. 저장 후 안전한 곳으로 옮기고 원본은 지우세요.",
+      "format": "형식",
+      "formatCsv": "CSV (크롬 호환)",
+      "formatCsvDesc": "아이디·비밀번호가 있는 로그인 항목만 내보내요",
+      "formatJson": "JSON",
+      "formatJsonDesc": "카드·메모 등 모든 항목과 필드를 그대로 내보내요",
+      "master": "마스터 비밀번호 재입력",
+      "masterPlaceholder": "마스터 비밀번호",
+      "submit": "내보내기",
+      "running": "내보내는 중…",
+      "done": "{{count}}개 항목을 {{path}} 에 저장했어요",
+      "lockedError": "키마스터가 잠겨 있어요. 먼저 잠금을 해제하세요",
+      "invalidMaster": "마스터 비밀번호가 맞지 않아요",
+      "cancelled": "내보내기를 취소했어요",
+      "failed": "내보내기에 실패했어요"
     },
     "add": {
       "menu": "추가",
@@ -414,6 +487,210 @@
       "description": "키마스터 저장/잠금 정책",
       "descriptionDetail": "자동 잠금·AI 접근 정책·자동 제출 등을 설정해요",
       "open": "키마스터 설정 열기"
+    },
+    "extensions": {
+      "title": "확장",
+      "add": "확장 설치",
+      "addDesc": "크롬 웹스토어에서 바로 설치하거나, 다른 브라우저에 깔린 확장을 가져오거나, 압축 해제된 폴더를 직접 불러올 수 있어요",
+      "addButton": "폴더 불러오기",
+      "adding": "불러오는 중…",
+      "empty": "불러온 확장이 없어요",
+      "remove": "제거",
+      "cancel": "취소",
+      "storeButton": "웹스토어에서 설치",
+      "storeTitle": "크롬 웹스토어에서 설치",
+      "storeDesc": "확장 상세 페이지 주소나 32자 확장 id 를 넣어 주세요. 확장 파일은 앱 데이터 폴더에 보관돼요",
+      "storePlaceholder": "https://chromewebstore.google.com/detail/…  또는 32자 id",
+      "storeSubmit": "설치",
+      "installing": "설치하는 중…",
+      "importButton": "다른 브라우저에서 가져오기",
+      "importTitle": "다른 브라우저에서 가져오기",
+      "importDesc": "크롬·웨일·엣지·브레이브에 설치된 확장을 앱 데이터로 복사해서 불러와요. 원본 브라우저의 확장은 그대로 남아요",
+      "importScanning": "설치된 브라우저를 찾는 중…",
+      "importEmpty": "가져올 수 있는 확장을 찾지 못했어요",
+      "importSubmit": "{{count}}개 가져오기",
+      "importing": "가져오는 중…",
+      "importFailed": "가져오지 못한 확장",
+      "sourceStore": "스토어",
+      "sourceImported": "가져옴",
+      "sourceFolder": "폴더",
+      "failedTitle": "불러오지 못한 확장",
+      "limitsTitle": "알아두실 점",
+      "limitMv3": "MV3(Manifest V3)의 일부 API 는 아직 지원되지 않아요",
+      "limitServiceWorker": "백그라운드 서비스 워커는 제약이 있어 확장이 기대대로 동작하지 않을 수 있어요",
+      "limitNoAutoUpdate": "확장 자동 업데이트가 없어요. 새 버전은 다시 설치하거나 폴더를 다시 불러와야 해요",
+      "limitMv2": "MV2(Manifest V2) 확장은 웹스토어에서 설치할 수 없어요",
+      "limitPartition": "프로필별 분리는 작업공간(세션 파티션) 단위로만 이뤄져요"
+    },
+    "placeholder": "다음 단계에서 제공돼요",
+    "groups": {
+      "personal": "개인",
+      "agent": "에이전트"
+    },
+    "sections": {
+      "general": "일반",
+      "appearance": "모양",
+      "account": "계정",
+      "plan": "요금제",
+      "security": "보안",
+      "agent": "에이전트",
+      "ai": "AI 연결",
+      "keymaster": "키마스터",
+      "automation": "자동화",
+      "developer": "개발자"
+    },
+    "general": {
+      "searchTitle": "검색",
+      "startupTitle": "시작 화면",
+      "importTitle": "가져오기",
+      "importDesc": "다른 브라우저에서 내보낸 비밀번호 CSV 와 북마크 HTML 을 가져와요"
+    },
+    "appearance": {
+      "themeTitle": "테마",
+      "themeSystem": "시스템",
+      "themeLight": "밝게",
+      "themeDark": "어둡게",
+      "zoomTitle": "화면 크기",
+      "zoom": "확대 비율 {{percent}}%",
+      "zoomDesc": "{{min}}% 에서 {{max}}% 사이에서 고를 수 있어요",
+      "sidebarTitle": "사이드바 구성",
+      "sidebarBookmarks": "북마크 보이기",
+      "sidebarBookmarksDesc": "사이드바에 북마크 목록을 띄워요",
+      "sidebarChat": "채팅 보이기",
+      "sidebarChatDesc": "사이드바에 AI 채팅 바로가기를 띄워요",
+      "shortcutsTitle": "단축키",
+      "shortcutsDesc": "읽기 전용이에요. 아직 바꿀 수 없어요",
+      "shortcutNewTab": "새 탭",
+      "shortcutCloseTab": "탭 닫기",
+      "shortcutAddressBar": "주소창으로 이동",
+      "shortcutReload": "새로고침",
+      "shortcutWorkspace": "작업공간 전환"
+    },
+    "agent": {
+      "notifyTitle": "알림",
+      "notify": "작업 완료 알림",
+      "notifyDesc": "에이전트가 일을 마치면 알려 줘요",
+      "sound": "완료 사운드",
+      "soundDesc": "알림과 함께 짧은 소리를 내요",
+      "queueTitle": "후속 지시",
+      "queue": "실행 중이면 지시를 쌓기",
+      "queueDesc": "에이전트가 작업 중일 때 새 지시를 큐에 넣고 차례로 실행해요",
+      "cleanupTitle": "탭 정리",
+      "cleanup": "에이전트가 연 탭 자동 정리",
+      "cleanupDesc": "지정한 시간이 지나면 에이전트가 연 탭을 닫아요",
+      "cleanupOff": "안 함",
+      "cleanupMinutes": "{{n}}분"
+    },
+    "security": {
+      "autofillTitle": "자동 채우기"
+    },
+    "keymaster": {
+      "open": "키마스터 열기",
+      "export": "내보내기",
+      "exportUnavailable": "내보내기는 다음 단계에서 제공돼요"
     }
+  },
+  "account": {
+    "title": "계정",
+    "signedIn": "로그인됨",
+    "signInTitle": "로그인",
+    "signUpTitle": "가입",
+    "signInDesc": "로그인하면 설정·북마크·키마스터가 기기 사이에서 동기화돼요",
+    "email": "이메일",
+    "password": "비밀번호",
+    "signIn": "로그인",
+    "signUp": "가입하기",
+    "toSignUp": "회원가입",
+    "toSignIn": "이미 계정이 있어요",
+    "signOut": "로그아웃",
+    "continueWithGoogle": "구글로 계속하기",
+    "googleWaiting": "브라우저에서 구글 로그인을 마쳐 주세요",
+    "googleWaitingDetail": "최대 5분까지 기다려요. 창을 닫았다면 취소를 누르고 다시 시도하세요",
+    "googleCancel": "취소",
+    "planFree": "무료",
+    "planPro": "Pro",
+    "notConfigured": "동기화를 쓰려면 Supabase 설정이 필요해요",
+    "notConfiguredDetail": "아래 문서를 따라 .env 에 SAMBA_SUPABASE_URL 과 SAMBA_SUPABASE_ANON_KEY 를 채워 주세요",
+    "devicesTitle": "기기",
+    "devicesDesc": "이 계정으로 로그인한 기기 목록이에요",
+    "devicesLoading": "불러오는 중이에요",
+    "devicesEmpty": "등록된 기기가 없어요",
+    "devicesUnavailable": "기기 목록은 아직 준비 중이에요",
+    "thisDevice": "이 기기",
+    "deviceRevoked": "로그아웃됨",
+    "lastSeen": "마지막 활동",
+    "revokeDevice": "원격 로그아웃",
+    "dangerTitle": "위험 구역",
+    "dangerDesc": "계정을 지우면 서버의 동기화 데이터가 모두 사라져요",
+    "deleteConfirmLabel": "확인을 위해 {{word}} 를 입력하세요",
+    "deleteAccount": "계정 삭제",
+    "deleteAccountUnavailable": "계정 삭제는 아직 준비 중이에요",
+    "errors": {
+      "invalidCredentials": "이메일 또는 비밀번호가 맞지 않아요",
+      "emailNotConfirmed": "이메일 확인이 아직 안 됐어요. 받은 메일의 링크를 눌러 주세요",
+      "alreadyRegistered": "이미 가입된 이메일이에요. 로그인해 주세요",
+      "weakPassword": "비밀번호가 너무 짧거나 단순해요(8자 이상)",
+      "rateLimited": "시도가 너무 많아요. 잠시 후 다시 해 주세요",
+      "network": "서버에 연결할 수 없어요. 인터넷 연결을 확인해 주세요",
+      "generic": "로그인에 실패했어요. 잠시 후 다시 시도해 주세요"
+    }
+  },
+  "sync": {
+    "title": "동기화",
+    "connection": "연결",
+    "online": "연결됨",
+    "offline": "오프라인",
+    "pending": "보내지 못한 변경",
+    "lastPulledAt": "마지막 수신",
+    "lastError": "마지막 오류",
+    "syncNow": "지금 동기화",
+    "syncing": "동기화 중"
+  },
+  "ai": {
+    "claudeSubscriptionDesc": "이 PC 에 설치된 Claude Code 로그인을 그대로 써요",
+    "claudeInstallHint": "Claude Code 가 설치되어 있지 않아요. 터미널에서 설치한 뒤 다시 확인하세요",
+    "claudeLoginHint": "터미널에서 claude login 을 실행해 주세요",
+    "noKey": "등록된 키 없음",
+    "keyPlaceholder": "키를 붙여 넣으면 바로 저장돼요",
+    "testOk": "키가 정상이에요",
+    "testFail": "키를 확인하지 못했어요",
+    "vendor": {
+      "anthropic": "Claude(Anthropic)",
+      "openai": "OpenAI",
+      "gemini": "Gemini"
+    },
+    "taskTable": {
+      "fastPurpose": "짧은 판단과 분류",
+      "fastUsedIn": "주소 판별·간단한 요약",
+      "standardPurpose": "일반 작업 실행",
+      "standardUsedIn": "기본 에이전트 실행",
+      "deepPurpose": "긴 추론과 어려운 작업",
+      "deepUsedIn": "복잡한 다단계 작업",
+      "visualPurpose": "화면·이미지 인식",
+      "visualUsedIn": "스크린샷 이해·캡차 확인",
+      "remapped": "연결 경로를 바꿔서 {{list}} 모델이 자동으로 대체됐어요",
+      "dismiss": "확인"
+    }
+  },
+  "recovery": {
+    "title": "복구 키 재발급",
+    "sectionTitle": "복구 키",
+    "sectionDesc": "마스터 비밀번호를 잊었을 때 키마스터를 여는 마지막 수단이에요",
+    "reissue": "복구 키 재발급",
+    "warnBody": "새 복구 키를 만들면 이전 복구 키는 즉시 쓸 수 없게 돼요",
+    "warnDetail": "마스터 비밀번호와 복구 키를 둘 다 잃으면 키마스터를 복구할 방법이 없어요",
+    "issue": "새 복구 키 만들기",
+    "cancel": "취소",
+    "showBody": "이 키를 안전한 곳에 보관하세요. 이 화면을 닫으면 다시 볼 수 없어요",
+    "showDetail": "24자 · 4자씩 6묶음이에요. 대소문자와 하이픈은 구분하지 않아요",
+    "copy": "복사",
+    "print": "인쇄",
+    "next": "다음",
+    "confirmBody": "보관한 복구 키를 그대로 다시 입력해 주세요",
+    "confirmFailed": "확인에 실패했어요. 다시 시도해 주세요",
+    "done": "완료",
+    "back": "뒤로",
+    "doneBody": "복구 키가 새로 발급됐어요. 이전 키는 더 이상 쓸 수 없어요",
+    "close": "닫기"
   }
 }

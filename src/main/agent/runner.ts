@@ -6,11 +6,31 @@ import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
 import { buildSystemPrompt } from './prompt'
 import { runQuery, classifyAuthError, isFatalApiError } from './provider'
+import { resolveModel } from '../ai/models'
 import { makeCounter } from './counter'
 import { createTextDeduper } from './dedupe'
+import {
+  watchHandoff,
+  HANDOFF_TIMEOUT_MS,
+  type HandoffResult,
+  type HandoffWatchDeps
+} from './handoff'
 
 // 확인 요청 응답 대기 상한 30분
 const CONFIRM_TIMEOUT_MS = 30 * 60 * 1000
+
+/**
+ * 작업 1건이 남긴 대화 기록. 완료·실패·중단 어느 쪽으로 끝나도 한 번 전달된다.
+ * steps 에는 도구가 붙인 **라벨**만 담긴다 — fill_secret·login 은 평문을 라벨에 넣지 않는다
+ */
+export interface TranscriptEntry {
+  prompt: string
+  text: string
+  steps: { label: string; ok: boolean }[]
+}
+
+/** 대화 기록 저장 훅. 주입하지 않으면 아무것도 저장하지 않는다 */
+export type TranscriptSink = (chatId: number, entry: TranscriptEntry) => void
 
 // 대기 중인 확인 요청(응답 콜백 + 만료 타이머)
 interface PendingConfirm {
@@ -24,6 +44,8 @@ export class AgentRunner {
   private pending = new Map<string, PendingConfirm>()
   // 실행 세대 번호. 중단된 이전 스트림이 뒤늦게 보내는 이벤트를 걸러낸다
   private generation = 0
+  // 대화 기록 저장 훅(채팅 저장소). 없으면 기록을 남기지 않는다
+  private transcript: TranscriptSink | null = null
 
   constructor(
     private tabs: TabManager,
@@ -32,6 +54,11 @@ export class AgentRunner {
     // 개인정보 금고. 없으면 금고 도구는 잠금으로 동작한다
     private vault?: VaultService
   ) {}
+
+  /** 대화 기록 저장 훅을 붙인다(채팅 저장소). null 이면 기록하지 않는다 */
+  setTranscript(sink: TranscriptSink | null): void {
+    this.transcript = sink
+  }
 
   /** 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다) */
   isRunning(): boolean {
@@ -47,17 +74,79 @@ export class AgentRunner {
     kind: 'danger' | 'finish' = 'danger',
     emit: (e: AgentEvent) => void = this.emit
   ): Promise<boolean> {
+    const id = randomUUID()
+    const reply = this.registerPending(id, CONFIRM_TIMEOUT_MS)
+    emit({ type: 'confirm', requestId: id, action, kind })
+    return reply
+  }
+
+  /**
+   * 캡차·2FA 를 사용자에게 넘기고 작업을 일시정지한다.
+   * 사용자가 화면에서 직접 처리하면(페이지 이동·징후 소멸) 자동으로 재개하고,
+   * 카드 버튼을 누르면 건너뛰기(skipped)/중단(aborted)으로 끝난다.
+   * 캡차를 대신 푸는 일은 하지 않는다 — 입력은 언제나 사용자가 한다
+   */
+  async requestHandoff(
+    req: {
+      matched: string
+      currentUrl: () => string
+      stillBlocked: () => Promise<boolean>
+      // 테스트에서 폴링 주기·시계를 갈아 끼우기 위한 통로
+      watch?: Pick<HandoffWatchDeps, 'sleep' | 'pollMs' | 'timeoutMs'>
+    },
+    emit: (e: AgentEvent) => void = this.emit
+  ): Promise<HandoffResult> {
+    const id = randomUUID()
+    // 사용자 버튼 응답: true = 건너뛰고 계속, false = 작업 중단
+    const reply = this.registerPending(id, HANDOFF_TIMEOUT_MS + 60_000)
+    emit({
+      type: 'handoff',
+      requestId: id,
+      kind: 'captcha',
+      matched: req.matched,
+      url: req.currentUrl()
+    })
+    let replied = false
+    const userOutcome = reply.then((ok): HandoffResult => {
+      replied = true
+      return { outcome: ok ? 'skipped' : 'aborted', url: req.currentUrl() }
+    })
+    const watched = watchHandoff({
+      currentUrl: req.currentUrl,
+      stillBlocked: req.stillBlocked,
+      cancelled: () => replied,
+      ...req.watch
+    }).then((r): HandoffResult | null =>
+      r.outcome === 'cancelled' ? null : { outcome: r.outcome, url: r.url }
+    )
+    // 먼저 끝나는 쪽이 결과가 된다. 감시가 취소(null)면 사용자 응답을 기다린다
+    const result = await Promise.race([userOutcome, watched.then((r) => r ?? userOutcome)])
+    // 자동 재개·시간 초과로 끝났으면 남은 응답 대기를 정리한다(카드도 닫힌다)
+    this.settlePending(id)
+    emit({ type: 'handoffDone', requestId: id, outcome: result.outcome })
+    return result
+  }
+
+  // 응답 대기 1건 등록 — 확인 카드와 넘김 카드가 같은 응답 채널을 쓴다
+  private registerPending(id: string, timeoutMs: number): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
-      const id = randomUUID()
       const timer = setTimeout(() => {
         // 응답이 없으면 거부 처리
         if (this.pending.delete(id)) resolve(false)
-      }, CONFIRM_TIMEOUT_MS)
+      }, timeoutMs)
       // 대기 타이머가 앱 종료를 막지 않도록 한다
       timer.unref?.()
       this.pending.set(id, { resolve, timer })
-      emit({ type: 'confirm', requestId: id, action, kind })
     })
+  }
+
+  // 아직 남아 있는 대기 1건을 조용히 정리한다(거부로 resolve)
+  private settlePending(id: string): void {
+    const p = this.pending.get(id)
+    if (!p) return
+    this.pending.delete(id)
+    clearTimeout(p.timer)
+    p.resolve(false)
   }
 
   resolveConfirm(id: string, approved: boolean): void {
@@ -92,7 +181,8 @@ export class AgentRunner {
     this.emit({ type: 'status', state: 'stopped' })
   }
 
-  async run(prompt: string): Promise<void> {
+  /** chatId 를 주면 이 실행의 대화 기록을 그 대화에 저장한다(완료·실패·중단 모두) */
+  async run(prompt: string, chatId?: number): Promise<void> {
     // 이미 실행 중이면 세대 가드 없이 status 를 emit 하면 진행 중인 실행의 UI 를 덮어쓸 수 있다.
     // 핸들러가 throw 를 { ok: false, error } 로 ack 하므로 에러만 던진다.
     if (this.abort) {
@@ -104,9 +194,14 @@ export class AgentRunner {
     const abort = new AbortController()
     this.abort = abort
     const gen = ++this.generation
+    // 이 실행이 남길 대화 기록. 화면으로 나가는 이벤트와 같은 값만 모은다(라벨·본문)
+    const entry: TranscriptEntry = { prompt, text: '', steps: [] }
     // 이 실행이 최신 세대일 때만 UI 로 이벤트를 보낸다
     const emit = (e: AgentEvent): void => {
-      if (gen === this.generation) this.emit(e)
+      if (gen !== this.generation) return
+      if (e.type === 'text') entry.text = entry.text ? `${entry.text}\n${e.text}` : e.text
+      if (e.type === 'step') entry.steps.push({ label: e.label, ok: e.ok })
+      this.emit(e)
     }
     const counter = makeCounter(s.maxToolCalls)
     const deduper = createTextDeduper()
@@ -125,17 +220,20 @@ export class AgentRunner {
       finalConfirm: s.finalConfirm,
       vaultAccessPolicy: s.vaultAccessPolicy,
       vaultAutoSubmit: s.vaultAutoSubmit,
+      vaultKeepSignedIn: s.vaultKeepSignedIn,
       vaultExcludedHosts: s.vaultExcludedHosts,
       tick: counter.tick,
       onStep: (label, ok) => emit({ type: 'step', label, ok }),
-      confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit)
+      confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit),
+      handoff: (req) => this.requestHandoff(req, emit)
     })
     emit({ type: 'status', state: 'running', toolCalls: 0 })
     try {
       const stream = runQuery({
         prompt,
         systemPrompt: buildSystemPrompt(s.language, s.permissionMode),
-        model: s.model,
+        // 작업별 모델 표의 '표준' 칸이 기본 실행 모델이다(s.model 은 하위 호환으로만 남는다)
+        model: resolveModel(s.taskModels, 'standard', s.aiProvider),
         mcpServers: { samba: server },
         allowedTools: SAMBA_TOOL_NAMES,
         abort
@@ -215,6 +313,14 @@ export class AgentRunner {
       if (gen === this.generation) {
         this.abort = null
         this.clearPending()
+      }
+      // 중단으로 끝났어도 그때까지의 대화는 남긴다. 저장 실패가 실행을 깨뜨리지는 않는다
+      if (chatId !== undefined && this.transcript) {
+        try {
+          this.transcript(chatId, entry)
+        } catch (e: unknown) {
+          console.error('대화 기록 저장 실패', e instanceof Error ? e.message : String(e))
+        }
       }
     }
   }

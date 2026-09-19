@@ -1,12 +1,14 @@
 // 북마크 저장소 — 폴더/링크 트리를 DB 에 저장하고, 트리 DTO 로 조회한다.
 // 같은 URL 의 링크는 전체 DB 기준으로 이미 있으면 건너뛴다(폴더 위치와 무관하게 중복 제거).
 
-import { eq } from 'drizzle-orm'
+import { and, eq, or, isNull, type SQL } from 'drizzle-orm'
 import type { Db } from '../db/client'
+import type { OutboxRecorder } from '../../shared/sync'
 import { bookmarkFolders, bookmarks } from '../db/schema'
 import type { BookmarkFolderNode, BookmarkTree } from '../import/bookmarks-html'
 import type { BookmarkFolderDto, BookmarkLinkDto, BookmarkTreeDto } from '../../shared/import'
 import { isAllowedExternalUrl } from '../../shared/url'
+import type { WorkspaceScope } from '../../shared/sync'
 
 export interface InsertTreeResult {
   folders: number
@@ -33,15 +35,66 @@ interface BookmarkRow {
 }
 
 export class BookmarkRepo {
+  // 동기화 변경 로그 훅. 주입하지 않으면 아무 일도 하지 않는다(동기화를 끈 상태)
+  private outbox: OutboxRecorder | null = null
+
   constructor(private readonly db: Db) {}
+
+  // 현재 작업공간. null 이면 범위 제한 없이 전부 본다(작업공간 기능이 붙기 전 동작).
+  // 폴더에는 작업공간 컬럼이 없어 링크만 걸러진다 — 폴더 구조는 작업공간끼리 공유된다
+  private scope: WorkspaceScope | null = null
 
   private get d(): Db['drizzle'] {
     return this.db.drizzle
   }
 
+  /** 활성 작업공간을 알려 준다. 이후의 조회는 이 범위로 걸러지고, 새 링크는 이 작업공간에 붙는다 */
+  setWorkspaceScope(scope: WorkspaceScope | null): void {
+    this.scope = scope
+  }
+
+  /** 새 링크에 붙일 작업공간 id */
+  private get scopeId(): number | null {
+    return this.scope ? this.scope.id : null
+  }
+
+  /**
+   * 작업공간 범위 조건. 기본 작업공간에서는 작업공간이 없던 시절의 링크(NULL)도 함께 보인다
+   */
+  private scopeWhere(): SQL | undefined {
+    if (!this.scope) return undefined
+    if (this.scope.isDefault)
+      return or(isNull(bookmarks.workspaceId), eq(bookmarks.workspaceId, this.scope.id))
+    return eq(bookmarks.workspaceId, this.scope.id)
+  }
+
+  /**
+   * 조회 조건 = 작업공간 범위 + 살아 있는 행.
+   * 원격에서 지워진 행(deleted_at 이 찍힌 tombstone)은 목록 어디에도 나오지 않는다
+   */
+  private visibleWhere(): SQL {
+    const scope = this.scopeWhere()
+    const alive = isNull(bookmarks.deletedAt)
+    return scope ? (and(scope, alive) as SQL) : alive
+  }
+
+  /** 변경 로그 훅을 붙인다(로그인 상태에서만) */
+  setOutboxRecorder(recorder: OutboxRecorder | null): void {
+    this.outbox = recorder
+  }
+
+  /** 삭제는 행이 사라지기 전에 기록해야 한다 — 호출 순서에 주의 */
+  private record(id: number, op: 'upsert' | 'delete'): void {
+    this.outbox?.('bookmarks', String(id), op)
+  }
+
   // 이미 저장된 URL 목록(전체 DB 기준) — 트리 삽입 전에 한 번만 읽어 중복 판단에 쓴다
   private existingUrls(): Set<string> {
-    const rows = this.d.select({ url: bookmarks.url }).from(bookmarks).all()
+    const rows = this.d
+      .select({ url: bookmarks.url })
+      .from(bookmarks)
+      .where(this.visibleWhere())
+      .all()
     return new Set(rows.map((r) => r.url))
   }
 
@@ -71,16 +124,21 @@ export class BookmarkRepo {
     position: number,
     addedAt?: number
   ): void {
-    this.d
+    const inserted = this.d
       .insert(bookmarks)
       .values({
         folderId,
         title,
         url,
         position,
-        addedAt: addedAt ?? null
+        addedAt: addedAt ?? null,
+        workspaceId: this.scopeId
       })
-      .run()
+      .returning({ id: bookmarks.id })
+      .all()
+    // 대량 가져오기도 한 줄씩 변경 로그를 남긴다 — 예전에는 여기만 빠져 있어,
+    // 로그인 뒤에 가져온 북마크 수백 개가 다른 PC 로 넘어가지 않았다
+    this.record(inserted[0].id, 'upsert')
   }
 
   private insertNode(
@@ -140,6 +198,7 @@ export class BookmarkRepo {
     return this.d
       .select()
       .from(bookmarks)
+      .where(this.visibleWhere())
       .all()
       .map((r) => ({
         id: r.id,
@@ -191,6 +250,8 @@ export class BookmarkRepo {
 
   // 북마크 링크 하나를 제거한다
   remove(id: number): void {
+    // 삭제 표식을 만들려면 행이 남아 있어야 한다 — 반드시 지우기 전에 기록한다
+    this.record(id, 'delete')
     this.d.delete(bookmarks).where(eq(bookmarks.id, id)).run()
     this.db.scheduleSave()
   }
@@ -223,10 +284,18 @@ export class BookmarkRepo {
       throw new Error('cannot create bookmark link: URL scheme not allowed')
     const inserted = this.d
       .insert(bookmarks)
-      .values({ folderId, title, url, position: this.nextLinkPosition(folderId) })
+      .values({
+        folderId,
+        title,
+        url,
+        position: this.nextLinkPosition(folderId),
+        workspaceId: this.scopeId,
+        updatedAt: Date.now()
+      })
       .returning({ id: bookmarks.id })
       .all()
     this.db.scheduleSave()
+    this.record(inserted[0].id, 'upsert')
     return inserted[0].id
   }
 
@@ -236,8 +305,9 @@ export class BookmarkRepo {
   }
 
   renameLink(id: number, title: string): void {
-    this.d.update(bookmarks).set({ title }).where(eq(bookmarks.id, id)).run()
+    this.d.update(bookmarks).set({ title, updatedAt: Date.now() }).where(eq(bookmarks.id, id)).run()
     this.db.scheduleSave()
+    this.record(id, 'upsert')
   }
 
   // toFolderId 가 id 자신이거나 id 의 자손이면 이동을 거부한다(트리가 끊어지는 것을 막는다)
@@ -272,10 +342,15 @@ export class BookmarkRepo {
   moveLink(id: number, toFolderId: number | null): void {
     this.d
       .update(bookmarks)
-      .set({ folderId: toFolderId, position: this.nextLinkPosition(toFolderId) })
+      .set({
+        folderId: toFolderId,
+        position: this.nextLinkPosition(toFolderId),
+        updatedAt: Date.now()
+      })
       .where(eq(bookmarks.id, id))
       .run()
     this.db.scheduleSave()
+    this.record(id, 'upsert')
   }
 
   // 폴더 제거(cascade) — DB 에 부모→자식 FK 가 없어(자기참조) 하위 폴더/링크를 직접 수집해 지운다
@@ -291,7 +366,22 @@ export class BookmarkRepo {
     }
     collect(id)
 
+    // 삭제 표식(tombstone)은 행이 남아 있을 때만 뜰 수 있다 — 지우기 전에 링크 id 를 모은다.
+    // 이 기록이 없으면 다른 PC 가 다음 풀에서 같은 북마크를 되살린다(좀비 북마크)
+    const linkIds = idsToRemove.flatMap((folderId) =>
+      this.d
+        .select({ id: bookmarks.id })
+        .from(bookmarks)
+        .where(eq(bookmarks.folderId, folderId))
+        .all()
+        .map((r) => r.id)
+    )
+
+    // 기록과 삭제를 같은 트랜잭션에 둔다 — 예전에는 기록이 트랜잭션 밖에 있어, 삭제가
+    // 실패하면 "지우지도 않았는데 삭제 표식만 올라가" 다른 PC 의 북마크가 사라졌다
     this.d.transaction(() => {
+      // 표식은 행이 살아 있을 때만 뜰 수 있다(원격 표의 url·title 이 NOT NULL)
+      for (const linkId of linkIds) this.record(linkId, 'delete')
       for (const folderId of idsToRemove) {
         this.d.delete(bookmarks).where(eq(bookmarks.folderId, folderId)).run()
       }
