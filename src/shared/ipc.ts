@@ -142,7 +142,12 @@ export const IPC = {
   phoneAuthEvents: 'phone:authEvents', // KPI 목록
   phoneToolsStatus: 'phone:toolsStatus', // adb·scrcpy 설치 상태(경로·버전)
   phoneInstallTools: 'phone:installTools', // 원클릭 설치(내려받기 → 해제 → 설정 저장)
-  phoneInstallProgress: 'phone:installProgress' // main → renderer 이벤트(설치 진행률)
+  phoneInstallProgress: 'phone:installProgress', // main → renderer 이벤트(설치 진행률)
+  // --- 번역(화면·이미지) — 원문/번역문만 오간다. 입력값·비밀번호는 실리지 않는다 ---
+  pageTranslate: 'page:translate', // preload(격리 월드) → 메인, 탭 전용 게이트
+  translateRun: 'translate:run', // 렌더러 → 메인, 활성 탭 화면 번역 시작
+  translateRestore: 'translate:restore', // 렌더러 → 메인, 원문 보기
+  translateCacheClear: 'translate:cacheClear' // 렌더러 → 메인, 번역 캐시 비우기
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -250,6 +255,8 @@ export type {
 } from './import'
 
 export type { SyncStatus, DeviceDto } from './sync'
+
+export type { TranslateLang, TranslateRequest, ImageTextBox, ImageTranslateDto } from './translate'
 
 export type {
   PhoneDto,

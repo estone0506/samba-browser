@@ -8,6 +8,8 @@
 //   - PAGE_IPC.newTabInit/newTabSearch/newTabOpen ← 같은 파일의 IPC 동명 채널
 //   - PAGE_IPC.gesture/gestureConfig ← 같은 파일의 IPC.pageGesture/pageGestureConfig
 //   - GESTURE_ACTION_LABELS 의 키 집합 ← src/shared/gestures.ts 의 GESTURE_ACTIONS
+//   - PAGE_IPC.pageTranslate ← 같은 파일의 IPC.pageTranslate
+//   - TRANSLATE_MAX_NODES/TRANSLATE_MAX_CHARS ← src/shared/translate.ts 의 동명 상수
 //   - INTERNAL_PROTOCOL ← src/shared/url.ts 의 INTERNAL_SCHEME + ':'
 //
 // 왜 복제하는가:
@@ -34,8 +36,13 @@ export const PAGE_IPC = {
   // 마우스 제스처: 인식된 시퀀스를 메인으로 보내는 채널(page → main)
   gesture: 'page:gesture',
   // 메인이 켜짐 여부와 시퀀스→동작 매핑을 밀어 주는 채널(main → page)
-  gestureConfig: 'page:gestureConfig'
+  gestureConfig: 'page:gestureConfig',
+  pageTranslate: 'page:translate'
 } as const
+
+// 번역 배치 상한 사본 ← src/shared/translate.ts 의 TRANSLATE_MAX_NODES / TRANSLATE_MAX_CHARS
+export const TRANSLATE_MAX_NODES = 100
+export const TRANSLATE_MAX_CHARS = 4096
 
 // 자동 채움 피커 문구(ko/en). page.ts 는 settings.language 를 IPC 로 물어본 뒤
 // 이 표에서 골라 쓴다(격리 월드에는 i18n 모듈을 쓸 수 없어 여기 복제해 둔다)

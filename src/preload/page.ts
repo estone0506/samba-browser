@@ -38,6 +38,7 @@ import {
   type PickerFillResponse
 } from './page-picker'
 import type { NewTabInitDto } from '../shared/newtab'
+import { installPageTranslate, type ImageOverlayDto } from './page-translate'
 
 // AI 실행기. contextIsolation 이 켜져 있으면 preload 는 격리 월드(WorldId 999)에서 실행되므로
 // contextBridge 로 메인 월드에 노출하지 않고 격리 월드 전역에만 둔다.
@@ -93,7 +94,7 @@ void ipcRenderer
     })
   })
 
-// === 마우스 제스처 ==========================================================
+// === 마우스 제스처 ===================================================
 // 켜짐 여부와 시퀀스→동작 매핑은 메인이 밀어 준다(page:gestureConfig).
 // 아직 못 받았으면 꺼진 것으로 보고 궤적도 그리지 않는다
 let gestureConfig: GestureConfig = { enabled: false, language: 'ko', mapping: {} }
@@ -120,6 +121,28 @@ installGestureRecognizer({
   }
 })
 // === 마우스 제스처 끝 =======================================================
+// === 화면 번역 · 이미지 번역 ================================================
+// 원문 배열 → 같은 순서의 번역 배열. 메인이 캐시와 AI 호출을 담당한다.
+// 이 채널에는 입력값·비밀번호가 실리지 않는다(DOM 텍스트 노드만 모은다)
+const translateApi = installPageTranslate({
+  translate: async (texts, lang) => {
+    const reply = (await ipcRenderer.invoke(PAGE_IPC.pageTranslate, { lang, texts })) as
+      IpcResult<string[]> | undefined
+    return reply && reply.ok ? reply.data : null
+  }
+})
+
+// 메인이 격리 월드에서 직접 호출한다(주소창 팝오버 · 이미지 우클릭 메뉴)
+Object.assign(globalThis, {
+  __sambaTranslate: {
+    run: (lang: string): Promise<string> => translateApi.run(lang),
+    restore: (): string => translateApi.restore(),
+    active: (): boolean => translateApi.active(),
+    showImageOverlay: (dto: ImageOverlayDto): string => translateApi.showImageOverlay(dto),
+    hideImageOverlay: (): void => translateApi.hideImageOverlay()
+  }
+})
+// === 화면 번역 끝 ===========================================================
 
 // === 자체 새 탭 페이지 브리지 ===============================================
 // 내부 스킴(samba:) 문서에서만 메인 월드에 노출한다. 웹 페이지는 protocol 이 http(s) 라

@@ -45,7 +45,8 @@ import {
   type ScreenMode,
   type PhoneScreenModeDto,
   type PhoneToolsStatusDto,
-  type PhoneToolsProgressDto
+  type PhoneToolsProgressDto,
+  type TranslateLang
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
@@ -342,6 +343,12 @@ const api = {
     // 웹스토어 주소 또는 32자 id 로 설치한다
     installWebstore: (input: string): Promise<IpcResult<ExtensionInstallResult>> =>
       invoke(IPC.extInstallWebstore, input)
+  },
+  // 화면 번역 · 이미지 번역 — 원문/번역문만 오간다(입력값·비밀번호는 실리지 않는다)
+  translate: {
+    run: (lang?: TranslateLang): Promise<IpcResult<string>> => invoke(IPC.translateRun, lang),
+    restore: (): Promise<IpcResult<string>> => invoke(IPC.translateRestore),
+    clearCache: (): Promise<IpcResult<boolean>> => invoke(IPC.translateCacheClear)
   },
   // 폰 연동 — 결제 비밀번호·문자 본문은 이 중 어느 채널로도 오지 않는다
   phone: {

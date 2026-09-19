@@ -4,6 +4,7 @@ import { DEFAULT_DANGER_WORDS, mergeDangerWords } from './danger'
 import { EXTENSION_SOURCES, type ExtensionSource } from './extensions'
 import { defaultMouseGestures, GESTURE_ACTIONS } from './gestures'
 import { DEFAULT_PAYMENT_LIMIT_KRW, type ScreenFps, type ScreenSize } from './phone'
+import { DEFAULT_TRANSLATE_LANG, TRANSLATE_LANGS, type TranslateLang } from './translate'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 
 // 도구 호출 상한 허용 범위
@@ -150,8 +151,14 @@ export const DEFAULT_SETTINGS = {
   // === 마우스 제스처 ========================================================
   // 오른쪽 버튼 드래그 제스처 사용 여부와 시퀀스→동작 매핑(웨일 기본값 16종)
   mouseGesturesEnabled: true,
-  mouseGestures: defaultMouseGestures()
+  mouseGestures: defaultMouseGestures(),
   // === 마우스 제스처 끝 =====================================================
+  // === 번역(화면·이미지) ====================================================
+  // 번역 결과의 기본 대상 언어
+  translateTargetLang: DEFAULT_TRANSLATE_LANG as TranslateLang,
+  // 열자마자 자동으로 번역할 도메인 목록(정규화된 host 문자열)
+  translateAutoDomains: [] as string[]
+  // === 번역 끝 ==============================================================
 }
 
 // 구독 연결 기록 한 칸. account 는 화면 표시용 문자열뿐이고 토큰은 담지 않는다
@@ -272,8 +279,12 @@ export const settingsSchema = z.object({
   // === 마우스 제스처 ==========================================================
   mouseGesturesEnabled: z.boolean().catch(DEFAULT_SETTINGS.mouseGesturesEnabled),
   // 알 수 없는 동작 이름이 섞이면 표 전체를 기본값으로 되돌린다(부분 손상 방지)
-  mouseGestures: z.record(z.string(), z.enum(GESTURE_ACTIONS)).catch(() => defaultMouseGestures())
+  mouseGestures: z.record(z.string(), z.enum(GESTURE_ACTIONS)).catch(() => defaultMouseGestures()),
   // === 마우스 제스처 끝 =======================================================
+  // === 번역 — 손상된 값은 기본 언어·빈 목록으로 되돌린다 ======================
+  translateTargetLang: z.enum(TRANSLATE_LANGS).catch(DEFAULT_SETTINGS.translateTargetLang),
+  translateAutoDomains: z.array(z.string()).catch(DEFAULT_SETTINGS.translateAutoDomains)
+  // === 번역 끝 ================================================================
 })
 
 export type Settings = z.infer<typeof settingsSchema>
