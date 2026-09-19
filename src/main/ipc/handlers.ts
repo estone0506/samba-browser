@@ -18,6 +18,8 @@ import { ClosedTabStack, newProfileName, runGesture, type GestureDeps } from '..
 import { SettingsStore } from '../settings/store'
 import { setOcrEnabled } from '../agent/tools-ocr'
 import { AgentRunner } from '../agent/runner'
+import { createAgentNotifier } from '../notify'
+import type { NotifyChannel } from '../../shared/notify'
 import type { Db } from '../db/client'
 import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vault/service'
 import { exportVault, writeOwnerOnlyFile, type ExportRequest } from '../vault/export'
@@ -169,7 +171,21 @@ export function registerIpc(
   // 금고. 마스터 키는 이 인스턴스 안에만 있고 IPC 로는 절대 나가지 않는다
   const vault = new VaultService(db, settings, { safeStorage })
   // AI 도구(list_accounts/fill_secret/login)가 쓸 수 있도록 금고를 넘긴다
-  const agent = new AgentRunner(tabs, settings, (ev) => send(IPC.agentEvent, ev), vault)
+  // 메신저 알림. 에이전트 이벤트를 화면으로 보내는 같은 길목에서 한 번 엿본다
+  // (작업 완료·실패, 확인 카드, 사람에게 넘김 — 폰 결제 비밀번호 키패드 포함)
+  const notifier = createAgentNotifier({
+    settings: () => settings.get(),
+    fetchImpl: (url, init) => net.fetch(url, init)
+  })
+  const agent = new AgentRunner(
+    tabs,
+    settings,
+    (ev) => {
+      send(IPC.agentEvent, ev)
+      notifier.observe(ev)
+    },
+    vault
+  )
   // AI 채팅 기록. 러너가 작업 완료 시점에 이 저장소로 대화를 남긴다
   const chats = new ChatRepo(db)
   agent.setTranscript((chatId, entry) => {
@@ -265,9 +281,14 @@ export function registerIpc(
   // 실행 시작만 즉시 확인해 주고, 완료·실패는 status 이벤트로만 알린다.
   // (예전처럼 완료까지 기다리면 늦게 끝난 이전 작업의 응답이 새 작업 UI 를 덮어썼다)
   handleFromRenderer(IPC.agentRun, (prompt: string, chatId?: number) => {
+    // 알림 요약의 "작업:" 줄에 쓸 사용자 지시(비밀값 마스킹은 메시지 조립 때 한다)
+    notifier.setPrompt(prompt)
     void agent.run(prompt, chatId).catch((e: unknown) => console.error('작업 실행 실패', e))
     return { started: true }
   })
+
+  // 설정 화면의 [테스트 보내기] — 지금 입력된 값으로 한 줄 보내 본다
+  handleFromRenderer(IPC.notifyTest, (channel: NotifyChannel) => notifier.test(channel))
 
   // --- AI 채팅 기록 -------------------------------------------------------
   handleFromRenderer(IPC.chatList, (limit?: number) => chats.list(limit ?? RECENT_CHAT_LIMIT))

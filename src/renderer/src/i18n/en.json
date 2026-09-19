@@ -595,7 +595,8 @@
       "behavior": "Behavior",
       "ai": "AI connection",
       "automation": "Automation",
-      "keymaster": "Key Master"
+      "keymaster": "Key Master",
+      "notify": "Notifications"
     },
     "general": {
       "searchTitle": "Search",
@@ -678,6 +679,37 @@
       "cacheDesc": "Keeps up to 10,000 entries on this PC so the same text is not translated twice.",
       "clearCache": "Clear cache",
       "cacheCleared": "Cache cleared"
+    },
+    "notify": {
+      "title": "Notifications",
+      "desc": "Get a ping on Slack, Telegram or Discord when a task finishes",
+      "slack": "Slack",
+      "slackDesc": "Paste a Slack Incoming Webhook URL and we post to that channel",
+      "slackInvalid": "Only URLs starting with https://hooks.slack.com/ are allowed",
+      "discord": "Discord",
+      "discordDesc": "Create a webhook under Channel Settings, Integrations, Webhooks",
+      "discordInvalid": "Only URLs starting with https://discord.com/api/webhooks/ are allowed",
+      "telegram": "Telegram",
+      "telegramDesc": "Create a bot with BotFather, then paste the chat id of your chat with it",
+      "telegramTokenInvalid": "That is not a bot token (digits:letters)",
+      "chatIdInvalid": "Only a number or @channelname is allowed",
+      "use": "Send notifications",
+      "webhookUrl": "Webhook URL",
+      "botToken": "Bot token",
+      "chatId": "Chat id",
+      "change": "Change",
+      "save": "Save",
+      "cancel": "Cancel",
+      "test": "Send a test",
+      "testSending": "Sending…",
+      "testSent": "Sent",
+      "testFailed": "Failed: {{reason}}",
+      "eventsTitle": "What to notify",
+      "eventsDesc": "Passwords and verification codes are never put in a message",
+      "onDone": "Task done",
+      "onFailed": "Task failed",
+      "onAttention": "Needs you",
+      "onAttentionDesc": "CAPTCHA, two-factor, payment password - the moments only you can handle"
     }
   },
   "account": {

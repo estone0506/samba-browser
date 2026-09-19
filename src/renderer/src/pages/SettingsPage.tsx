@@ -8,6 +8,7 @@ import { AccountSection } from '@renderer/components/settings/AccountSection'
 import { SecuritySection } from '@renderer/components/settings/SecuritySection'
 import { AgentSection } from '@renderer/components/settings/AgentSection'
 import { AiSection } from '@renderer/components/settings/AiSection'
+import { NotifySection } from '@renderer/components/settings/NotifySection'
 import { PlaceholderSection } from '@renderer/components/settings/PlaceholderSection'
 import { PersonalInfoPage } from '@renderer/pages/PersonalInfoPage'
 import { AutomationPage } from '@renderer/pages/AutomationPage'
@@ -138,6 +139,8 @@ function SectionBody({
       return <PersonalInfoPage />
     case 'automation':
       return <AutomationPage />
+    case 'notify':
+      return <NotifySection settings={settings} update={update} />
     default:
       return <PlaceholderSection titleKey={labelKey} />
   }

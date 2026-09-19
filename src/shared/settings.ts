@@ -13,6 +13,7 @@ import {
   type CaptureFormat,
   type CaptureShortcuts
 } from './capture'
+import { isDiscordWebhook, isSlackWebhook, isTelegramChatId, isTelegramToken } from './notify'
 import { isSupabaseAnonKey, isSupabaseProjectUrl } from './sync'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 import { playbookListSchema, type PlaybookDto } from './playbook'
@@ -196,8 +197,24 @@ export const DEFAULT_SETTINGS = {
   // 기기마다 다를 수 있고 서버에 올릴 이유도 없어 SYNCED_SETTING_KEYS 에 넣지 않는다.
   // anonKey 는 공개용 publishable 키다 — service_role 키는 저장 단계에서 거른다
   syncSupabaseUrl: '',
-  syncSupabaseAnonKey: ''
+  syncSupabaseAnonKey: '',
   // === Supabase 연결 끝 =====================================================
+  // === 알림 연동(기기 로컬) =================================================
+  // 작업이 끝나거나 사람 확인이 필요할 때 메신저로 알린다.
+  // 웹훅 주소·봇 토큰은 이 PC 의 비밀이라 SYNCED_SETTING_KEYS 에 넣지 않는다 —
+  // 다른 PC 로 올려 보낼 이유가 없고, 새는 경로를 하나라도 줄이는 쪽이 낫다
+  notifySlackEnabled: false,
+  notifySlackWebhook: '',
+  notifyDiscordEnabled: false,
+  notifyDiscordWebhook: '',
+  notifyTelegramEnabled: false,
+  notifyTelegramToken: '',
+  notifyTelegramChatId: '',
+  // 사건별 켬/끔(완료·실패·확인 필요). 기본은 셋 다 켬
+  notifyOnDone: true,
+  notifyOnFailed: true,
+  notifyOnAttention: true
+  // === 알림 연동 끝 =========================================================
 }
 
 // 구독 연결 기록 한 칸. account 는 화면 표시용 문자열뿐이고 토큰은 담지 않는다
@@ -347,8 +364,32 @@ export const settingsSchema = z.object({
   syncSupabaseAnonKey: z
     .string()
     .catch(DEFAULT_SETTINGS.syncSupabaseAnonKey)
-    .transform((v) => (isSupabaseAnonKey(v) ? v.trim() : ''))
+    .transform((v) => (isSupabaseAnonKey(v) ? v.trim() : '')),
   // === Supabase 연결 끝 =======================================================
+  // === 알림 연동 — 형식이 어긋난 주소·토큰은 빈 문자열로 되돌린다 =============
+  notifySlackEnabled: z.boolean().catch(DEFAULT_SETTINGS.notifySlackEnabled),
+  notifySlackWebhook: z
+    .string()
+    .catch(DEFAULT_SETTINGS.notifySlackWebhook)
+    .transform((v) => (isSlackWebhook(v) ? v.trim() : '')),
+  notifyDiscordEnabled: z.boolean().catch(DEFAULT_SETTINGS.notifyDiscordEnabled),
+  notifyDiscordWebhook: z
+    .string()
+    .catch(DEFAULT_SETTINGS.notifyDiscordWebhook)
+    .transform((v) => (isDiscordWebhook(v) ? v.trim() : '')),
+  notifyTelegramEnabled: z.boolean().catch(DEFAULT_SETTINGS.notifyTelegramEnabled),
+  notifyTelegramToken: z
+    .string()
+    .catch(DEFAULT_SETTINGS.notifyTelegramToken)
+    .transform((v) => (isTelegramToken(v) ? v.trim() : '')),
+  notifyTelegramChatId: z
+    .string()
+    .catch(DEFAULT_SETTINGS.notifyTelegramChatId)
+    .transform((v) => (isTelegramChatId(v) ? v.trim() : '')),
+  notifyOnDone: z.boolean().catch(DEFAULT_SETTINGS.notifyOnDone),
+  notifyOnFailed: z.boolean().catch(DEFAULT_SETTINGS.notifyOnFailed),
+  notifyOnAttention: z.boolean().catch(DEFAULT_SETTINGS.notifyOnAttention)
+  // === 알림 연동 끝 ===========================================================
 })
 
 export type Settings = z.infer<typeof settingsSchema>
