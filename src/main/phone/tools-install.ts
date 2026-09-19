@@ -32,7 +32,11 @@ export const SCRCPY_FALLBACK_URL =
   'https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-win64-v4.1.zip'
 /**
  * 고정판 zip 의 sha256. 릴리스의 SHA256SUMS.txt 에 적힌 값을 그대로 박아 둔다 —
- * API 를 못 부르는 상황에서는 해시 목록도 못 받으므로, 이 상수가 유일한 무결성 근거다
+ * API 를 못 부르는 상황에서는 해시 목록도 못 받으므로, 이 상수가 유일한 무결성 근거다.
+ *
+ * 근거: 2026-09-19 SHA256SUMS.txt 대조
+ * (https://github.com/Genymobile/scrcpy/releases/download/v4.1/SHA256SUMS.txt 의
+ *  `scrcpy-win64-v4.1.zip` 줄과 일치함을 확인했다)
  */
 export const SCRCPY_FALLBACK_SHA256 =
   '5b12172b3264b2889f4583ee64752ce832e29bc8b1089dca81093459697165db'
