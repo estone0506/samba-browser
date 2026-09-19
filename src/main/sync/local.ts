@@ -106,25 +106,32 @@ export class SyncLocal {
     return rows[0]?.id ?? null
   }
 
-  setAccountRemoteId(id: number, remoteId: string): void {
-    this.d.update(accounts).set({ remoteId }).where(eq(accounts.id, id)).run()
+  /** updatedAt 을 함께 주면 그 값도 적는다(최초 업로드에서 시각을 올려 보낸 경우) */
+  setAccountRemoteId(id: number, remoteId: string, updatedAt: number | null = null): void {
+    this.d
+      .update(accounts)
+      .set(updatedAt === null ? { remoteId } : { remoteId, updatedAt })
+      .where(eq(accounts.id, id))
+      .run()
     this.db.scheduleSave()
   }
 
   /**
    * 원격 id 가 아직 없는 계정에 하나 만들어 붙인다.
-   * 금고 항목이 account_id 로 가리켜야 하는데 계정이 아직 올라가지 않은 경우에 쓴다
+   * 금고 항목이 account_id 로 가리켜야 하는데 계정이 아직 올라가지 않은 경우에 쓴다.
+   * 이 계정도 서버에 한 번도 없던 행이므로 수정 시각을 지금으로 올린다 —
+   * 옛 시각 그대로 올라가면 커서가 앞서 있는 다른 PC 의 풀에 걸리지 않는다
    */
   ensureAccountRemoteId(id: number, generate: () => string): string | null {
     const row = this.d
-      .select({ remoteId: accounts.remoteId })
+      .select({ remoteId: accounts.remoteId, updatedAt: accounts.updatedAt })
       .from(accounts)
       .where(eq(accounts.id, id))
       .get()
     if (!row) return null
     if (row.remoteId) return row.remoteId
     const remoteId = generate()
-    this.setAccountRemoteId(id, remoteId)
+    this.setAccountRemoteId(id, remoteId, Math.max(row.updatedAt ?? 0, Date.now()))
     return remoteId
   }
 
@@ -215,8 +222,13 @@ export class SyncLocal {
     return row ? row.updatedAt : null
   }
 
-  setVaultItemRemoteId(id: number, remoteId: string): void {
-    this.d.update(vaultItems).set({ remoteId }).where(eq(vaultItems.id, id)).run()
+  /** updatedAt 을 함께 주면 그 값도 적는다(최초 업로드에서 시각을 올려 보낸 경우) */
+  setVaultItemRemoteId(id: number, remoteId: string, updatedAt: number | null = null): void {
+    this.d
+      .update(vaultItems)
+      .set(updatedAt === null ? { remoteId } : { remoteId, updatedAt })
+      .where(eq(vaultItems.id, id))
+      .run()
     this.db.scheduleSave()
   }
 
@@ -351,8 +363,13 @@ export class SyncLocal {
     return row ? row.id : null
   }
 
-  setBookmarkRemoteId(id: number, remoteId: string): void {
-    this.d.update(bookmarks).set({ remoteId }).where(eq(bookmarks.id, id)).run()
+  /** updatedAt 을 함께 주면 그 값도 적는다(최초 업로드에서 시각을 올려 보낸 경우) */
+  setBookmarkRemoteId(id: number, remoteId: string, updatedAt: number | null = null): void {
+    this.d
+      .update(bookmarks)
+      .set(updatedAt === null ? { remoteId } : { remoteId, updatedAt })
+      .where(eq(bookmarks.id, id))
+      .run()
     this.db.scheduleSave()
   }
 

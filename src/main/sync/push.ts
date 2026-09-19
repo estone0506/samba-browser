@@ -134,6 +134,8 @@ interface Prepared {
   row: RemoteRow
   /** upsert 인 경우에만 있다(삭제는 로컬 행이 이미 없다) */
   localId: number | null
+  /** 최초 업로드라 수정 시각을 올려 보냈다면 그 값. 성공하면 로컬에도 같은 값을 적는다 */
+  bumpedAt: number | null
 }
 
 async function pushTable(
@@ -198,9 +200,9 @@ async function pushTable(
   for (const p of prepared) {
     if (p.localId === null) continue
     const remoteId = String(p.row.id)
-    if (table === 'accounts') local.setAccountRemoteId(p.localId, remoteId)
-    else if (table === 'vault_items') local.setVaultItemRemoteId(p.localId, remoteId)
-    else local.setBookmarkRemoteId(p.localId, remoteId)
+    if (table === 'accounts') local.setAccountRemoteId(p.localId, remoteId, p.bumpedAt)
+    else if (table === 'vault_items') local.setVaultItemRemoteId(p.localId, remoteId, p.bumpedAt)
+    else local.setBookmarkRemoteId(p.localId, remoteId, p.bumpedAt)
   }
   deps.outbox.clear(prepared.map((p) => p.entry.id))
   result.sent += prepared.length
@@ -223,13 +225,25 @@ function buildRemote(
     const row =
       entry.op === 'delete' ? tombstone<AccountSyncRow>(entry) : local.accountForSync(rowId)
     if (!row) return null
-    return { entry, row: accountToRemote(row, ctx), localId: entry.op === 'delete' ? null : rowId }
+    const bumpedAt = bumpForFirstUpload(row, entry)
+    return {
+      entry,
+      row: accountToRemote(row, ctx),
+      localId: entry.op === 'delete' ? null : rowId,
+      bumpedAt
+    }
   }
   if (table === 'bookmarks') {
     const row =
       entry.op === 'delete' ? tombstone<BookmarkSyncRow>(entry) : local.bookmarkForSync(rowId)
     if (!row) return null
-    return { entry, row: bookmarkToRemote(row, ctx), localId: entry.op === 'delete' ? null : rowId }
+    const bumpedAt = bumpForFirstUpload(row, entry)
+    return {
+      entry,
+      row: bookmarkToRemote(row, ctx),
+      localId: entry.op === 'delete' ? null : rowId,
+      bumpedAt
+    }
   }
 
   const item =
@@ -245,9 +259,28 @@ function buildRemote(
       deps.outbox.record('accounts', String(item.accountId), 'upsert', undefined, entry.workspaceId)
     }
   }
+  const bumpedAt = bumpForFirstUpload(item, entry)
   const row = deps.vault.useMasterKey((key) => vaultItemToRemote(item, { ...ctx, key }))
   if (row === null) return 'skip'
-  return { entry, row, localId: entry.op === 'delete' ? null : rowId }
+  return { entry, row, localId: entry.op === 'delete' ? null : rowId, bumpedAt }
+}
+
+/**
+ * 서버에 한 번도 올라간 적 없는 행(remote_id 없음)은 **지금 시각**으로 올린다.
+ *
+ * 로그인 전에 쌓인 행은 옛 updated_at 을 그대로 달고 있어, 커서가 이미 그보다 앞으로 가 있던
+ * 다른 PC 의 풀(updated_at > cursor)에 영영 걸리지 않는다(2PC 실검수에서 발견).
+ * 서버에 없던 행이라 시각을 올려도 LWW 로 남의 최신 값을 덮지 않는다.
+ * 삭제 표식은 tombstone() 이 이미 삭제 시각으로 올려 둔다
+ */
+function bumpForFirstUpload<T extends { remoteId: string | null; updatedAt: number }>(
+  row: T,
+  entry: OutboxRow
+): number | null {
+  if (entry.op === 'delete' || row.remoteId !== null) return null
+  const next = Math.max(row.updatedAt, Date.now())
+  row.updatedAt = next
+  return next
 }
 
 /**
