@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { FakeAdb } from './stubs/fake-adb'
-import { registerPhoneScreenIpc } from '../src/main/phone/screen-ipc'
+import { registerPhoneScreenIpc, SIZE_CACHE_TTL_MS } from '../src/main/phone/screen-ipc'
 import { ScrcpyWindows } from '../src/main/phone/scrcpy'
 import { IPC } from '../src/shared/ipc'
 import { DEFAULT_SETTINGS, type Settings } from '../src/shared/settings'
@@ -73,6 +73,51 @@ describe('registerPhoneScreenIpc', () => {
     const tapCall = adb.calls.find((c) => c.includes('tap'))
     expect(tapCall).toBeDefined()
     expect(tapCall?.slice(-2)).toEqual(['540', '600'])
+  })
+
+  it('범위 밖·숫자가 아닌 좌표는 폰으로 보내지 않는다', async () => {
+    const { adb, callArgs } = setup()
+    for (const [rx, ry] of [
+      [Number.NaN, 0.5],
+      [0.5, Number.POSITIVE_INFINITY],
+      [-0.1, 0.5],
+      [1.5, 0.5]
+    ]) {
+      await expect(callArgs(IPC.phoneTap, SERIAL, rx, ry)).rejects.toThrow(/화면 좌표/)
+    }
+    expect(adb.calls.some((c) => c.includes('tap'))).toBe(false)
+  })
+
+  it('스와이프 시간이 올바르지 않으면 거절한다', async () => {
+    const { adb, callArgs } = setup()
+    await expect(callArgs(IPC.phoneSwipe, SERIAL, 0.1, 0.1, 0.2, 0.2, Number.NaN)).rejects.toThrow(
+      /스와이프 시간/
+    )
+    await expect(callArgs(IPC.phoneSwipe, SERIAL, 0.1, 0.1, 0.2, 0.2, 60_000)).rejects.toThrow(
+      /스와이프 시간/
+    )
+    expect(adb.calls.some((c) => c.includes('swipe'))).toBe(false)
+    // 주지 않으면 기본값으로 지나간다
+    await callArgs(IPC.phoneSwipe, SERIAL, 0.1, 0.1, 0.2, 0.2)
+    expect(adb.calls.some((c) => c.includes('swipe'))).toBe(true)
+  })
+
+  it('해상도 캐시는 수명이 지나면 다시 읽는다(화면 회전 반영)', async () => {
+    const { adb, callArgs } = setup()
+    await callArgs(IPC.phoneTap, SERIAL, 0.5, 0.25)
+    const first = adb.calls.filter((c) => c.includes('size')).length
+    await callArgs(IPC.phoneTap, SERIAL, 0.5, 0.25)
+    // 수명 안에서는 다시 읽지 않는다
+    expect(adb.calls.filter((c) => c.includes('size')).length).toBe(first)
+
+    const realNow = Date.now
+    Date.now = () => realNow() + SIZE_CACHE_TTL_MS + 1
+    try {
+      await callArgs(IPC.phoneTap, SERIAL, 0.5, 0.25)
+    } finally {
+      Date.now = realNow
+    }
+    expect(adb.calls.filter((c) => c.includes('size')).length).toBe(first + 1)
   })
 
   it('screenStart 가 스트림을 열고 청크를 렌더러로 보낸다', async () => {

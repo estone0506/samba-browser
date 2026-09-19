@@ -49,9 +49,9 @@ export type PlaybookProvider = () => PlaybookDto[]
 
 /**
  * 폰 도구 배선. 권한 모드·호출 상한·확인 카드는 웹 도구 것을 그대로 쓰므로
- * 배선부는 폰 조작 능력과 요금제·배정 폰만 넘긴다(금고는 넘기지 않는다)
+ * 배선부는 폰 조작 능력과 배정 폰만 넘긴다(금고는 넘기지 않는다)
  */
-export type PhoneBridge = Pick<PhoneToolContext, 'phones' | 'isPro' | 'assigned'> & {
+export type PhoneBridge = Pick<PhoneToolContext, 'phones' | 'assigned'> & {
   /**
    * 문자 인증 흐름(phone/wiring.ts). 붙어 있지 않으면 wait_for_sms_code 도구가
    * "sms auth is not available" 만 돌려준다
@@ -324,7 +324,6 @@ export class AgentRunner {
             // 배선부의 두 실행기(waitForSmsCode/approvePayment)는 문맥을 한 겹 덧씌워
             // 아래에서 따로 넣는다 — 그대로 펼치면 도구가 보는 모양과 어긋난다
             phones: phones.phones,
-            isPro: phones.isPro,
             assigned: phones.assigned,
             mode: s.permissionMode,
             tick: counter.tick,
@@ -339,7 +338,6 @@ export class AgentRunner {
       pay:
         phones && phones.approvePayment
           ? {
-              isPro: phones.isPro,
               tick: counter.tick,
               onStep: (label, ok) => emit({ type: 'step', label, ok }),
               run: (req) => runPay(req)

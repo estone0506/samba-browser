@@ -25,6 +25,10 @@ export interface SyncStatus {
 export interface AuthState {
   signedIn: boolean
   email?: string
+  /**
+   * 동기화 서버가 내려주는 요금제 값. 스키마 호환을 위해 타입에만 남겨 두고
+   * UI·기능 게이트에서는 쓰지 않는다(요금제 구분 폐지)
+   */
   plan: 'free' | 'pro'
   deviceId: string | null
   /** .env 가 채워져 있는가 */

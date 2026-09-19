@@ -10,7 +10,6 @@ import { join } from 'node:path'
 import {
   PLATFORM_TOOLS_URL,
   SCRCPY_FALLBACK_URL,
-  SCRCPY_FALLBACK_VERSION,
   SCRCPY_LATEST_API,
   TOOLS_MANIFEST,
   commonRootFolder,
@@ -20,6 +19,7 @@ import {
   parsePkgRevision,
   parseSha256Sums,
   phoneToolsStatus,
+  isAllowedToolUrl,
   pickScrcpyAsset,
   type ToolsFetcher,
   type ToolsResponse
@@ -173,8 +173,50 @@ describe('pickScrcpyAsset', () => {
       url: SCRCPY_URL,
       fileName: 'scrcpy-win64-v4.2.zip',
       version: 'v4.2',
-      sumsUrl: SUMS_URL
+      sumsUrl: SUMS_URL,
+      expectedSha256: null
     })
+  })
+
+  it('해시 목록 이름이 SHA256SUMS.txt 여도 찾는다(v4.1 릴리스가 그렇다)', () => {
+    const txtUrl = 'https://github.com/Genymobile/scrcpy/releases/download/v4.2/SHA256SUMS.txt'
+    const asset = pickScrcpyAsset({
+      tag_name: 'v4.2',
+      assets: [
+        { name: 'scrcpy-win64-v4.2.zip', browser_download_url: SCRCPY_URL },
+        { name: 'SHA256SUMS.txt', browser_download_url: txtUrl }
+      ]
+    })
+    expect(asset?.sumsUrl).toBe(txtUrl)
+  })
+
+  it('허용 호스트가 아닌 주소는 쓰지 않는다(릴리스 JSON 은 바깥 값이다)', () => {
+    expect(
+      pickScrcpyAsset({
+        tag_name: 'v4.2',
+        assets: [
+          { name: 'scrcpy-win64-v4.2.zip', browser_download_url: 'https://evil.example/x.zip' }
+        ]
+      })
+    ).toBeNull()
+    // zip 은 정상이지만 해시 목록만 딴 데면 목록을 버린다(→ 고정판으로 되돌아간다)
+    const asset = pickScrcpyAsset({
+      tag_name: 'v4.2',
+      assets: [
+        { name: 'scrcpy-win64-v4.2.zip', browser_download_url: SCRCPY_URL },
+        { name: 'SHA256SUMS', browser_download_url: 'http://github.com/x/SHA256SUMS' }
+      ]
+    })
+    expect(asset?.sumsUrl).toBeNull()
+  })
+
+  it('isAllowedToolUrl 은 https + 허용 호스트만 통과시킨다', () => {
+    expect(isAllowedToolUrl(PLATFORM_TOOLS_URL)).toBe(true)
+    expect(isAllowedToolUrl(SCRCPY_FALLBACK_URL)).toBe(true)
+    expect(isAllowedToolUrl('http://github.com/a.zip')).toBe(false)
+    expect(isAllowedToolUrl('https://evil.example/a.zip')).toBe(false)
+    expect(isAllowedToolUrl('file:///C:/a.zip')).toBe(false)
+    expect(isAllowedToolUrl('not a url')).toBe(false)
   })
 
   it('win64 zip 이 없거나 모양이 다르면 null', () => {
@@ -274,18 +316,68 @@ describe('installPhoneTools', () => {
     expect(progress.at(-1)).toMatchObject({ step: 'scrcpy', phase: 'done' })
   })
 
-  it('릴리스 API 가 실패하면 고정 주소로 되돌아간다', async () => {
+  it('릴리스 API 가 실패하면 고정 주소를 받되 박아 둔 해시와 대조한다', async () => {
     const s = server({
       [SCRCPY_LATEST_API]: () => ({ ok: false, status: 403, arrayBuffer: notCalled }),
       [SCRCPY_FALLBACK_URL]: () => bytes(SCRCPY_ZIP)
     })
-    const status = await installPhoneTools({
-      root,
-      fetchImpl: s.fetchImpl,
-      settings: fakeSettings()
-    })
+    // 시험용 zip 은 고정판이 아니므로 해시가 어긋나 설치가 멈춘다
+    await expect(
+      installPhoneTools({ root, fetchImpl: s.fetchImpl, settings: fakeSettings() })
+    ).rejects.toThrow(/해시가 달라요/)
     expect(s.urls).toContain(SCRCPY_FALLBACK_URL)
-    expect(status.scrcpyVersion).toBe(SCRCPY_FALLBACK_VERSION)
+    expect(existsSync(join(root, 'scrcpy', 'scrcpy.exe'))).toBe(false)
+  })
+
+  it('해시 목록이 없는 릴리스는 쓰지 않고 고정판으로 되돌아간다', async () => {
+    const s = server({
+      [SCRCPY_LATEST_API]: () =>
+        text(
+          JSON.stringify({
+            tag_name: 'v9.9',
+            assets: [
+              {
+                name: 'scrcpy-win64-v9.9.zip',
+                browser_download_url:
+                  'https://github.com/Genymobile/scrcpy/releases/download/v9.9/scrcpy-win64-v9.9.zip'
+              }
+            ]
+          })
+        ),
+      [SCRCPY_FALLBACK_URL]: () => bytes(SCRCPY_ZIP)
+    })
+    await expect(
+      installPhoneTools({ root, fetchImpl: s.fetchImpl, settings: fakeSettings() })
+    ).rejects.toThrow(/해시가 달라요/)
+    expect(s.urls).toContain(SCRCPY_FALLBACK_URL)
+  })
+
+  it('해시 목록을 받지 못하면 조용히 넘어가지 않고 멈춘다', async () => {
+    const settings = fakeSettings()
+    const s = server({ [SUMS_URL]: () => ({ ok: false, status: 500, arrayBuffer: notCalled }) })
+    await expect(installPhoneTools({ root, fetchImpl: s.fetchImpl, settings })).rejects.toThrow(
+      /해시 목록을 받지 못해/
+    )
+    expect(settings.get().scrcpyPath).toBe('')
+  })
+
+  it('해시 목록에 이 파일이 없으면 멈춘다', async () => {
+    const settings = fakeSettings()
+    const s = server({
+      [SUMS_URL]: () =>
+        text(`${'a'.repeat(64)}  scrcpy-linux-v4.2.tar.gz
+`)
+    })
+    await expect(installPhoneTools({ root, fetchImpl: s.fetchImpl, settings })).rejects.toThrow(
+      /해시 목록에 이 파일이 없어/
+    )
+    expect(settings.get().scrcpyPath).toBe('')
+  })
+
+  it('허용되지 않은 주소는 내려받지 않는다', async () => {
+    await expect(
+      downloadWithProgress('https://evil.example/tools.zip', notCalled as never, () => undefined)
+    ).rejects.toThrow(/허용되지 않은 내려받기 주소/)
   })
 
   it('SHA256SUMS 와 다르면 설치하지 않는다', async () => {

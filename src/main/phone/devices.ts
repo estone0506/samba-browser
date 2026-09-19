@@ -3,7 +3,7 @@
 
 import {
   DEVICE_POLL_INTERVAL_MS,
-  PHONE_LIMIT_PRO,
+  PHONE_LIMIT,
   isPhoneCountry,
   type PhoneDto,
   type PhoneState,
@@ -45,8 +45,6 @@ export interface DeviceManagerDeps {
   adb: AdbRunner
   repo: DeviceRepo
   now: () => number
-  // Pro 요금제가 아니면 폴링을 시작하지 않는다
-  isPro: () => boolean
   autoReconnect: () => boolean
   // 경고 문구는 상한 초과처럼 사용자가 알아야 할 때만 함께 온다
   onChange: (phones: PhoneDto[], warning?: string) => void
@@ -90,7 +88,7 @@ export class DeviceManager {
   constructor(private deps: DeviceManagerDeps) {}
 
   start(): void {
-    if (this.handle !== null || !this.deps.isPro()) return
+    if (this.handle !== null) return
     const setI =
       this.deps.setInterval ?? ((fn: () => void, ms: number): unknown => setInterval(fn, ms))
     void this.refresh()
@@ -111,7 +109,6 @@ export class DeviceManager {
 
   /** 1회 즉시 스캔(설정 화면의 "지금 찾기") */
   async refresh(): Promise<PhoneDto[]> {
-    if (!this.deps.isPro()) return []
     const res = await this.deps.adb.run(['devices', '-l'])
     const raw = parseDevices(res.stdout)
     const now = this.deps.now()
@@ -132,12 +129,12 @@ export class DeviceManager {
       toDto(
         row,
         raw.find((d) => d.serial === row.serial),
-        index >= PHONE_LIMIT_PRO
+        index >= PHONE_LIMIT
       )
     )
-    const over = next.length - PHONE_LIMIT_PRO
+    const over = next.length - PHONE_LIMIT
     const warning =
-      over > 0 ? `연결 상한(${PHONE_LIMIT_PRO}대)을 넘어 ${over}대를 쓰지 않습니다` : undefined
+      over > 0 ? `연결 상한(${PHONE_LIMIT}대)을 넘어 ${over}대를 쓰지 않습니다` : undefined
     // 끊긴 폰 자동 복구 1회
     if (this.deps.autoReconnect()) {
       for (const p of next) {

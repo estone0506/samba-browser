@@ -117,6 +117,8 @@ describe('폰 설정', () => {
     expect(DEFAULT_SETTINGS.phoneScreenFps).toBe(15)
     expect(DEFAULT_SETTINGS.phoneAutoReconnect).toBe(true)
     expect(DEFAULT_SETTINGS.paymentLimitKrw).toBe(500_000)
+    // 결제 키패드 화면을 외부 AI 로 보내는 경로는 기본으로 꿫 둔다
+    expect(DEFAULT_SETTINGS.phoneKeypadVisual).toBe(false)
   })
 
   it('깨진 값은 기본값으로 되돌린다', () => {
@@ -141,7 +143,8 @@ describe('폰 설정', () => {
       'phoneScreenMaxSize',
       'phoneScreenFps',
       'phoneAutoReconnect',
-      'paymentLimitKrw'
+      'paymentLimitKrw',
+      'phoneKeypadVisual'
     ]) {
       expect(synced).not.toContain(key)
     }

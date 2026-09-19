@@ -23,6 +23,7 @@ import type { PermissionMode, SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
 import { installWebstoreNavigatorUserAgent, installWebstoreUserAgent } from './webstore-ua'
 import { installDialogHandler, isAutomationActive } from './dialogs'
+import { PopupRegistry, type PopupEntry } from './popups'
 import { getFaviconService, type FaviconResponse } from '../favicon/service'
 
 export interface Tab {
@@ -38,17 +39,9 @@ export interface Tab {
 /**
  * window.open 으로 열린 팝업 창(결제창 등). 크롬처럼 별도 창으로 띄운다.
  * Electron 의 createWindow 는 BrowserWindow 를 기대하므로 WebContentsView 로 만들면 네이티브 크래시가 난다.
- * 탭 목록에는 넣지 않고 따로 추적해, 부모 탭이 결제 결과를 확인할 때 찾는다
+ * 탭 목록에는 넣지 않고 따로 추적해(popups.ts), 부모 탭이 결제 결과를 확인할 때 찾는다
  */
-/** 팝업 창이 닫힐 때 실제 파괴를 미루는 시간 */
-const POPUP_CLOSE_DELAY_MS = 2500
-
-interface Popup {
-  id: string
-  win: BrowserWindow
-  openerId: string
-  profile: string
-}
+type Popup = PopupEntry<BrowserWindow>
 
 // 설정을 아직 못 읽었을 때의 기본 주소. 설정이 들어오면 setDefaultUrl 로 덮인다
 const DEFAULT_URL = NEW_TAB_URL
@@ -128,7 +121,7 @@ function hardenSession(ses: Session, partition: string): void {
 // 리다이렉트·페이지 내 이동으로 금지 스킴에 도달하는 경로까지 막는다.
 // allowExtension 은 확장 문서(옵션 페이지)를 담은 탭에만 준다 — 그 탭 안에서는
 // `chrome-extension://` 사이 이동이 정상이기 때문이다(웹 페이지 탭에는 주지 않는다)
-function guardNavigation(wc: WebContents, allowExtension: boolean): void {
+export function guardNavigation(wc: WebContents, allowExtension: boolean): void {
   const allowed = (url: string): boolean =>
     isAllowedUrl(url) || (allowExtension && isExtensionUrl(url))
   wc.on('will-navigate', (e, url) => {
@@ -146,7 +139,7 @@ function guardNavigation(wc: WebContents, allowExtension: boolean): void {
 // 탭 = WebContentsView 1개. 프로필은 persist: 파티션으로 쿠키 분리
 export class TabManager {
   private tabs: Tab[] = []
-  private popups: Popup[] = []
+  private popups = new PopupRegistry<BrowserWindow>()
   private activeId: string | null = null
   private layout: Layout = {
     x: 0,
@@ -352,6 +345,8 @@ export class TabManager {
     this.closedListeners = []
     this.tabs = []
     this.activeId = null
+    // 부모 창이 사라졌는데 결제창만 남아 떠 있지 않게 팝업도 함께 파괴한다
+    this.popups.destroyAll()
   }
 
   list(): TabInfo[] {
@@ -385,7 +380,7 @@ export class TabManager {
   findByWebContents(wc: WebContents): Tab | null {
     const tab = this.tabs.find((t) => t.view.webContents === wc)
     if (tab) return tab
-    const popup = this.popups.find((p) => !p.win.isDestroyed() && p.win.webContents === wc)
+    const popup = this.popups.find((p) => p.win.webContents === wc)
     return popup ? this.asTab(popup) : null
   }
 
@@ -405,10 +400,8 @@ export class TabManager {
    * 간편결제처럼 결제창이 별도 WebContents 로 열리는 사이트에서 성공 리다이렉트를 확인할 때 쓴다
    */
   popupOf(openerId: string): Tab | null {
-    for (let i = this.popups.length - 1; i >= 0; i--) {
-      const p = this.popups[i]
-      if (p.openerId === openerId && !p.win.isDestroyed()) return this.asTab(p)
-    }
+    const popup = this.popups.latestFor(openerId)
+    if (popup) return this.asTab(popup)
     for (let i = this.tabs.length - 1; i >= 0; i--) {
       const t = this.tabs[i]
       if (t.openerId === openerId && !t.view.webContents.isDestroyed()) return t
@@ -579,8 +572,18 @@ export class TabManager {
 
   /** 팝업 창을 추적 목록에 넣고, 닫히면 뺀다. 페이지 조작 훅은 탭과 같은 것을 붙인다 */
   private registerPopup(win: BrowserWindow, openerId: string, profile: string): void {
-    const popup: Popup = { id: randomUUID(), win, openerId, profile }
-    this.popups.push(popup)
+    const popup = this.popups.add({
+      id: randomUUID(),
+      win,
+      openerId,
+      profile,
+      handle: {
+        isDestroyed: () => win.isDestroyed(),
+        hide: () => win.hide(),
+        close: () => win.close(),
+        destroy: () => win.destroy()
+      }
+    })
     // 크롬처럼 부모 창 가운데에 띄운다(기본값은 화면 왼쪽 위라 결제창이 엉뚱한 곳에 떴다).
     // 페이지가 left/top 을 지정했으면 Electron 이 이미 반영했으므로 그 경우는 두고,
     // 아니면 부모 창 기준으로 가운데 정렬한다
@@ -588,27 +591,27 @@ export class TabManager {
     const wc = win.webContents
     this.contextMenuHook?.(wc)
     wc.on('dom-ready', () => this.sendGestureConfig(wc))
+    // 팝업도 탭과 똑같이 막는다 — 결제창에서 file:// 로 넘어가면 로컬 DB 파일이
+    // 그대로 읽힌다. 확장 문서는 팝업으로 열 일이 없으므로 허용하지 않는다
+    guardNavigation(wc, false)
+    // 페이지 JS 대화상자도 탭과 같은 정책으로 처리한다(결제창의 alert 가 작업을 멈추지 않게)
+    installDialogHandler(wc, {
+      isAutomationActive: () =>
+        isAutomationActive(this.agentRunning(), process.env, !app.isPackaged),
+      mode: () => this.dialogMode(),
+      ...(this.dialogConfirm ? { confirm: this.dialogConfirm } : {}),
+      onMessage: (message) => this.lastDialogMessage.set(popup.id, message)
+    })
     // 팝업이 또 창을 열면(결제 → 인증창) 같은 규칙으로 창을 만든다
     wc.setWindowOpenHandler(({ url: target }) => {
       if (!isAllowedUrl(target)) return { action: 'deny' }
       return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true } }
     })
     wc.on('did-create-window', (child) => this.registerPopup(child, openerId, profile))
-    // 팝업이 스스로 닫히는(window.close) 순간 부모 탭이 결제 처리 주소로 이동하면
-    // 브라우저 프로세스가 죽는 크래시가 있었다(결제창 흐름). 창은 즉시 숨기고 실제 파괴는
-    // 잠시 뒤로 미뤄, 부모의 내비게이션과 자식 파괴가 같은 순간에 겹치지 않게 한다
-    let deferredClose = false
-    win.on('close', (event) => {
-      if (deferredClose || win.isDestroyed()) return
-      event.preventDefault()
-      deferredClose = true
-      win.hide()
-      setTimeout(() => {
-        if (!win.isDestroyed()) win.close()
-      }, POPUP_CLOSE_DELAY_MS)
-    })
+    win.on('close', (event) => this.popups.handleClose(popup, () => event.preventDefault()))
     win.once('closed', () => {
-      this.popups = this.popups.filter((p) => p !== popup)
+      this.popups.remove(popup)
+      this.lastDialogMessage.delete(popup.id)
     })
   }
 

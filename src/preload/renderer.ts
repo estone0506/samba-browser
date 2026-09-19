@@ -53,6 +53,7 @@ import {
   type TranslateLang,
   type TranslateProgressDto,
   type CaptureMode,
+  type CaptureBeginVideoDto,
   type CaptureResultDto,
   type CaptureStillDto,
   type CaptureVideoSourceDto
@@ -467,11 +468,14 @@ const api = {
       invoke(IPC.captureVideoSource, mode),
     saveVideo: (bytes: Uint8Array, mode: CaptureMode): Promise<IpcResult<void>> =>
       invoke(IPC.captureSaveVideo, bytes, mode),
-    beginVideo: (mode: CaptureMode): Promise<IpcResult<string>> =>
+    // 녹화 1건을 가리키는 token 을 받아, 이어 쓰기·마무리·취소에 그대로 돌려준다
+    beginVideo: (mode: CaptureMode): Promise<IpcResult<CaptureBeginVideoDto>> =>
       invoke(IPC.captureBeginVideo, mode),
-    appendVideo: (bytes: Uint8Array): Promise<IpcResult<void>> =>
-      invoke(IPC.captureAppendVideo, bytes),
-    endVideo: (mode: CaptureMode): Promise<IpcResult<void>> => invoke(IPC.captureEndVideo, mode),
+    appendVideo: (token: string, bytes: Uint8Array): Promise<IpcResult<void>> =>
+      invoke(IPC.captureAppendVideo, token, bytes),
+    endVideo: (token: string, mode: CaptureMode): Promise<IpcResult<void>> =>
+      invoke(IPC.captureEndVideo, token, mode),
+    cancelVideo: (token: string): Promise<IpcResult<void>> => invoke(IPC.captureCancelVideo, token),
     copyImage: (filePath: string): Promise<IpcResult<void>> =>
       invoke(IPC.captureCopyImage, filePath),
     openFile: (filePath: string): Promise<IpcResult<void>> => invoke(IPC.captureOpenFile, filePath),

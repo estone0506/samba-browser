@@ -39,13 +39,28 @@ export function isSkippedTag(tag: string): boolean {
   return SKIPPED_TAGS.has(tag.toUpperCase())
 }
 
+// contenteditable 의 편집 가능 값. 'true' 말고 빈 문자열과 'plaintext-only' 도 편집 가능이다
+const EDITABLE_ATTR_RE = /^(?:true|plaintext-only|)$/i
+
+/**
+ * 이 요소가 편집 가능한가.
+ * 브라우저가 상속까지 계산해 주는 isContentEditable 을 먼저 믿고,
+ * 그 속성이 없는 환경(테스트용 DOM 구현)에서만 속성 값으로 판정한다
+ */
+export function isEditableElement(el: Element): boolean {
+  const inherited = (el as Partial<HTMLElement>).isContentEditable
+  if (typeof inherited === 'boolean') return inherited
+  const attr = el.getAttribute('contenteditable')
+  return attr !== null && EDITABLE_ATTR_RE.test(attr)
+}
+
 /** 이 요소 아래 텍스트를 번역해도 되는가(편집 중인 영역·제외 태그·이미 감싼 것은 제외) */
 export function isTranslatableParent(el: Element | null): boolean {
   let node: Element | null = el
   while (node) {
     if (isSkippedTag(node.tagName)) return false
     if (node.hasAttribute(ORIG_ATTR)) return false
-    if (node.getAttribute('contenteditable') === 'true') return false
+    if (isEditableElement(node)) return false
     if (node.getAttribute('translate') === 'no') return false
     if (node.getAttribute('aria-hidden') === 'true') return false
     node = node.parentElement

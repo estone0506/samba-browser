@@ -34,27 +34,6 @@ import {
   type PayRunDeps
 } from './pay'
 
-// --- Pro 게이트 --------------------------------------------------------------
-
-/** 개발·검증용 우회를 켜는 환경변수 */
-export const PRO_OVERRIDE_ENV = 'SAMBA_PHONE_PRO_OVERRIDE'
-
-/**
- * 폰 기능을 써도 되는가. Pro 계정이면 언제나 참이다.
- * 개발 중에는 설정(phoneDevOverridePro)이나 환경변수로 우회할 수 있지만,
- * 배포판(app.isPackaged)에서는 우회를 통째로 무시한다
- */
-export function phoneProEnabled(input: {
-  plan: string
-  devOverride: boolean
-  env?: string
-  packaged: boolean
-}): boolean {
-  if (input.plan === 'pro') return true
-  if (input.packaged) return false
-  return input.devOverride || input.env === '1'
-}
-
 // --- 비밀 화면 차단(T5 ScreenStream 훅) ---------------------------------------
 
 /** 비밀번호 화면으로 본 뒤 이 시간 동안은 프레임을 내보내지 않는다 */
@@ -201,14 +180,22 @@ export function createCodeReader(deps: CodeReaderDeps): (png: Buffer) => Promise
 
 /**
  * 비밀번호 화면을 직접 캡처해 Visual 에게 "숫자 위치" 만 묻는다.
- * 이 캡처는 렌더러로도 모델 대화로도 가지 않는다 — 좌표를 얻는 즉시 버린다
+ *
+ * 이 경로는 결제 키패드 원본 화면을 외부 AI 제공자에게 그대로 보낸다.
+ * 그래서 기본값은 꺼짐이고(enabled 가 거짓이면 캡처조차 뜨지 않는다),
+ * 꺼져 있으면 null 을 돌려줘 결제 실행기가 사람에게 넘기도록(handOff) 한다.
+ * 좌표를 얻은 캡처는 렌더러로도 모델 대화로도 가지 않고 즉시 버린다
  */
 export function createKeypadReader(deps: {
   adb: AdbRunner
+  /** 설정의 phoneKeypadVisual. 기본은 꺼짐 */
+  enabled: () => boolean
   screen: (serial: string) => Promise<PhoneScreen>
   readLayout: (png: Buffer, size: { width: number; height: number }) => Promise<KeypadLayout | null>
 }): (serial: string) => Promise<KeypadLayout | null> {
   return async (serial) => {
+    // 꺼져 있으면 화면을 뜨지 않는다 — 배치 없음과 같고, 호출부가 사람에게 넘긴다
+    if (!deps.enabled()) return null
     try {
       const screen = await deps.screen(serial)
       const png = await deps.adb.runBinary(execOutArgs(serial, ['screencap', '-p']))
@@ -293,7 +280,7 @@ export interface PhoneWiringDeps {
   sleep?: (ms: number) => Promise<void>
 }
 
-/** 폰 도구가 받는 두 함수. 나머지(phones/isPro/assigned)는 handlers 가 직접 넘긴다 */
+/** 폰 도구가 받는 두 함수. 나머지(phones/assigned)는 handlers 가 직접 넘긴다 */
 export interface PhoneAgentBridge {
   waitForSmsCode: (ctx: PhoneRunContext, host?: string) => Promise<SmsCodeOutcome>
   approvePayment: (ctx: PhoneRunContext, req: PayToolRequest) => Promise<PayResult>

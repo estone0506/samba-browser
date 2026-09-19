@@ -75,7 +75,6 @@ interface Built {
 function build(
   opts: {
     mode?: PhoneToolContext['mode']
-    isPro?: boolean
     confirmResult?: boolean
     phones?: PhoneDto[]
     screen?: PhoneScreen
@@ -96,14 +95,14 @@ function build(
     screenshot: vi.fn(async () => ({
       png: Buffer.from('fake-png-bytes'),
       secret: opts.secret ?? false
-    }))
+    })),
+    isSecret: vi.fn(() => opts.secret ?? false)
   }
   const confirm = vi.fn(async () => opts.confirmResult ?? true)
   const steps: Array<{ label: string; ok: boolean }> = []
   const ctx: PhoneToolContext = {
     phones: ops as unknown as PhoneOps,
     mode: opts.mode ?? 'guard',
-    isPro: () => opts.isPro ?? true,
     assigned: () => null,
     confirm,
     tick: opts.tick ?? ((): string | null => null),
@@ -166,19 +165,6 @@ describe('권한 모드(read_only)', () => {
 
     const shot = await get(tools, 'phone_screenshot').handler({})
     expect(shot.content.some((c) => c.type === 'image')).toBe(true)
-  })
-})
-
-describe('Pro 게이트', () => {
-  it('Pro 가 아니면 전부 거부한다', async () => {
-    const { tools, ops } = build({ isPro: false, mode: 'full' })
-    for (const t of tools) {
-      const r = await t.handler(ARGS[t.name])
-      expect(textOut(r)).toBe('refused: phone requires Pro plan')
-    }
-    expect(ops.screen).not.toHaveBeenCalled()
-    expect(ops.screenshot).not.toHaveBeenCalled()
-    expect(ops.tap).not.toHaveBeenCalled()
   })
 })
 
@@ -334,7 +320,6 @@ describe('금고 비접근', () => {
     expect(Object.keys(ctx).sort()).toEqual([
       'assigned',
       'confirm',
-      'isPro',
       'mode',
       'onStep',
       'phones',
@@ -371,6 +356,37 @@ describe('createPhoneOps — adb 배선', () => {
     expect(shot.secret).toBe(true)
     expect(shot.png.length).toBe(0)
     expect(adb.calls.some((c) => c.join(' ').includes('screencap'))).toBe(false)
+  })
+
+  it('결제 앱 비밀번호 문구가 보이면 캡처를 뜨지 않는다(password 속성이 없어도)', async () => {
+    const adb = new FakeAdb()
+    adb.reply(
+      'cat /sdcard/samba-ui.xml',
+      '<hierarchy><node text="결제 비밀번호를 입력하세요" class="android.widget.TextView" ' +
+        'bounds="[0,0][720,100]" /></hierarchy>'
+    )
+    adb.replyBinary('screencap -p', Buffer.from('png-bytes'))
+    const ops = createPhoneOps(adb, () => [fakePhone()])
+    const shot = await ops.screenshot(SERIAL)
+    expect(shot.secret).toBe(true)
+    expect(adb.calls.some((c) => c.join(' ').includes('screencap'))).toBe(false)
+  })
+
+  it('결제 실행기가 세운 표식(SecretScreenGate)만으로도 캡처를 막는다', async () => {
+    const adb = new FakeAdb()
+    adb.reply('cat /sdcard/samba-ui.xml', PLAIN_XML)
+    adb.replyBinary('screencap -p', Buffer.from('png-bytes'))
+    const ops = createPhoneOps(adb, () => [fakePhone()], { isSecret: () => true })
+    const shot = await ops.screenshot(SERIAL)
+    expect(shot.secret).toBe(true)
+    expect(shot.png.length).toBe(0)
+  })
+
+  it('phone_get_screen 은 비밀 화면이면 요소 목록도 넘기지 않는다', async () => {
+    const { tools, steps } = build({ secret: true })
+    const r = await get(tools, 'phone_get_screen').handler({})
+    expect(textOut(r)).toBe('refused: secret screen')
+    expect(steps.at(-1)).toEqual({ label: '폰 화면 읽기', ok: false })
   })
 
   it('탭·입력·키를 adb input 으로 넘긴다', async () => {

@@ -3,6 +3,7 @@ import { app, crashReporter } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { createMainWindow } from './window'
 import { TabManager } from './browser/tab-manager'
+import { markQuitting } from './browser/popups'
 import { registerInternalProtocol, registerInternalScheme } from './browser/internal-protocol'
 import { registerIpc } from './ipc/handlers'
 import { registerFaviconIpc } from './ipc/favicon'
@@ -137,7 +138,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-// 종료 직전 금고를 먼저 잠그고 DB 를 안전하게 저장/닫는다(내부적으로 pending save 를 즉시 flush 함)
+// 종료 직전 금고를 먼저 잠그고 DB 를 안전하게 저장/닫는다(내부적으로 pending save 를 즉시 flush 함).
+// markQuitting 을 먼저 세운다 — 이 표식이 없으면 팝업 창(결제창)의 close 지연이
+// preventDefault 로 종료 자체를 취소해, DB·금고만 닫힌 좀비 앱이 남는다
 app.on('before-quit', () => {
+  markQuitting()
   shutdown()
 })

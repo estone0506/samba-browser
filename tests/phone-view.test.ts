@@ -17,7 +17,7 @@ import {
   transportLabelKey
 } from '../src/renderer/src/components/phone/phone-view'
 import {
-  PHONE_LIMIT_PRO,
+  PHONE_LIMIT,
   PHONE_STATES,
   PHONE_TRANSPORTS,
   type PhoneDto,
@@ -103,10 +103,10 @@ describe('폰 목록 정렬·상한', () => {
     expect(list.map((p) => p.id)).toEqual([1, 2])
   })
 
-  it('카드 격자 수는 Pro 연결 상한과 같다', () => {
-    expect(PHONE_GRID_MAX).toBe(PHONE_LIMIT_PRO)
-    expect(isOverPhoneLimit(PHONE_LIMIT_PRO)).toBe(false)
-    expect(isOverPhoneLimit(PHONE_LIMIT_PRO + 1)).toBe(true)
+  it('카드 격자 수는 동시 연결 상한과 같다', () => {
+    expect(PHONE_GRID_MAX).toBe(PHONE_LIMIT)
+    expect(isOverPhoneLimit(PHONE_LIMIT)).toBe(false)
+    expect(isOverPhoneLimit(PHONE_LIMIT + 1)).toBe(true)
   })
 })
 
@@ -165,7 +165,6 @@ describe('폰 i18n 키', () => {
   it('폰 화면·설정·매핑 키 묶음이 두 파일에 모두 있다', () => {
     for (const key of [
       'phone.title',
-      'phone.proTitle',
       'phone.empty',
       'phone.recover',
       'phone.authWaiting',

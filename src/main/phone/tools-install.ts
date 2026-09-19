@@ -30,6 +30,39 @@ export const SCRCPY_LATEST_API = 'https://api.github.com/repos/Genymobile/scrcpy
 export const SCRCPY_FALLBACK_VERSION = 'v4.1'
 export const SCRCPY_FALLBACK_URL =
   'https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-win64-v4.1.zip'
+/**
+ * 고정판 zip 의 sha256. 릴리스의 SHA256SUMS.txt 에 적힌 값을 그대로 박아 둔다 —
+ * API 를 못 부르는 상황에서는 해시 목록도 못 받으므로, 이 상수가 유일한 무결성 근거다
+ */
+export const SCRCPY_FALLBACK_SHA256 =
+  '5b12172b3264b2889f4583ee64752ce832e29bc8b1089dca81093459697165db'
+
+/**
+ * 도구를 내려받아도 되는 호스트. https 만 허용한다.
+ * 목록 밖 주소는 GitHub API 응답이 시키더라도 받지 않는다 —
+ * 릴리스 JSON 은 우리가 만든 값이 아니기 때문이다
+ */
+export const TOOL_URL_HOSTS = [
+  'dl.google.com', // platform-tools(adb)
+  'api.github.com',
+  'github.com',
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com'
+]
+
+/** https 이고 허용 호스트인가 */
+export function isAllowedToolUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw)
+    return url.protocol === 'https:' && TOOL_URL_HOSTS.includes(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+function assertToolUrl(raw: string): void {
+  if (!isAllowedToolUrl(raw)) throw new Error(`허용되지 않은 내려받기 주소예요: ${raw}`)
+}
 
 /** 내려받기 상한 — platform-tools 는 10MB 대, scrcpy 는 50MB 대다 */
 export const MAX_TOOL_BYTES = 200 * 1024 * 1024
@@ -107,12 +140,16 @@ export interface ScrcpyAsset {
   url: string
   fileName: string
   version: string
-  /** 릴리스가 SHA256SUMS 를 함께 올렸을 때만 채운다 */
+  /** 릴리스가 해시 목록을 함께 올렸을 때만 채운다 */
   sumsUrl: string | null
+  /** 고정판처럼 해시를 코드에 박아 둔 경우. 있으면 목록을 받지 않고 이 값과 대조한다 */
+  expectedSha256: string | null
 }
 
 /** win64 zip 자산 이름 */
 const SCRCPY_WIN64_RE = /^scrcpy-win64-.*\.zip$/i
+// 릴리스마다 이름이 SHA256SUMS 이기도 SHA256SUMS.txt 이기도 하다(v4.1 은 .txt)
+const SCRCPY_SUMS_RE = /^SHA256SUMS(\.txt)?$/i
 
 /**
  * GitHub 릴리스 JSON 에서 win64 zip 자산을 고른다.
@@ -130,8 +167,11 @@ export function pickScrcpyAsset(release: unknown): ScrcpyAsset | null {
       typeof (a as { browser_download_url?: unknown }).browser_download_url === 'string'
   )
   const zip = assets.find((a) => SCRCPY_WIN64_RE.test(a.name))
-  if (!zip) return null
-  const sums = assets.find((a) => /^SHA256SUMS$/i.test(a.name))
+  // 릴리스 JSON 은 바깥에서 온 값이다 — 주소가 허용 호스트가 아니면 안 쓴다
+  if (!zip || !isAllowedToolUrl(zip.browser_download_url)) return null
+  const sums = assets.find(
+    (a) => SCRCPY_SUMS_RE.test(a.name) && isAllowedToolUrl(a.browser_download_url)
+  )
   const version =
     typeof r.tag_name === 'string' && r.tag_name
       ? r.tag_name
@@ -140,7 +180,8 @@ export function pickScrcpyAsset(release: unknown): ScrcpyAsset | null {
     url: zip.browser_download_url,
     fileName: zip.name,
     version,
-    sumsUrl: sums?.browser_download_url ?? null
+    sumsUrl: sums?.browser_download_url ?? null,
+    expectedSha256: null
   }
 }
 
@@ -265,6 +306,7 @@ export async function downloadWithProgress(
   maxBytes: number = MAX_TOOL_BYTES,
   timeoutMs: number = TOOL_TIMEOUT_MS
 ): Promise<Buffer> {
+  assertToolUrl(url)
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -369,46 +411,64 @@ function reporter(
   }
 }
 
-/** scrcpy 최신 릴리스를 묻는다. 실패하면 고정 주소로 되돌아간다 */
-export async function resolveScrcpyAsset(fetchImpl: ToolsFetcher): Promise<ScrcpyAsset> {
-  const fallback: ScrcpyAsset = {
+/** 해시를 코드에 박아 둔 고정판. 해시 목록을 못 받는 상황에서도 검증할 수 있다 */
+export function scrcpyFallbackAsset(): ScrcpyAsset {
+  return {
     url: SCRCPY_FALLBACK_URL,
     fileName: `scrcpy-win64-${SCRCPY_FALLBACK_VERSION}.zip`,
     version: SCRCPY_FALLBACK_VERSION,
-    sumsUrl: null
+    sumsUrl: null,
+    expectedSha256: SCRCPY_FALLBACK_SHA256
   }
+}
+
+/**
+ * scrcpy 최신 릴리스를 묻는다. 실패하거나 해시 목록이 없는 릴리스면 고정판으로 되돌아간다 —
+ * 대조할 근거가 없는 zip 은 아예 받지 않는다
+ */
+export async function resolveScrcpyAsset(fetchImpl: ToolsFetcher): Promise<ScrcpyAsset> {
+  const fallback = scrcpyFallbackAsset()
   try {
     const res = await fetchImpl(SCRCPY_LATEST_API, {
       headers: { Accept: 'application/vnd.github+json' }
     })
     if (!res.ok) return fallback
     const text = res.text ? await res.text() : Buffer.from(await res.arrayBuffer()).toString('utf8')
-    return pickScrcpyAsset(JSON.parse(text) as unknown) ?? fallback
+    const picked = pickScrcpyAsset(JSON.parse(text) as unknown)
+    return picked?.sumsUrl ? picked : fallback
   } catch {
     return fallback
   }
 }
 
-/** SHA256SUMS 를 받아 대조한다. 목록이 없거나 이 파일이 안 적혀 있으면 넘어간다 */
-async function verifyScrcpy(
+const SHA_MISMATCH = 'scrcpy 내려받기가 손상됐어요 (해시가 달라요). 잠시 뒤 다시 시도해 주세요'
+
+/**
+ * 받은 zip 의 sha256 을 반드시 대조한다.
+ * 박아 둔 상수가 있으면 그것과, 없으면 릴리스의 해시 목록과 견준다.
+ * 목록을 못 받거나 이 파일이 안 적혀 있으면 조용히 넘어가지 않고 설치를 멈춘다
+ */
+export async function verifyScrcpy(
   zip: Buffer,
   asset: ScrcpyAsset,
   fetchImpl: ToolsFetcher
 ): Promise<void> {
-  if (!asset.sumsUrl) return
-  let expected: string | null = null
-  try {
-    const res = await fetchImpl(asset.sumsUrl)
-    if (!res.ok) return
-    const text = res.text ? await res.text() : Buffer.from(await res.arrayBuffer()).toString('utf8')
-    expected = parseSha256Sums(text, asset.fileName)
-  } catch {
+  if (asset.expectedSha256) {
+    if (sha256(zip) !== asset.expectedSha256.toLowerCase()) throw new Error(SHA_MISMATCH)
     return
   }
-  if (!expected) return
-  if (sha256(zip) !== expected) {
-    throw new Error('scrcpy 내려받기가 손상됐어요 (해시가 달라요). 잠시 뒤 다시 시도해 주세요')
+  if (!asset.sumsUrl) throw new Error('scrcpy 해시 목록이 없어 설치를 멈췄어요')
+  let text: string
+  try {
+    const res = await fetchImpl(asset.sumsUrl)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    text = res.text ? await res.text() : Buffer.from(await res.arrayBuffer()).toString('utf8')
+  } catch {
+    throw new Error('scrcpy 해시 목록을 받지 못해 설치를 멈췄어요. 잠시 뒤 다시 시도해 주세요')
   }
+  const expected = parseSha256Sums(text, asset.fileName)
+  if (!expected) throw new Error('scrcpy 해시 목록에 이 파일이 없어 설치를 멈췄어요')
+  if (sha256(zip) !== expected) throw new Error(SHA_MISMATCH)
 }
 
 /**

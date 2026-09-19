@@ -345,7 +345,7 @@ describe('phone_approve_payment 도구', () => {
     handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>
   }
 
-  function buildTool(opts: { isPro?: boolean; over?: string | null; result?: PayResult } = {}): {
+  function buildTool(opts: { over?: string | null; result?: PayResult } = {}): {
     tool: ToolStub
     run: ReturnType<typeof vi.fn>
     steps: Array<{ label: string; ok: boolean }>
@@ -353,7 +353,6 @@ describe('phone_approve_payment 도구', () => {
     const run = vi.fn(async () => opts.result ?? { ok: true })
     const steps: Array<{ label: string; ok: boolean }> = []
     const built = createPayTool({
-      isPro: () => opts.isPro ?? true,
       tick: () => opts.over ?? null,
       onStep: (label, ok) => steps.push({ label, ok }),
       run
@@ -380,14 +379,6 @@ describe('phone_approve_payment 도구', () => {
 
     const bad = buildTool({ result: { ok: false, reason: 'over-limit' } })
     expect((await bad.tool.handler(args)).content[0].text).toBe('refused: over-limit')
-  })
-
-  it('Pro 가 아니면 실행기를 부르지 않는다', async () => {
-    const t = buildTool({ isPro: false })
-    const out = await t.tool.handler(args)
-
-    expect(out.content[0].text).toContain('Pro')
-    expect(t.run).not.toHaveBeenCalled()
   })
 
   it('호출 상한에 걸리면 실행기를 부르지 않는다', async () => {

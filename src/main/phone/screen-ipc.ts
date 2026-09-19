@@ -33,6 +33,32 @@ export interface PhoneScreenIpc {
   dispose: () => void
 }
 
+/** 폰 해상도 캐시 수명. 가로/세로 회전이 반영될 만큼 짧게 둔다 */
+export const SIZE_CACHE_TTL_MS = 5000
+/** 스와이프 시간(ms) 상한 — 오래 누르고 있는 제스처가 화면을 붙잡지 않게 */
+export const MAX_SWIPE_MS = 5000
+
+/**
+ * 렌더러가 보낸 0~1 비율 좌표를 검증한다.
+ * NaN·Infinity 가 그대로 지나가면 `input tap NaN NaN` 이 폰으로 나간다
+ */
+export function assertRatio(...values: number[]): void {
+  for (const v of values) {
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1) {
+      throw new Error('화면 좌표가 올바르지 않습니다')
+    }
+  }
+}
+
+/** 스와이프 시간. 주지 않으면 기본값(undefined)을 그대로 넘긴다 */
+export function assertSwipeMs(ms?: number): number | undefined {
+  if (ms === undefined) return undefined
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0 || ms > MAX_SWIPE_MS) {
+    throw new Error('스와이프 시간이 올바르지 않습니다')
+  }
+  return Math.round(ms)
+}
+
 export function registerPhoneScreenIpc(deps: PhoneScreenIpcDeps): PhoneScreenIpc {
   const settings = deps.settings
   const adb = deps.adb ?? createAdbRunner(() => settings().adbPath)
@@ -70,14 +96,17 @@ export function registerPhoneScreenIpc(deps: PhoneScreenIpcDeps): PhoneScreenIpc
   })
 
   // 사용자가 앱 안 폰 화면을 직접 누른 경우. 좌표는 0~1 비율로 받아 폰 해상도로 환산한다.
-  // 해상도는 `wm size` 로 폰당 한 번 읽어 캐시한다
-  const sizeCache = new Map<string, { width: number; height: number }>()
+  // 해상도는 `wm size` 로 읽되, 가로/세로 회전으로 바뀌므로 짧게만 캐시한다
+  const sizeCache = new Map<string, { width: number; height: number; at: number }>()
   const deviceSize = async (serial: string): Promise<{ width: number; height: number }> => {
+    const now = Date.now()
     const cached = sizeCache.get(serial)
-    if (cached) return cached
+    if (cached && now - cached.at < SIZE_CACHE_TTL_MS) {
+      return { width: cached.width, height: cached.height }
+    }
     const res = await adb.run(shellArgs(serial, 'wm size'))
     const phys = parseWmSize(res.stdout) ?? { width: 1080, height: 2400 }
-    sizeCache.set(serial, phys)
+    sizeCache.set(serial, { ...phys, at: now })
     return phys
   }
   const ratioToDevice = async (
@@ -85,6 +114,7 @@ export function registerPhoneScreenIpc(deps: PhoneScreenIpcDeps): PhoneScreenIpc
     rx: number,
     ry: number
   ): Promise<{ x: number; y: number }> => {
+    assertRatio(rx, ry)
     const size = await deviceSize(serial)
     return toDeviceCoord({ x: rx, y: ry }, { width: 1, height: 1 }, size)
   }
@@ -97,7 +127,7 @@ export function registerPhoneScreenIpc(deps: PhoneScreenIpcDeps): PhoneScreenIpc
     async (serial: string, rx1: number, ry1: number, rx2: number, ry2: number, ms?: number) => {
       const a = await ratioToDevice(serial, rx1, ry1)
       const b = await ratioToDevice(serial, rx2, ry2)
-      await swipe(adb, serial, a, b, ms)
+      await swipe(adb, serial, a, b, assertSwipeMs(ms))
     }
   )
   deps.handle(IPC.phoneKey, async (serial: string, key: string) => {

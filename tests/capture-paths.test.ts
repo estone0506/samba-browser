@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { join } from 'node:path'
-import { resolveCaptureDir, uniqueCaptureFile } from '../src/main/capture/paths'
+import { resolveCaptureDir, samePath, uniqueCaptureFile } from '../src/main/capture/paths'
 import { DEFAULT_CAPTURE_FOLDER_NAME } from '../src/shared/capture'
 import { blitRows, createCanvas, toDeviceStep, type RgbaImage } from '../src/main/capture/stitch'
 
@@ -106,5 +106,24 @@ describe('전체 페이지 이미지 이어붙이기', () => {
     const step = { index: 1, scrollY: 700, sourceTop: 100, height: 700, destTop: 800 }
     expect(toDeviceStep(step, 2)).toEqual({ sourceTop: 200, height: 1400, destTop: 1600 })
     expect(toDeviceStep(step, 1)).toEqual({ sourceTop: 100, height: 700, destTop: 800 })
+  })
+})
+
+describe('경로 비교(저장 폴더 안인지 판정)', () => {
+  it('구분자·끝 구분자가 달라도 같은 폴더로 본다', () => {
+    expect(samePath('C:/a/b', 'C:\\a\\b', true)).toBe(true)
+    expect(samePath('C:/a/b/', 'C:/a/b', true)).toBe(true)
+    expect(samePath('C:/a/./b', 'C:/a/b', true)).toBe(true)
+  })
+
+  it('윈도우에서는 대소문자를 가리지 않는다', () => {
+    expect(samePath('C:/Users/Me/Pics', 'c:/users/me/pics', true)).toBe(true)
+    expect(samePath('C:/Users/Me/Pics', 'c:/users/me/pics', false)).toBe(false)
+  })
+
+  it('다른 폴더는 여전히 다르다', () => {
+    expect(samePath('C:/a/b', 'C:/a/c', true)).toBe(false)
+    expect(samePath('C:/a/b', 'C:/a/b/c', true)).toBe(false)
+    expect(samePath('', 'C:/a/b')).toBe(false)
   })
 })

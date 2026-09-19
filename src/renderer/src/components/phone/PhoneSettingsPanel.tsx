@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Switch } from '@renderer/components/ui/switch'
 import {
   PHONE_COUNTRIES,
-  PHONE_LIMIT_PRO,
+  PHONE_LIMIT,
   SCREEN_FPS,
   SCREEN_SIZES,
   type PhoneCountry,
@@ -105,7 +105,7 @@ export function PhoneSettingsPanel({ settings, update }: SectionProps): React.JS
 
       <SettingsSection
         title={t('phone.settings.listTitle')}
-        description={t('phone.settings.limitNote', { n: PHONE_LIMIT_PRO })}
+        description={t('phone.settings.limitNote', { n: PHONE_LIMIT })}
       >
         {list.length === 0 ? (
           <p className="text-[11.5px] text-[var(--text2)]">{t('phone.empty')}</p>
@@ -114,7 +114,7 @@ export function PhoneSettingsPanel({ settings, update }: SectionProps): React.JS
         )}
         {isOverPhoneLimit(list.length) && (
           <p className="text-[11.5px] text-[#b91c1c]">
-            {t('phone.settings.overLimit', { n: PHONE_LIMIT_PRO })}
+            {t('phone.settings.overLimit', { n: PHONE_LIMIT })}
           </p>
         )}
       </SettingsSection>

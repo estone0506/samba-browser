@@ -125,10 +125,18 @@ export async function startRecording(options: StartRecordingOptions): Promise<Re
   const recorder = new MediaRecorder(recordedStream, mimeType ? { mimeType } : undefined)
   const chunks: Blob[] = []
   const onChunk = options.onChunk
+  // 마지막 청크는 stop() 바로 앞에 dataavailable 로 온다. Blob→ArrayBuffer 변환이
+  // 비동기라 그대로 두면 onstop 이 먼저 끝나고, 호출부가 파일을 닫아 마지막 조각이 사라진다.
+  // 변환을 한 줄로 이어 두고 stop() 이 이 줄을 기다리게 한다(순서도 함께 지켜진다)
+  let pendingChunks: Promise<unknown> = Promise.resolve()
   recorder.ondataavailable = (e): void => {
     if (e.data.size <= 0) return
     chunks.push(e.data)
-    if (onChunk) void e.data.arrayBuffer().then((buf) => onChunk(new Uint8Array(buf)))
+    if (!onChunk) return
+    pendingChunks = pendingChunks
+      .then(() => e.data.arrayBuffer())
+      .then((buf) => onChunk(new Uint8Array(buf)))
+      .catch(() => undefined)
   }
   recorder.start(1000)
 
@@ -141,8 +149,9 @@ export async function startRecording(options: StartRecordingOptions): Promise<Re
         }
         recorder.onstop = (): void => {
           for (const fn of cleanups) fn()
-          void new Blob(chunks, { type: mimeType || 'video/webm' })
-            .arrayBuffer()
+          // 마지막 청크 쓰기가 끝난 뒤에야 끝났다고 알린다
+          void pendingChunks
+            .then(() => new Blob(chunks, { type: mimeType || 'video/webm' }).arrayBuffer())
             .then((buffer) => resolve(new Uint8Array(buffer)))
             .catch(reject)
         }

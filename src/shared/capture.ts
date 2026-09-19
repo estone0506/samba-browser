@@ -388,6 +388,16 @@ export interface CaptureVideoSourceDto {
   scaleFactor: number
 }
 
+/**
+ * 녹화 시작 결과. token 은 이 녹화 1건을 가리키는 표이고,
+ * 이어 쓰기·마무리·취소는 모두 이 표를 함께 보내야 한다 —
+ * 앞 녹화가 늦게 보낸 청크가 다음 녹화 파일을 오염시키지 않게 하기 위함이다
+ */
+export interface CaptureBeginVideoDto {
+  token: string
+  fileName: string
+}
+
 /** 직접 지정용 정지 이미지 + 그 이미지가 덮는 렌더러 좌표 */
 export interface CaptureStillDto {
   dataUrl: string

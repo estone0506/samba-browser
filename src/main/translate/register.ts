@@ -44,16 +44,30 @@ export interface RegisterTranslateDeps {
   settings: () => Settings
   apiKeys: ApiKeyStore
   userDataDir: string
+  /**
+   * 지금 작업공간(프로필) 식별자. 번역 캐시에는 번역문이 평문으로 들어가므로
+   * 작업공간마다 파일을 나눈다
+   */
+  profileId: () => string
   /** main → renderer 진행률 통지(창이 살아 있을 때만 보낸다) */
   emit: (dto: TranslateProgressDto) => void
 }
 
 export interface TranslateHandle {
+  /** 작업공간이 바뀌었을 때 캐시 파일을 그 프로필 것으로 갈아 끼운다 */
+  setProfile: () => void
   dispose: () => void
 }
 
+/** 파일 이름에 쓸 수 없는 글자는 밑줄로 바꾼다 */
+function safeProfileId(raw: string): string {
+  return raw.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64) || 'default'
+}
+
 export function registerTranslate(deps: RegisterTranslateDeps): TranslateHandle {
-  const cache = new TranslateCache(join(deps.userDataDir, 'translate-cache.json'))
+  const cacheFile = (): string =>
+    join(deps.userDataDir, `translate-cache-${safeProfileId(deps.profileId())}.json`)
+  const cache = new TranslateCache(cacheFile())
   // 번역은 늘 Fast 등급(Haiku 급) 모델로 돈다 — 문장 치환에 비싼 모델을 쓸 이유가 없다
   const fastModel = (): string => {
     const s = deps.settings()
@@ -242,6 +256,7 @@ export function registerTranslate(deps: RegisterTranslateDeps): TranslateHandle 
   })
 
   return {
+    setProfile: () => cache.setFile(cacheFile()),
     dispose: () => {
       cache.flush()
       sdkAsk.dispose()

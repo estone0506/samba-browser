@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { DeviceManager, type DeviceRepo, type PhoneRowLike } from '../src/main/phone/devices'
-import { DEVICE_POLL_INTERVAL_MS, PHONE_LIMIT_PRO, type PhoneDto } from '../src/shared/phone'
+import { DEVICE_POLL_INTERVAL_MS, PHONE_LIMIT, type PhoneDto } from '../src/shared/phone'
 import { ADB_CANDIDATES } from '../src/main/phone/adb'
 import { PhoneService, type PhoneServiceRepo } from '../src/main/phone/service'
 import { DEFAULT_SETTINGS, type Settings } from '../src/shared/settings'
@@ -73,7 +73,7 @@ interface Harness {
   manager: DeviceManager
 }
 
-function makeHarness(options: { pro?: boolean; autoReconnect?: boolean } = {}): Harness {
+function makeHarness(options: { autoReconnect?: boolean } = {}): Harness {
   const adb = new FakeAdb()
   const repo = new FakeRepo()
   const timer = new FakeTimer()
@@ -82,7 +82,6 @@ function makeHarness(options: { pro?: boolean; autoReconnect?: boolean } = {}): 
     adb,
     repo,
     now: () => 1_000,
-    isPro: () => options.pro !== false,
     autoReconnect: () => options.autoReconnect !== false,
     onChange: (list, warning) => changes.push({ list, warning }),
     setInterval: timer.setInterval,
@@ -151,17 +150,6 @@ describe('DeviceManager 폴링', () => {
     expect(list[0].state).toBe('unauthorized')
     expect(h.adb.calls.some((c) => c[0] === 'kill-server')).toBe(false)
   })
-
-  it('isPro() 가 false 면 폴링을 시작하지 않고 목록이 비어 있다', async () => {
-    const off = makeHarness({ pro: false })
-    off.adb.reply('devices -l', ONE)
-    off.manager.start()
-    await Promise.resolve()
-    expect(off.adb.calls).toHaveLength(0)
-    expect(await off.manager.refresh()).toEqual([])
-    expect(off.manager.list()).toEqual([])
-    expect(off.changes).toHaveLength(0)
-  })
 })
 
 describe('DeviceManager 끊김 복구', () => {
@@ -205,17 +193,17 @@ describe('DeviceManager 끊김 복구', () => {
 })
 
 describe('DeviceManager 상한과 와이파이', () => {
-  it('Pro 상한을 넘는 폰은 offline 으로 두고 경고를 함께 통지한다', async () => {
+  it('동시 연결 상한을 넘는 폰은 offline 으로 두고 경고를 함께 통지한다', async () => {
     const h = makeHarness()
     const lines = ['List of devices attached']
-    for (let i = 0; i < PHONE_LIMIT_PRO + 1; i++) {
+    for (let i = 0; i < PHONE_LIMIT + 1; i++) {
       lines.push(`SERIAL${i} device usb:1-${i} model:SM_A54${i}`)
     }
     h.adb.reply('devices -l', `${lines.join('\n')}\n`)
     const list = await h.manager.refresh()
-    expect(list).toHaveLength(PHONE_LIMIT_PRO + 1)
-    expect(list.slice(0, PHONE_LIMIT_PRO).every((p) => p.state === 'online')).toBe(true)
-    expect(list[PHONE_LIMIT_PRO].state).toBe('offline')
+    expect(list).toHaveLength(PHONE_LIMIT + 1)
+    expect(list.slice(0, PHONE_LIMIT).every((p) => p.state === 'online')).toBe(true)
+    expect(list[PHONE_LIMIT].state).toBe('offline')
     expect(h.changes[0].warning).toBeTruthy()
   })
 
@@ -278,7 +266,7 @@ class FakeServiceRepo extends FakeRepo implements PhoneServiceRepo {
   }
 }
 
-function makeService(options: { pro?: boolean } = {}): {
+function makeService(): {
   adb: FakeAdb
   repo: FakeServiceRepo
   emitted: { list: PhoneDto[]; warning?: string }[]
@@ -299,7 +287,6 @@ function makeService(options: { pro?: boolean } = {}): {
         return settings
       }
     },
-    isPro: () => options.pro !== false,
     emit: (list, warning) => emitted.push({ list, warning }),
     emitAuthWaiting: () => {},
     now: () => 1_000,
@@ -317,15 +304,6 @@ function makeService(options: { pro?: boolean } = {}): {
 }
 
 describe('PhoneService', () => {
-  it('Pro 가 아니면 폴링을 시작하지 않는다', async () => {
-    const s = makeService({ pro: false })
-    s.adb.reply('devices -l', ONE)
-    s.service.start()
-    await Promise.resolve()
-    expect(s.adb.calls).toHaveLength(0)
-    expect(s.service.list()).toEqual([])
-  })
-
   it('detectPaths 는 찾은 경로로 비어 있는 설정을 채운다', () => {
     const s = makeService()
     const found = s.service.detectPaths()

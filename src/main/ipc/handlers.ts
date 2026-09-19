@@ -94,8 +94,6 @@ import {
   createCodeReader,
   createKeypadReader,
   createPhoneAgentBridge,
-  phoneProEnabled,
-  PRO_OVERRIDE_ENV,
   SecretScreenGate
 } from '../phone/wiring'
 // === 화면 번역 · 이미지 번역 — 배선은 translate/register.ts 한 곳에 모여 있다 ==========
@@ -972,19 +970,11 @@ export function registerIpc(
   // === 확장 끝 =========================================================================
 
   // === 폰 연동(3단계) — 이 블록만 따로 추가한다 ========================================
-  // 기기 감시는 Pro 요금제에서만 돈다. 결제 비밀번호·문자 본문은 이 채널들로 흐르지 않는다
+  // 결제 비밀번호·문자 본문은 이 채널들로 흐르지 않는다
   const phoneAdb = createAdbRunner(() => settings.get().adbPath)
   // 원클릭 설치본이 들어가는 자리(%APPDATA%/SAMBA Browser/phone-tools)
   const phoneToolsRoot = join(app.getPath('userData'), 'phone-tools')
   const phoneRepo = new PhoneRepo(db)
-  // 요금제 게이트. 개발·검증용 우회는 배포판에서 통째로 무시된다
-  const phoneIsPro = (): boolean =>
-    phoneProEnabled({
-      plan: auth.state().plan,
-      devOverride: settings.get().phoneDevOverridePro,
-      env: process.env[PRO_OVERRIDE_ENV],
-      packaged: app.isPackaged
-    })
   // 비밀번호 화면 표식(결제 실행기가 갱신 → 화면 전송이 참조)과 ARS 진행 로그 중계
   const phoneSecretGate = new SecretScreenGate()
   const phoneProgress = new AgentProgressRelay()
@@ -993,7 +983,6 @@ export function registerIpc(
     repo: phoneRepo,
     settings,
     toolsRoot: phoneToolsRoot,
-    isPro: phoneIsPro,
     emit: (list, warning) => send(IPC.phoneUpdated, { list, warning }),
     emitAuthWaiting: (dto) => send(IPC.phoneAuthWaiting, dto),
     onProgress: (t) => phoneProgress.emit(t)
@@ -1026,11 +1015,11 @@ export function registerIpc(
       onProgress: (p) => send(IPC.phoneInstallProgress, p)
     })
   )
-  // AI 폰 도구 배선. 금고는 넘기지 않는다 — 폰 도구는 비밀값을 볼 수 없다
   // AI 폰 도구 배선. 금고는 넘기지 않는다 — 폰 도구는 비밀값을 볼 수 없다.
   // 문자 인증·결제 승인만 별도 실행기(phone/wiring.ts)를 거치고, 결제 비밀번호는
-  // 그 안의 pay-secret.ts 밖으로 나오지 않는다
-  const phoneOps = createPhoneOps(phoneAdb, () => phones.list())
+  // 그 안의 pay-secret.ts 밖으로 나오지 않는다.
+  // 비밀 화면 표식을 함께 넘겨, 화면 읽기·캡처가 비밀번호 화면을 모델에게 넘기지 않게 한다
+  const phoneOps = createPhoneOps(phoneAdb, () => phones.list(), phoneSecretGate)
   const visualDeps = {
     apiKey: () => apiKeys.get('anthropic'),
     model: () => resolveModel(settings.get().taskModels, 'visual', settings.get().aiProvider)
@@ -1057,6 +1046,8 @@ export function registerIpc(
     }),
     readKeypad: createKeypadReader({
       adb: phoneAdb,
+      // 결제 키패드 원본 화면을 외부 AI 로 보내는 경로다 — 기본은 꺼짐
+      enabled: () => settings.get().phoneKeypadVisual,
       screen: (serial) => phoneOps.screen(serial),
       readLayout: (png, size) => readKeypadLayout(visualDeps, png, size)
     }),
@@ -1065,7 +1056,6 @@ export function registerIpc(
   })
   agent.setPhones({
     phones: phoneOps,
-    isPro: phoneIsPro,
     assigned: () => phones.list().find((p) => p.state === 'online')?.serial ?? null,
     waitForSmsCode: phoneBridge.waitForSmsCode,
     approvePayment: phoneBridge.approvePayment
@@ -1091,9 +1081,13 @@ export function registerIpc(
     settings: () => settings.get(),
     apiKeys,
     userDataDir: app.getPath('userData'),
+    // 번역 캐시에는 번역문이 평문으로 들어가므로 작업공간마다 파일을 나눈다
+    profileId: () => `ws${workspace.active().id}`,
     // 진행률에는 개수와 고정된 사유 코드만 담긴다(원문·번역문은 오지 않는다)
     emit: (dto) => send(IPC.translateProgress, dto)
   })
+  // 작업공간을 바꾸면 그 프로필의 캐시 파일로 갈아 끼운다
+  workspace.onChanged(() => translate.setProfile())
   win.once('closed', () => translate.dispose())
   // === 번역 끝 ========================================================================
   // === 사진·영상 캡처 ==================================================================

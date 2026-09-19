@@ -10,7 +10,6 @@ import {
   SecondaryButton,
   SettingsRow,
   SettingsSection,
-  StatusBadge,
   TextInput
 } from './shared'
 
@@ -71,10 +70,6 @@ export function AccountSection(): React.JSX.Element {
             </div>
             <div className="text-[11px] text-[var(--text2)]">{t('account.signedIn')}</div>
           </div>
-          <StatusBadge
-            label={auth.state.plan === 'pro' ? t('account.planPro') : t('account.planFree')}
-            tone={auth.state.plan === 'pro' ? 'strong' : 'neutral'}
-          />
         </div>
         <SecondaryButton disabled={auth.pending !== null} onClick={() => void auth.signOut()}>
           {t('account.signOut')}
