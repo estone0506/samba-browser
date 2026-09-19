@@ -146,3 +146,12 @@ describe('설정 스키마', () => {
     expect(s.taskModels.visual).toBe('claude-fable-5-1')
   })
 })
+
+describe('canonicalModel', () => {
+  it('별칭을 정식 ID 로 바꾸고 모르는 값은 그대로 둔다', async () => {
+    const { canonicalModel } = await import('../src/shared/ai')
+    expect(canonicalModel('sonnet')).toBe('claude-sonnet-5')
+    expect(canonicalModel('claude-sonnet-5')).toBe('claude-sonnet-5')
+    expect(canonicalModel('gpt-5.6')).toBe('gpt-5.6')
+  })
+})

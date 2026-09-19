@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { modelLabel } from '@shared/ai'
+import { modelLabel, canonicalModel } from '@shared/ai'
 import { Check, ChevronDown } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@renderer/components/ui/popover'
 import { cn } from '@renderer/lib/utils'
@@ -56,7 +56,9 @@ export function ModelEffortMenu(): React.JSX.Element {
   }, [load])
 
   // 사용자가 설정 화면에서 직접 적어 넣은 모델도 목록에 보이게 한다
-  const choices = modelChoices.includes(model) ? modelChoices : [model, ...modelChoices]
+  // 저장값이 별칭(sonnet)이면 정식 ID 항목과 같은 줄로 본다 — 같은 모델이 두 번 보이지 않게
+  const current = canonicalModel(model)
+  const choices = modelChoices.includes(current) ? modelChoices : [current, ...modelChoices]
 
   const choose = (m: string): void => {
     setModelOpen(false)
@@ -88,7 +90,7 @@ export function ModelEffortMenu(): React.JSX.Element {
               <OptionRow
                 key={m}
                 label={modelLabel(m)}
-                selected={m === model}
+                selected={m === current}
                 onClick={() => choose(m)}
               />
             ))}

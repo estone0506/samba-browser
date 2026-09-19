@@ -107,3 +107,14 @@ const MODEL_LABELS: Record<string, string> = {
 export function modelLabel(model: string): string {
   return MODEL_LABELS[model] ?? model
 }
+
+// 별칭(sonnet 등)을 정식 ID 로. 저장값이 별칭이어도 목록의 정식 ID 와 같은 항목으로 취급한다
+const MODEL_ALIASES: Record<string, string> = {
+  fable: 'claude-fable-5-1',
+  opus: 'claude-opus-5',
+  sonnet: 'claude-sonnet-5',
+  haiku: 'claude-haiku-4-5-20251001'
+}
+export function canonicalModel(model: string): string {
+  return MODEL_ALIASES[model] ?? model
+}
