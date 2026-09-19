@@ -2,9 +2,11 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Play } from 'lucide-react'
 import type { PlaybookDto, PlaybookInput } from '@shared/playbook'
+import type { PlaybookSchedule, ScheduleStatusDto } from '@shared/schedule'
 import { Switch } from '@renderer/components/ui/switch'
 import { PrimaryButton, SecondaryButton, StatusBadge } from '@renderer/components/settings/shared'
 import { PlaybookEditor } from './PlaybookEditor'
+import { ScheduleCard } from './ScheduleCard'
 import { previewOf } from './playbook-view'
 
 /**
@@ -20,7 +22,12 @@ export function PlaybookCard({
   onToggle,
   onRun,
   onRemove,
-  onRestore
+  onRestore,
+  scheduleStatus,
+  modelChoices,
+  onSchedule,
+  onRunNow,
+  onSetPaused
 }: {
   playbook: PlaybookDto
   editing: boolean
@@ -31,6 +38,12 @@ export function PlaybookCard({
   onRun: () => void
   onRemove: () => void
   onRestore: () => void
+  scheduleStatus?: ScheduleStatusDto
+  modelChoices: string[]
+  onSchedule: (schedule: PlaybookSchedule) => void
+  /** 예약 경로로 실행한다(결과가 예약 기록에 남는다) */
+  onRunNow: () => void
+  onSetPaused: (paused: boolean) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const preview = previewOf(playbook.instructions)
@@ -86,6 +99,14 @@ export function PlaybookCard({
               <SecondaryButton onClick={onRemove}>{t('automation.action.delete')}</SecondaryButton>
             )}
           </div>
+          <ScheduleCard
+            schedule={playbook.schedule}
+            status={scheduleStatus}
+            modelChoices={modelChoices}
+            onChange={onSchedule}
+            onRunNow={onRunNow}
+            onSetPaused={onSetPaused}
+          />
         </>
       )}
     </section>

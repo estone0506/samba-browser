@@ -9,6 +9,7 @@ import type { PayResult } from '../phone/pay'
 import type { PhoneRunContext } from '../phone/wiring'
 import { buildSystemPrompt } from './prompt'
 import { appendPlaybooks, matchPlaybooks, type PlaybookDto } from '../../shared/playbook'
+import type { ScheduleRunOverrides } from '../../shared/schedule'
 import {
   runQuery,
   runCodexQuery,
@@ -238,8 +239,12 @@ export class AgentRunner {
     this.emit({ type: 'status', state: 'stopped' })
   }
 
-  /** chatId 를 주면 이 실행의 대화 기록을 그 대화에 저장한다(완료·실패·중단 모두) */
-  async run(prompt: string, chatId?: number): Promise<void> {
+  /**
+   * chatId 를 주면 이 실행의 대화 기록을 그 대화에 저장한다(완료·실패·중단 모두).
+   * overrides 는 예약 실행이 넘기는 이번 실행만의 모델·권한 모드다 —
+   * 주지 않으면(사용자가 직접 친 문장) 전역 설정을 그대로 쓴다
+   */
+  async run(prompt: string, chatId?: number, overrides?: ScheduleRunOverrides): Promise<void> {
     // 이미 실행 중이면 세대 가드 없이 status 를 emit 하면 진행 중인 실행의 UI 를 덮어쓸 수 있다.
     // 핸들러가 throw 를 { ok: false, error } 로 ack 하므로 에러만 던진다.
     if (this.abort) {
@@ -247,7 +252,18 @@ export class AgentRunner {
     }
     // 이전 작업의 잔여 확인 요청 정리
     this.clearPending()
-    const s = this.settings.get()
+    const saved = this.settings.get()
+    // 권한 모드만 덮어쓴다. 도구·프롬프트가 보는 s.permissionMode 가 한 군데라 이걸로 충분하다
+    const s =
+      overrides?.permissionMode === undefined
+        ? saved
+        : { ...saved, permissionMode: overrides.permissionMode }
+    // 이번 실행에 쓸 모델. 예약이 모델을 지정하지 않았으면 작업별 모델 표의 '표준' 칸이다
+    const overrideModel = overrides?.model?.trim()
+    const runModel =
+      overrideModel !== undefined && overrideModel !== ''
+        ? overrideModel
+        : resolveModel(s.taskModels, 'standard', s.aiProvider)
     const abort = new AbortController()
     this.abort = abort
     const gen = ++this.generation
@@ -361,7 +377,7 @@ export class AgentRunner {
           {
             prompt,
             systemPrompt: systemPrompt(s.permissionMode),
-            model: resolveModel(s.taskModels, 'standard', s.aiProvider),
+            model: runModel,
             abort
           },
           deduper,
@@ -372,8 +388,7 @@ export class AgentRunner {
       const stream = runQuery({
         prompt,
         systemPrompt: systemPrompt(s.permissionMode, s.agentEffort),
-        // 작업별 모델 표의 '표준' 칸이 기본 실행 모델이다(s.model 은 하위 호환으로만 남는다)
-        model: resolveModel(s.taskModels, 'standard', s.aiProvider),
+        model: runModel,
         // 채팅 입력줄에서 고른 추론 강도
         effort: s.agentEffort,
         mcpServers: { samba: server },

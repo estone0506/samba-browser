@@ -3,7 +3,9 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus } from 'lucide-react'
 import { runPhraseOf, type PlaybookInput } from '@shared/playbook'
+import type { PlaybookSchedule } from '@shared/schedule'
 import { usePlaybookStore } from '@renderer/stores/playbookStore'
+import { useScheduleStore } from '@renderer/stores/scheduleStore'
 import { useChatStore } from '@renderer/stores/chatStore'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { PrimaryButton } from '@renderer/components/settings/shared'
@@ -26,11 +28,22 @@ export function AutomationPage(): React.JSX.Element {
   const save = usePlaybookStore((s) => s.save)
   const remove = usePlaybookStore((s) => s.remove)
   const restore = usePlaybookStore((s) => s.restore)
+  const scheduleById = useScheduleStore((s) => s.byId)
+  const loadSchedules = useScheduleStore((s) => s.load)
+  const scheduleRunNow = useScheduleStore((s) => s.runNow)
+  const setSchedulePaused = useScheduleStore((s) => s.setPaused)
+  const modelChoices = useChatStore((s) => s.modelChoices)
+  const loadModelMenu = useChatStore((s) => s.loadModelMenu)
   const [editing, setEditing] = useState<EditTarget>(null)
 
   useEffect(() => {
     void load()
-  }, [load])
+    void loadSchedules()
+    // 예약의 모델 칸은 설정의 작업별 모델 목록을 그대로 쓴다
+    void loadModelMenu()
+  }, [load, loadSchedules, loadModelMenu])
+  // 메인이 예약 상태를 바꾸면(실행 시작·완료·자동 일시정지) 목록을 다시 읽는다
+  useEffect(() => useScheduleStore.getState().subscribe(), [])
 
   const commit = (input: PlaybookInput): void => {
     void save(input).then((ok) => {
@@ -105,6 +118,21 @@ export function AutomationPage(): React.JSX.Element {
             onRun={() => run(runPhraseOf(playbook))}
             onRemove={() => void remove(playbook.id)}
             onRestore={() => void restore(playbook.id)}
+            scheduleStatus={scheduleById[playbook.id]}
+            modelChoices={modelChoices}
+            onSchedule={(schedule: PlaybookSchedule) =>
+              void save({
+                id: playbook.id,
+                name: playbook.name,
+                triggers: playbook.triggers,
+                instructions: playbook.instructions,
+                enabled: playbook.enabled,
+                schedule
+              }).then(() => loadSchedules())
+            }
+            // 예약 경로로 실행한다 — 결과가 예약 기록(마지막 실행·이력)에 남는다
+            onRunNow={() => void scheduleRunNow(playbook.id)}
+            onSetPaused={(paused) => void setSchedulePaused(playbook.id, paused)}
           />
         ))}
 
