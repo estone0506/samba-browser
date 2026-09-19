@@ -250,14 +250,21 @@ function buildRemote(
   return { entry, row, localId: entry.op === 'delete' ? null : rowId }
 }
 
-/** 삭제 스냅샷(payload)을 원래 행 모양으로 되돌린다. 삭제 시각이 비어 있으면 지금으로 본다 */
-function tombstone<T extends { deletedAt: number | null }>(entry: OutboxRow): T | null {
+/**
+ * 삭제 스냅샷(payload)을 원래 행 모양으로 되돌린다. 삭제 시각이 비어 있으면 지금으로 본다.
+ * updatedAt 도 삭제 시각으로 올린다 — 옛 값 그대로 두면 다른 PC 의 풀 커서(updated_at > cursor)에
+ * 걸러져 삭제가 영영 전파되지 않는다(2PC 실검수에서 발견)
+ */
+function tombstone<T extends { deletedAt: number | null; updatedAt: number }>(
+  entry: OutboxRow
+): T | null {
   if (!entry.payload) return null
   try {
     const parsed: unknown = JSON.parse(entry.payload)
     if (typeof parsed !== 'object' || parsed === null) return null
     const row = parsed as T
-    return { ...row, deletedAt: row.deletedAt ?? entry.createdAt }
+    const deletedAt = row.deletedAt ?? entry.createdAt
+    return { ...row, deletedAt, updatedAt: Math.max(row.updatedAt ?? 0, deletedAt) }
   } catch {
     return null
   }

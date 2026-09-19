@@ -219,6 +219,10 @@ describe('pushAll', () => {
     const rows = backend.rows('vault_items_sync')
     expect(rows).toHaveLength(1)
     expect(rows[0].deleted_at).not.toBeNull()
+    // 삭제 표식의 updated_at 은 삭제 시각 이상이어야 다른 PC 의 풀 커서를 통과한다
+    expect(new Date(rows[0].updated_at).getTime()).toBeGreaterThanOrEqual(
+      new Date(rows[0].deleted_at as string).getTime()
+    )
   })
 
   it('네트워크 오류가 나면 변경 로그가 보존되고 다음 시도에 전송된다', async () => {
