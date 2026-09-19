@@ -9,7 +9,6 @@ import {
   type WebContents
 } from 'electron'
 import { join } from 'node:path'
-import { writeFile } from 'node:fs/promises'
 import * as os from 'node:os'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import { defaultTabUrl } from '../../shared/settings'
@@ -19,7 +18,7 @@ import { setOcrEnabled } from '../agent/tools-ocr'
 import { AgentRunner } from '../agent/runner'
 import type { Db } from '../db/client'
 import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vault/service'
-import { exportVault, type ExportRequest } from '../vault/export'
+import { exportVault, writeOwnerOnlyFile, type ExportRequest } from '../vault/export'
 import { ImportService, type ImportDialogs } from '../import/service'
 import { VaultCaptureGate } from './vault-capture'
 import { watchLoginSuccess } from './login-watch'
@@ -249,9 +248,8 @@ export function registerIpc(
           if (result.canceled || !result.filePath) return undefined
           return result.filePath
         },
-        // 평문이 담기는 파일이다 — 만들 때부터 소유자만 읽을 수 있게 한다(0o600)
-        writeFile: (filePath, content) =>
-          writeFile(filePath, content, { encoding: 'utf8', mode: 0o600 })
+        // 평문이 담기는 파일이다 — 소유자만 읽을 수 있게 한다(0o600)
+        writeFile: (filePath, content) => writeOwnerOnlyFile(filePath, content)
       },
       req
     )
