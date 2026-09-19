@@ -130,8 +130,7 @@ installGestureRecognizer({
 const translateApi = installPageTranslate({
   translate: async (texts, lang) => {
     const reply = (await ipcRenderer.invoke(PAGE_IPC.pageTranslate, { lang, texts })) as
-      | IpcResult<string[]>
-      | undefined
+      IpcResult<string[]> | undefined
     if (!reply) return { ok: false, error: 'translate:failed' }
     return reply.ok ? { ok: true, texts: reply.data } : { ok: false, error: reply.error }
   },

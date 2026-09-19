@@ -61,6 +61,52 @@ export interface ImageTranslateDto {
   boxes: ImageTextBox[]
 }
 
+// === 진행률 · 실패 사유 =====================================================
+// 화면에 "번역 중 12/398" 과 실패 안내를 띄우기 위한 최소 정보만 담는다.
+// 원문·번역문은 이 경로로 나가지 않는다(개수와 고정된 사유 코드뿐이다).
+
+/** 어느 번역의 진행률인가 */
+export type TranslateProgressKind = 'page' | 'image'
+
+/** 화면에 띄울 실패 사유(i18n 키 꼬리). 자유 문구는 쓰지 않는다 */
+export type TranslateFailReason = 'needsAi' | 'timeout' | 'noText' | 'failed'
+
+export interface TranslateProgressDto {
+  kind: TranslateProgressKind
+  /** running=진행 중, done=더 보낼 것 없음, error=실패 */
+  phase: 'running' | 'done' | 'error'
+  done: number
+  total: number
+  /** phase 가 error 일 때만 채운다 */
+  reason?: TranslateFailReason
+}
+
+/**
+ * 내부 오류 코드/메시지를 화면에 띄울 사유로 좁힌다.
+ * 어떤 문자열이 와도 네 가지 중 하나가 되므로, 페이지가 만든 문구가 그대로 새어 나가지 않는다
+ */
+export function translateFailReason(message: string): TranslateFailReason {
+  const m = message.toLowerCase()
+  if (m.includes('needs-ai') || m.includes('not_connected') || m.includes('auth')) return 'needsAi'
+  if (m.includes('timeout') || m.includes('abort') || m.includes('시간')) return 'timeout'
+  if (m.includes('no-text') || m.includes('no text')) return 'noText'
+  return 'failed'
+}
+
+/** 격리 월드가 보고한 원시 값 → 렌더러에 보낼 DTO(숫자 정리 + 사유 좁히기) */
+export function toTranslateProgress(
+  kind: TranslateProgressKind,
+  input: { running?: unknown; done?: unknown; total?: unknown; error?: unknown }
+): TranslateProgressDto {
+  const count = (v: unknown): number =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0
+  const done = count(input.done)
+  const total = Math.max(count(input.total), done)
+  const error = typeof input.error === 'string' && input.error ? input.error : ''
+  if (error) return { kind, phase: 'error', done, total, reason: translateFailReason(error) }
+  return { kind, phase: input.running === true ? 'running' : 'done', done, total }
+}
+
 export function isTranslateLang(v: unknown): v is TranslateLang {
   return typeof v === 'string' && (TRANSLATE_LANGS as readonly string[]).includes(v)
 }

@@ -981,7 +981,9 @@ export function registerIpc(
     tabs,
     settings: () => settings.get(),
     apiKeys,
-    userDataDir: app.getPath('userData')
+    userDataDir: app.getPath('userData'),
+    // 진행률에는 개수와 고정된 사유 코드만 담긴다(원문·번역문은 오지 않는다)
+    emit: (dto) => send(IPC.translateProgress, dto)
   })
   win.once('closed', () => translate.dispose())
   // === 번역 끝 ========================================================================

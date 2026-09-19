@@ -7,9 +7,11 @@ import { IPC, type IpcResult, type Settings } from '../../shared/ipc'
 import {
   isTranslateLang,
   shouldAutoTranslate,
+  toTranslateProgress,
   TRANSLATE_MAX_NODES,
   type ImageTranslateDto,
-  type TranslateLang
+  type TranslateLang,
+  type TranslateProgressDto
 } from '../../shared/translate'
 import { resolveModel } from '../ai/models'
 import type { ApiKeyStore } from '../ai/keys'
@@ -42,6 +44,8 @@ export interface RegisterTranslateDeps {
   settings: () => Settings
   apiKeys: ApiKeyStore
   userDataDir: string
+  /** main → renderer 진행률 통지(창이 살아 있을 때만 보낸다) */
+  emit: (dto: TranslateProgressDto) => void
 }
 
 export interface TranslateHandle {
@@ -73,6 +77,16 @@ export function registerTranslate(deps: RegisterTranslateDeps): TranslateHandle 
       const tab = deps.tabs.get(t.id)
       return !!tab && !tab.view.webContents.isDestroyed() && tab.view.webContents === sender
     })
+
+  // 활성 탭이 보고한 진행률만 화면에 올린다(뒤에서 자동 번역 중인 탭이 주소창을 흔들지 않게)
+  const onPageProgress = (e: { sender: WebContents }, raw: unknown): void => {
+    if (!isTabSender(e.sender)) return
+    const active = deps.tabs.active()
+    if (!active || active.view.webContents !== e.sender) return
+    const input = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+    deps.emit(toTranslateProgress('page', input))
+  }
+  ipcMain.on(IPC.pageTranslateProgress, onPageProgress)
 
   ipcMain.handle(IPC.pageTranslate, async (e, raw: unknown): Promise<IpcResult<string[]>> => {
     if (!isTabSender(e.sender)) return { ok: false, error: 'translate:forbidden' }
@@ -200,6 +214,7 @@ export function registerTranslate(deps: RegisterTranslateDeps): TranslateHandle 
     dispose: () => {
       cache.flush()
       ipcMain.removeHandler(IPC.pageTranslate)
+      ipcMain.removeListener(IPC.pageTranslateProgress, onPageProgress)
     }
   }
 }
