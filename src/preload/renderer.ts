@@ -41,7 +41,9 @@ import {
   type AuthEventDto,
   type PhoneScreenChunkDto,
   type ScreenMode,
-  type PhoneScreenModeDto
+  type PhoneScreenModeDto,
+  type PhoneToolsStatusDto,
+  type PhoneToolsProgressDto
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
@@ -345,6 +347,14 @@ const api = {
       invoke(IPC.phoneAssign, accountId, phoneId),
     authEvents: (limit?: number): Promise<IpcResult<AuthEventDto[]>> =>
       invoke(IPC.phoneAuthEvents, limit),
+    // 폰 연동 프로그램(adb·scrcpy) 설치 상태·원클릭 설치
+    toolsStatus: (): Promise<IpcResult<PhoneToolsStatusDto>> => invoke(IPC.phoneToolsStatus),
+    installTools: (): Promise<IpcResult<PhoneToolsStatusDto>> => invoke(IPC.phoneInstallTools),
+    onInstallProgress: (cb: (dto: PhoneToolsProgressDto) => void): (() => void) => {
+      const h = (_: unknown, dto: PhoneToolsProgressDto): void => cb(dto)
+      ipcRenderer.on(IPC.phoneInstallProgress, h)
+      return () => ipcRenderer.off(IPC.phoneInstallProgress, h)
+    },
     // 목록·상태가 바뀔 때마다 온다. warning 은 연결 상한 초과 같은 안내 문구
     onUpdated: (cb: (list: PhoneDto[], warning?: string) => void): (() => void) => {
       const h = (_: unknown, dto: PhoneUpdatedDto): void => cb(dto.list, dto.warning)
