@@ -50,6 +50,26 @@ export function captureExtension(mode: CaptureMode, format: CaptureFormat): stri
 /** 기본 저장 폴더 이름(사용자가 설정에서 바꾸지 않았을 때 Downloads 아래에 만든다) */
 export const DEFAULT_CAPTURE_FOLDER_NAME = 'SAMBA 캡처'
 
+/**
+ * 좁은 메뉴에 넣을 수 있게 폴더 경로를 줄인다.
+ * 길면 앞을 `…` 로 접고 뒤쪽 폴더 이름부터 남긴다(구분자는 원래 것을 쓴다)
+ */
+export function shortenCapturePath(path: string, maxLength = 34): string {
+  const trimmed = path.trim()
+  if (trimmed.length <= maxLength) return trimmed
+  const separator = trimmed.includes('\\') ? '\\' : '/'
+  const parts = trimmed.split(separator).filter((p) => p.length > 0)
+  let out = ''
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const next = `${separator}${parts[i]}${out}`
+    if (next.length + 1 > maxLength) break
+    out = next
+  }
+  // 마지막 한 조각조차 길면 그 조각의 뒷부분만 남긴다
+  if (!out) return `…${trimmed.slice(trimmed.length - maxLength + 1)}`
+  return `…${out}`
+}
+
 // === 파일명 규칙 ===========================================================
 const pad = (n: number, width = 2): string => String(n).padStart(width, '0')
 
@@ -241,6 +261,42 @@ export function clampRect(rect: CaptureRect, bounds: CaptureRect): CaptureRect |
   return { x: left, y: top, width: right - left, height: bottom - top }
 }
 
+// === 녹화 영역(비디오 · 직접 지정) =========================================
+/** 녹화 영역 최소 크기(웹뷰 CSS 픽셀). 이보다 작게 끌면 실수로 본다 */
+export const MIN_VIDEO_REGION_SIZE = 32
+
+/** 선택 사각형을 화면 좌표로 옮길 때 필요한 값들 */
+export interface VideoRegionSource {
+  /** 잘린 곳 없는 웹뷰 영역(화면 픽셀). 선택 사각형의 원점이다 */
+  viewport: CaptureRect
+  /** 화면 안으로 잘라 넣은 녹화 가능 영역(화면 픽셀). null 이면 viewport 를 그대로 쓴다 */
+  crop: CaptureRect | null
+  /** 화면 픽셀 / CSS 픽셀 비율 */
+  scaleFactor: number
+}
+
+/**
+ * 오버레이에서 고른 사각형(웹뷰 CSS 픽셀)을 녹화용 화면 픽셀 사각형으로 옮긴다.
+ * 너무 작은 선택과 화면 밖으로 완전히 벗어난 선택은 null 이다
+ */
+export function videoRegionCrop(
+  selection: CaptureRect,
+  source: VideoRegionSource
+): CaptureRect | null {
+  if (selection.width < MIN_VIDEO_REGION_SIZE || selection.height < MIN_VIDEO_REGION_SIZE) {
+    return null
+  }
+  const scale = source.scaleFactor > 0 ? source.scaleFactor : 1
+  const wanted: CaptureRect = {
+    x: Math.round(source.viewport.x + selection.x * scale),
+    y: Math.round(source.viewport.y + selection.y * scale),
+    width: Math.max(1, Math.round(selection.width * scale)),
+    height: Math.max(1, Math.round(selection.height * scale))
+  }
+  // 웹뷰 영역(화면에 보이는 부분) 밖으로 나간 부분은 잘라 낸다
+  return clampRect(wanted, source.crop ?? source.viewport)
+}
+
 // === 전체 페이지 이어붙이기 ================================================
 /** 결과 이미지 최대 높이(CSS 픽셀). 아주 긴 페이지에서 메모리가 터지지 않게 자른다 */
 export const MAX_FULL_PAGE_HEIGHT = 20000
@@ -324,8 +380,12 @@ export interface CaptureVideoSourceDto {
   /** 화면(또는 창) 픽셀 크기 */
   width: number
   height: number
-  /** videoDirect 일 때만: 잘라낼 웹뷰 영역(화면 좌표, CSS 픽셀) */
+  /** videoDirect 일 때만: 잘라낼 웹뷰 영역(화면 픽셀) */
   crop: CaptureRect | null
+  /** videoDirect 일 때만: 화면 밖으로 잘리기 전 웹뷰 영역(화면 픽셀). 선택 영역의 원점이다 */
+  viewport: CaptureRect | null
+  /** 화면 픽셀 / CSS 픽셀 비율 */
+  scaleFactor: number
 }
 
 /** 직접 지정용 정지 이미지 + 그 이미지가 덮는 렌더러 좌표 */
