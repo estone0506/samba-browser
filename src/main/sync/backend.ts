@@ -23,6 +23,8 @@ export interface SyncBackend {
   /** 딥링크로 돌아온 인증 코드를 세션으로 바꾼다 */
   exchangeCode(code: string): Promise<{ userId: string; email: string }>
   signOut(): Promise<void>
+  /** 서버를 부르지 않고 이 PC 에 저장된 세션(refresh token)만 지운다 — 토큰 만료·원격 취소용 */
+  clearLocalSession(): Promise<void>
   currentUser(): Promise<{ userId: string; email: string } | null>
   /**
    * updated_at 이 sinceMs 보다 큰 행만 오래된 순으로 준다.

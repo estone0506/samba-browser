@@ -93,6 +93,9 @@ export function createFakeBackend(): FakeBackend {
     async signOut() {
       signedIn = null
     },
+    async clearLocalSession() {
+      signedIn = null
+    },
     async currentUser() {
       return signedIn
     },

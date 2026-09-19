@@ -30,6 +30,14 @@ export interface DeviceDeps {
   appVersion: () => string
 }
 
+/** 이 PC 의 기기 등록이 다른 기기에서 취소된 상태 — 호출부는 로그아웃·잠금으로 처리한다 */
+export class DeviceRevokedError extends Error {
+  constructor() {
+    super('이 기기는 다른 기기에서 로그아웃됐어요')
+    this.name = 'DeviceRevokedError'
+  }
+}
+
 export class DeviceService {
   private readonly local: SyncLocal
 
@@ -48,6 +56,11 @@ export class DeviceService {
    */
   async ensureRegistered(): Promise<string> {
     const id = this.currentId() ?? randomUUID()
+    // 다른 기기에서 취소된 행이면 되살리지 않는다(revoked_at 을 null 로 덮으면 원격 로그아웃이 무효가 된다)
+    const existing = this.currentId() ? await this.fetch(id) : null
+    if (existing && fromIsoOrNull(existing.revoked_at) !== null) {
+      throw new DeviceRevokedError()
+    }
     await this.deps.backend.upsert(DEVICES_TABLE, [
       {
         id,

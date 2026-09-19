@@ -63,6 +63,10 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
     async signOut() {
       await client.auth.signOut()
     },
+    async clearLocalSession() {
+      // scope: 'local' 은 서버 세션은 두고 이 클라이언트 저장소만 비운다
+      await client.auth.signOut({ scope: 'local' })
+    },
     async currentUser() {
       const { data } = await client.auth.getUser()
       return data.user ? { userId: data.user.id, email: data.user.email ?? '' } : null

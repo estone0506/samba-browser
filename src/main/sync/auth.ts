@@ -125,6 +125,11 @@ export class AuthService {
   markExpired(): void {
     this.cancelPending()
     this.setSignedOut()
+    // 저장된 refresh token 을 그대로 두면 다음 실행 때 restore() 가 되살린다 —
+    // 원격 취소된 기기가 재시작만으로 다시 로그인되는 구멍(2PC 실검수에서 발견)
+    void this.deps.backend?.clearLocalSession().catch((e: unknown) => {
+      console.warn('로컬 세션 삭제 실패', e instanceof Error ? e.message : String(e))
+    })
   }
 
   /** 창이 닫힐 때 — 기다리던 구글 로그인과 루프백 서버를 정리한다 */

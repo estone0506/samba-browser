@@ -2,7 +2,12 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { openDatabase, type Db } from '../src/main/db/client'
-import { DeviceService, DEVICE_ID_KEY, DEVICES_TABLE } from '../src/main/sync/devices'
+import {
+  DeviceRevokedError,
+  DeviceService,
+  DEVICE_ID_KEY,
+  DEVICES_TABLE
+} from '../src/main/sync/devices'
 import { SyncLocal } from '../src/main/sync/local'
 import { createFakeBackend, FAKE_USER_ID, type FakeBackend } from './stubs/fake-backend'
 
@@ -97,6 +102,13 @@ describe('DeviceService', () => {
     expect(row?.revoked_at).not.toBeNull()
     // 내 기기는 그대로다
     expect(await devices.isRevoked()).toBe(false)
+  })
+
+  it('취소된 기기는 다시 등록해도 되살아나지 않고 DeviceRevokedError 를 던진다', async () => {
+    const mine = await devices.ensureRegistered()
+    await devices.revoke(mine)
+    await expect(devices.ensureRegistered()).rejects.toBeInstanceOf(DeviceRevokedError)
+    expect(await devices.isRevoked()).toBe(true)
   })
 
   it('내 기기를 취소하면 isRevoked() 가 true 다', async () => {

@@ -16,7 +16,7 @@ import type { Db } from '../db/client'
 import type { AuthService } from './auth'
 import { backfillOutbox, verifyBackfill } from './backfill'
 import { AuthExpiredError, type SyncBackend } from './backend'
-import { DeviceService } from './devices'
+import { DeviceRevokedError, DeviceService } from './devices'
 import { SyncEngine, SyncEngineHolder } from './engine'
 import { SyncLocal } from './local'
 import { createOutboxRecorder, settingUpdatedAtKey, SyncOutbox } from './outbox'
@@ -125,7 +125,17 @@ export class SyncConnection {
         userId: user.userId,
         ...this.deps.device
       })
-      const deviceId = await devices.ensureRegistered()
+      let deviceId: string
+      try {
+        deviceId = await devices.ensureRegistered()
+      } catch (e: unknown) {
+        // 취소된 기기가 재시작·세션 복원으로 되살아나면 안 된다 → 즉시 로그아웃·잠금
+        if (e instanceof DeviceRevokedError) {
+          this.expire()
+          return
+        }
+        throw e
+      }
       this.deviceService = devices
       this.deps.auth.setDeviceId(deviceId)
       this.attachRecorders()
