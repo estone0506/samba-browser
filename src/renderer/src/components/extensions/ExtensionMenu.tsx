@@ -153,6 +153,19 @@ export function ExtensionMenu(): React.JSX.Element {
                         className={cn('h-3.5 w-3.5', pinned.includes(item.id) && 'fill-current')}
                       />
                     </button>
+                    {/* 즉시 삭제 — ⋯ 메뉴를 열지 않고 바로 지운다 */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuFor(null)
+                        void remove(item.id)
+                      }}
+                      title={t('extensions.remove')}
+                      aria-label={t('extensions.remove')}
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-[var(--text3)] hover:bg-red-50 hover:text-red-600"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                     <button
                       type="button"
                       onClick={() => setMenuFor((v) => (v === item.id ? null : item.id))}
