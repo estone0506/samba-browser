@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+import { Settings2 } from 'lucide-react'
 import { PHONE_LIMIT_PRO } from '@shared/phone'
+import type { Settings } from '@shared/settings'
 import { PhoneCard } from '@renderer/components/phone/PhoneCard'
 import { ToolsInstallCard } from '@renderer/components/phone/ToolsInstallCard'
+import { PhoneSettingsPanel } from '@renderer/components/phone/PhoneSettingsPanel'
 import { PHONE_GRID_MAX } from '@renderer/components/phone/phone-view'
 import { PrimaryButton, SecondaryButton, TextInput } from '@renderer/components/settings/shared'
+import { cn } from '@renderer/lib/utils'
 import { useAuthStore } from '@renderer/stores/authStore'
 import { usePhoneStore } from '@renderer/stores/phoneStore'
 import { useUiStore } from '@renderer/stores/uiStore'
@@ -41,10 +45,29 @@ export function PhonesPage(): React.JSX.Element {
     (s: { installed: boolean }) => setToolsInstalled(s.installed),
     []
   )
+  // 폰 설정은 이 화면 안에서 톱니로 여닫는다(설정 페이지에는 더 이상 폰 섹션이 없다)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settings, setSettings] = useState<Settings | null>(null)
 
   useEffect(() => {
     void loadAuth()
   }, [loadAuth])
+
+  // 패널을 처음 열 때만 설정을 읽어 온다
+  useEffect(() => {
+    if (!settingsOpen || settings) return
+    void window.samba.settings.get().then((r) => {
+      if (r.ok) setSettings(r.data)
+    })
+  }, [settingsOpen, settings])
+
+  // 낙관적으로 먼저 반영하고, 메인이 정규화한 값으로 덮어쓴다
+  const updateSettings = useCallback((patch: Partial<Settings>): void => {
+    setSettings((prev) => (prev ? { ...prev, ...patch } : prev))
+    void window.samba.settings.set(patch).then((r) => {
+      if (r.ok) setSettings(r.data)
+    })
+  }, [])
 
   useEffect(() => {
     void load()
@@ -119,10 +142,33 @@ export function PhonesPage(): React.JSX.Element {
                   {t('phone.wifiConnect')}
                 </SecondaryButton>
               </div>
-              <SecondaryButton className="h-[30px]" onClick={() => setView('settings')}>
-                {t('phone.openSettings')}
-              </SecondaryButton>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen((v) => !v)}
+                title={
+                  settingsOpen
+                    ? t('phone.settings.settingsClose')
+                    : t('phone.settings.settingsOpen')
+                }
+                aria-expanded={settingsOpen}
+                className={cn(
+                  'flex h-[30px] shrink-0 items-center gap-1.5 rounded-[9px] border px-2.5 text-[12.5px]',
+                  settingsOpen
+                    ? 'border-[var(--text)] bg-[var(--text)] font-medium text-white'
+                    : 'border-[var(--line)] text-[var(--text)] hover:bg-black/5'
+                )}
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+                {t('phone.settings.settingsOpen')}
+              </button>
             </div>
+
+            {/* 폰 설정 — 열었을 때만 그린다 */}
+            {settingsOpen && settings && (
+              <div className="flex flex-col gap-4">
+                <PhoneSettingsPanel settings={settings} update={updateSettings} />
+              </div>
+            )}
 
             {warning && (
               <Notice text={warning} onClose={clearWarning} closeLabel={t('phone.dismiss')} />

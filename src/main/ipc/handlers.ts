@@ -676,6 +676,9 @@ export function registerIpc(
     return extensions.add(folder)
   })
   handleFromRenderer(IPC.extRemove, (id: string) => extensions.remove(id))
+  handleFromRenderer(IPC.extSetEnabled, (id: string, enabled: boolean) =>
+    extensions.setEnabled(id, enabled)
+  )
 
   // 가져오기·웹스토어 설치. 결과 폴더는 항상 userData/extensions/<id> 이고, 로드는 위 관리자가 한다
   const extensionInstaller = createExtensionInstaller({

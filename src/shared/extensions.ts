@@ -6,7 +6,7 @@ export type ExtensionSource = 'store' | 'imported' | 'folder'
 
 export const EXTENSION_SOURCES = ['store', 'imported', 'folder'] as const
 
-/** 설정 화면 목록의 확장 한 줄 */
+/** 확장 프로그램 화면 카드 한 장 */
 export interface ExtensionDto {
   id: string
   name: string
@@ -14,6 +14,12 @@ export interface ExtensionDto {
   path: string
   /** 어디에서 온 확장인지(설정에 기록이 없으면 'folder' 로 본다) */
   source: ExtensionSource
+  /** manifest 의 설명(없으면 빈 문자열) */
+  description: string
+  /** manifest 가 요청하는 권한 — 세부정보에 요약으로 보여 준다 */
+  permissions: string[]
+  /** 꺼 두면 목록에는 남지만 세션에서는 걷어낸다 */
+  enabled: boolean
 }
 
 /** 로드 실패 한 건. 앱을 멈추지 않고 화면에 표시만 한다 */

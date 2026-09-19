@@ -322,6 +322,9 @@ const api = {
     list: (): Promise<IpcResult<ExtensionListDto>> => invoke(IPC.extList),
     load: (path?: string): Promise<IpcResult<ExtensionDto | null>> => invoke(IPC.extLoad, path),
     remove: (id: string): Promise<IpcResult<void>> => invoke(IPC.extRemove, id),
+    // 확장을 켜고 끈다. 끄면 목록에는 남고 세션에서만 빠진다
+    setEnabled: (id: string, enabled: boolean): Promise<IpcResult<ExtensionDto>> =>
+      invoke(IPC.extSetEnabled, id, enabled),
     // 다른 브라우저(크롬·웨일·엣지·브레이브)에 설치된 확장 목록
     importSources: (): Promise<IpcResult<ImportBrowserDto[]>> => invoke(IPC.extImportSources),
     // 고른 확장을 앱 데이터로 복사한 뒤 로드한다(항목별 성공·실패)

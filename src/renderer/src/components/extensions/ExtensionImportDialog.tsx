@@ -97,20 +97,14 @@ export function ExtensionImportDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>{t('settingsPage.extensions.importTitle')}</DialogTitle>
-          <DialogDescription>{t('settingsPage.extensions.importDesc')}</DialogDescription>
+          <DialogTitle>{t('extensions.importTitle')}</DialogTitle>
+          <DialogDescription>{t('extensions.importDesc')}</DialogDescription>
         </DialogHeader>
 
         {scanning && (
-          <p className="text-[12px] text-[var(--text2)]">
-            {t('settingsPage.extensions.importScanning')}
-          </p>
+          <p className="text-[12px] text-[var(--text2)]">{t('extensions.importScanning')}</p>
         )}
-        {empty && (
-          <p className="text-[12px] text-[var(--text2)]">
-            {t('settingsPage.extensions.importEmpty')}
-          </p>
-        )}
+        {empty && <p className="text-[12px] text-[var(--text2)]">{t('extensions.importEmpty')}</p>}
 
         <div className="flex max-h-[45vh] flex-col gap-3 overflow-y-auto">
           {browsers.map((b) => (
@@ -146,7 +140,7 @@ export function ExtensionImportDialog({
         {failures.length > 0 && (
           <div className="flex flex-col gap-0.5 rounded-[9px] border border-red-200 bg-red-50 px-2.5 py-2">
             <span className="text-[11.5px] font-medium text-red-600">
-              {t('settingsPage.extensions.importFailed')}
+              {t('extensions.importFailed')}
             </span>
             {failures.map((f) => (
               <span key={f.id} className="text-[11px] leading-snug break-all text-red-500">
@@ -158,12 +152,12 @@ export function ExtensionImportDialog({
 
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-            {t('settingsPage.extensions.cancel')}
+            {t('extensions.cancel')}
           </Button>
           <Button type="button" onClick={() => void submit()} disabled={checked.size === 0 || busy}>
             {busy
-              ? t('settingsPage.extensions.importing')
-              : t('settingsPage.extensions.importSubmit', { count: checked.size })}
+              ? t('extensions.importing')
+              : t('extensions.importSubmit', { count: checked.size })}
           </Button>
         </div>
       </DialogContent>

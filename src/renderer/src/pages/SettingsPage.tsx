@@ -8,10 +8,7 @@ import { AccountSection } from '@renderer/components/settings/AccountSection'
 import { SecuritySection } from '@renderer/components/settings/SecuritySection'
 import { AgentSection } from '@renderer/components/settings/AgentSection'
 import { AiSection } from '@renderer/components/settings/AiSection'
-import { KeymasterSection } from '@renderer/components/settings/KeymasterSection'
-import { PhoneSection } from '@renderer/components/settings/PhoneSection'
 import { PlaceholderSection } from '@renderer/components/settings/PlaceholderSection'
-import { ExtensionsSection } from '@renderer/components/settings/ExtensionsSection'
 import {
   DEFAULT_SECTION_KEY,
   SECTIONS,
@@ -125,18 +122,11 @@ function SectionBody({
       return <AccountSection />
     case 'security':
       return <SecuritySection settings={settings} update={update} />
-    case 'agent':
+    // 동작 — 그룹 이름(에이전트)과 겹치지 않도록 부르는 이름만 바꾼 것이라 내용은 그대로다
+    case 'behavior':
       return <AgentSection settings={settings} update={update} />
     case 'ai':
       return <AiSection />
-    case 'keymaster':
-      return <KeymasterSection />
-    // 폰 섹션: adb·scrcpy 경로와 폰 목록·화면 품질·결제 상한(Task 11)
-    case 'phone':
-      return <PhoneSection settings={settings} update={update} />
-    // 개발자 섹션: 압축 해제된 크롬 확장 폴더 관리(Task 15)
-    case 'developer':
-      return <ExtensionsSection />
     default:
       return <PlaceholderSection titleKey={labelKey} />
   }

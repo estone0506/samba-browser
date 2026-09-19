@@ -10,6 +10,7 @@ import { WebArea } from '@renderer/components/browser/WebArea'
 import { PersonalInfoPage } from '@renderer/pages/PersonalInfoPage'
 import { BookmarksPage } from '@renderer/pages/BookmarksPage'
 import { PhonesPage } from '@renderer/pages/PhonesPage'
+import { ExtensionsPage } from '@renderer/pages/ExtensionsPage'
 import { SettingsPage } from '@renderer/pages/SettingsPage'
 import { useBrowserStore } from '@renderer/stores/browserStore'
 import { useUiStore } from '@renderer/stores/uiStore'
@@ -117,6 +118,8 @@ export default function App(): React.JSX.Element {
             <BookmarksPage />
           ) : view === 'phones' ? (
             <PhonesPage />
+          ) : view === 'extensions' ? (
+            <ExtensionsPage />
           ) : view === 'settings' ? (
             <SettingsPage />
           ) : (

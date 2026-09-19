@@ -2,19 +2,23 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import type React from 'react'
 import { useBrowserStore } from '../../stores/browserStore'
 import { useUiStore } from '../../stores/uiStore'
+import { useOverlayStore } from '../../stores/overlayStore'
 
 // 실제 웹페이지(WebContentsView)는 메인이 그림. 이 컴포넌트는 빈 자리를 만들고 좌표만 보고
 export function WebArea(): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const mobile = useBrowserStore((s) => s.activeTab?.mobile ?? false)
-  // 구독만으로도 resizing 이 바뀌면 리렌더 → useLayoutEffect 가 다시 측정한다
+  // 구독만으로도 값이 바뀌면 리렌더 → useLayoutEffect 가 다시 측정한다
   useUiStore((s) => s.resizing)
+  useOverlayStore((s) => s.webviewHidden)
   const send = useCallback((): void => {
     const el = ref.current
     if (!el) return
     // 패널 폭을 드래그하는 동안은 네이티브 뷰를 접어 둔다. 뷰가 렌더러 위에 떠 있어
     // 포인터가 그 위로 가면 드래그가 끊기기 때문. 놓으면 원래 크기로 다시 보고된다
-    if (useUiStore.getState().resizing) {
+    // 웹뷰 위로 내려오는 렌더러 팝오버(퍼즐 메뉴 등)가 열려 있을 때도 같이 접는다 —
+    // 네이티브 뷰는 항상 렌더러 위에 그려져 접지 않으면 팝오버가 가려진다
+    if (useUiStore.getState().resizing || useOverlayStore.getState().webviewHidden) {
       void window.samba.layout.set({
         x: 0,
         y: 0,
