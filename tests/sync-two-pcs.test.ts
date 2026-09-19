@@ -14,7 +14,7 @@ import { VaultService } from '../src/main/vault/service'
 import { BookmarkRepo } from '../src/main/bookmarks/repo'
 import { ChatRepo } from '../src/main/chat/repo'
 import { SyncOutbox, createOutboxRecorder } from '../src/main/sync/outbox'
-import { backfillOutbox, verifyBackfill } from '../src/main/sync/backfill'
+import { backfillOutbox, backfillSettings, verifyBackfill } from '../src/main/sync/backfill'
 import {
   accounts as accountsTable,
   bookmarks as bookmarksTable,
@@ -295,8 +295,11 @@ describe('첫 로그인 시 로컬 기존 데이터가 전부 올라간다', () 
     expect(result.accounts).toBe(1)
     expect(result.vaultItems).toBe(1)
     expect(result.bookmarks).toBe(1)
-    // 동기화 대상 설정 + 금고 키 재료 세 키가 함께 올라간다
-    expect(result.settings).toBeGreaterThanOrEqual(VAULT_KEY_SYNC_KEYS.length)
+    // 설정은 최초 업로드에서 빠졌다(C1) — 풀을 한 번 돌린 뒤에 따로 올린다
+    expect(result.settings).toBe(0)
+    // 엔진이 풀 직후에 하는 일을 그대로 흉내 낸다. 서버가 비어 있으니 전 키가 올라간다
+    const settings = backfillSettings(db1, pc1.deps.workspace(), pc1.vault)
+    expect(settings.settings).toBeGreaterThanOrEqual(VAULT_KEY_SYNC_KEYS.length)
 
     const pushed = await pushAll(pc1.deps)
     expect(pushed.failed).toBe(0)
@@ -335,6 +338,7 @@ describe('첫 로그인 시 로컬 기존 데이터가 전부 올라간다', () 
 
     pc1.signIn()
     backfillOutbox(db1, pc1.deps.workspace(), pc1.vault)
+    backfillSettings(db1, pc1.deps.workspace(), pc1.vault)
     const pushed = await pushAll(pc1.deps)
     expect(pushed.failed).toBe(0)
 
