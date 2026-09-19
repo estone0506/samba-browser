@@ -4,7 +4,7 @@
 // 인증 만료(401·기기 원격 로그아웃)는 상태로만 알리고, 로그아웃·금고 잠금은 호출부가 한다
 
 import type { SyncStatus } from '../../shared/sync'
-import { SYNC_TABLES } from '../../shared/sync'
+import { SYNC_TABLES, VAULT_KEY_MISMATCH_ERROR } from '../../shared/sync'
 import { AuthExpiredError } from './backend'
 import { SyncLocal } from './local'
 import { remoteTableOf } from './mappers'
@@ -99,10 +99,11 @@ export class SyncEngine {
     try {
       await this.deps.onCycleStart?.()
       // 먼저 받고(pull) 나서 보낸다(push) — 로컬 변경이 원격 최신본 위에 얹히도록
-      await pullAll(this.deps)
+      const pulled = await pullAll(this.deps)
       await pushAll(this.deps)
       this.online = true
-      this.lastError = undefined
+      // 키 재료 불일치는 통신 실패가 아니다 — 연결은 살아 있고 경고만 상태에 싣는다
+      this.lastError = pulled.vaultKeyMismatch ? VAULT_KEY_MISMATCH_ERROR : undefined
       this.authExpiredNotified = false
     } catch (e: unknown) {
       this.online = false

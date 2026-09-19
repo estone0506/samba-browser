@@ -17,7 +17,8 @@ import type { AuthService } from './auth'
 import { AuthExpiredError, type SyncBackend } from './backend'
 import { DeviceService } from './devices'
 import { SyncEngine, SyncEngineHolder } from './engine'
-import { createOutboxRecorder, SyncOutbox } from './outbox'
+import { SyncLocal } from './local'
+import { createOutboxRecorder, settingUpdatedAtKey, SyncOutbox } from './outbox'
 import type { SettingsAccess, VaultAccess, WorkspaceRef } from './push'
 
 /** 변경 로그 훅을 받아 주는 저장소(금고·설정·북마크가 모두 이 모양이다) */
@@ -26,7 +27,12 @@ export interface OutboxTarget {
 }
 
 /** VaultService 가 그대로 만족한다 */
-export type SyncVaultTarget = VaultAccess & OutboxTarget & { lock(): void }
+export type SyncVaultTarget = VaultAccess &
+  OutboxTarget & {
+    lock(): void
+    /** 로그아웃 상태에서 설정된 금고의 키 재료를 뒤늦게 기록한다(없으면 건너뛴다) */
+    ensureKeyMaterialRecorded?: () => void
+  }
 /** SettingsStore 가 그대로 만족한다 */
 export type SyncSettingsTarget = SettingsAccess & OutboxTarget
 
@@ -184,6 +190,12 @@ export class SyncConnection {
     this.deps.vault.setOutboxRecorder(recorder)
     this.deps.settings.setOutboxRecorder(recorder)
     this.deps.bookmarks.setOutboxRecorder(recorder)
+    // 로그아웃 상태에서 만든 금고는 키 재료를 남길 훅이 없었다. 한 번도 오간 적이 없을 때만
+    // 지금 기록한다 — 매 로그인마다 올리면 서버 값을 같은 값으로 계속 덮어쓴다
+    const local = new SyncLocal(this.deps.db)
+    if (local.getStateNumber(settingUpdatedAtKey('vault.salt')) === null) {
+      this.deps.vault.ensureKeyMaterialRecorded?.()
+    }
   }
 
   private detachRecorders(): void {

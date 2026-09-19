@@ -15,7 +15,7 @@ import {
   vaultItemFromRemote
 } from './mappers'
 import { settingUpdatedAtKey } from './outbox'
-import { SYNCED_SETTING_KEYS } from '../../shared/sync'
+import { isVaultKeySyncKey, SYNCED_SETTING_KEYS, type VaultKeySyncKey } from '../../shared/sync'
 import { parseSettings, type Settings } from '../../shared/settings'
 import type { PushDeps } from './push'
 
@@ -25,6 +25,11 @@ export interface PullResult {
   applied: number
   conflicts: number
   pruned: number
+  /**
+   * 서버의 마스터 키 재료가 이 PC 의 금고와 다르다. 덮어쓰지 않고 경고만 올린다 —
+   * 덮으면 이 PC 에 이미 저장된 암호문이 영영 열리지 않는다
+   */
+  vaultKeyMismatch: boolean
 }
 
 /**
@@ -64,7 +69,7 @@ export async function pullAll(deps: PullDeps): Promise<PullResult> {
   // 내려받은 행에 지금 작업공간을 찍어 둔다 — 그러지 않으면 비기본 작업공간에서 보이지 않는다
   const workspaceLocalId = deps.workspace().localId
   const local = new SyncLocal(deps.db, workspaceLocalId)
-  const result: PullResult = { applied: 0, conflicts: 0, pruned: 0 }
+  const result: PullResult = { applied: 0, conflicts: 0, pruned: 0, vaultKeyMismatch: false }
   // 단일 커서만 있던 옛 DB 는 그 자리에서 이어 간다
   const legacy = local.getStateNumber(PULL_CURSOR_KEY) ?? 0
 
@@ -235,10 +240,21 @@ async function pullSettings(
 ): Promise<Seen> {
   const rows = await deps.backend.selectKeyed('settings_sync', since, workspaceOf(deps))
   const seen: { updatedAt: number }[] = []
+  // 마스터 키 재료는 세 키가 다 모여야 심을 수 있다 — 먼저 모아 두고 끝에서 한 번에 적용한다
+  const keyMaterial: Partial<Record<VaultKeySyncKey, string>> = {}
+  const keyMaterialAt = new Map<VaultKeySyncKey, number>()
 
   for (const raw of rows) {
     const remote = settingFromRemote(raw)
     seen.push({ updatedAt: remote.updatedAt })
+    if (isVaultKeySyncKey(remote.key)) {
+      // 다른 설정과 달리 수정 시각으로 거르지 않는다 — 로컬이 더 최신이어도 "같은 금고인가"는
+      // 확인해야 하고, 심을지 말지는 금고 상태(설정 전인가)가 정한다
+      if (typeof remote.value !== 'string') continue
+      keyMaterial[remote.key] = remote.value
+      keyMaterialAt.set(remote.key, remote.updatedAt)
+      continue
+    }
     if (!isSyncedSettingKey(remote.key)) continue
     // 설정은 config.json 에 있어 행 단위 수정 시각이 없다. sync_state 에 키별로 따로 적어 둔다
     const localUpdatedAt = local.getStateNumber(settingUpdatedAtKey(remote.key)) ?? 0
@@ -252,7 +268,34 @@ async function pullSettings(
     local.setStateNumber(settingUpdatedAtKey(remote.key), remote.updatedAt)
     result.applied += 1
   }
+
+  applyVaultKeyMaterial(deps, local, keyMaterial, keyMaterialAt, result)
   return seen
+}
+
+/**
+ * 모아 둔 마스터 키 재료를 금고에 심는다.
+ * 심지 못한 경우(불일치·부족)에는 수정 시각을 적지 않는다 — 다음 주기에 다시 본다
+ */
+function applyVaultKeyMaterial(
+  deps: PullDeps,
+  local: SyncLocal,
+  values: Partial<Record<VaultKeySyncKey, string>>,
+  updatedAt: Map<VaultKeySyncKey, number>,
+  result: PullResult
+): void {
+  if (Object.keys(values).length === 0) return
+  const outcome = deps.vault.applyKeyMaterial?.(values)
+  if (outcome === undefined) return
+  if (outcome === 'mismatch') {
+    // 값도 재료도 남기지 않는다 — 어긋났다는 사실만 알린다
+    console.warn('동기화: 서버의 마스터 키 재료가 이 PC 의 금고와 다릅니다(덮어쓰지 않음)')
+    result.vaultKeyMismatch = true
+    return
+  }
+  if (outcome === 'incomplete') return
+  for (const [key, at] of updatedAt) local.setStateNumber(settingUpdatedAtKey(key), at)
+  if (outcome === 'applied') result.applied += 1
 }
 
 /** 원격에서 받은 설정을 적용한다. 다시 변경 로그에 쌓이지 않도록 전용 경로가 있으면 그것을 쓴다 */
