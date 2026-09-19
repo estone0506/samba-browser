@@ -27,7 +27,9 @@ import {
   type TaskModels,
   type SyncStatus,
   type ExtensionDto,
+  type ExtensionInstallResult,
   type ExtensionListDto,
+  type ImportBrowserDto,
   type DeviceDto
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
@@ -291,7 +293,15 @@ const api = {
   extensions: {
     list: (): Promise<IpcResult<ExtensionListDto>> => invoke(IPC.extList),
     load: (path?: string): Promise<IpcResult<ExtensionDto | null>> => invoke(IPC.extLoad, path),
-    remove: (id: string): Promise<IpcResult<void>> => invoke(IPC.extRemove, id)
+    remove: (id: string): Promise<IpcResult<void>> => invoke(IPC.extRemove, id),
+    // 다른 브라우저(크롬·웨일·엣지·브레이브)에 설치된 확장 목록
+    importSources: (): Promise<IpcResult<ImportBrowserDto[]>> => invoke(IPC.extImportSources),
+    // 고른 확장을 앱 데이터로 복사한 뒤 로드한다(항목별 성공·실패)
+    importFrom: (ids: string[]): Promise<IpcResult<ExtensionInstallResult[]>> =>
+      invoke(IPC.extImportFrom, ids),
+    // 웹스토어 주소 또는 32자 id 로 설치한다
+    installWebstore: (input: string): Promise<IpcResult<ExtensionInstallResult>> =>
+      invoke(IPC.extInstallWebstore, input)
   }
 }
 

@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Trash2 } from 'lucide-react'
-import type { ExtensionDto, ExtensionError } from '@shared/extensions'
+import { Download, FolderOpen, Puzzle, Store, Trash2 } from 'lucide-react'
+import type { ExtensionDto, ExtensionError, ExtensionSource } from '@shared/extensions'
+import { ExtensionWebstoreDialog } from './ExtensionWebstoreDialog'
+import { ExtensionImportDialog } from './ExtensionImportDialog'
 
 /**
- * 설정 페이지의 확장 섹션 — 압축 해제된 크롬 확장 폴더를 고르고, 목록·제거를 다룬다.
- * CRX 설치·웹스토어 연동은 없으며, 제한 사항 안내는 항상 고정으로 보인다
+ * 설정 페이지의 확장 섹션 — 설치 경로가 셋이다.
+ * 웹스토어에서 설치 · 다른 브라우저에서 가져오기 · 압축 해제된 폴더 불러오기.
+ * 앞의 둘은 앱 데이터(userData/extensions/<id>)로 복사한 사본을 로드한다.
+ * 제한 사항 안내는 어느 경로로 깔았든 항상 고정으로 보인다
  */
 export function ExtensionsSection(): React.JSX.Element {
   const { t } = useTranslation()
@@ -14,6 +18,8 @@ export function ExtensionsSection(): React.JSX.Element {
   const [loadErrors, setLoadErrors] = useState<ExtensionError[]>([])
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const [storeOpen, setStoreOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
 
   const refresh = useCallback(async (): Promise<void> => {
     const r = await window.samba.extensions.list()
@@ -59,6 +65,13 @@ export function ExtensionsSection(): React.JSX.Element {
     await refresh()
   }
 
+  const sourceLabel = (source: ExtensionSource): string =>
+    source === 'store'
+      ? t('settingsPage.extensions.sourceStore')
+      : source === 'imported'
+        ? t('settingsPage.extensions.sourceImported')
+        : t('settingsPage.extensions.sourceFolder')
+
   return (
     <section className="rounded-2xl border border-[var(--line)] bg-white p-4">
       <h2 className="mb-3 text-[13px] font-semibold text-[var(--text)]">
@@ -74,14 +87,33 @@ export function ExtensionsSection(): React.JSX.Element {
               {t('settingsPage.extensions.addDesc')}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => void add()}
-            disabled={busy}
-            className="h-9 w-fit shrink-0 whitespace-nowrap rounded-[9px] bg-[var(--text)] px-3 text-[12.5px] font-medium text-white disabled:opacity-50"
-          >
-            {busy ? t('settingsPage.extensions.adding') : t('settingsPage.extensions.addButton')}
-          </button>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => setStoreOpen(true)}
+              className="flex h-9 w-fit shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] bg-[var(--text)] px-3 text-[12.5px] font-medium text-white"
+            >
+              <Store className="h-3.5 w-3.5" />
+              {t('settingsPage.extensions.storeButton')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className="flex h-9 w-fit shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-[var(--line)] px-3 text-[12.5px] font-medium text-[var(--text)] hover:bg-black/5"
+            >
+              <Download className="h-3.5 w-3.5" />
+              {t('settingsPage.extensions.importButton')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void add()}
+              disabled={busy}
+              className="flex h-9 w-fit shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-[var(--line)] px-3 text-[12.5px] font-medium text-[var(--text)] hover:bg-black/5 disabled:opacity-50"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              {busy ? t('settingsPage.extensions.adding') : t('settingsPage.extensions.addButton')}
+            </button>
+          </div>
           {message && <p className="text-[11px] text-red-500">{message}</p>}
         </div>
 
@@ -95,6 +127,7 @@ export function ExtensionsSection(): React.JSX.Element {
                 key={e.id}
                 className="flex items-center gap-2 rounded-[9px] border border-[var(--line)] px-2.5 py-2"
               >
+                <Puzzle className="h-5 w-5 shrink-0 text-[var(--text2)]" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[12.5px] font-medium text-[var(--text)]">
                     {e.name}
@@ -107,6 +140,9 @@ export function ExtensionsSection(): React.JSX.Element {
                   >
                     {e.path}
                   </span>
+                </span>
+                <span className="shrink-0 rounded-full bg-black/[0.05] px-2 py-0.5 text-[10.5px] text-[var(--text2)]">
+                  {sourceLabel(e.source)}
                 </span>
                 <button
                   type="button"
@@ -145,10 +181,22 @@ export function ExtensionsSection(): React.JSX.Element {
             <li>{t('settingsPage.extensions.limitMv3')}</li>
             <li>{t('settingsPage.extensions.limitServiceWorker')}</li>
             <li>{t('settingsPage.extensions.limitNoAutoUpdate')}</li>
+            <li>{t('settingsPage.extensions.limitMv2')}</li>
             <li>{t('settingsPage.extensions.limitPartition')}</li>
           </ul>
         </div>
       </div>
+
+      <ExtensionWebstoreDialog
+        open={storeOpen}
+        onOpenChange={setStoreOpen}
+        onInstalled={() => refresh()}
+      />
+      <ExtensionImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={() => refresh()}
+      />
     </section>
   )
 }

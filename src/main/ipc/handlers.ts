@@ -2,6 +2,7 @@ import {
   app,
   dialog,
   ipcMain,
+  net,
   safeStorage,
   session,
   shell,
@@ -48,6 +49,7 @@ import type { DeviceService } from '../sync/devices'
 import { WorkspaceService } from '../workspace/service'
 import { workspaceShortcutIndex } from '../workspace/shortcut'
 import { ExtensionManager, createSessionExtensionHost } from '../extensions/manager'
+import { createExtensionInstaller } from '../extensions/install-service'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -647,6 +649,20 @@ export function registerIpc(
     return extensions.add(folder)
   })
   handleFromRenderer(IPC.extRemove, (id: string) => extensions.remove(id))
+
+  // 가져오기·웹스토어 설치. 결과 폴더는 항상 userData/extensions/<id> 이고, 로드는 위 관리자가 한다
+  const extensionInstaller = createExtensionInstaller({
+    manager: extensions,
+    extensionsRoot: join(app.getPath('userData'), 'extensions'),
+    localAppData: process.env.LOCALAPPDATA ?? '',
+    chromiumVersion: process.versions.chrome ?? '120.0.0.0',
+    fetchImpl: (url, init) => net.fetch(url, init)
+  })
+  handleFromRenderer(IPC.extImportSources, () => extensionInstaller.importSources())
+  handleFromRenderer(IPC.extImportFrom, (ids: string[]) => extensionInstaller.importFrom(ids))
+  handleFromRenderer(IPC.extInstallWebstore, (input: string) =>
+    extensionInstaller.installWebstore(input)
+  )
   // === 확장 끝 =========================================================================
 
   return { settings, agent, db, vault, auth, sync }

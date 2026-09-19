@@ -99,10 +99,13 @@ export const IPC = {
   authSignInGoogle: 'auth:signInGoogle', // 브라우저를 열고 루프백 콜백까지 기다린다
   authSignOut: 'auth:signOut',
   authStateChanged: 'auth:stateChanged', // main → renderer 이벤트
-  // --- 확장(2b) — 압축 해제된 크롬 확장 폴더만 다룬다(CRX·웹스토어 없음) ------
+  // --- 확장(2b) — 폴더 불러오기 + 다른 브라우저 가져오기 + 웹스토어 설치 ------
   extList: 'ext:list',
   extLoad: 'ext:load', // 경로를 안 주면 메인에서 폴더 선택 다이얼로그를 연다
-  extRemove: 'ext:remove'
+  extRemove: 'ext:remove',
+  extImportSources: 'ext:importSources', // 다른 브라우저에 설치된 확장 목록
+  extImportFrom: 'ext:importFrom', // 고른 확장을 앱 데이터로 복사해서 로드
+  extInstallWebstore: 'ext:installWebstore' // 웹스토어 주소 또는 32자 id
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -178,7 +181,15 @@ export type {
   TaskModels
 } from './ai'
 
-export type { ExtensionDto, ExtensionError, ExtensionListDto } from './extensions'
+export type {
+  ExtensionDto,
+  ExtensionError,
+  ExtensionInstallResult,
+  ExtensionListDto,
+  ExtensionSource,
+  ImportBrowserDto,
+  ImportExtensionDto
+} from './extensions'
 
 export type {
   ImportPasswordsResult,
