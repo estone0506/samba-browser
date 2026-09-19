@@ -85,27 +85,24 @@ export function CaptureMenu(): React.JSX.Element {
     void start(mode)
   }
 
-  if (recordingMode) {
-    return (
-      <>
-        <button
-          type="button"
-          onClick={() => void stopRecording()}
-          title={t('screenCapture.stop')}
-          className="flex h-7 items-center gap-1.5 rounded-lg border border-[#b91c1c] px-2 text-[11.5px] font-medium text-[#b91c1c]"
-        >
-          <span className="h-2 w-2 animate-pulse rounded-full bg-[#b91c1c]" />
-          <span className="tabular-nums">{formatElapsed(elapsed)}</span>
-          <Square className="h-3 w-3 fill-current" />
-          {t('screenCapture.stop')}
-        </button>
-        <CaptureToast />
-      </>
-    )
-  }
+  // 녹화 중 표시(타이머 + 중지). 카메라 메뉴 버튼과는 별개로 둔다 —
+  // 예전엔 카메라 자리가 이 버튼으로 바뀌어, 이미지 캡처하려다 녹화가 끊기는 일이 있었다
+  const recordingPill = recordingMode ? (
+    <button
+      type="button"
+      onClick={() => void stopRecording()}
+      title={t('screenCapture.stop')}
+      className="mr-1 flex h-7 items-center gap-1.5 rounded-lg border border-[#b91c1c] px-2 text-[11.5px] font-medium text-[#b91c1c]"
+    >
+      <span className="h-2 w-2 animate-pulse rounded-full bg-[#b91c1c]" />
+      <span className="tabular-nums">{formatElapsed(elapsed)}</span>
+      <Square className="h-3 w-3 fill-current" />
+    </button>
+  ) : null
 
   return (
     <>
+      {recordingPill}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button
@@ -117,6 +114,18 @@ export function CaptureMenu(): React.JSX.Element {
           </button>
         </PopoverTrigger>
         <PopoverContent align="end" className="w-60">
+          {recordingMode && (
+            <>
+              <MenuItem
+                label={`${t('screenCapture.stop')} · ${formatElapsed(elapsed)}`}
+                onClick={() => {
+                  setOpen(false)
+                  void stopRecording()
+                }}
+              />
+              <div className="my-1 h-px bg-[var(--line)]" />
+            </>
+          )}
           <MenuGroup label={t('screenCapture.image')} />
           {IMAGE_CAPTURE_MODES.map((mode) => (
             <MenuItem
