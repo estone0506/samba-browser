@@ -649,7 +649,6 @@
     "findNow": "지금 찾기",
     "wifiPlaceholder": "와이파이 주소 (예: 192.168.0.5:5555)",
     "wifiConnect": "연결",
-    "openSettings": "폰 설정 열기",
     "dismiss": "닫기",
     "empty": "연결된 폰이 없어요. USB 로 연결하고 폰에서 USB 디버깅을 승인해 주세요",
     "recover": "재연결",

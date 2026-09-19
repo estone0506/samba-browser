@@ -20,7 +20,7 @@ import {
   phoneStateTone,
   smsBadgeKey,
   transportLabelKey
-} from '@renderer/components/phone/phone-view'
+} from './phone-view'
 import {
   SecondaryButton,
   SegmentedGroup,
@@ -30,10 +30,12 @@ import {
   StatusBadge,
   TextInput,
   type SectionProps
-} from './shared'
+} from '@renderer/components/settings/shared'
 
-// 설정 → 폰. adb·scrcpy 경로와 폰 목록, 화면 품질, 자동 재연결, 결제 상한을 다룬다
-export function PhoneSection({ settings, update }: SectionProps): React.JSX.Element {
+// 폰 화면 상단 톱니로 여는 "폰 설정" 패널.
+// adb·scrcpy 경로와 폰 목록, 화면 품질, 자동 재연결, 결제 상한을 다룬다.
+// 설정 페이지에 있던 것을 그대로 옮긴 것이라 내용은 같다
+export function PhoneSettingsPanel({ settings, update }: SectionProps): React.JSX.Element {
   const { t } = useTranslation()
   const { list, load, subscribe, setLabel } = usePhoneStore()
   const [adb, setAdb] = useState(settings.adbPath)

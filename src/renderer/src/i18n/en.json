@@ -649,7 +649,6 @@
     "findNow": "Scan now",
     "wifiPlaceholder": "Wi-Fi address (e.g. 192.168.0.5:5555)",
     "wifiConnect": "Connect",
-    "openSettings": "Open phone settings",
     "dismiss": "Dismiss",
     "empty": "No phones connected. Plug one in over USB and approve USB debugging on the phone.",
     "recover": "Reconnect",
