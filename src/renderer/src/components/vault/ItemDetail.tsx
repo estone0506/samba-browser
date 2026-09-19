@@ -6,6 +6,10 @@ import { useVaultStore } from '@renderer/stores/vaultStore'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 import { AGENT_ACCESS_VALUES } from '@shared/vault'
+import {
+  PhoneAssignDialog,
+  PhoneAssignSuggestion
+} from '@renderer/components/phone/PhoneAssignDialog'
 import type { AccountDto, AgentAccess, AuditLogDto, VaultField, VaultItemMeta } from '@shared/ipc'
 
 const USAGE_HISTORY_LIMIT = 10
@@ -475,10 +479,36 @@ export function ItemDetail({ onEdit, onEditGlobal }: Props): React.JSX.Element {
         <ItemSections key={item.id} item={item} />
       ))}
 
+      <PhoneAssignSuggestion accountId={account.id} />
+
+      <PhoneAssignSection accountId={account.id} />
+
       <AccountSettings account={account} />
 
       <UsageSection key={`account-${account.id}`} accountId={account.id} />
     </div>
+  )
+}
+
+// 계정별 "담당 폰". 고르지 않으면 인증 때 연결된 폰을 동시에 감시한다
+function PhoneAssignSection({ accountId }: { accountId: number }): React.JSX.Element {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  return (
+    <section className="mb-5">
+      <h4 className="mb-2 text-[12px] font-semibold text-[var(--text2)]">
+        {t('phone.assign.label')}
+      </h4>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-[30px] rounded-[9px]"
+        onClick={() => setOpen(true)}
+      >
+        {t('phone.assign.open')}
+      </Button>
+      <PhoneAssignDialog accountId={accountId} open={open} onOpenChange={setOpen} />
+    </section>
   )
 }
 
