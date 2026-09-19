@@ -22,9 +22,7 @@ describe('cursorFilter — PostgREST 필터 문자열', () => {
   it('id 도 큰따옴표로 감싸고, 동률 구간은 >= 로 넓게 건다', () => {
     const iso = new Date(1_700_000_000_123).toISOString()
     const filter = cursorFilter({ ts: 1_700_000_000_123, id: 'row-1' }, 'id')
-    expect(filter).toBe(
-      `updated_at.gt."${iso}",and(updated_at.gte."${iso}",id.gt."row-1")`
-    )
+    expect(filter).toBe(`updated_at.gt."${iso}",and(updated_at.gte."${iso}",id.gt."row-1")`)
   })
 
   it('복합 PK 표는 동률 판정 컬럼이 key 다', () => {
