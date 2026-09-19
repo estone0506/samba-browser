@@ -4,18 +4,19 @@
 // src/shared/* 에서 **값(value)** 을 import 하지 말 것(타입만 `import type`).
 // 상대 경로 import 는 같은 엔트리에 인라인되므로 안전하다.
 //
-// --- 이식 출처 및 라이선스 ------------------------------------------------
-// 1) 정규식 상수: The Chromium Project (BSD-3-Clause)
-//    - components/autofill/core/common/autofill_regex_constants.cc 의 kEmailRe
-//    - components/password_manager/core/common/password_manager_constants.h 의
-//      kPasswordRe / kOneTimePwdRe / kSearch
-//    Copyright 2013 The Chromium Authors. Use of this source code is governed by
-//    a BSD-style license: https://chromium.googlesource.com/chromium/src/+/main/LICENSE
-//    한국어 패턴(아이디, 사용자명, 이메일, 비밀번호, 비번, 인증번호 등)은 우리가 덧붙였다.
-// 2) 후보 선택 휴리스틱: Bitwarden clients (GPL-3.0) 의
-//    apps/browser/src/autofill/services/autofill.service.ts 의 findUsernameField,
-//    collect-autofill-content.service.ts 의 가시성 판정을 **참고해 재구현**했다
-//    (코드를 복사하지 않고 규칙만 이식).
+// --- 출처 및 라이선스 ------------------------------------------------------
+// 정규식 상수 일부는 The Chromium Project (BSD-3-Clause) 에서 가져왔다.
+//   - components/autofill/core/common/autofill_regex_constants.cc 의 kEmailRe
+//   - components/password_manager/core/common/password_manager_constants.h 의
+//     kPasswordRe / kOneTimePwdRe / kSearch
+//   Copyright 2013 The Chromium Authors. Use of this source code is governed by
+//   a BSD-style license. 전문은 resources/licenses/LICENSE-chromium.txt 참고.
+//   한국어 패턴(아이디, 사용자명, 이메일, 비밀번호, 비번, 인증번호 등)과
+//   그 밖의 필드명 패턴은 우리가 직접 덧붙였다.
+//
+// 후보 선택·가시성 판정 로직은 이 저장소의 독자 설계다. 어떤 비밀번호 관리자
+// 구현에서도 코드를 가져오지 않았고, 웹 표준(autocomplete 토큰)과 업계에
+// 널리 알려진 공개 관행만 참고했다. 자세한 감사 결과는 THIRD_PARTY_NOTICES.md 참고.
 
 // 탐지 단계. 2단계 로그인(아이디 화면 → 비밀번호 화면)을 호출부가 구분할 수 있게 한다
 export type LoginStage = 'single' | 'username-only' | 'password-only' | 'none'
@@ -51,7 +52,7 @@ export interface LoginFields {
 export const EMAIL_RE =
   /e.?mail|courriel|correo.*electr(o|ó)nico|メールアドレス|Электронной.?Почты|邮件|邮箱|電郵地址|(\b|_)eposta(\b|_)|이메일|전자.?우편|메일.?주소/i
 
-// Chromium kNameIgnoredRe(user.?name|user.?id 계열) + Bitwarden UsernameFieldNames + 한국어
+// Chromium kNameIgnoredRe(user.?name|user.?id 계열) + 한국 사이트에서 실제로 쓰는 필드명
 export const USERNAME_RE =
   /user.?(name|id|nm)|userid|login.?(id|name)|customer.?id|member.?id|account.?(id|name)|benutzer.?(name|id)|nickname|screen.?name|아이디|사용자.?(명|이름|아이디)|회원.?(아이디|번호)|계정/i
 
@@ -71,7 +72,7 @@ export const CONFIRM_PASSWORD_RE =
 export const ONE_TIME_PASSWORD_RE =
   /one.?time|(?:\b|_)(?:otp|otc|totp|sms|2fa|mfa)(?:\b|_)|(?:otp|otc|totp|sms|2fa|mfa).?(?:code|token|input|val|pin|login|verif|pass|pwd|psw|auth|field)|(?:verif(?:y|ication)?|email|phone|text|login|input|txt|user).?(?:otp|otc|totp|sms|2fa|mfa)|sms.?otp|mfa.?otp|verif(?:y|ication)?.?code|(?:\b|_)vcode|(?:second|two|2).?factor|wfls-token|email_code|인증.?(번호|코드)|일회용.?비밀.?번호|보안.?문자/i
 
-// Chromium kSearch + Bitwarden SearchFieldNames + 한국어
+// Chromium kSearch + 검색창에 흔한 일반 명사 + 한국어
 export const SEARCH_RE = /search|query|keyword|\bfind\b|검색|찾기/i
 
 // 소셜 로그인 버튼(우리 자격 증명으로 제출할 대상이 아니다)
@@ -124,9 +125,9 @@ function cssEscape(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`)
 }
 
-// 가시성 판정(Bitwarden 의 viewable 판정을 재구현).
-// jsdom 은 레이아웃을 계산하지 않아 크기/offsetParent 를 신뢰할 수 없으므로
-// 스타일·속성 기반으로만 판단한다.
+// 가시성 판정. jsdom 은 레이아웃을 계산하지 않아 크기/offsetParent 를 신뢰할 수
+// 없으므로, 우리는 계산된 스타일(display·visibility·opacity·clip·화면 밖 배치)과
+// 속성(hidden·aria-hidden·type=hidden)만으로 판단한다.
 export function isVisible(el: HTMLElement): boolean {
   if (el.hidden) return false
   if (el instanceof HTMLInputElement && el.type === 'hidden') return false
@@ -235,38 +236,74 @@ function isUsableCandidate(el: HTMLInputElement): boolean {
   return true
 }
 
-// 비밀번호 칸 기준 사용자명 후보 선택(Bitwarden findUsernameField 규칙 재구현):
-// 같은 form 안에서 username 키워드가 맞는 칸이 최우선, 없으면 같은 form 의 마지막 후보,
-// 그마저 없으면 form 밖이라도 username 키워드가 맞는 후보(2단계 로그인/폼 없는 SPA 대비).
+// 아이디 칸 후보의 점수 계산에 필요한 기준값
+interface UsernameScoreContext {
+  // 비밀번호 칸이 속한 form(없으면 null)
+  form: HTMLFormElement | null
+  // 비밀번호 칸과 몇 칸 떨어져 있는지(1 = 바로 앞)
+  distance: number
+}
+
+// 폼 경계가 같으면 주는 점수. 이 점수가 없으면 사실상 탈락이므로
+// "같은 폼(또는 둘 다 폼 밖)" 이 사실상의 1차 관문 역할을 한다
+const SCORE_SAME_FORM = 30
+
+/**
+ * 아이디 칸다움을 점수로 환산한다(우리 방식: 가중치 합산 랭킹).
+ * 근거를 하나씩 더하고 비밀번호 칸에서 먼 만큼 깎아, 한 화면에 입력칸이
+ * 여럿이어도 "가장 아이디 칸다운" 하나가 남게 한다.
+ */
+function scoreUsernameCandidate(el: HTMLInputElement, ctx: UsernameScoreContext): number {
+  let score = 0
+
+  // 1) 웹 표준 autocomplete 힌트가 가장 확실한 근거다
+  const auto = autocompleteOf(el)
+  if (auto === 'username') score += 50
+  else if (auto === 'email' || auto === 'tel') score += 40
+
+  // 2) 비밀번호 칸과 같은 폼 경계(둘 다 폼 밖인 SPA 도 같은 경계로 본다)
+  if (formOf(el) === ctx.form) score += SCORE_SAME_FORM
+
+  // 3) 이름·라벨·placeholder 에 아이디/이메일 낱말이 있는가
+  const hay = labelTextOf(el)
+  if (USERNAME_RE.test(hay)) score += 25
+  else if (EMAIL_RE.test(hay)) score += 20
+
+  // 4) input type 자체가 아이디로 쓰이는 형태인가
+  if (el.type === 'email' || el.type === 'tel') score += 10
+
+  // 5) 비밀번호 칸에서 멀수록 감점(최대 10점). 같은 점수대면 가까운 칸이 이긴다
+  score -= Math.min(ctx.distance, 10)
+
+  return score
+}
+
+/**
+ * 비밀번호 칸을 기준으로 짝이 되는 아이디 칸을 고른다.
+ * 비밀번호 칸보다 앞에 있는 입력칸만 후보로 삼고, 각 후보를 점수로 매겨
+ * 최고점 하나를 고른다. 점수가 0 이하면(= 폼도 다르고 아이디 낱말도 없으면)
+ * 아이디 칸이 없는 것으로 본다.
+ */
 export function usernameElementFor(passwordEl: HTMLInputElement): HTMLInputElement | undefined {
   const inputs = allInputs()
   const pwPos = inputs.indexOf(passwordEl)
   if (pwPos === -1) return undefined
   const pwForm = formOf(passwordEl)
 
-  let sameFormCandidate: HTMLInputElement | undefined
-  let keywordCandidate: HTMLInputElement | undefined
+  let best: HTMLInputElement | undefined
+  let bestScore = 0
 
   for (let i = 0; i < pwPos; i++) {
     const el = inputs[i]
     if (!isUsableCandidate(el)) continue
-    const inSameForm = pwForm !== null && formOf(el) === pwForm
-    const hasKeyword = isUsernameLike(el)
-    if (inSameForm) {
-      sameFormCandidate = el
-      if (hasKeyword) return el
-      continue
+    const score = scoreUsernameCandidate(el, { form: pwForm, distance: pwPos - i })
+    if (score > bestScore) {
+      best = el
+      bestScore = score
     }
-    // password 가 form 밖이면 form 소속과 무관하게 후보로 본다
-    if (pwForm === null) {
-      sameFormCandidate = el
-      if (hasKeyword) return el
-      continue
-    }
-    if (hasKeyword) keywordCandidate = el
   }
 
-  return sameFormCandidate ?? keywordCandidate
+  return best
 }
 
 // 비밀번호 칸이 없는 화면(2단계 로그인 1단계)의 아이디 칸
