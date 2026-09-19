@@ -1,14 +1,7 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Switch } from '@renderer/components/ui/switch'
 import { MAX_UI_ZOOM, MIN_UI_ZOOM, type ThemeMode } from '@shared/settings'
-import {
-  SegmentedGroup,
-  SettingsRow,
-  SettingsSection,
-  SettingsToggleRow,
-  type SectionProps
-} from './shared'
+import { SegmentedGroup, SettingsRow, SettingsSection, type SectionProps } from './shared'
 
 // 화면에 보여 줄 단축키 표(읽기 전용). 값은 번역하지 않는 키 조합 문자열이다
 const SHORTCUTS: { keys: string; labelKey: string }[] = [
@@ -21,7 +14,8 @@ const SHORTCUTS: { keys: string; labelKey: string }[] = [
 
 const ZOOM_STEPS = [80, 90, 100, 110, 125, 150]
 
-// 모양 — 테마 · 줌 · 사이드바 구성 · 단축키 표
+// 모양 — 테마 · 줌 · 단축키 표.
+// 사이드바 구성은 사이드바 자체에서 헤더를 눌러 접고 펴므로 설정에 따로 두지 않는다
 export function AppearanceSection({ settings, update }: SectionProps): React.JSX.Element {
   const { t } = useTranslation()
 
@@ -64,27 +58,6 @@ export function AppearanceSection({ settings, update }: SectionProps): React.JSX
             options={ZOOM_STEPS.map((z) => ({ value: String(z), label: `${z}%` }))}
           />
         </SettingsRow>
-      </SettingsSection>
-
-      <SettingsSection title={t('settingsPage.appearance.sidebarTitle')}>
-        <SettingsToggleRow
-          label={t('settingsPage.appearance.sidebarBookmarks')}
-          description={t('settingsPage.appearance.sidebarBookmarksDesc')}
-        >
-          <Switch
-            checked={settings.sidebarShowBookmarks}
-            onCheckedChange={(v) => update({ sidebarShowBookmarks: v })}
-          />
-        </SettingsToggleRow>
-        <SettingsToggleRow
-          label={t('settingsPage.appearance.sidebarChat')}
-          description={t('settingsPage.appearance.sidebarChatDesc')}
-        >
-          <Switch
-            checked={settings.sidebarShowChat}
-            onCheckedChange={(v) => update({ sidebarShowChat: v })}
-          />
-        </SettingsToggleRow>
       </SettingsSection>
 
       <SettingsSection

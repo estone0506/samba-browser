@@ -21,17 +21,22 @@ describe('설정 섹션 상수', () => {
       'general',
       'appearance',
       'account',
-      'plan',
       'security'
     ])
-    expect(sectionsOfGroup('agent').map((s) => s.key)).toEqual([
-      'agent',
-      'ai',
-      'keymaster',
-      'phone',
-      'automation',
-      'developer'
-    ])
+    expect(sectionsOfGroup('agent').map((s) => s.key)).toEqual(['behavior', 'ai', 'automation'])
+  })
+
+  it('다른 화면에 이미 있는 것은 설정에 두지 않는다', () => {
+    // 키마스터·폰·확장(개발자)은 각각 개인정보·폰·확장 프로그램 화면이 담당하고,
+    // 요금제는 계정 섹션의 배지로만 보여 준다
+    for (const gone of ['keymaster', 'phone', 'developer', 'plan']) {
+      expect(isSectionKey(gone)).toBe(false)
+    }
+  })
+
+  it('그룹 이름과 같은 이름의 섹션은 없다', () => {
+    // "에이전트 > 에이전트" 처럼 같은 말이 겹치면 어디에 있는지 알 수 없다
+    for (const s of SECTIONS) expect(SETTINGS_GROUPS).not.toContain(s.key)
   })
 
   it('섹션 키는 중복되지 않는다', () => {
@@ -43,9 +48,9 @@ describe('설정 섹션 상수', () => {
     for (const s of SECTIONS) expect(SETTINGS_GROUPS).toContain(s.group)
   })
 
-  it('자리만 잡아 둔 섹션은 요금제·자동화 둘뿐이다(개발자는 확장 관리)', () => {
-    expect([...PLACEHOLDER_SECTION_KEYS]).toEqual(['plan', 'automation'])
-    expect(isPlaceholderSection('plan')).toBe(true)
+  it('자리만 잡아 둔 섹션은 자동화 하나뿐이다', () => {
+    expect([...PLACEHOLDER_SECTION_KEYS]).toEqual(['automation'])
+    expect(isPlaceholderSection('automation')).toBe(true)
     expect(isPlaceholderSection('general')).toBe(false)
   })
 })
