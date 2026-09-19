@@ -57,6 +57,8 @@ export class PhoneService {
       adb: deps.adb,
       repo: deps.repo,
       now: deps.now ?? ((): number => Date.now()),
+      // 설정에 adb 경로가 없으면 폴링이 adb 를 부르지 않는다(부르면 곧바로 던진다)
+      adbPath: () => deps.settings.get().adbPath,
       autoReconnect: () => deps.settings.get().phoneAutoReconnect,
       onChange: (list, warning) => {
         deps.emit(list, warning)

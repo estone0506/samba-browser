@@ -48,6 +48,11 @@ export interface DeviceManagerDeps {
   autoReconnect: () => boolean
   // 경고 문구는 상한 초과처럼 사용자가 알아야 할 때만 함께 온다
   onChange: (phones: PhoneDto[], warning?: string) => void
+  /**
+   * 지금 설정된 adb 실행 파일 경로. 비어 있으면 adb 를 아예 부르지 않는다 —
+   * AdbRunner 는 경로가 없으면 던지므로, 5초 폴링이 그대로 unhandledRejection 이 된다
+   */
+  adbPath?: () => string
   // 테스트에서 가짜 타이머를 넣는다
   setInterval?: (fn: () => void, ms: number) => unknown
   clearInterval?: (handle: unknown) => void
@@ -107,8 +112,28 @@ export class DeviceManager {
     return this.phones
   }
 
-  /** 1회 즉시 스캔(설정 화면의 "지금 찾기") */
+  /** adb 경로가 설정돼 있는가(경로 함수를 주지 않았으면 있다고 본다) */
+  private hasAdb(): boolean {
+    return this.deps.adbPath === undefined || this.deps.adbPath() !== ''
+  }
+
+  /**
+   * 1회 즉시 스캔(설정 화면의 "지금 찾기").
+   * adb 가 없거나 실행이 실패해도 던지지 않는다 — 5초 폴링에서 던지면
+   * 붙잡는 곳이 없어 unhandledRejection 이 된다. 실패하면 직전 목록을 그대로 둔다
+   */
   async refresh(): Promise<PhoneDto[]> {
+    try {
+      return await this.scan()
+    } catch {
+      // 도구가 없거나 adb 서버가 죽은 상황 — 조용히 직전 목록을 유지한다
+      return this.phones
+    }
+  }
+
+  private async scan(): Promise<PhoneDto[]> {
+    // 경로가 비어 있으면 adb 를 부르지 않는다(부르면 곧바로 던진다)
+    if (!this.hasAdb()) return this.phones
     const res = await this.deps.adb.run(['devices', '-l'])
     const raw = parseDevices(res.stdout)
     const now = this.deps.now()
@@ -152,12 +177,20 @@ export class DeviceManager {
     return next
   }
 
-  /** 폰 카드의 "재연결" — kill-server && start-server 를 1회만 시도한다 */
+  /**
+   * 폰 카드의 "재연결" — kill-server && start-server 를 1회만 시도한다.
+   * 자동 복구는 refresh 안에서 기다리지 않고 부르므로 여기서도 던지지 않는다
+   */
   async recover(serial: string): Promise<boolean> {
-    await this.deps.adb.run(['kill-server'])
-    await this.deps.adb.run(['start-server'])
-    const res = await this.deps.adb.run(['devices', '-l'])
-    return parseDevices(res.stdout).some((d) => d.serial === serial && d.state === 'online')
+    if (!this.hasAdb()) return false
+    try {
+      await this.deps.adb.run(['kill-server'])
+      await this.deps.adb.run(['start-server'])
+      const res = await this.deps.adb.run(['devices', '-l'])
+      return parseDevices(res.stdout).some((d) => d.serial === serial && d.state === 'online')
+    } catch {
+      return false
+    }
   }
 
   async connectWifi(address: string): Promise<{ ok: boolean; message: string }> {
