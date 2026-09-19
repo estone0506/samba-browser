@@ -8,8 +8,8 @@
 //   - PAGE_IPC.newTabInit/newTabSearch/newTabOpen ← 같은 파일의 IPC 동명 채널
 //   - PAGE_IPC.gesture/gestureConfig ← 같은 파일의 IPC.pageGesture/pageGestureConfig
 //   - GESTURE_ACTION_LABELS 의 키 집합 ← src/shared/gestures.ts 의 GESTURE_ACTIONS
-//   - PAGE_IPC.pageTranslate ← 같은 파일의 IPC.pageTranslate
-//   - TRANSLATE_MAX_NODES/TRANSLATE_MAX_CHARS ← src/shared/translate.ts 의 동명 상수
+//   - PAGE_IPC.pageTranslate/pageTranslateProgress ← 같은 파일의 IPC 동명 채널
+//   - TRANSLATE_MAX_NODES/TRANSLATE_MAX_CHARS/TRANSLATE_CONCURRENCY ← src/shared/translate.ts 의 동명 상수
 //   - PAGE_IPC.captureRegionMode/captureElementRect ← 같은 파일의 IPC 동명 채널
 //   - PAGE_IPC.webstoreInstall/webstoreInstallResult ← 같은 파일의 IPC.pageWebstoreInstall/pageWebstoreInstallResult
 //   - INTERNAL_PROTOCOL ← src/shared/url.ts 의 INTERNAL_SCHEME + ':'
@@ -40,6 +40,8 @@ export const PAGE_IPC = {
   // 메인이 켜짐 여부와 시퀀스→동작 매핑을 밀어 주는 채널(main → page)
   gestureConfig: 'page:gestureConfig',
   pageTranslate: 'page:translate',
+  // 번역 진행률(page → main). 개수와 오류 코드만 싣고 원문·번역문은 싣지 않는다
+  pageTranslateProgress: 'page:translateProgress',
   // 캡처 영역 선택(요소 단위). 메인이 모드를 켜고, 클릭한 요소 경계만 돌려보낸다
   captureRegionMode: 'capture:regionMode',
   captureElementRect: 'capture:elementRect',
@@ -49,9 +51,11 @@ export const PAGE_IPC = {
   webstoreInstallResult: 'page:webstoreInstallResult'
 } as const
 
-// 번역 배치 상한 사본 ← src/shared/translate.ts 의 TRANSLATE_MAX_NODES / TRANSLATE_MAX_CHARS
-export const TRANSLATE_MAX_NODES = 100
-export const TRANSLATE_MAX_CHARS = 4096
+// 번역 배치 상한·동시 실행 수 사본
+// ← src/shared/translate.ts 의 TRANSLATE_MAX_NODES / TRANSLATE_MAX_CHARS / TRANSLATE_CONCURRENCY
+export const TRANSLATE_MAX_NODES = 30
+export const TRANSLATE_MAX_CHARS = 1200
+export const TRANSLATE_CONCURRENCY = 3
 
 // 자동 채움 피커 문구(ko/en). page.ts 는 settings.language 를 IPC 로 물어본 뒤
 // 이 표에서 골라 쓴다(격리 월드에는 i18n 모듈을 쓸 수 없어 여기 복제해 둔다)

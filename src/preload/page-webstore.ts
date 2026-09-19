@@ -133,6 +133,20 @@ export function installWebstoreHook(deps: WebstoreHookDeps): WebstoreHook {
   // 설치를 요청해 둔 버튼들(같은 확장을 두 번 누르는 것을 막고, 결과를 되돌려 적는다)
   const pending = new Map<string, HTMLElement>()
 
+  // 웹스토어는 click 이 아니라 pointerdown/pointerup(jsaction)에서 "Chrome으로 전환할까요?" 안내를
+  // 띄운다. 버튼 위의 포인터 이벤트는 캡처 단계에서 모두 끊어 그 안내가 뜨지 않게 한다
+  for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup'] as const) {
+    document.addEventListener(
+      type,
+      (event: Event) => {
+        if (!event.isTrusted || !findAddButton(event.target)) return
+        event.stopPropagation()
+        event.stopImmediatePropagation()
+      },
+      true
+    )
+  }
+
   document.addEventListener(
     'click',
     (event: MouseEvent) => {

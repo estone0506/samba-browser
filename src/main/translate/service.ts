@@ -47,6 +47,9 @@ export function isValidBatch(texts: readonly string[]): boolean {
     if (typeof t !== 'string') return false
     chars += t.length
   }
+  // 긴 문단 하나가 통째로 온 경우는 clampSource 가 잘라 보내므로 총량 규칙에서 빼 준다
+  // (배치 상한을 줄인 뒤에도 긴 본문 한 덩어리가 통째로 실패하지 않게 한다)
+  if (texts.length === 1) return true
   return chars <= TRANSLATE_MAX_CHARS * 2
 }
 

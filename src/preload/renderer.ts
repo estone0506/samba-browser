@@ -47,6 +47,7 @@ import {
   type PhoneToolsStatusDto,
   type PhoneToolsProgressDto,
   type TranslateLang,
+  type TranslateProgressDto,
   type CaptureMode,
   type CaptureResultDto,
   type CaptureStillDto,
@@ -358,7 +359,13 @@ const api = {
   translate: {
     run: (lang?: TranslateLang): Promise<IpcResult<string>> => invoke(IPC.translateRun, lang),
     restore: (): Promise<IpcResult<string>> => invoke(IPC.translateRestore),
-    clearCache: (): Promise<IpcResult<boolean>> => invoke(IPC.translateCacheClear)
+    clearCache: (): Promise<IpcResult<boolean>> => invoke(IPC.translateCacheClear),
+    // 진행률·실패 사유 구독(개수와 고정된 사유 코드만 온다)
+    onProgress: (cb: (dto: TranslateProgressDto) => void): (() => void) => {
+      const h = (_: unknown, dto: TranslateProgressDto): void => cb(dto)
+      ipcRenderer.on(IPC.translateProgress, h)
+      return () => ipcRenderer.off(IPC.translateProgress, h)
+    }
   },
   // 폰 연동 — 결제 비밀번호·문자 본문은 이 중 어느 채널로도 오지 않는다
   phone: {

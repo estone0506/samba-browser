@@ -149,6 +149,8 @@ export const IPC = {
   phoneInstallProgress: 'phone:installProgress', // main → renderer 이벤트(설치 진행률)
   // --- 번역(화면·이미지) — 원문/번역문만 오간다. 입력값·비밀번호는 실리지 않는다 ---
   pageTranslate: 'page:translate', // preload(격리 월드) → 메인, 탭 전용 게이트
+  pageTranslateProgress: 'page:translateProgress', // preload → 메인, 진행률(개수·사유 코드만)
+  translateProgress: 'translate:progress', // main → renderer 이벤트(번역 중 12/398 · 실패 사유)
   translateRun: 'translate:run', // 렌더러 → 메인, 활성 탭 화면 번역 시작
   translateRestore: 'translate:restore', // 렌더러 → 메인, 원문 보기
   translateCacheClear: 'translate:cacheClear', // 렌더러 → 메인, 번역 캐시 비우기
@@ -274,7 +276,15 @@ export type {
 
 export type { SyncStatus, DeviceDto } from './sync'
 
-export type { TranslateLang, TranslateRequest, ImageTextBox, ImageTranslateDto } from './translate'
+export type {
+  TranslateLang,
+  TranslateRequest,
+  ImageTextBox,
+  ImageTranslateDto,
+  TranslateProgressDto,
+  TranslateProgressKind,
+  TranslateFailReason
+} from './translate'
 
 export type {
   PhoneDto,

@@ -18,7 +18,11 @@ import {
   isValidBatch,
   type AskText
 } from '../src/main/translate/service'
-import { TRANSLATE_MAX_TEXT } from '../src/shared/translate'
+import {
+  TRANSLATE_MAX_CHARS,
+  TRANSLATE_MAX_NODES,
+  TRANSLATE_MAX_TEXT
+} from '../src/shared/translate'
 
 let dir = ''
 
@@ -95,8 +99,14 @@ describe('번역 프롬프트 JSON 왕복', () => {
 
   it('상한을 넘는 배치는 거절한다', () => {
     expect(isValidBatch([])).toBe(false)
-    expect(isValidBatch(Array.from({ length: 101 }, () => 'a'))).toBe(false)
+    expect(isValidBatch(Array.from({ length: TRANSLATE_MAX_NODES + 1 }, () => 'a'))).toBe(false)
     expect(isValidBatch(['a', 'b'])).toBe(true)
+    expect(isValidBatch(Array.from({ length: TRANSLATE_MAX_NODES }, () => 'a'))).toBe(true)
+  })
+
+  it('긴 문단 하나만 담긴 배치는 총량 규칙에서 빼 준다(잘라서 보내므로)', () => {
+    expect(isValidBatch(['가'.repeat(TRANSLATE_MAX_CHARS * 4)])).toBe(true)
+    expect(isValidBatch(['가'.repeat(TRANSLATE_MAX_CHARS * 2), '나'.repeat(10)])).toBe(false)
   })
 })
 

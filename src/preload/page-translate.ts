@@ -8,7 +8,7 @@
 // - 이 파일은 page.ts 와 같은 엔트리에 인라인되므로 shared 의 **값**을 import 하지 않는다
 //   (상수 사본은 ./page-constants.ts).
 
-import { TRANSLATE_MAX_CHARS, TRANSLATE_MAX_NODES } from './page-constants'
+import { TRANSLATE_CONCURRENCY, TRANSLATE_MAX_CHARS, TRANSLATE_MAX_NODES } from './page-constants'
 
 /** 원문을 담아 두는 감싸개 표식 */
 export const ORIG_ATTR = 'data-samba-orig'
@@ -135,6 +135,47 @@ export function splitBatches(
   }
   if (current.length > 0) batches.push(current)
   return batches
+}
+
+/**
+ * 할 일들을 최대 limit 개씩만 동시에 돌린다.
+ * 하나가 끝나면 바로 다음 것을 집어 가므로, 결과는 도착하는 대로 화면에 반영된다.
+ * 개별 할 일이 던진 오류는 삼키고 나머지를 계속 돌린다(배치 하나가 실패해도 페이지 전체가 멈추지 않는다)
+ */
+export async function runWithLimit(
+  tasks: readonly (() => Promise<void>)[],
+  limit: number = TRANSLATE_CONCURRENCY
+): Promise<void> {
+  const size = Math.max(1, Math.floor(limit))
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < tasks.length) {
+      const index = next
+      next += 1
+      try {
+        await tasks[index]()
+      } catch {
+        // 실패 사유는 호출부(진행률 보고)가 이미 들고 있다
+      }
+    }
+  }
+  const workers: Promise<void>[] = []
+  for (let i = 0; i < Math.min(size, tasks.length); i++) workers.push(worker())
+  await Promise.all(workers)
+}
+
+/**
+ * 화면에 보이는 요소를 위에서 아래(같은 높이면 왼쪽부터) 순서로 세운다.
+ * IntersectionObserver 가 넘겨 주는 순서는 정해져 있지 않아서 여기서 한 번 정렬한다
+ */
+export function sortByViewportOrder<T>(
+  items: readonly T[],
+  positionOf: (item: T) => { top: number; left: number }
+): T[] {
+  return items
+    .map((item, index) => ({ item, index, pos: positionOf(item) }))
+    .sort((a, b) => a.pos.top - b.pos.top || a.pos.left - b.pos.left || a.index - b.index)
+    .map((v) => v.item)
 }
 
 // === 이미지 번역 오버레이 ===================================================
@@ -305,9 +346,26 @@ function createImageOverlay(): OverlayHandle {
 
 // === 설치 =================================================================
 
+/** 배치 한 덩어리의 결과. 실패 사유는 메인이 준 오류 코드 문자열이다(원문은 담기지 않는다) */
+export type TranslateReply = { ok: true; texts: string[] } | { ok: false; error: string }
+
+/** 진행률 보고 한 건. 화면에 "번역 중 12/398" 로 보여 줄 값만 담는다 */
+export interface TranslateProgress {
+  /** 아직 돌고 있는 배치가 있는가 */
+  running: boolean
+  /** 화면에 반영된 노드 수 */
+  done: number
+  /** 이번 실행에서 번역 대기열에 올린 노드 수 */
+  total: number
+  /** 마지막 실패 사유 코드(있을 때만) */
+  error?: string
+}
+
 export interface PageTranslateDeps {
-  /** 원문 배열을 보내고 같은 순서의 번역 배열을 받는다. 실패하면 null */
-  translate: (texts: string[], lang: string) => Promise<string[] | null>
+  /** 원문 배열을 보내고 같은 순서의 번역 배열을 받는다 */
+  translate: (texts: string[], lang: string) => Promise<TranslateReply>
+  /** 진행률 보고(메인 → 렌더러로 흘러간다). 없으면 보고하지 않는다 */
+  progress?: (p: TranslateProgress) => void
 }
 
 export interface PageTranslateApi {
@@ -329,33 +387,57 @@ export function installPageTranslate(deps: PageTranslateDeps): PageTranslateApi 
   let observer: IntersectionObserver | null = null
   let running = false
   let translatedCount = 0
+  // 이번 실행에서 대기열에 올린 노드 수(진행률의 분모)
+  let queuedTotal = 0
+  // 지금 돌고 있는 묶음 수. 0 이면 더 보낼 것이 없다는 뜻이다
+  let inFlight = 0
+  let lastError = ''
 
   // 마지막으로 요청한 대상 언어(스크롤로 새로 보이는 노드도 같은 언어로 번역한다)
   let targetLang = 'ko'
 
-  const translateElements = async (targets: HTMLElement[]): Promise<number> => {
-    if (targets.length === 0) return 0
-    const texts = targets.map((el) => el.getAttribute(ORIG_ATTR) ?? '')
-    let done = 0
-    for (const batch of splitBatches(texts)) {
-      const slice = batch.map((i) => texts[i])
-      const result = await deps.translate(slice, targetLang)
-      if (!result) return done
-      batch.forEach((index, i) => {
-        const value = result[i]
-        if (typeof value !== 'string' || !value) return
-        targets[index].textContent = value
-        done += 1
-      })
-    }
-    return done
+  const report = (): void => {
+    deps.progress?.({
+      running: inFlight > 0,
+      done: translatedCount,
+      total: queuedTotal,
+      ...(lastError ? { error: lastError } : {})
+    })
   }
 
-  const flush = async (targets: HTMLElement[]): Promise<number> => {
+  const translateElements = async (targets: HTMLElement[]): Promise<void> => {
+    if (targets.length === 0) return
+    const texts = targets.map((el) => el.getAttribute(ORIG_ATTR) ?? '')
+    // 배치를 동시에 여러 개 띄우고, 먼저 끝난 것부터 바로 화면에 꽂는다
+    const tasks = splitBatches(texts).map((batch) => async (): Promise<void> => {
+      const slice = batch.map((i) => texts[i])
+      const reply = await deps.translate(slice, targetLang)
+      if (!reply.ok) {
+        lastError = reply.error
+        report()
+        return
+      }
+      batch.forEach((index, i) => {
+        const value = reply.texts[i]
+        if (typeof value !== 'string' || !value) return
+        targets[index].textContent = value
+        translatedCount += 1
+      })
+      report()
+    })
+    await runWithLimit(tasks)
+  }
+
+  const flush = async (targets: HTMLElement[]): Promise<void> => {
     for (const el of targets) pending.delete(el)
-    const count = await translateElements(targets)
-    translatedCount += count
-    return count
+    inFlight += 1
+    report()
+    try {
+      await translateElements(targets)
+    } finally {
+      inFlight -= 1
+      report()
+    }
   }
 
   const observe = (elements: HTMLElement[]): void => {
@@ -372,7 +454,12 @@ export function installPageTranslate(deps: PageTranslateDeps): PageTranslateApi 
           .filter((el) => pending.has(el))
         if (visible.length === 0) return
         for (const el of visible) observer?.unobserve(el)
-        void flush(visible)
+        // 화면 위쪽부터 번역해야 사용자가 보고 있는 곳이 먼저 바뀐다
+        const ordered = sortByViewportOrder(visible, (el) => {
+          const r = el.getBoundingClientRect()
+          return { top: r.top, left: r.left }
+        })
+        void flush(ordered)
       })
     }
     for (const el of elements) {
@@ -385,10 +472,16 @@ export function installPageTranslate(deps: PageTranslateDeps): PageTranslateApi 
     if (running) return 'busy'
     running = true
     targetLang = lang
+    lastError = ''
     try {
       const nodes = collectTextNodes(document.body)
       const wrapped = wrapTextNodes(nodes)
-      if (wrapped.length === 0) return 'nothing to translate'
+      queuedTotal = translatedCount + wrapped.length
+      if (wrapped.length === 0) {
+        report()
+        return 'nothing to translate'
+      }
+      report()
       observe(wrapped)
       return `queued: ${wrapped.length}`
     } finally {
@@ -403,6 +496,9 @@ export function installPageTranslate(deps: PageTranslateDeps): PageTranslateApi 
     overlay.hide()
     const count = restoreOriginals(document.body)
     translatedCount = 0
+    queuedTotal = 0
+    lastError = ''
+    report()
     return `restored: ${count}`
   }
 

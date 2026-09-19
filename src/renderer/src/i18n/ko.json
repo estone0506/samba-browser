@@ -922,6 +922,16 @@
     "autoOn": "{{host}} 은(는) 열 때마다 자동 번역",
     "autoOff": "{{host}} 자동 번역 끄기",
     "autoList": "자동 번역: {{list}}",
+    "progress": "번역 중 {{done}}/{{total}}",
+    "progressDone": "번역 완료 {{done}}/{{total}}",
+    "imageWorking": "이미지 번역 중…",
+    "imageDone": "이미지 번역 완료",
+    "fail": {
+      "needsAi": "AI 연결이 없어요. 설정 → AI 연결에서 연결해 주세요",
+      "timeout": "시간이 초과됐어요. 잠시 뒤 다시 시도해 주세요",
+      "noText": "글자를 찾지 못했어요",
+      "failed": "번역에 실패했어요. 잠시 뒤 다시 시도해 주세요"
+    },
     "lang": {
       "ko": "한국어",
       "en": "영어",

@@ -922,6 +922,16 @@
     "autoOn": "Always translate {{host}}",
     "autoOff": "Stop translating {{host}}",
     "autoList": "Auto-translate: {{list}}",
+    "progress": "Translating {{done}}/{{total}}",
+    "progressDone": "Translated {{done}}/{{total}}",
+    "imageWorking": "Translating image…",
+    "imageDone": "Image translated",
+    "fail": {
+      "needsAi": "No AI connection. Connect one in Settings → AI.",
+      "timeout": "It took too long. Please try again in a moment.",
+      "noText": "No text found.",
+      "failed": "Translation failed. Please try again in a moment."
+    },
     "lang": {
       "ko": "Korean",
       "en": "English",
