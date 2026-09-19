@@ -60,6 +60,8 @@ export const DEFAULT_SETTINGS = {
   vaultRememberDevice: true,
   vaultAccessPolicy: 'while_unlocked' as const,
   vaultAutoSubmit: true,
+  // 로그인 폼의 "로그인 상태 유지" 체크박스를 자동으로 켤지(세션 재사용 → 캡차 감소)
+  vaultKeepSignedIn: true,
   // 저장된 값과 다른 값으로 로그인에 성공하면 묻지 않고 자동으로 비밀번호를 갱신할지 여부
   vaultAutoUpdatePassword: true,
   vaultExcludedHosts: [] as string[],
@@ -129,6 +131,8 @@ export const settingsSchema = z.object({
   vaultAccessPolicy: z.enum(VAULT_ACCESS_POLICIES).catch(DEFAULT_SETTINGS.vaultAccessPolicy),
   // 자동 채움 후 자동 제출 여부
   vaultAutoSubmit: z.boolean().catch(DEFAULT_SETTINGS.vaultAutoSubmit),
+  // 로그인 상태 유지 체크박스 자동 체크 여부
+  vaultKeepSignedIn: z.boolean().catch(DEFAULT_SETTINGS.vaultKeepSignedIn),
   // 로그인 성공 감지 시 비밀번호 자동 갱신 여부(끄면 기존 "갱신할까요?" 프롬프트로 동작)
   vaultAutoUpdatePassword: z.boolean().catch(DEFAULT_SETTINGS.vaultAutoUpdatePassword),
   // 제외 도메인(정규화된 host 문자열 목록). 손상된 값은 빈 배열로 되돌린다
