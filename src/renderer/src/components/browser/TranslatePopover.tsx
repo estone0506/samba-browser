@@ -7,6 +7,7 @@ import { addAutoDomain, removeAutoDomain, TRANSLATE_LANGS } from '@shared/transl
 import type { TranslateLang } from '@shared/translate'
 import { useBrowserStore } from '@renderer/stores/browserStore'
 import { cn } from '@renderer/lib/utils'
+import { useOverlayStore } from '@renderer/stores/overlayStore'
 
 // 현재 탭 주소의 호스트(자동 번역 목록에 넣고 뺄 대상)
 function hostOf(url?: string): string {
@@ -28,6 +29,13 @@ export function TranslatePopover(): React.JSX.Element {
   const [note, setNote] = useState('')
   const host = hostOf(activeTab?.url)
   const auto = domains.includes(host.replace(/^www\./, ''))
+
+  // 열려 있는 동안에는 네이티브 웹뷰를 접는다 — 접지 않으면 팝오버가 그 아래로 가려져 안 보인다
+  const setWebviewHidden = useOverlayStore((s) => s.setWebviewHidden)
+  useEffect(() => {
+    setWebviewHidden(open)
+    return () => setWebviewHidden(false)
+  }, [open, setWebviewHidden])
 
   // 팝오버를 열 때마다 최신 설정을 읽는다(다른 화면에서 바뀌었을 수 있다)
   useEffect(() => {

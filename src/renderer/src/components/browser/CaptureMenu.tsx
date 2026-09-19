@@ -7,6 +7,7 @@ import { useCaptureStore, formatElapsed } from '@renderer/stores/captureStore'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { CaptureOverlay } from './CaptureOverlay'
 import { CaptureToast } from './CaptureToast'
+import { useOverlayStore } from '@renderer/stores/overlayStore'
 import {
   DEFAULT_CAPTURE_SHORTCUTS,
   IMAGE_CAPTURE_MODES,
@@ -32,6 +33,13 @@ export function CaptureMenu(): React.JSX.Element {
   const clearError = useCaptureStore((s) => s.clearError)
   const showToast = useCaptureStore((s) => s.showToast)
   const setView = useUiStore((s) => s.setView)
+
+  // 열려 있는 동안에는 네이티브 웹뷰를 접는다 — 접지 않으면 팝오버가 그 아래로 가려져 안 보인다
+  const setWebviewHidden = useOverlayStore((s) => s.setWebviewHidden)
+  useEffect(() => {
+    setWebviewHidden(open)
+    return () => setWebviewHidden(false)
+  }, [open, setWebviewHidden])
 
   // 단축키 표는 설정에서 바뀔 수 있으므로 메뉴를 열 때마다 최신 값을 읽는다
   useEffect(() => {
