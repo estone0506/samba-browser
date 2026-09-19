@@ -17,7 +17,7 @@ import {
   type NativeImage,
   type WebContents
 } from 'electron'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, writeFileSync, writeSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { IPC } from '../../shared/ipc'
 import type { Settings } from '../../shared/settings'
@@ -294,6 +294,48 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
       mode,
       filePath: target.filePath,
       fileName: target.fileName,
+      previewDataUrl: '',
+      width: 0,
+      height: 0
+    } satisfies CaptureResultDto)
+  })
+
+  // --- 녹화 스트리밍 저장: 시작 때 파일을 열고 청크를 바로 이어 쓴다 ----------
+  // MediaRecorder(webm) 청크는 순서대로 이어 붙이면 그대로 재생 가능한 파일이 된다.
+  // 렌더러가 죽거나 앱이 크래시해도 마지막 청크까지는 디스크에 남는다
+  let streaming: { fd: number; filePath: string; fileName: string } | null = null
+  deps.handle(IPC.captureBeginVideo, (): string => {
+    if (streaming) {
+      closeSync(streaming.fd)
+      streaming = null
+    }
+    const dir = targetDir()
+    const target = uniqueCaptureFile(dir, new Date(), 'webm', (p) => existsSync(p))
+    const fd = openSync(target.filePath, 'w')
+    streaming = { fd, filePath: target.filePath, fileName: target.fileName }
+    return target.fileName
+  })
+  deps.handle(IPC.captureAppendVideo, (rawBytes: unknown): void => {
+    if (!streaming) return
+    const bytes =
+      rawBytes instanceof Uint8Array
+        ? rawBytes
+        : rawBytes instanceof ArrayBuffer
+          ? new Uint8Array(rawBytes)
+          : null
+    if (!bytes || bytes.byteLength === 0) return
+    writeSync(streaming.fd, bytes)
+  })
+  deps.handle(IPC.captureEndVideo, (rawMode: unknown): void => {
+    const mode: CaptureMode = isCaptureMode(rawMode) ? rawMode : 'videoScreen'
+    if (!streaming) return
+    const { fd, filePath, fileName } = streaming
+    streaming = null
+    closeSync(fd)
+    deps.send(IPC.captureDone, {
+      mode,
+      filePath,
+      fileName,
       previewDataUrl: '',
       width: 0,
       height: 0

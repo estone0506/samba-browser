@@ -164,7 +164,11 @@ export const IPC = {
   captureRun: 'capture:run', // 방식별 캡처 실행(영역/전체 페이지/전체 화면)
   captureSaveImage: 'capture:saveImage', // 렌더러가 잘라낸 이미지를 저장
   captureVideoSource: 'capture:videoSource', // 녹화용 desktopCapturer 소스 + 크롭
-  captureSaveVideo: 'capture:saveVideo', // 녹화 결과(webm) 저장
+  captureSaveVideo: 'capture:saveVideo', // 녹화 결과(webm) 저장(한 번에)
+  // 녹화 중 청크를 바로 파일에 이어 쓴다 — 앱이 죽어도 직전까지 남는다
+  captureBeginVideo: 'capture:beginVideo', // 파일 열기 → 파일 이름
+  captureAppendVideo: 'capture:appendVideo', // 청크 덧붙이기
+  captureEndVideo: 'capture:endVideo', // 마무리(완료 이벤트)
   captureCopyImage: 'capture:copyImage', // 저장된 이미지를 클립보드로
   captureOpenFile: 'capture:openFile',
   captureOpenFolder: 'capture:openFolder',

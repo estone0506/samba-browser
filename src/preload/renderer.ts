@@ -467,6 +467,11 @@ const api = {
       invoke(IPC.captureVideoSource, mode),
     saveVideo: (bytes: Uint8Array, mode: CaptureMode): Promise<IpcResult<void>> =>
       invoke(IPC.captureSaveVideo, bytes, mode),
+    beginVideo: (mode: CaptureMode): Promise<IpcResult<string>> =>
+      invoke(IPC.captureBeginVideo, mode),
+    appendVideo: (bytes: Uint8Array): Promise<IpcResult<void>> =>
+      invoke(IPC.captureAppendVideo, bytes),
+    endVideo: (mode: CaptureMode): Promise<IpcResult<void>> => invoke(IPC.captureEndVideo, mode),
     copyImage: (filePath: string): Promise<IpcResult<void>> =>
       invoke(IPC.captureCopyImage, filePath),
     openFile: (filePath: string): Promise<IpcResult<void>> => invoke(IPC.captureOpenFile, filePath),

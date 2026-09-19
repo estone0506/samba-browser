@@ -11,6 +11,8 @@ import { useUiStore } from './uiStore'
 
 // 녹화 중인 작업. 핸들은 스토어 상태에 넣지 않는다(리렌더 대상이 아니다)
 let recordingHandle: RecordingHandle | null = null
+// 녹화 청크 이어 쓰기 대기열(중지 때 마지막 청크까지 기다린다)
+let appendQueue: () => Promise<unknown> = () => Promise.resolve()
 let elapsedTimer: number | null = null
 
 export interface CaptureState {
@@ -71,10 +73,19 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
       const source = await window.samba.capture.videoSource(mode)
       if (!source.ok) throw new Error(source.error)
       const settings = await window.samba.settings.get()
+      // 파일을 먼저 열어 두고 청크를 바로 이어 쓴다(크래시 나도 직전까지 남는다)
+      const begun = await window.samba.capture.beginVideo(mode)
+      if (!begun.ok) throw new Error(begun.error)
+      // 청크는 순서가 중요하므로 앞 청크 쓰기가 끝난 뒤 다음을 보낸다
+      let queue: Promise<unknown> = Promise.resolve()
       recordingHandle = await startRecording({
         source: source.data,
-        microphone: settings.ok ? settings.data.captureMicrophone : false
+        microphone: settings.ok ? settings.data.captureMicrophone : false,
+        onChunk: (bytes) => {
+          queue = queue.then(() => window.samba.capture.appendVideo(bytes)).catch(() => undefined)
+        }
       })
+      appendQueue = (): Promise<unknown> => queue
       set({ recordingMode: mode, elapsed: 0 })
       elapsedTimer = window.setInterval(() => set((s) => ({ elapsed: s.elapsed + 1 })), 1000)
     } catch (e: unknown) {
@@ -122,9 +133,11 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
     set({ recordingMode: null, elapsed: 0 })
     if (!handle || !mode) return
     try {
-      const bytes = await handle.stop()
-      const saved = await window.samba.capture.saveVideo(bytes, mode)
-      if (!saved.ok) throw new Error(saved.error)
+      await handle.stop()
+      // 마지막 청크까지 파일에 들어간 뒤 닫는다
+      await appendQueue()
+      const ended = await window.samba.capture.endVideo(mode)
+      if (!ended.ok) throw new Error(ended.error)
     } catch (e: unknown) {
       set({ error: toMessage(e) })
     }

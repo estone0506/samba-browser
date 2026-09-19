@@ -60,6 +60,8 @@ export interface StartRecordingOptions {
   /** 마이크 소리를 함께 담을지 */
   microphone: boolean
   fps?: number
+  /** 청크가 생길 때마다(약 1초) 호출된다 — 바로 파일에 이어 쓰는 용도 */
+  onChunk?: (bytes: Uint8Array) => void
 }
 
 /**
@@ -121,8 +123,11 @@ export async function startRecording(options: StartRecordingOptions): Promise<Re
   const mimeType = pickRecorderMime((m) => MediaRecorder.isTypeSupported(m))
   const recorder = new MediaRecorder(recordedStream, mimeType ? { mimeType } : undefined)
   const chunks: Blob[] = []
+  const onChunk = options.onChunk
   recorder.ondataavailable = (e): void => {
-    if (e.data.size > 0) chunks.push(e.data)
+    if (e.data.size <= 0) return
+    chunks.push(e.data)
+    if (onChunk) void e.data.arrayBuffer().then((buf) => onChunk(new Uint8Array(buf)))
   }
   recorder.start(1000)
 
