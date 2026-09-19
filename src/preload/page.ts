@@ -13,7 +13,8 @@
 //       relative import(./page-core 등)는 같은 엔트리에 인라인되므로 안전하다.
 // 회귀 방지 테스트: tests/preload-bundle.test.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import { INTERNAL_PROTOCOL, PAGE_IPC, PICKER_LABELS } from './page-constants'
+import { GESTURE_ACTION_LABELS, INTERNAL_PROTOCOL, PAGE_IPC, PICKER_LABELS } from './page-constants'
+import { installGestureRecognizer, type GestureConfig } from './page-gesture'
 import type { IpcResult, Settings } from '../shared/ipc'
 import {
   buildSnapshot,
@@ -91,6 +92,34 @@ void ipcRenderer
       labels: PICKER_LABELS[language]
     })
   })
+
+// === 마우스 제스처 ==========================================================
+// 켜짐 여부와 시퀀스→동작 매핑은 메인이 밀어 준다(page:gestureConfig).
+// 아직 못 받았으면 꺼진 것으로 보고 궤적도 그리지 않는다
+let gestureConfig: GestureConfig = { enabled: false, language: 'ko', mapping: {} }
+
+ipcRenderer.on(PAGE_IPC.gestureConfig, (_e, raw: unknown) => {
+  if (typeof raw !== 'object' || raw === null) return
+  const next = raw as Partial<GestureConfig>
+  gestureConfig = {
+    enabled: next.enabled === true,
+    language: next.language === 'en' ? 'en' : 'ko',
+    mapping: typeof next.mapping === 'object' && next.mapping !== null ? next.mapping : {}
+  }
+})
+
+installGestureRecognizer({
+  send: (sequence) => ipcRenderer.send(PAGE_IPC.gesture, sequence),
+  config: () => gestureConfig,
+  labelOf: (sequence) => {
+    if (!sequence) return ''
+    const action = gestureConfig.mapping[sequence]
+    if (typeof action !== 'string' || action === 'none') return ''
+    const labels: Record<string, string> = GESTURE_ACTION_LABELS[gestureConfig.language]
+    return labels[action] ?? ''
+  }
+})
+// === 마우스 제스처 끝 =======================================================
 
 // === 자체 새 탭 페이지 브리지 ===============================================
 // 내부 스킴(samba:) 문서에서만 메인 월드에 노출한다. 웹 페이지는 protocol 이 http(s) 라
