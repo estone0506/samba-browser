@@ -37,6 +37,7 @@ import {
   type PickerAccountsResponse,
   type PickerFillResponse
 } from './page-picker'
+import { installRegionPicker, REGION_HINTS } from './page-capture'
 import type { NewTabInitDto } from '../shared/newtab'
 import { installPageTranslate, type ImageOverlayDto } from './page-translate'
 
@@ -80,11 +81,13 @@ installCaptureListener((payload) => ipcRenderer.send(PAGE_IPC.vaultCapture, payl
 // 문구는 페이지 언어가 아니라 앱 언어를 따라야 하므로, settings:get 으로 현재 언어를
 // 물어본 뒤 page-constants 의 ko/en 표에서 골라 쓴다(격리 월드에는 i18n 모듈을 쓸 수 없다).
 // 응답이 늦거나 실패해도 피커는 즉시 동작해야 하므로 기본은 한국어로 두고 설치한다
+let appLanguage: 'ko' | 'en' = 'ko'
 void ipcRenderer
   .invoke(PAGE_IPC.settingsGet)
   .then((r: IpcResult<Settings>) => (r.ok && r.data.language === 'en' ? 'en' : 'ko'))
   .catch(() => 'ko' as const)
   .then((language: 'ko' | 'en') => {
+    appLanguage = language
     installAutofillPicker({
       listAccounts: (host) =>
         ipcRenderer.invoke(PAGE_IPC.vaultPickerAccounts, host) as Promise<PickerAccountsResponse>,
@@ -143,6 +146,17 @@ Object.assign(globalThis, {
   }
 })
 // === 화면 번역 끝 ===========================================================
+// === 캡처 · 영역 선택(요소 단위) ============================================
+// 메인이 모드를 켤 때만 하이라이트가 붙고, 클릭한 요소의 경계 네 값만 되돌려 보낸다.
+// 페이지가 스스로 켤 수는 없다(메인이 활성 탭에만 모드를 보낸다)
+const regionPicker = installRegionPicker({
+  send: (rect) => ipcRenderer.send(PAGE_IPC.captureElementRect, rect)
+})
+ipcRenderer.on(PAGE_IPC.captureRegionMode, (_event, payload: { active?: boolean } | undefined) => {
+  if (payload?.active) regionPicker.start(REGION_HINTS[appLanguage])
+  else regionPicker.stop()
+})
+// === 캡처 끝 ================================================================
 
 // === 자체 새 탭 페이지 브리지 ===============================================
 // 내부 스킴(samba:) 문서에서만 메인 월드에 노출한다. 웹 페이지는 protocol 이 http(s) 라

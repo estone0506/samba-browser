@@ -46,7 +46,11 @@ import {
   type PhoneScreenModeDto,
   type PhoneToolsStatusDto,
   type PhoneToolsProgressDto,
-  type TranslateLang
+  type TranslateLang,
+  type CaptureMode,
+  type CaptureResultDto,
+  type CaptureStillDto,
+  type CaptureVideoSourceDto
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
@@ -412,6 +416,35 @@ const api = {
       const h = (_: unknown, dto: PhoneScreenModeDto): void => cb(dto)
       ipcRenderer.on(IPC.phoneScreenMode, h)
       return () => ipcRenderer.off(IPC.phoneScreenMode, h)
+    }
+  },
+  // 사진·영상 캡처 — 파일은 설정의 저장 폴더에만 쓰인다(경로를 렌더러가 고르지 못한다)
+  capture: {
+    // 직접 지정용 정지 이미지(웹뷰 1장) + 그 이미지가 덮는 렌더러 좌표
+    still: (): Promise<IpcResult<CaptureStillDto>> => invoke(IPC.captureStill),
+    // 영역 선택·전체 페이지·전체 화면. true 면 메인이 처리를 맡았다는 뜻
+    run: (mode: CaptureMode): Promise<IpcResult<boolean>> => invoke(IPC.captureRun, mode),
+    saveImage: (dataUrl: string): Promise<IpcResult<void>> => invoke(IPC.captureSaveImage, dataUrl),
+    videoSource: (mode: CaptureMode): Promise<IpcResult<CaptureVideoSourceDto>> =>
+      invoke(IPC.captureVideoSource, mode),
+    saveVideo: (bytes: Uint8Array, mode: CaptureMode): Promise<IpcResult<void>> =>
+      invoke(IPC.captureSaveVideo, bytes, mode),
+    copyImage: (filePath: string): Promise<IpcResult<void>> =>
+      invoke(IPC.captureCopyImage, filePath),
+    openFile: (filePath: string): Promise<IpcResult<void>> => invoke(IPC.captureOpenFile, filePath),
+    openFolder: (filePath: string): Promise<IpcResult<void>> =>
+      invoke(IPC.captureOpenFolder, filePath),
+    // 저장 폴더 선택. 고르면 메인이 설정에 반영하고 그 경로를 돌려준다
+    pickDir: (): Promise<IpcResult<string | null>> => invoke(IPC.capturePickDir),
+    onShortcut: (cb: (mode: CaptureMode) => void): (() => void) => {
+      const h = (_: unknown, dto: { mode: CaptureMode }): void => cb(dto.mode)
+      ipcRenderer.on(IPC.captureShortcut, h)
+      return () => ipcRenderer.off(IPC.captureShortcut, h)
+    },
+    onDone: (cb: (dto: CaptureResultDto) => void): (() => void) => {
+      const h = (_: unknown, dto: CaptureResultDto): void => cb(dto)
+      ipcRenderer.on(IPC.captureDone, h)
+      return () => ipcRenderer.off(IPC.captureDone, h)
     }
   }
 }

@@ -32,6 +32,9 @@ interface UiState {
   vaultPanelOpen: boolean
   // 폭 드래그 중이면 true. 네이티브 웹뷰가 포인터를 가로채지 않도록 WebArea 가 뷰를 잠시 접는다
   resizing: boolean
+  // 캡처 '직접 지정' 오버레이가 떠 있으면 true. 정지 이미지를 웹뷰가 덮지 않도록
+  // resizing 과 똑같이 웹뷰를 잠시 접는다
+  captureOverlayOpen: boolean
   setSidebarWidth: (w: number) => void
   setSidebarCollapsed: (v: boolean) => void
   // 토글 후의 접힘 상태를 돌려준다(호출부가 그대로 설정에 저장한다)
@@ -41,6 +44,7 @@ interface UiState {
   toggleSidebarSection: (key: SidebarSectionKey) => SidebarSections
   setPanelWidth: (w: number) => void
   setResizing: (v: boolean) => void
+  setCaptureOverlayOpen: (v: boolean) => void
   setView: (v: MainView) => void
   toggleVaultPanel: () => void
   closeVaultPanel: () => void
@@ -55,6 +59,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   view: 'browser',
   vaultPanelOpen: false,
   resizing: false,
+  captureOverlayOpen: false,
   setSidebarWidth: (w) =>
     set({ sidebarWidth: Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, w)) }),
   setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
@@ -79,6 +84,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   setPanelWidth: (w) =>
     set({ panelWidth: Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, w)) }),
   setResizing: (v) => set({ resizing: v }),
+  setCaptureOverlayOpen: (v) => set({ captureOverlayOpen: v }),
   setView: (v) => set({ view: v }),
   toggleVaultPanel: () => set((s) => ({ vaultPanelOpen: !s.vaultPanelOpen })),
   closeVaultPanel: () => set({ vaultPanelOpen: false })

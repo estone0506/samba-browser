@@ -5,6 +5,14 @@ import { EXTENSION_SOURCES, type ExtensionSource } from './extensions'
 import { defaultMouseGestures, GESTURE_ACTIONS } from './gestures'
 import { DEFAULT_PAYMENT_LIMIT_KRW, type ScreenFps, type ScreenSize } from './phone'
 import { DEFAULT_TRANSLATE_LANG, TRANSLATE_LANGS, type TranslateLang } from './translate'
+import {
+  CAPTURE_FORMATS,
+  CAPTURE_MODES,
+  DEFAULT_CAPTURE_SHORTCUTS,
+  mergeCaptureShortcuts,
+  type CaptureFormat,
+  type CaptureShortcuts
+} from './capture'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 
 // 도구 호출 상한 허용 범위
@@ -157,8 +165,19 @@ export const DEFAULT_SETTINGS = {
   // 번역 결과의 기본 대상 언어
   translateTargetLang: DEFAULT_TRANSLATE_LANG as TranslateLang,
   // 열자마자 자동으로 번역할 도메인 목록(정규화된 host 문자열)
-  translateAutoDomains: [] as string[]
+  translateAutoDomains: [] as string[],
   // === 번역 끝 ==============================================================
+  // === 사진·영상 캡처(3단계 추가분) =========================================
+  // 저장 폴더. 빈 문자열이면 메인이 `다운로드/SAMBA 캡처` 를 만들어 쓴다(기기별 값)
+  captureDir: '',
+  captureFormat: 'png' as CaptureFormat,
+  // 영상 녹화에 마이크 소리를 함께 담을지
+  captureMicrophone: false,
+  // 이미지 저장 직후 클립보드에도 복사할지
+  captureCopyToClipboard: false,
+  // 캡처 단축키 표(설정에서 바꿀 수 있다)
+  captureShortcuts: { ...DEFAULT_CAPTURE_SHORTCUTS } as CaptureShortcuts
+  // === 캡처 끝 ==============================================================
 }
 
 // 구독 연결 기록 한 칸. account 는 화면 표시용 문자열뿐이고 토큰은 담지 않는다
@@ -283,8 +302,19 @@ export const settingsSchema = z.object({
   // === 마우스 제스처 끝 =======================================================
   // === 번역 — 손상된 값은 기본 언어·빈 목록으로 되돌린다 ======================
   translateTargetLang: z.enum(TRANSLATE_LANGS).catch(DEFAULT_SETTINGS.translateTargetLang),
-  translateAutoDomains: z.array(z.string()).catch(DEFAULT_SETTINGS.translateAutoDomains)
+  translateAutoDomains: z.array(z.string()).catch(DEFAULT_SETTINGS.translateAutoDomains),
   // === 번역 끝 ================================================================
+  // === 사진·영상 캡처 — 기기별 값이라 동기화하지 않는다 ========================
+  captureDir: z.string().catch(DEFAULT_SETTINGS.captureDir),
+  captureFormat: z.enum(CAPTURE_FORMATS).catch(DEFAULT_SETTINGS.captureFormat),
+  captureMicrophone: z.boolean().catch(DEFAULT_SETTINGS.captureMicrophone),
+  captureCopyToClipboard: z.boolean().catch(DEFAULT_SETTINGS.captureCopyToClipboard),
+  // 표기가 깨진 항목만 기본 단축키로 되돌린다(전체를 버리지 않는다)
+  captureShortcuts: z
+    .record(z.enum(CAPTURE_MODES), z.string())
+    .catch({ ...DEFAULT_CAPTURE_SHORTCUTS })
+    .transform((v): CaptureShortcuts => mergeCaptureShortcuts(v))
+  // === 캡처 끝 ================================================================
 })
 
 export type Settings = z.infer<typeof settingsSchema>

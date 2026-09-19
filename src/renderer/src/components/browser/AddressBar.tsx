@@ -17,6 +17,7 @@ import { displayUrl } from '@renderer/lib/display-url'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { cn } from '@renderer/lib/utils'
 import { TranslatePopover } from './TranslatePopover'
+import { CaptureMenu } from './CaptureMenu'
 
 // 이펙트에서 setState 하면 리렌더가 겹치므로, 렌더 도중 활성 탭 URL 변화를 감지해 상태를 맞춤
 function AddressBarButton({
@@ -90,6 +91,7 @@ export function AddressBar(): React.JSX.Element {
         />
       </form>
       <TranslatePopover />
+      <CaptureMenu />
       <AddressBarButton onClick={toggleVaultPanel} title={t('vault.popover.open')}>
         <KeyRound className={cn('h-4 w-4', vaultPanelOpen && 'text-[var(--text)]')} />
       </AddressBarButton>
