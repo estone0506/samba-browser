@@ -19,6 +19,9 @@ export interface Db {
 }
 
 const SAVE_DEBOUNCE_MS = 300
+// rename 실패 재시도 횟수·기본 간격(1초·2초·3초·4초·5초)
+const SAVE_MAX_RETRIES = 5
+const SAVE_RETRY_BASE_MS = 1000
 
 // sql.js 는 wasm 을 별도로 로드해야 한다. dev/빌드(externalized deps) 어느 쪽이든
 // node_modules 안의 실제 wasm 파일 경로를 그대로 알려주면 동작하므로 require.resolve 를 쓴다
@@ -65,14 +68,29 @@ export async function openDatabase(filePath: string): Promise<Db> {
     }
   }
 
+  // 타이머에서 도는 저장은 예외를 던지면 메인 프로세스 Uncaught 로 앱이 죽는다.
+  // Windows 에서는 백신·다른 프로세스가 data.db 를 잠깐 잡고 있으면 rename 이 EPERM 으로
+  // 실패하므로, 실패하면 간격을 늘려 가며 다시 시도하고 끝내 안 되면 기록만 남긴다
   let saveTimer: ReturnType<typeof setTimeout> | undefined
-  const scheduleSave = (): void => {
+  let retries = 0
+  const scheduleSave = (delay = SAVE_DEBOUNCE_MS): void => {
     if (isMemory || closed) return
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       saveTimer = undefined
-      save()
-    }, SAVE_DEBOUNCE_MS)
+      try {
+        save()
+        retries = 0
+      } catch (e: unknown) {
+        retries += 1
+        if (retries <= SAVE_MAX_RETRIES) {
+          scheduleSave(SAVE_RETRY_BASE_MS * retries)
+        } else {
+          retries = 0
+          console.error('DB 저장 실패(재시도 소진)', e)
+        }
+      }
+    }, delay)
   }
 
   // 두 번 호출돼도 안전하다(예: before-quit 과 창 closed 이벤트 양쪽에서 종료 정리가 겹치는 경우)

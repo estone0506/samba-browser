@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { app, crashReporter } from 'electron'
+import { app, BrowserWindow, crashReporter } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { createMainWindow } from './window'
 import { TabManager } from './browser/tab-manager'
@@ -30,6 +30,19 @@ if (userDataOverride) app.setPath('userData', userDataOverride)
 
 // 개발 모드(electron.exe 직접 실행)에서도 앱 이름이 'Electron' 대신 제품명으로 보이게 한다
 app.setName('SAMBA Browser')
+
+// 같은 userData 로 두 번째 인스턴스가 뜨면 data.db 저장이 서로 충돌한다(rename EPERM).
+// 락은 userData 경로별이라 SAMBA_USER_DATA 를 나눈 E2E·검증 인스턴스는 나란히 뜰 수 있다
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  })
+}
 
 // 내부 페이지 스킴(samba://) 등록도 app.whenReady() 이전이어야 한다
 registerInternalScheme()

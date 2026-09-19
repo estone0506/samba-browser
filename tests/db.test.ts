@@ -1,6 +1,23 @@
-import { describe, it, expect, afterEach, beforeEach } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, statSync, readdirSync } from 'node:fs'
+
+// rename 실패를 흉내 내기 위한 훅 — 설정돼 있으면 renameSync 대신 호출된다
+const renameHook = vi.hoisted(() => ({ fn: undefined as undefined | (() => void) }))
+vi.mock('node:fs', async (orig) => {
+  const m = await orig<typeof import('node:fs')>()
+  return {
+    ...m,
+    renameSync: (a: string, b: string) => {
+      if (renameHook.fn) {
+        const fn = renameHook.fn
+        renameHook.fn = undefined
+        fn()
+      }
+      return m.renameSync(a, b)
+    }
+  }
+})
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Database as SqlJsDatabase } from 'sql.js'
@@ -292,5 +309,33 @@ describe('0005 동기화 스키마', () => {
       .all<{ tag: string }>(sql`SELECT tag FROM __migrations WHERE tag LIKE '0005%'`)
       .map((row) => row.tag)
     expect(tags).toEqual(['0005_sync_workspaces'])
+  })
+})
+
+describe('scheduleSave 재시도', () => {
+  it('rename 이 실패해도 예외를 던지지 않고 뒤에 다시 저장한다', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'samba-db-retry-'))
+    const file = join(dir, 'data.db')
+    const db = await openDatabase(file)
+    vi.useFakeTimers()
+    // 다음 rename 한 번만 EPERM 으로 실패시킨다(Windows 에서 다른 프로세스가 파일을 잡은 상황)
+    let failed = 0
+    renameHook.fn = () => {
+      failed += 1
+      const err = new Error('EPERM: operation not permitted, rename') as NodeJS.ErrnoException
+      err.code = 'EPERM'
+      throw err
+    }
+    const before = statSync(file).mtimeMs
+    db.scheduleSave()
+    expect(() => vi.advanceTimersByTime(400)).not.toThrow()
+    expect(failed).toBe(1)
+    // 1초 뒤 재시도로 실제 저장이 이뤄진다(임시 파일은 남지 않는다)
+    vi.advanceTimersByTime(1100)
+    expect(readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([])
+    expect(statSync(file).mtimeMs).toBeGreaterThanOrEqual(before)
+    vi.useRealTimers()
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
   })
 })
