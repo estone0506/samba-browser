@@ -16,6 +16,8 @@ import { useUiStore } from './uiStore'
 export const RECORDING_BUSY_KEY = 'screenCapture.recordingBusy'
 
 let recordingHandle: RecordingHandle | null = null
+// 지금 녹화의 표. 메인은 이 표가 맞는 이어 쓰기·마무리만 듣는다
+let recordingToken: string | null = null
 // 녹화 청크 이어 쓰기 대기열(중지 때 마지막 청크까지 기다린다)
 let appendQueue: () => Promise<unknown> = () => Promise.resolve()
 let elapsedTimer: number | null = null
@@ -69,17 +71,30 @@ async function beginRecording(
   const settings = await window.samba.settings.get()
   const begun = await window.samba.capture.beginVideo(mode)
   if (!begun.ok) throw new Error(begun.error)
-  // 청크는 순서가 중요하므로 앞 청크 쓰기가 끝난 뒤 다음을 보낸다
-  let queue: Promise<unknown> = Promise.resolve()
-  recordingHandle = await startRecording({
-    source,
-    microphone: settings.ok ? settings.data.captureMicrophone : false,
-    onChunk: (bytes) => {
-      queue = queue.then(() => window.samba.capture.appendVideo(bytes)).catch(() => undefined)
-    }
-  })
-  appendQueue = (): Promise<unknown> => queue
-  onStarted()
+  const token = begun.data.token
+  try {
+    // 청크는 순서가 중요하므로 앞 청크 쓰기가 끝난 뒤 다음을 보낸다
+    let queue: Promise<unknown> = Promise.resolve()
+    recordingHandle = await startRecording({
+      source,
+      microphone: settings.ok ? settings.data.captureMicrophone : false,
+      onChunk: (bytes) => {
+        queue = queue
+          .then(() => window.samba.capture.appendVideo(token, bytes))
+          .catch(() => undefined)
+      }
+    })
+    recordingToken = token
+    appendQueue = (): Promise<unknown> => queue
+    onStarted()
+  } catch (e: unknown) {
+    // 파일은 이미 열렸다 — 시작에 실패했으면 메인이 닫고 지우게 알린다
+    // (그러지 않으면 파일 핸들과 setBackgroundThrottling(false) 가 그대로 남는다)
+    await window.samba.capture.cancelVideo(token)
+    recordingHandle = null
+    recordingToken = null
+    throw e
+  }
 }
 
 export const useCaptureStore = create<CaptureState>((set, get) => ({
@@ -187,20 +202,24 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
   stopRecording: async () => {
     const mode = get().recordingMode
     const handle = recordingHandle
+    const token = recordingToken
     recordingHandle = null
+    recordingToken = null
     if (elapsedTimer !== null) {
       window.clearInterval(elapsedTimer)
       elapsedTimer = null
     }
     set({ recordingMode: null, elapsed: 0 })
-    if (!handle || !mode) return
+    if (!handle || !mode || !token) return
     try {
       await handle.stop()
       // 마지막 청크까지 파일에 들어간 뒤 닫는다
       await appendQueue()
-      const ended = await window.samba.capture.endVideo(mode)
+      const ended = await window.samba.capture.endVideo(token, mode)
       if (!ended.ok) throw new Error(ended.error)
     } catch (e: unknown) {
+      // 마무리에 실패해도 파일 핸들은 반드시 닫는다
+      await window.samba.capture.cancelVideo(token)
       set({ error: toMessage(e) })
     }
   },

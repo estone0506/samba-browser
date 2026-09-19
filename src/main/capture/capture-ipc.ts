@@ -17,7 +17,16 @@ import {
   type NativeImage,
   type WebContents
 } from 'electron'
-import { closeSync, existsSync, mkdirSync, openSync, writeFileSync, writeSync } from 'node:fs'
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  rmSync,
+  writeFileSync,
+  writeSync
+} from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
 import { IPC } from '../../shared/ipc'
 import type { Settings } from '../../shared/settings'
@@ -31,6 +40,7 @@ import {
   type CaptureMode,
   type CaptureRect,
   type CaptureResultDto,
+  type CaptureBeginVideoDto,
   type CaptureShortcutInput,
   type CaptureStillDto,
   type CaptureVideoSourceDto
@@ -315,27 +325,51 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
 
   // --- 녹화 스트리밍 저장: 시작 때 파일을 열고 청크를 바로 이어 쓴다 ----------
   // MediaRecorder(webm) 청크는 순서대로 이어 붙이면 그대로 재생 가능한 파일이 된다.
-  // 렌더러가 죽거나 앱이 크래시해도 마지막 청크까지는 디스크에 남는다
-  let streaming: { fd: number; filePath: string; fileName: string } | null = null
+  // 렌더러가 죽거나 앱이 크래시해도 마지막 청크까지는 디스크에 남는다.
+  //
+  // 슬롯은 하나뿐이라 "앞 녹화의 늦은 청크" 가 다음 녹화 파일에 섞일 수 있었다.
+  // 그래서 시작할 때 token 을 발급하고, 이어 쓰기·마무리·취소는 토큰이 맞을 때만 듣는다
+  let streaming: { token: string; fd: number; filePath: string; fileName: string } | null = null
   // 렌더러는 웹뷰에 가려 '보이지 않는 창' 으로 취급되어 타이머·rAF 가 초당 한두 번으로
   // 묶인다. 녹화 중에는 크롭 캔버스를 그 속도로 그리면 영상이 뚝뚝 끊기므로 잠시 풀어 준다
   const setThrottling = (allowed: boolean): void => {
     if (!deps.win.isDestroyed()) deps.win.webContents.setBackgroundThrottling(allowed)
   }
-  deps.handle(IPC.captureBeginVideo, (): string => {
-    if (streaming) {
-      closeSync(streaming.fd)
-      streaming = null
+
+  /** 열려 있는 파일 핸들을 닫고 슬롯을 비운다(어느 경로로 끝나든 이 함수만 쓴다) */
+  const closeStreaming = (): { filePath: string; fileName: string } | null => {
+    const current = streaming
+    streaming = null
+    setThrottling(true)
+    if (!current) return null
+    try {
+      closeSync(current.fd)
+    } catch (e: unknown) {
+      console.warn('녹화 파일 닫기 실패', e instanceof Error ? e.message : String(e))
     }
+    return { filePath: current.filePath, fileName: current.fileName }
+  }
+
+  /** 토큰이 맞는 녹화만 돌려준다. 어긋나면 null(앞 녹화의 늦은 메시지) */
+  const currentStreaming = (rawToken: unknown): typeof streaming => {
+    if (!streaming) return null
+    return typeof rawToken === 'string' && rawToken === streaming.token ? streaming : null
+  }
+
+  deps.handle(IPC.captureBeginVideo, (): CaptureBeginVideoDto => {
+    // 앞 녹화가 아직 열려 있으면(중지가 오지 않은 경우) 먼저 닫는다
+    closeStreaming()
     const dir = targetDir()
     const target = uniqueCaptureFile(dir, new Date(), 'webm', (p) => existsSync(p))
     const fd = openSync(target.filePath, 'w')
-    streaming = { fd, filePath: target.filePath, fileName: target.fileName }
+    const token = randomUUID()
+    streaming = { token, fd, filePath: target.filePath, fileName: target.fileName }
     setThrottling(false)
-    return target.fileName
+    return { token, fileName: target.fileName }
   })
-  deps.handle(IPC.captureAppendVideo, (rawBytes: unknown): void => {
-    if (!streaming) return
+  deps.handle(IPC.captureAppendVideo, (rawToken: unknown, rawBytes: unknown): void => {
+    const current = currentStreaming(rawToken)
+    if (!current) return
     const bytes =
       rawBytes instanceof Uint8Array
         ? rawBytes
@@ -343,23 +377,38 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
           ? new Uint8Array(rawBytes)
           : null
     if (!bytes || bytes.byteLength === 0) return
-    writeSync(streaming.fd, bytes)
+    try {
+      writeSync(current.fd, bytes)
+    } catch (e: unknown) {
+      // 이미 닫힌 핸들(EBADF)에 쓰려 한 경우다 — 조용히 삼키지 않고 슬롯을 정리한다
+      console.warn('녹화 청크 쓰기 실패', e instanceof Error ? e.message : String(e))
+      closeStreaming()
+    }
   })
-  deps.handle(IPC.captureEndVideo, (rawMode: unknown): void => {
+  deps.handle(IPC.captureEndVideo, (rawToken: unknown, rawMode: unknown): void => {
     const mode: CaptureMode = isCaptureMode(rawMode) ? rawMode : 'videoScreen'
-    setThrottling(true)
-    if (!streaming) return
-    const { fd, filePath, fileName } = streaming
-    streaming = null
-    closeSync(fd)
+    if (!currentStreaming(rawToken)) return
+    const closed = closeStreaming()
+    if (!closed) return
     deps.send(IPC.captureDone, {
       mode,
-      filePath,
-      fileName,
+      filePath: closed.filePath,
+      fileName: closed.fileName,
       previewDataUrl: '',
       width: 0,
       height: 0
     } satisfies CaptureResultDto)
+  })
+  // 녹화를 시작하지 못했거나 중간에 접었을 때. 파일을 닫고 빈 파일은 지운다
+  deps.handle(IPC.captureCancelVideo, (rawToken: unknown): void => {
+    if (!currentStreaming(rawToken)) return
+    const closed = closeStreaming()
+    if (!closed) return
+    try {
+      if (existsSync(closed.filePath)) rmSync(closed.filePath, { force: true })
+    } catch (e: unknown) {
+      console.warn('녹화 파일 삭제 실패', e instanceof Error ? e.message : String(e))
+    }
   })
 
   // 저장이 끝난 파일만 다룬다 — 임의 경로 열기를 막기 위해 저장 폴더 밖이면 거절한다
@@ -428,7 +477,8 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   return {
     handleShortcut,
     dispose: () => {
-      setThrottling(true)
+      // 녹화 중에 창이 닫히면 열린 파일 핸들이 그대로 남는다 — 여기서 닫는다
+      closeStreaming()
       ipcMain.removeListener(IPC.captureElementRect, onElementRect)
       for (const wc of regionTargets) {
         if (!wc.isDestroyed()) wc.send(IPC.captureRegionMode, { active: false })

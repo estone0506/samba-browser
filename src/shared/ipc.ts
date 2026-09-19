@@ -166,9 +166,10 @@ export const IPC = {
   captureVideoSource: 'capture:videoSource', // 녹화용 desktopCapturer 소스 + 크롭
   captureSaveVideo: 'capture:saveVideo', // 녹화 결과(webm) 저장(한 번에)
   // 녹화 중 청크를 바로 파일에 이어 쓴다 — 앱이 죽어도 직전까지 남는다
-  captureBeginVideo: 'capture:beginVideo', // 파일 열기 → 파일 이름
-  captureAppendVideo: 'capture:appendVideo', // 청크 덧붙이기
-  captureEndVideo: 'capture:endVideo', // 마무리(완료 이벤트)
+  captureBeginVideo: 'capture:beginVideo', // 파일 열기 → { token, 파일 이름 }
+  captureAppendVideo: 'capture:appendVideo', // 청크 덧붙이기(토큰 필요)
+  captureEndVideo: 'capture:endVideo', // 마무리(완료 이벤트, 토큰 필요)
+  captureCancelVideo: 'capture:cancelVideo', // 시작 실패·중단 — 파일을 닫고 지운다
   captureCopyImage: 'capture:copyImage', // 저장된 이미지를 클립보드로
   captureOpenFile: 'capture:openFile',
   captureOpenFolder: 'capture:openFolder', // 인자가 없으면 저장 폴더 자체를 연다
@@ -329,6 +330,7 @@ export type {
   CaptureRect,
   CaptureShortcuts,
   CaptureResultDto,
+  CaptureBeginVideoDto,
   CaptureStillDto,
   CaptureVideoSourceDto
 } from './capture'
