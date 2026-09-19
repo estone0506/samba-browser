@@ -89,3 +89,27 @@ export const SYNCED_SETTING_KEYS = [
 ] as const
 
 export type SyncedSettingKey = (typeof SYNCED_SETTING_KEYS)[number]
+
+/**
+ * 마스터 키 재료 동기화 키(settings 표에 얹어 보낸다).
+ * salt·KDF 파라미터·검증자는 비밀이 아니다 — 이것만으로는 금고를 열 수 없고,
+ * 같은 마스터 비밀번호에서 **같은 키를 다시 유도**하는 데만 쓰인다.
+ * 값은 설정 store 가 아니라 vault_meta 에서 읽고 쓴다
+ */
+export const VAULT_KEY_SYNC_KEYS = ['vault.salt', 'vault.kdf', 'vault.verifier'] as const
+
+export type VaultKeySyncKey = (typeof VAULT_KEY_SYNC_KEYS)[number]
+
+export function isVaultKeySyncKey(key: string): key is VaultKeySyncKey {
+  return (VAULT_KEY_SYNC_KEYS as readonly string[]).includes(key)
+}
+
+/** 원격에서 받은 키 재료를 로컬 금고에 심은 결과 */
+export type VaultKeyApplyResult =
+  | 'applied' // 설정 전이던 금고에 심었다(이제 '잠김')
+  | 'unchanged' // 로컬 값과 같다
+  | 'mismatch' // 로컬이 이미 다른 마스터로 설정돼 있다 — 덮지 않는다
+  | 'incomplete' // 세 키가 다 오지 않았거나 값이 깨졌다
+
+/** 로컬·원격의 마스터 키 재료가 다를 때 상태 표시줄에 올리는 표식 */
+export const VAULT_KEY_MISMATCH_ERROR = 'sync:vaultKeyMismatch'

@@ -22,6 +22,8 @@ export function UnlockScreen(): React.JSX.Element {
   // (savedRemember 가 null 이어도) 방금 바꾼 값을 무시하지 않기 위해 따로 추적한다
   const [rememberTouched, setRememberTouched] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  // 이 금고가 다른 PC 에서 내려온 키 재료로 만들어졌는가 — 안내 문구만 달라진다
+  const [fromSync, setFromSync] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -29,6 +31,10 @@ export function UnlockScreen(): React.JSX.Element {
       if (cancelled || !r.ok) return
       setRemember(r.data.vaultRememberDevice)
       setSavedRemember(r.data.vaultRememberDevice)
+    })
+    void window.samba.vault.keyFromSync().then((r) => {
+      if (cancelled || !r.ok) return
+      setFromSync(r.data)
     })
     return () => {
       cancelled = true
@@ -53,7 +59,9 @@ export function UnlockScreen(): React.JSX.Element {
         </div>
         <div className="text-center">
           <h1 className="text-[19px] font-semibold tracking-tight">{t('vault.unlock.title')}</h1>
-          <p className="mt-1.5 text-[12.5px] text-[var(--text2)]">{t('vault.unlock.desc')}</p>
+          <p className="mt-1.5 text-[12.5px] text-[var(--text2)]">
+            {t(fromSync ? 'vault.unlock.fromSync' : 'vault.unlock.desc')}
+          </p>
         </div>
         <Input
           type="password"

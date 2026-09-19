@@ -187,6 +187,7 @@
       "failed": "Couldn't create KeyMaster"
     },
     "unlock": {
+      "fromSync": "Enter the master password you set on your other PC",
       "title": "Unlock",
       "desc": "Enter your master password",
       "placeholder": "Master password",

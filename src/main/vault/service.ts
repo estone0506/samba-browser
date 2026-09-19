@@ -59,7 +59,15 @@ import type {
   VaultState
 } from '../../shared/vault'
 import type { Settings } from '../../shared/settings'
-import type { OutboxRecorder, SyncOp, SyncTable, WorkspaceScope } from '../../shared/sync'
+import {
+  VAULT_KEY_SYNC_KEYS,
+  type OutboxRecorder,
+  type SyncOp,
+  type SyncTable,
+  type VaultKeyApplyResult,
+  type VaultKeySyncKey,
+  type WorkspaceScope
+} from '../../shared/sync'
 import { normalizeHost, registrableDomain } from '../../shared/host'
 
 // electron safeStorage 중 실제로 쓰는 부분만 좁혀 둔 인터페이스(테스트에서 스텁 주입)
@@ -154,6 +162,9 @@ const META_DEVICE_KEY = 'device_wrapped_key'
 const META_RECOVERY_SALT = 'recovery_salt'
 const META_RECOVERY_CT = 'recovery_wrapped_key'
 const META_RECOVERY_IV = 'recovery_wrapped_iv'
+// 이 금고의 키 재료가 다른 PC 에서 내려온 것인가(잠금 해제 화면 안내 문구 분기용).
+// 한 번이라도 마스터 키를 채택하면(applyKey) 지운다
+const META_KEY_FROM_SYNC = 'key_from_sync'
 
 // 발급한 복구 키를 재입력 확인까지 메모리에 들고 있는 시간
 const RECOVERY_PENDING_TTL_MS = 10 * 60_000
@@ -218,6 +229,80 @@ export class VaultService {
     return fn(this.key)
   }
 
+  // --- 마스터 키 재료 동기화 ---------------------------------------------
+  //
+  // 새 PC 에서 같은 마스터 비밀번호로 금고를 열 수 있게, salt·KDF 파라미터·검증자를
+  // settings 표에 얹어 나른다. 셋 다 비밀이 아니다 — 이것만으로는 아무 값도 열리지 않고,
+  // 같은 비밀번호에서 같은 키를 다시 유도하는 데만 쓰인다
+
+  /** 동기화가 올릴 값. 금고가 아직 설정 전이면 null */
+  readKeyMaterial(key: VaultKeySyncKey): string | null {
+    if (this.db.isClosed || !this.isInitialized()) return null
+    if (key === 'vault.salt') {
+      const salt = this.repo.getMeta(META_SALT)
+      return salt ? salt.toString('base64') : null
+    }
+    if (key === 'vault.kdf') return JSON.stringify(this.readKdfParams())
+    const ct = this.repo.getMeta(META_VERIFIER_CT)
+    const iv = this.repo.getMeta(META_VERIFIER_IV)
+    if (!ct || !iv) return null
+    return JSON.stringify({ ct: ct.toString('base64'), iv: iv.toString('base64') })
+  }
+
+  /**
+   * 원격에서 받은 키 재료를 로컬에 심는다.
+   * 로컬 금고가 아직 설정 전일 때만 심는다 — 이미 설정돼 있는데 값이 다르면
+   * 덮어쓰지 않고 'mismatch' 를 돌려준다(덮으면 이 PC 의 기존 암호문이 영영 안 열린다)
+   */
+  applyKeyMaterial(values: Partial<Record<VaultKeySyncKey, string>>): VaultKeyApplyResult {
+    if (this.db.isClosed) return 'incomplete'
+    const parsed = parseKeyMaterial(values)
+    if (!parsed) return 'incomplete'
+
+    if (this.isInitialized()) {
+      const salt = this.repo.getMeta(META_SALT)
+      const ct = this.repo.getMeta(META_VERIFIER_CT)
+      const iv = this.repo.getMeta(META_VERIFIER_IV)
+      const same =
+        !!salt &&
+        !!ct &&
+        !!iv &&
+        salt.equals(parsed.salt) &&
+        ct.equals(parsed.verifierCt) &&
+        iv.equals(parsed.verifierIv)
+      return same ? 'unchanged' : 'mismatch'
+    }
+
+    this.repo.setMeta(META_SALT, parsed.salt)
+    this.repo.setMeta(META_KDF_PARAMS, Buffer.from(JSON.stringify(parsed.kdf), 'utf8'))
+    this.repo.setMeta(META_VERIFIER_CT, parsed.verifierCt)
+    this.repo.setMeta(META_VERIFIER_IV, parsed.verifierIv)
+    this.repo.setMeta(META_KEY_FROM_SYNC, Buffer.from('1', 'utf8'))
+    // 'uninitialized' → 'locked' 로 바뀐 것을 화면이 곧바로 따라오게 한다
+    this.emit()
+    return 'applied'
+  }
+
+  /** 이 금고의 키 재료가 다른 PC 에서 내려온 것인가(잠금 해제 화면 안내 문구용) */
+  isKeyFromSync(): boolean {
+    if (this.db.isClosed) return false
+    return this.repo.getMeta(META_KEY_FROM_SYNC) !== null
+  }
+
+  /** 키 재료 세 키를 변경 로그에 올린다(금고 설정 직후) */
+  private recordKeyMaterial(): void {
+    for (const key of VAULT_KEY_SYNC_KEYS) this.outbox?.('settings', key, 'upsert')
+  }
+
+  /**
+   * 로그인 직후 한 번 — 로그아웃 상태에서 설정한 금고는 키 재료를 기록할 훅이 없었다.
+   * 그대로 두면 이 PC 의 마스터 비밀번호로는 다른 PC 에서 금고를 열 수 없다
+   */
+  ensureKeyMaterialRecorded(): void {
+    if (this.db.isClosed || !this.isInitialized()) return
+    this.recordKeyMaterial()
+  }
+
   // --- 상태 -------------------------------------------------------------
 
   state(): VaultState {
@@ -269,6 +354,8 @@ export class VaultService {
     this.repo.setMeta(META_VERIFIER_CT, verifier.ciphertext)
     this.repo.setMeta(META_VERIFIER_IV, verifier.iv)
 
+    // 다른 PC 가 같은 마스터 비밀번호로 이 금고를 열 수 있도록 키 재료를 함께 올린다
+    this.recordKeyMaterial()
     this.applyKey(key)
   }
 
@@ -375,6 +462,10 @@ export class VaultService {
     // 이미 채택된 키가 있으면(예: unlock 을 다시 호출) 새 키로 덮어쓰기 전에 메모리에서 지운다
     if (this.key) zeroize(this.key)
     this.key = key
+    // 한 번이라도 열었으면 "다른 PC 에서 설정됨" 안내는 더 이상 필요 없다
+    if (!this.db.isClosed && this.repo.getMeta(META_KEY_FROM_SYNC)) {
+      this.repo.deleteMeta(META_KEY_FROM_SYNC)
+    }
     this.syncDeviceWrappedKey()
     this.restartAutoLock()
     this.emit()
@@ -1129,5 +1220,63 @@ export class VaultService {
     if (Date.now() > pending.expiresAt) return null
     const { host, username, password, isNew, locked } = pending
     return { host, username, password, isNew, locked }
+  }
+}
+
+/** base64 문자열을 버퍼로. 값이 없거나 형식이 아니면 null */
+function fromBase64(value: unknown): Buffer | null {
+  if (typeof value !== 'string' || value.length === 0) return null
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return null
+  const buf = Buffer.from(value, 'base64')
+  return buf.length > 0 ? buf : null
+}
+
+/**
+ * 원격에서 받은 키 재료 세 키를 검사해 버퍼로 푼다.
+ * 하나라도 빠졌거나 형식이 어긋나면 null — 반쪽만 심어 금고를 못 여는 상태를 만들지 않는다
+ */
+function parseKeyMaterial(values: Partial<Record<VaultKeySyncKey, string>>): {
+  salt: Buffer
+  kdf: KdfParams
+  verifierCt: Buffer
+  verifierIv: Buffer
+} | null {
+  const salt = fromBase64(values['vault.salt'])
+  if (!salt || salt.length !== SALT_BYTES) return null
+
+  const rawVerifier = values['vault.verifier']
+  const rawKdf = values['vault.kdf']
+  if (typeof rawVerifier !== 'string' || typeof rawKdf !== 'string') return null
+
+  let verifier: unknown
+  let kdf: unknown
+  try {
+    verifier = JSON.parse(rawVerifier)
+    kdf = JSON.parse(rawKdf)
+  } catch {
+    return null
+  }
+  if (typeof verifier !== 'object' || verifier === null) return null
+  if (typeof kdf !== 'object' || kdf === null) return null
+
+  const { ct, iv } = verifier as { ct?: unknown; iv?: unknown }
+  const verifierCt = fromBase64(ct)
+  const verifierIv = fromBase64(iv)
+  if (!verifierCt || !verifierIv) return null
+
+  // 원격 값이 변조돼도 허용 범위를 벗어나지 못하게 한다(unlock 의 readKdfParams 와 같은 규칙)
+  const p = kdf as Partial<KdfParams>
+  const fallback = resolveDefaultKdfParams()
+  return {
+    salt,
+    kdf: {
+      memoryKiB: typeof p.memoryKiB === 'number' ? clampMemoryKiB(p.memoryKiB) : fallback.memoryKiB,
+      iterations:
+        typeof p.iterations === 'number' ? clampIterations(p.iterations) : fallback.iterations,
+      parallelism:
+        typeof p.parallelism === 'number' ? clampParallelism(p.parallelism) : fallback.parallelism
+    },
+    verifierCt,
+    verifierIv
   }
 }

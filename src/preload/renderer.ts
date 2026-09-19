@@ -136,6 +136,8 @@ const api = {
   // 금고 — reveal 만이 평문을 돌려준다. 나머지는 상태·메타뿐이다
   vault: {
     state: (): Promise<IpcResult<VaultState>> => invoke(IPC.vaultState),
+    // 이 금고가 다른 PC 에서 내려온 키 재료로 만들어졌는가(잠금 해제 화면 안내 문구용)
+    keyFromSync: (): Promise<IpcResult<boolean>> => invoke(IPC.vaultKeyFromSync),
     setup: (master: string): Promise<IpcResult<void>> => invoke(IPC.vaultSetup, master),
     unlock: (master: string): Promise<IpcResult<boolean>> => invoke(IPC.vaultUnlock, master),
     lock: (): Promise<IpcResult<void>> => invoke(IPC.vaultLock),

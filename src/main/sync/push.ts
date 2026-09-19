@@ -8,7 +8,13 @@
 import { randomUUID } from 'node:crypto'
 import type { Db } from '../db/client'
 import type { Settings } from '../../shared/settings'
-import { SYNCED_SETTING_KEYS, type SyncTable } from '../../shared/sync'
+import {
+  isVaultKeySyncKey,
+  SYNCED_SETTING_KEYS,
+  type SyncTable,
+  type VaultKeyApplyResult,
+  type VaultKeySyncKey
+} from '../../shared/sync'
 import { AuthExpiredError, type RemoteKeyedRow, type RemoteRow, type SyncBackend } from './backend'
 import { assertNoPlaintext, PlaintextLeakError } from './guard'
 import { SyncLocal } from './local'
@@ -41,6 +47,13 @@ export interface SettingsAccess {
 export interface VaultAccess {
   /** 잠금 해제 상태에서만 마스터 키를 빌려 준다. 잠겨 있으면 null */
   useMasterKey: <T>(fn: (key: Buffer) => T) => T | null
+  /**
+   * 마스터 키 재료(salt·KDF·검증자)를 읽는다. 값은 설정 store 가 아니라 vault_meta 에서 온다.
+   * 금고가 아직 설정 전이면 null. 없으면 키 재료를 올리지 않는다(옛 테스트 스텁 호환)
+   */
+  readKeyMaterial?: (key: VaultKeySyncKey) => string | null
+  /** 원격에서 받은 키 재료를 로컬 금고에 심는다. 없으면 풀에서 무시한다 */
+  applyKeyMaterial?: (values: Partial<Record<VaultKeySyncKey, string>>) => VaultKeyApplyResult
 }
 
 /**
@@ -265,6 +278,21 @@ async function pushSettings(
   try {
     for (const entry of entries) {
       const key = entry.rowId
+      if (isVaultKeySyncKey(key)) {
+        // 키 재료는 설정 store 에 없다 — 금고(vault_meta)에서 읽는다
+        const material = deps.vault.readKeyMaterial?.(key) ?? null
+        if (material === null) {
+          // 금고가 아직 설정 전이면 올릴 값이 없다(다음 설정 때 다시 기록된다)
+          droppable.push(entry.id)
+          continue
+        }
+        const updatedAt = local.getStateNumber(settingUpdatedAtKey(key)) ?? entry.createdAt
+        const row = settingToRemote(key, material, updatedAt, ctxOf(entry))
+        assertNoPlaintext('settings_sync', row)
+        rows.push(row)
+        ids.push(entry.id)
+        continue
+      }
       if (!isSyncedSettingKey(key)) {
         // 조용히 사라지면 "왜 안 올라가지" 를 추적할 수 없다. 키 이름만 남긴다(값은 없다)
         console.warn('동기화 대상이 아닌 설정 키라 변경 로그에서 버립니다', key)
