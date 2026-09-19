@@ -10,7 +10,12 @@ import { tool, type SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import type { PermissionMode } from '../../shared/settings'
 import type { PhoneDto } from '../../shared/phone'
-import { findElement, serializePhoneScreen, type PhoneScreen } from '../../shared/phone-snapshot'
+import {
+  findElement,
+  isScreenUnknown,
+  serializePhoneScreen,
+  type PhoneScreen
+} from '../../shared/phone-snapshot'
 import {
   PHONE_KEYS,
   isPhoneKey,
@@ -28,6 +33,8 @@ const READ_ONLY_REFUSAL = 'refused: read-only mode'
 const NO_PHONE = 'no phone connected'
 const NOT_FOUND = 'not found'
 const SECRET_SCREEN = 'refused: secret screen'
+// uiautomator 덤프가 실패해 비밀 화면 여부를 판정하지 못한 경우
+const UNKNOWN_SCREEN = 'refused: cannot read the phone screen, so it may be a secret screen'
 const USER_DECLINED = 'refused: user declined'
 // 좌표도 요소 번호도 없이 부른 경우
 const TAP_TARGET_MISSING = 'refused: give elementId from phone_get_screen, or x and y'
@@ -81,7 +88,8 @@ export interface PhoneOps {
   swipe: (serial: string, from: Point, to: Point, ms?: number) => Promise<void>
   typeText: (serial: string, text: string) => Promise<'ok' | 'unsupported-text'>
   key: (serial: string, key: PhoneKey) => Promise<void>
-  screenshot: (serial: string) => Promise<{ png: Buffer; secret: boolean }>
+  /** unknown 은 화면을 읽지 못해 비밀 화면 여부를 판정할 수 없다는 뜻이다 */
+  screenshot: (serial: string) => Promise<{ png: Buffer; secret: boolean; unknown?: boolean }>
   /**
    * 이 화면을 모델에게 넘겨도 되는가.
    * 결제 실행기가 세운 표식(SecretScreenGate)과 결제 앱의 비밀번호 문구를 함께 본다
@@ -202,6 +210,8 @@ export function createPhoneTools(ctx: PhoneToolContext): PhoneTool[] {
     () =>
       act('폰 화면 읽기', false, async (serial, screen) => {
         const got = await screen()
+        // 덤프가 실패한 화면은 비밀 화면인지 가릴 수 없다 — 판정 불가는 거부로 본다
+        if (isScreenUnknown(got)) return UNKNOWN_SCREEN
         // 비밀번호·PIN 화면은 요소 목록도 넘기지 않는다(키패드 배치가 곧 단서다)
         if (ctx.phones.isSecret(serial, got)) return SECRET_SCREEN
         return serializePhoneScreen(got)
@@ -287,7 +297,12 @@ export function createPhoneTools(ctx: PhoneToolContext): PhoneTool[] {
         return text(gate.message)
       }
       try {
-        const { png, secret } = await ctx.phones.screenshot(gate.serial)
+        const { png, secret, unknown } = await ctx.phones.screenshot(gate.serial)
+        // 화면을 읽지 못했으면(판정 불가) 캡처 원본을 넘기지 않는다
+        if (unknown) {
+          ctx.onStep(label, false)
+          return text(UNKNOWN_SCREEN)
+        }
         // 비밀번호·PIN 화면은 이미지를 아예 넘기지 않는다
         if (secret) {
           ctx.onStep(label, false)
@@ -362,6 +377,8 @@ export function createPhoneOps(
     key: (serial, key) => pressKey(adb, serial, key),
     screenshot: async (serial) => {
       const screen = await dumpScreen(adb, serial)
+      // 덤프가 실패해 판정할 수 없으면 캡처를 뜨지 않는다(가장 안전한 쪽으로 본다)
+      if (isScreenUnknown(screen)) return { png: Buffer.alloc(0), secret: true, unknown: true }
       // 비밀 화면이면 캡처를 아예 뜨지 않는다 — 버퍼로도 만들지 않는다
       if (isSecret(serial, screen)) return { png: Buffer.alloc(0), secret: true }
       return { png: await adb.runBinary(execOutArgs(serial, ['screencap', '-p'])), secret: false }

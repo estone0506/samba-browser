@@ -79,6 +79,8 @@ function build(
     phones?: PhoneDto[]
     screen?: PhoneScreen
     secret?: boolean
+    /** uiautomator 덤프 실패(판정 불가) 상황 */
+    unknownScreen?: boolean
     typeResult?: 'ok' | 'unsupported-text'
     tick?: () => string | null
     waitForSmsCode?: PhoneToolContext['waitForSmsCode']
@@ -93,8 +95,9 @@ function build(
     typeText: vi.fn(async () => opts.typeResult ?? 'ok'),
     key: vi.fn(async () => {}),
     screenshot: vi.fn(async () => ({
-      png: Buffer.from('fake-png-bytes'),
-      secret: opts.secret ?? false
+      png: opts.unknownScreen ? Buffer.alloc(0) : Buffer.from('fake-png-bytes'),
+      secret: opts.unknownScreen ? true : (opts.secret ?? false),
+      unknown: opts.unknownScreen ?? false
     })),
     isSecret: vi.fn(() => opts.secret ?? false)
   }
@@ -295,6 +298,44 @@ describe('phone_screenshot', () => {
     const image = r.content.find((c): c is ImageBlock => c.type === 'image')
     expect(image?.mimeType).toBe('image/png')
     expect(image?.data).toBe(Buffer.from('fake-png-bytes').toString('base64'))
+  })
+})
+
+describe('화면 판정 불가(uiautomator 덤프 실패)', () => {
+  const UNKNOWN = 'refused: cannot read the phone screen, so it may be a secret screen'
+  const blank = (): PhoneScreen => ({
+    serial: SERIAL,
+    width: 0,
+    height: 0,
+    app: 'com.example.app',
+    elements: []
+  })
+
+  it('phone_get_screen 은 거부한다', async () => {
+    const { tools, steps } = build({ screen: blank() })
+    expect(textOut(await get(tools, 'phone_get_screen').handler({}))).toBe(UNKNOWN)
+    expect(steps.at(-1)).toEqual({ label: '폰 화면 읽기', ok: false })
+  })
+
+  it('phone_screenshot 은 이미지를 돌려주지 않는다', async () => {
+    const { tools, steps } = build({ unknownScreen: true })
+    const r = await get(tools, 'phone_screenshot').handler({})
+    expect(r.content.some((c) => c.type === 'image')).toBe(false)
+    expect(textOut(r)).toBe(UNKNOWN)
+    expect(steps.at(-1)).toEqual({ label: '폰 화면 캡처', ok: false })
+  })
+
+  it('createPhoneOps 는 덤프가 실패하면 screencap 을 부르지 않는다', async () => {
+    const adb = new FakeAdb()
+    // uiautomator dump 가 0 이 아닌 코드로 끝나 화면을 읽지 못한 상황
+    adb.reply('uiautomator dump', 'ERROR: could not get idle state', 1)
+    adb.replyBinary('screencap -p', Buffer.from('png-bytes'))
+    const ops = createPhoneOps(adb, () => [fakePhone()])
+    const shot = await ops.screenshot(SERIAL)
+    expect(shot.unknown).toBe(true)
+    expect(shot.secret).toBe(true)
+    expect(shot.png.length).toBe(0)
+    expect(adb.calls.some((c) => c.join(' ').includes('screencap'))).toBe(false)
   })
 })
 
