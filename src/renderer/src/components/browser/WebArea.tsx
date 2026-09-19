@@ -7,14 +7,17 @@ import { useUiStore } from '../../stores/uiStore'
 export function WebArea(): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const mobile = useBrowserStore((s) => s.activeTab?.mobile ?? false)
-  // 구독만으로도 resizing 이 바뀌면 리렌더 → useLayoutEffect 가 다시 측정한다
+  // 구독만으로도 resizing·캡처 오버레이가 바뀌면 리렌더 → useLayoutEffect 가 다시 측정한다
   useUiStore((s) => s.resizing)
+  useUiStore((s) => s.captureOverlayOpen)
   const send = useCallback((): void => {
     const el = ref.current
     if (!el) return
     // 패널 폭을 드래그하는 동안은 네이티브 뷰를 접어 둔다. 뷰가 렌더러 위에 떠 있어
-    // 포인터가 그 위로 가면 드래그가 끊기기 때문. 놓으면 원래 크기로 다시 보고된다
-    if (useUiStore.getState().resizing) {
+    // 포인터가 그 위로 가면 드래그가 끊기기 때문. 놓으면 원래 크기로 다시 보고된다.
+    // 캡처 '직접 지정' 오버레이가 떠 있을 때도 같은 이유로 접는다
+    const ui = useUiStore.getState()
+    if (ui.resizing || ui.captureOverlayOpen) {
       void window.samba.layout.set({
         x: 0,
         y: 0,
