@@ -79,6 +79,35 @@ export interface PhoneAuthWaitingDto {
   phoneId: number | null
 }
 
+// 폰 연동 프로그램(adb·scrcpy) 설치 상태. 버전은 설치할 때 남겨 둔 기록에서 읽는다 —
+// 상태를 보려고 adb.exe 를 실행하지는 않는다
+export interface PhoneToolsStatusDto {
+  /** adb·scrcpy 둘 다 쓸 수 있는가 */
+  installed: boolean
+  adbPath: string
+  scrcpyPath: string
+  /** 앱이 설치한 것이 아니면(사용자가 직접 넣은 경로) null */
+  adbVersion: string | null
+  scrcpyVersion: string | null
+}
+
+/** 설치 진행 단계 */
+export const TOOL_INSTALL_STEPS = ['platformTools', 'scrcpy'] as const
+export type ToolInstallStep = (typeof TOOL_INSTALL_STEPS)[number]
+
+export const TOOL_INSTALL_PHASES = ['download', 'extract', 'done'] as const
+export type ToolInstallPhase = (typeof TOOL_INSTALL_PHASES)[number]
+
+/** 설치 진행률 통지(메인 → 렌더러) */
+export interface PhoneToolsProgressDto {
+  step: ToolInstallStep
+  phase: ToolInstallPhase
+  /** 0~100. 서버가 전체 크기를 안 알려 주면 받은 바이트로만 추정하지 않고 0 을 보낸다 */
+  percent: number
+  receivedBytes: number
+  totalBytes: number
+}
+
 // --- 상수(스펙 "핵심 결정" 의 값) -------------------------------------------
 /** adb devices 폴링 주기 5초 */
 export const DEVICE_POLL_INTERVAL_MS = 5000
