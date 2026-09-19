@@ -60,6 +60,11 @@ describe('page-constants 는 shared 원본과 동기화되어야 한다', () => 
     expect(PAGE_WEBSTORE_HOST).toBe(WEBSTORE_HOST)
   })
 
+  it('AI 프레임 채널명이 shared/ipc 와 같다', () => {
+    expect(PAGE_IPC.agentCall).toBe(IPC.pageAgentCall)
+    expect(PAGE_IPC.agentResult).toBe(IPC.pageAgentResult)
+  })
+
   it('내부 스킴 상수가 shared/url 과 같다', () => {
     expect(INTERNAL_PROTOCOL).toBe(`${INTERNAL_SCHEME}:`)
   })

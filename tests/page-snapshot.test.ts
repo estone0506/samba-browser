@@ -5,6 +5,7 @@ import {
   performClick,
   performScroll,
   performType,
+  runAgentOp,
   textOf
 } from '../src/preload/page-core'
 import { MAX_ELEMENTS, serializeSnapshot } from '../src/shared/snapshot'
@@ -409,5 +410,45 @@ describe('performScroll — 목록 내부 스크롤', () => {
     document.body.innerHTML = '<div data-cursor="pointer">x</div>'
     buildSnapshot()
     expect(performScroll('down', 999)).toContain('not found')
+  })
+})
+
+describe('프레임 채널 동작 실행(runAgentOp)', () => {
+  // iframe 안 preload 는 코드 문자열이 아니라 동작 이름만 받아 자기 문서에서 실행한다
+  it('snapshot 동작은 이 문서의 스냅샷을 돌려준다', () => {
+    document.body.innerHTML = '<button>우편번호 검색</button>'
+    const s = runAgentOp({ op: 'snapshot', reqId: 1 }) as { elements: { text: string }[] }
+    expect(s.elements.map((e) => e.text)).toEqual(['우편번호 검색'])
+  })
+
+  it('query 를 주면 걸러낸다', () => {
+    document.body.innerHTML = '<button>검색</button><button>닫기</button>'
+    const s = runAgentOp({ op: 'snapshot', query: '닫기', reqId: 2 }) as {
+      elements: { text: string }[]
+    }
+    expect(s.elements.map((e) => e.text)).toEqual(['닫기'])
+  })
+
+  it('click·type 동작이 실제 요소에 닿는다', () => {
+    document.body.innerHTML = '<input type="text"><button>검색</button>'
+    const s = runAgentOp({ op: 'snapshot', reqId: 3 }) as {
+      elements: { id: number; tag: string }[]
+    }
+    const input = s.elements.find((e) => e.tag.toLowerCase() === 'input')
+    const button = s.elements.find((e) => e.tag.toLowerCase() === 'button')
+    expect(input && button).toBeTruthy()
+    if (!input || !button) return
+    runAgentOp({ op: 'type', id: input.id, text: '서울시 강남구', submit: false, reqId: 4 })
+    expect((document.querySelector('input') as HTMLInputElement).value).toBe('서울시 강남구')
+    let clicked = false
+    document.querySelector('button')?.addEventListener('click', () => (clicked = true))
+    runAgentOp({ op: 'click', id: button.id, reqId: 5 })
+    expect(clicked).toBe(true)
+  })
+
+  it('모르는 동작과 망가진 요청은 무시한다', () => {
+    expect(runAgentOp({ op: 'deleteEverything', reqId: 6 })).toBeNull()
+    expect(runAgentOp(null)).toBeNull()
+    expect(runAgentOp('__samba.click(1)')).toBeNull()
   })
 })
