@@ -56,6 +56,9 @@ describe('확장 manifest 검증', () => {
       description: '',
       permissions: [],
       iconPath: null,
+      actionIconPath: null,
+      popupPath: null,
+      optionsPath: null,
       defaultLocale: undefined
     })
   })
@@ -259,6 +262,24 @@ describe('ExtensionManager', () => {
     expect(second.removed).toEqual([dto2.id])
   })
 
+  it('loadSaved 가 끝나기 전에 attachHost 를 불러도 새 세션에 확장이 걸린다', async () => {
+    // 앱이 뜨는 순서 그대로다 — loadSaved 를 기다리지 않고 첫 탭이 만들어지면서
+    // 그 파티션 세션이 attachHost 로 들어온다. 예전에는 여기서 목록이 아직 비어 있어
+    // 확장이 기본 세션에만 남고 어느 탭에서도 동작하지 않았다
+    const dir = makeFolder('race', validManifest('경쟁'))
+    const settings2 = makeSettings({ extensionPaths: [dir] })
+    const primary = makeHost()
+    const mgr = new ExtensionManager(primary, settings2)
+
+    const saving = mgr.loadSaved()
+    const second = makeHost()
+    const attaching = mgr.attachHost(second)
+    await Promise.all([saving, attaching])
+
+    expect(primary.loaded).toEqual([dir])
+    expect(second.loaded).toEqual([dir])
+  })
+
   it('attachHost 의 로드 실패는 던지지 않고 오류 목록에만 남는다', async () => {
     const primary = makeHost()
     const mgr = new ExtensionManager(primary, settings)
@@ -280,6 +301,9 @@ describe('ExtensionManager', () => {
       description: '',
       permissions: [],
       iconPath: null,
+      actionIconPath: null,
+      popupPath: null,
+      optionsPath: null,
       defaultLocale: undefined
     })
   })
