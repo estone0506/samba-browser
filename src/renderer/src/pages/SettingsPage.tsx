@@ -12,7 +12,6 @@ import { PlaceholderSection } from '@renderer/components/settings/PlaceholderSec
 import {
   SECTIONS,
   SETTINGS_GROUPS,
-  groupLabelKey,
   sectionsOfGroup,
   type SettingsSectionDef
 } from '@renderer/components/settings/sections'
@@ -68,11 +67,9 @@ export function SettingsPage(): React.JSX.Element {
       {/* 데스크톱 폭 — 좌측 240px 섹션 목록 */}
       <aside className="hidden w-[240px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-[var(--line)] p-4 min-[769px]:flex">
         <h1 className="text-[15px] font-semibold text-[var(--text)]">{t('settingsPage.title')}</h1>
+        {/* 그룹 제목(개인·AI)은 그리지 않는다 — 섹션이 6개뿐이라 제목이 오히려 눈에 걸린다 */}
         {SETTINGS_GROUPS.map((group) => (
           <div key={group} className="flex flex-col gap-0.5">
-            <div className="px-2 pb-1 text-[11px] font-medium text-[var(--text2)]">
-              {t(groupLabelKey(group))}
-            </div>
             {sectionsOfGroup(group).map((s: SettingsSectionDef) => (
               <button
                 key={s.key}
