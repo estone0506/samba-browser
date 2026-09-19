@@ -169,7 +169,8 @@
     "close": "Close tab",
     "openTabs": "Open tabs",
     "empty": "No open tabs",
-    "untitled": "Untitled"
+    "untitled": "Untitled",
+    "popup": "Popup"
   },
   "newtab": {
     "title": "New Tab",

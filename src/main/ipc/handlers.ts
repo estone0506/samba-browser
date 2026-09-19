@@ -303,12 +303,14 @@ export function registerIpc(
     vault.dispose()
   })
 
-  handleFromRenderer(IPC.tabList, () => tabs.list())
+  // 팝업(결제창·주소 검색창)까지 함께 돌려준다 — 사이드바가 "팝업" 배지로 보여 준다
+  handleFromRenderer(IPC.tabList, () => tabs.listAll())
   handleFromRenderer(IPC.tabCreate, (o: { url?: string; profile?: string; mobile?: boolean }) =>
     tabs.create(o)
   )
-  handleFromRenderer(IPC.tabClose, (id: string) => tabs.close(id))
-  handleFromRenderer(IPC.tabActivate, (id: string) => tabs.activate(id))
+  // 팝업 id 로도 닫기·전환이 되게 대상(탭+팝업) 경로로 보낸다
+  handleFromRenderer(IPC.tabClose, (id: string) => tabs.closeTarget(id))
+  handleFromRenderer(IPC.tabActivate, (id: string) => tabs.focusTarget(id))
   handleFromRenderer(IPC.tabNavigate, (id: string, url: string) => tabs.navigate(id, url))
   handleFromRenderer(IPC.tabBack, (id: string) => tabs.back(id))
   handleFromRenderer(IPC.tabForward, (id: string) => tabs.forward(id))

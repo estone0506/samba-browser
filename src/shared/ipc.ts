@@ -217,6 +217,11 @@ export interface TabInfo {
   mobile: boolean
   loading: boolean
   active: boolean
+  /**
+   * 탭인지 팝업 창(결제창·주소 검색창)인지. 예전 페이로드와 맞추기 위해 선택 항목이며,
+   * 없으면 탭으로 본다. 팝업은 탭 바에는 나오지 않고 사이드바에만 배지로 보인다
+   */
+  kind?: 'tab' | 'popup'
 }
 
 // 렌더러가 메인에 알려주는 웹뷰 영역(사이드바·패널 제외)

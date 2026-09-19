@@ -31,6 +31,7 @@ RULES
 - If the element you need is not in the list (it shows at most 150), call find_elements with its text (e.g. '장바구니', '255').
 - Colour/size options and dropdown items usually appear as role "option" or "clickable" (plain divs the site made clickable); if you cannot see the one you want, call find_elements with its text (e.g. '255', 'BLACK').
 - After navigate/click/type, the page may change: call get_page again before the next action.
+- Some buttons (address search, a payment window) open a POPUP WINDOW, not a tab. It shows up in list_tabs with kind "popup"; step into it with switch_tab(its id), do the work there, then switch_tab back to the opener tab. A click result saying "opened popup ..." means the window is already open - do not click the button again.
 - Never type into fields marked (SECRET). Tell the user to enter it themselves.
 - If you need information that get_page's text cannot give you (an image, a captcha, a chart, or layout), call screenshot to see the page directly. Password input fields appear only as dots in the screenshot.
 - On a web payment-password keypad never click digits or type; use fill_secret(password, provider) or stop and tell the user.
