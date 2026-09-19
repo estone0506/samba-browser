@@ -10,8 +10,11 @@ create table if not exists public.profiles (
 );
 
 -- workspaces 표는 2b 에서 앱이 쓰지 않는다(2c 예정).
--- 2b 동안 작업공간의 원격 uuid 는 PC 마다 로컬에서 만들어 sync_state 에 고정하며,
--- 이 표에는 행이 올라가지 않는다. 다른 표의 workspace_id 는 그 uuid 를 그대로 담는다
+-- 2b 에서 기기 간 공유 대상은 **기본 작업공간 하나**이고, 그 원격 uuid 는 모든 PC 가 쓰는
+-- 고정값('00000000-0000-4000-8000-000000000001')이다 — PC 마다 새로 만들면 풀 필터
+-- (workspace_id 일치)에 걸려 두 번째 PC 로 아무것도 내려오지 않는다.
+-- 추가 작업공간만 PC 로컬에서 uuid 를 만들어 sync_state 에 고정한다(기기 간 공유 안 함).
+-- 어느 쪽이든 이 표에는 행이 올라가지 않고, 다른 표의 workspace_id 가 그 uuid 를 그대로 담는다
 create table if not exists public.workspaces (
   id uuid primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
