@@ -1,4 +1,5 @@
 import { query, type Options, type Query } from '@anthropic-ai/claude-agent-sdk'
+import type { AgentEffort } from '../../shared/settings'
 
 export interface ProviderInput {
   prompt: string
@@ -7,6 +8,8 @@ export interface ProviderInput {
   mcpServers: Options['mcpServers']
   allowedTools: string[]
   abort: AbortController
+  // 추론 강도. SDK Options.effort('low'|'medium'|'high'|…)와 값이 같다
+  effort?: AgentEffort
 }
 
 // 사용자가 설정에 넣어 둔 내 API 키를 읽는 함수. 메인 프로세스가 주입한다.
@@ -31,27 +34,37 @@ function resolveEnv(): Record<string, string | undefined> | undefined {
   return { ...process.env, ANTHROPIC_API_KEY: key }
 }
 
+/**
+ * SDK 에 넘길 옵션을 만든다(순수 함수 — 단위 테스트에서 그대로 확인한다).
+ * effort 는 SDK Options 가 지원하는 정식 옵션이라 그대로 넘기고,
+ * 같은 내용을 시스템 프롬프트 한 줄로도 남겨 둔다(prompt.ts)
+ */
+export function buildQueryOptions(input: ProviderInput): Options {
+  return {
+    env: resolveEnv(),
+    systemPrompt: input.systemPrompt,
+    model: input.model,
+    effort: input.effort ?? 'medium',
+    mcpServers: input.mcpServers,
+    allowedTools: input.allowedTools,
+    // 내장 도구 전체 비활성화. disallowedTools 는 이중 안전장치
+    tools: [],
+    disallowedTools: ['Bash', 'Write', 'Edit', 'Read', 'WebFetch', 'WebSearch', 'Glob', 'Grep'],
+    // samba 서버 외의 MCP(사용자 설정·계정 커넥터·플러그인)를 불러오지 않음
+    strictMcpConfig: true,
+    // 사용자/프로젝트 설정(훅·CLAUDE.md)을 상속하지 않음
+    settingSources: [],
+    permissionMode: 'default',
+    maxTurns: 60,
+    abortController: input.abort
+  }
+}
+
 // Claude Agent SDK 호출. Claude Code 로그인 또는 ANTHROPIC_API_KEY 자동 사용
 export function runQuery(input: ProviderInput): Query {
   return query({
     prompt: input.prompt,
-    options: {
-      env: resolveEnv(),
-      systemPrompt: input.systemPrompt,
-      model: input.model,
-      mcpServers: input.mcpServers,
-      allowedTools: input.allowedTools,
-      // 내장 도구 전체 비활성화. disallowedTools 는 이중 안전장치
-      tools: [],
-      disallowedTools: ['Bash', 'Write', 'Edit', 'Read', 'WebFetch', 'WebSearch', 'Glob', 'Grep'],
-      // samba 서버 외의 MCP(사용자 설정·계정 커넥터·플러그인)를 불러오지 않음
-      strictMcpConfig: true,
-      // 사용자/프로젝트 설정(훅·CLAUDE.md)을 상속하지 않음
-      settingSources: [],
-      permissionMode: 'default',
-      maxTurns: 60,
-      abortController: input.abort
-    }
+    options: buildQueryOptions(input)
   })
 }
 

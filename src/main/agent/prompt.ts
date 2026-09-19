@@ -1,7 +1,18 @@
+import type { AgentEffort } from '../../shared/settings'
+
+// 추론 강도 한 줄. SDK 의 effort 옵션과 함께 프롬프트에도 남겨,
+// effort 를 지원하지 않는 모델에서도 같은 방향으로 동작하게 한다
+export function effortLine(effort: AgentEffort): string {
+  if (effort === 'high') return 'Reasoning effort: high — think carefully before each action.'
+  if (effort === 'low') return 'Reasoning effort: low — be brief and act quickly.'
+  return 'Reasoning effort: medium — balance speed and care.'
+}
+
 // AI 시스템 프롬프트. 안전 규칙 포함
 export function buildSystemPrompt(
   language: 'ko' | 'en',
-  mode: 'read_only' | 'guard' | 'full' = 'guard'
+  mode: 'read_only' | 'guard' | 'full' = 'guard',
+  effort: AgentEffort = 'medium'
 ): string {
   const lang = language === 'ko' ? '한국어' : 'English'
   const modeLine =
@@ -13,6 +24,7 @@ export function buildSystemPrompt(
   return `You are the agent inside Samba Browser, a desktop web browser. You complete web tasks for the user by calling tools.
 
 ${modeLine}
+${effortLine(effort)}
 
 RULES
 - Always call get_page first to see the current page. Elements are numbered [n]. Use those numbers for click/type/select.

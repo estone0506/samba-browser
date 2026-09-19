@@ -6,6 +6,8 @@ import { cn } from '@renderer/lib/utils'
 import { useBookmarkStore } from '@renderer/stores/bookmarkStore'
 import { useBrowserStore } from '@renderer/stores/browserStore'
 import { useUiStore } from '@renderer/stores/uiStore'
+import { SectionHeader } from './SectionHeader'
+import { isSectionOpen } from './sidebar-view'
 import type { BookmarkFolderDto, BookmarkLinkDto } from '@shared/ipc'
 
 // 즐겨찾기 아이콘 대신 첫 글자를 검정 원에 넣은 파비콘 대체
@@ -195,6 +197,8 @@ export function BookmarkTree(): React.JSX.Element {
   const loading = useBookmarkStore((s) => s.loading)
   const load = useBookmarkStore((s) => s.load)
   const setView = useUiStore((s) => s.setView)
+  // 섹션 헤더로 접었으면 목록을 그리지 않는다(상태는 설정에 영속)
+  const open = useUiStore((s) => isSectionOpen(s.sidebarSections, 'bookmarks'))
 
   useEffect(() => {
     void load()
@@ -207,30 +211,35 @@ export function BookmarkTree(): React.JSX.Element {
     : []
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center justify-between px-2 pb-1.5 pt-3">
-        <span className="text-[11px] font-semibold text-[var(--text3)]">{t('bookmark.title')}</span>
-        <button
-          type="button"
-          onClick={() => setView('bookmarks')}
-          className="text-[11px] font-medium text-[var(--text3)] hover:text-[var(--text)] hover:underline"
-        >
-          {t('bookmark.manage')}
-        </button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto">
-        {!loading && isEmpty && (
-          <div className="px-2.5 py-2 text-[12px] text-[var(--text3)]">
-            {t('bookmark.emptyAll')}
-          </div>
-        )}
-        {folders.map((f) => (
-          <FolderRow key={f.id} folder={f} depth={0} />
-        ))}
-        {tree?.links.map((l) => (
-          <LinkRow key={l.id} link={l} depth={0} />
-        ))}
-      </div>
+    <div className={cn('flex flex-col', open && 'min-h-0 flex-1')}>
+      <SectionHeader
+        sectionKey="bookmarks"
+        label={t('bookmark.title')}
+        action={
+          <button
+            type="button"
+            onClick={() => setView('bookmarks')}
+            className="shrink-0 text-[11px] font-medium text-[var(--text3)] hover:text-[var(--text)] hover:underline"
+          >
+            {t('bookmark.manage')}
+          </button>
+        }
+      />
+      {open && (
+        <div className="min-h-0 flex-1 overflow-auto">
+          {!loading && isEmpty && (
+            <div className="px-2.5 py-2 text-[12px] text-[var(--text3)]">
+              {t('bookmark.emptyAll')}
+            </div>
+          )}
+          {folders.map((f) => (
+            <FolderRow key={f.id} folder={f} depth={0} />
+          ))}
+          {tree?.links.map((l) => (
+            <LinkRow key={l.id} link={l} depth={0} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

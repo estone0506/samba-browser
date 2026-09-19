@@ -255,9 +255,11 @@ export class AgentRunner {
     try {
       const stream = runQuery({
         prompt,
-        systemPrompt: buildSystemPrompt(s.language, s.permissionMode),
+        systemPrompt: buildSystemPrompt(s.language, s.permissionMode, s.agentEffort),
         // 작업별 모델 표의 '표준' 칸이 기본 실행 모델이다(s.model 은 하위 호환으로만 남는다)
         model: resolveModel(s.taskModels, 'standard', s.aiProvider),
+        // 채팅 입력줄에서 고른 추론 강도
+        effort: s.agentEffort,
         mcpServers: { samba: server },
         allowedTools: SAMBA_TOOL_NAMES,
         abort

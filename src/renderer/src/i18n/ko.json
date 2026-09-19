@@ -10,7 +10,9 @@
     "phones": "폰",
     "logs": "로그",
     "settings": "설정",
-    "chats": "채팅"
+    "chats": "채팅",
+    "collapse": "사이드바 접기",
+    "expand": "사이드바 펼치기"
   },
   "workspace": {
     "title": "작업공간",
@@ -32,7 +34,11 @@
     "home": "홈"
   },
   "tab": {
-    "new": "새 탭"
+    "new": "새 탭",
+    "close": "탭 닫기",
+    "openTabs": "열린 탭",
+    "empty": "열린 탭이 없습니다",
+    "untitled": "제목 없음"
   },
   "newtab": {
     "title": "새 탭",
@@ -54,7 +60,19 @@
     "empty": "저장된 대화가 없습니다",
     "untitled": "제목 없는 대화",
     "delete": "대화 삭제",
-    "deleteConfirm": "삭제"
+    "deleteConfirm": "삭제",
+    "modelMenu": "모델",
+    "effortMenu": "추론 강도",
+    "effort": {
+      "low": "낮음",
+      "medium": "보통",
+      "high": "높음"
+    },
+    "effortDesc": {
+      "low": "적게 생각하고 빠르게 답해요",
+      "medium": "속도와 신중함의 중간이에요",
+      "high": "행동 전에 꼼꼼히 생각해요"
+    }
   },
   "confirm": {
     "title": "확인이 필요합니다",
