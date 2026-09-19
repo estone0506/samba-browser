@@ -183,7 +183,15 @@ export const IPC = {
   playbookList: 'playbook:list',
   playbookPut: 'playbook:put', // 새로 만들기 + 수정(id 없으면 새로 만든다)
   playbookDelete: 'playbook:delete',
-  playbookRestore: 'playbook:restore' // 내장 플레이북 기본값 복원
+  playbookRestore: 'playbook:restore', // 내장 플레이북 기본값 복원
+  // --- 플레이북 예약 실행 — 실행 기록은 기기 로컬 파일이라 동기화되지 않는다 -----
+  scheduleStatus: 'schedule:status', // 예약 상태 목록(설정 + 기기 로컬 기록)
+  scheduleRunNow: 'schedule:runNow', // 카드의 [지금 실행]
+  scheduleSetPaused: 'schedule:setPaused', // 카드의 [일시정지]/[재개]
+  scheduleChanged: 'schedule:changed', // main → renderer 이벤트(목록 다시 읽기)
+  // main → renderer 이벤트. "이 문구를 채팅에 넣어라" — 실행은 사용자가 직접 칠 때와
+  // 같은 경로(chat → agent:run)를 그대로 탄다
+  scheduleDispatch: 'schedule:dispatch'
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -336,6 +344,23 @@ export type {
 } from './capture'
 
 export type { PlaybookDto, PlaybookInput } from './playbook'
+
+export type {
+  PlaybookSchedule,
+  ScheduleKind,
+  ScheduleHistoryEntry,
+  SchedulePauseReason,
+  ScheduleResult,
+  ScheduleStatusDto,
+  ScheduleUiState
+} from './schedule'
+
+/** schedule:dispatch 로 가는 실행 요청. 토큰은 이 실행이 그 예약의 것임을 잇는 표식이다 */
+export interface ScheduleDispatchDto {
+  token: string
+  playbookId: string
+  phrase: string
+}
 
 export type {
   ChatRole,

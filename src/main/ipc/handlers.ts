@@ -25,6 +25,8 @@ import { ImportService, type ImportDialogs } from '../import/service'
 import { ChatRepo } from '../chat/repo'
 import { PlaybookStore } from '../playbooks/store'
 import type { PlaybookInput } from '../../shared/playbook'
+import { ScheduleRunStore } from '../schedule/runs'
+import { PlaybookScheduler } from '../schedule/scheduler'
 import { RECENT_CHAT_LIMIT, type AppendMessageInput } from '../../shared/chat'
 import { VaultCaptureGate } from './vault-capture'
 import { watchLoginSuccess } from './login-watch'
@@ -62,7 +64,7 @@ import {
 } from '../ai/connections'
 import { resolveAgentAuth } from '../ai/auth-route'
 import { remapOnProviderChange, resolveModel, taskModelChoices } from '../ai/models'
-import { setApiKeyResolver, setAuthResolver } from '../agent/provider'
+import { agentBackend, setApiKeyResolver, setAuthResolver } from '../agent/provider'
 // === AI 연결 끝 =======================================================================
 import { AuthService } from '../sync/auth'
 import { hasSupabaseEnv, setSupabaseEnvFromSettings } from '../sync/env'
@@ -168,8 +170,17 @@ export function registerIpc(
   }
   // 금고. 마스터 키는 이 인스턴스 안에만 있고 IPC 로는 절대 나가지 않는다
   const vault = new VaultService(db, settings, { safeStorage })
-  // AI 도구(list_accounts/fill_secret/login)가 쓸 수 있도록 금고를 넘긴다
-  const agent = new AgentRunner(tabs, settings, (ev) => send(IPC.agentEvent, ev), vault)
+  // AI 도구(list_accounts/fill_secret/login)가 쓸 수 있도록 금고를 넘긴다.
+  // 예약 실행 결과 판정은 이 이벤트 흐름만 본다 — 별도 통지 경로를 만들지 않는다
+  const agent = new AgentRunner(
+    tabs,
+    settings,
+    (ev) => {
+      scheduler.noteAgentEvent(ev)
+      send(IPC.agentEvent, ev)
+    },
+    vault
+  )
   // AI 채팅 기록. 러너가 작업 완료 시점에 이 저장소로 대화를 남긴다
   const chats = new ChatRepo(db)
   agent.setTranscript((chatId, entry) => {
@@ -179,6 +190,18 @@ export function registerIpc(
   // 자동화 플레이북. 사용자 문장에 트리거가 들어 있으면 러너가 절차를 시스템 프롬프트에 덧붙인다
   const playbooks = new PlaybookStore(settings)
   agent.setPlaybooks(() => playbooks.list())
+  // 예약 실행. 실행 기록은 이 PC 의 파일에만 남는다(동기화 대상이 아니다)
+  const scheduleRuns = new ScheduleRunStore(join(app.getPath('userData'), 'schedule-runs.json'))
+  const scheduler = new PlaybookScheduler({
+    playbooks,
+    runs: scheduleRuns,
+    isRunning: () => agent.isRunning(),
+    aiConnected: () => agentBackend() !== 'none',
+    // 렌더러가 이 문구를 평소 채팅과 똑같이 보낸다 — 진행 상황이 AI 패널에 그대로 보인다
+    dispatch: (req) => send(IPC.scheduleDispatch, req),
+    onChanged: () => send(IPC.scheduleChanged, null)
+  })
+  scheduler.start()
   // 페이지 JS 대화상자는 AI 작업이 도는 동안에만 자동 처리한다
   tabs.setAgentRunningProvider(() => agent.isRunning())
   // guard 모드에서 confirm/beforeunload 는 사용자 확인 카드를 거쳐야 '예' 가 된다
@@ -244,6 +267,7 @@ export function registerIpc(
     ipcMain.removeAllListeners(IPC.vaultUndoPasswordUpdate)
     ipcMain.removeAllListeners(IPC.pageGesture)
     ipcMain.removeAllListeners(IPC.pageWebstoreInstall)
+    scheduler.stop()
     sync.current()?.stop()
     sync.release()
     vault.dispose()
@@ -264,8 +288,12 @@ export function registerIpc(
 
   // 실행 시작만 즉시 확인해 주고, 완료·실패는 status 이벤트로만 알린다.
   // (예전처럼 완료까지 기다리면 늦게 끝난 이전 작업의 응답이 새 작업 UI 를 덮어썼다)
-  handleFromRenderer(IPC.agentRun, (prompt: string, chatId?: number) => {
-    void agent.run(prompt, chatId).catch((e: unknown) => console.error('작업 실행 실패', e))
+  // scheduleToken 은 예약이 보낸 실행임을 잇는 표식이다. 모르는 토큰이면 평소대로 돈다
+  handleFromRenderer(IPC.agentRun, (prompt: string, chatId?: number, scheduleToken?: string) => {
+    const overrides = scheduler.claimOverrides(scheduleToken)
+    void agent
+      .run(prompt, chatId, overrides)
+      .catch((e: unknown) => console.error('작업 실행 실패', e))
     return { started: true }
   })
 
@@ -283,6 +311,13 @@ export function registerIpc(
   handleFromRenderer(IPC.playbookPut, (input: PlaybookInput) => playbooks.put(input))
   handleFromRenderer(IPC.playbookDelete, (id: string) => playbooks.remove(id))
   handleFromRenderer(IPC.playbookRestore, (id: string) => playbooks.restore(id))
+
+  // --- 예약 실행 — 상태 조회·지금 실행·일시정지/재개 ------------------------
+  handleFromRenderer(IPC.scheduleStatus, () => scheduler.statusList())
+  handleFromRenderer(IPC.scheduleRunNow, (playbookId: string) => scheduler.runNow(playbookId))
+  handleFromRenderer(IPC.scheduleSetPaused, (playbookId: string, paused: boolean) =>
+    scheduler.setPaused(playbookId, paused)
+  )
   onFromRenderer(IPC.agentConfirmReply, (requestId: string, approved: boolean) =>
     agent.resolveConfirm(requestId, approved)
   )

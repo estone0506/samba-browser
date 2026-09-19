@@ -5,6 +5,7 @@
 // 계정·비밀번호는 언제나 키마스터(login·fill_secret 도구)가 쥔다
 
 import { z } from 'zod'
+import { playbookScheduleSchema, type PlaybookSchedule } from './schedule'
 
 /** 이름·트리거·절차 길이 상한. 동기화 값이라 한없이 커지지 않게 막는다 */
 export const PLAYBOOK_NAME_MAX = 60
@@ -24,6 +25,11 @@ export interface PlaybookDto {
   enabled: boolean
   /** 내장 플레이북인가. 내장은 삭제 대신 '기본값 복원'만 된다 */
   builtin?: boolean
+  /**
+   * 예약 실행 설정. 칸이 없으면 예약을 걸지 않은 것이다 —
+   * 이 칸이 생기기 전에 저장된 플레이북도 그대로 읽힌다
+   */
+  schedule?: PlaybookSchedule
   updatedAt: number
 }
 
@@ -35,6 +41,8 @@ export const playbookSchema = z.object({
   instructions: z.string().max(PLAYBOOK_INSTRUCTIONS_MAX),
   enabled: z.boolean(),
   builtin: z.boolean().optional(),
+  // 옛 플레이북에는 이 칸이 없다. 값이 깨져 있어도 예약만 버리고 플레이북은 살린다
+  schedule: playbookScheduleSchema.optional().catch(undefined),
   updatedAt: z.number()
 })
 
@@ -47,6 +55,8 @@ export interface PlaybookInput {
   triggers: string[]
   instructions: string
   enabled: boolean
+  /** 주지 않으면 저장돼 있던 예약 설정을 그대로 둔다 */
+  schedule?: PlaybookSchedule
 }
 
 /** 내장 플레이북 id — 기본값 복원이 이 id 를 기준으로 찾는다 */
