@@ -84,6 +84,7 @@ export const SYNCED_SETTING_KEYS = [
   'maxToolCalls',
   'permissionMode',
   'finalConfirm',
+  'agentEffort',
   'vaultAutoLockMinutes',
   'vaultAccessPolicy',
   'vaultAutoSubmit',

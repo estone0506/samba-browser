@@ -36,6 +36,19 @@ export const MAX_UI_ZOOM = 150
 export const PERMISSION_MODES = ['read_only', 'guard', 'full'] as const
 export type PermissionMode = (typeof PERMISSION_MODES)[number]
 
+// 에이전트 추론 강도(Aside 하단 "Fable 5.1 High ▾" 와 같은 개념).
+// Claude Agent SDK 의 effort 옵션 값과 같은 문자열을 쓴다
+export const AGENT_EFFORTS = ['low', 'medium', 'high'] as const
+export type AgentEffort = (typeof AGENT_EFFORTS)[number]
+
+// 사이드바 접힘 폭(아이콘만 보이는 폭)
+export const SIDEBAR_COLLAPSED_WIDTH = 56
+
+// 사이드바 안에서 따로 접을 수 있는 섹션들
+export const SIDEBAR_SECTION_KEYS = ['tabs', 'chat', 'bookmarks'] as const
+export type SidebarSectionKey = (typeof SIDEBAR_SECTION_KEYS)[number]
+export type SidebarSections = Record<SidebarSectionKey, boolean>
+
 // === 홈/새 탭/검색엔진 설정 (신규 추가분) ==================================
 // 새 탭 주소: 'home' 이면 홈 주소를 따르고, 'blank' 면 빈 페이지로 연다
 export const NEW_TAB_URL_MODES = ['home', 'blank'] as const
@@ -100,6 +113,11 @@ export const DEFAULT_SETTINGS = {
   uiZoom: 100,
   sidebarShowBookmarks: true,
   sidebarShowChat: true,
+  // 사이드바 접기(아이콘 폭) 여부와 섹션별 펼침 상태 — 기기 로컬이라 동기화하지 않는다
+  sidebarCollapsed: false,
+  sidebarSections: { tabs: true, chat: true, bookmarks: true } as SidebarSections,
+  // 에이전트 추론 강도(채팅 입력줄에서 고른다). 기기 간 같은 값을 쓰도록 동기화한다
+  agentEffort: 'medium' as AgentEffort,
   // === 2b 추가분 끝 =========================================================
   // === 폰 연동(3단계 추가분) ================================================
   // adb/scrcpy 실행 파일 경로. 빈 문자열이면 설정 화면의 "자동 찾기" 를 안내한다
@@ -187,6 +205,16 @@ export const settingsSchema = z.object({
   uiZoom: z.number().int().min(MIN_UI_ZOOM).max(MAX_UI_ZOOM).catch(DEFAULT_SETTINGS.uiZoom),
   sidebarShowBookmarks: z.boolean().catch(DEFAULT_SETTINGS.sidebarShowBookmarks),
   sidebarShowChat: z.boolean().catch(DEFAULT_SETTINGS.sidebarShowChat),
+  sidebarCollapsed: z.boolean().catch(DEFAULT_SETTINGS.sidebarCollapsed),
+  // 섹션 중 하나만 망가져도 그 칸만 기본값(펼침)으로 되돌린다
+  sidebarSections: z
+    .object({
+      tabs: z.boolean().catch(true),
+      chat: z.boolean().catch(true),
+      bookmarks: z.boolean().catch(true)
+    })
+    .catch(DEFAULT_SETTINGS.sidebarSections),
+  agentEffort: z.enum(AGENT_EFFORTS).catch(DEFAULT_SETTINGS.agentEffort),
   // === 2b 추가분 끝 ===========================================================
   // === 폰 연동(3단계 추가분) — 경로는 기기별 값이라 동기화하지 않는다 ==========
   adbPath: z.string().catch(DEFAULT_SETTINGS.adbPath),
