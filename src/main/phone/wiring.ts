@@ -337,9 +337,10 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     const siteHost = normalizeHost(host ?? '') || deps.page.host()
     const account = accountFor(siteHost)
     const serials = serialsFor(account?.id ?? null)
-    // 인증 대기 중에만 ARS 감시를 켜고, 그 진행 로그를 이 작업의 StepLog 로 보낸다
-    const stopArs = deps.phones.watchArs(siteHost)
+    // 인증 대기 중에만 ARS 감시를 켜고, 그 진행 로그를 이 작업의 StepLog 로 보낸다.
+    // 중계를 먼저 붙인다 — 감시가 시작하자마자 알리는 경우가 있다
     const unbind = deps.progress.bind(ctx.onStep)
+    const stopArs = deps.phones.watchArs(siteHost)
     // 자리수는 기록 콜백에서만 얻는다 — 인증번호 값은 여기서 보지 않는다
     let digits = 0
     try {
@@ -360,6 +361,7 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
         },
         notify: (dto) => deps.phones.notifyAuthWaiting(dto),
         now,
+        sleep,
         cancelled: ctx.cancelled,
         phoneIdOf
       })
