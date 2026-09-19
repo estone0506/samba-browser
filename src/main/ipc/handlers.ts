@@ -14,6 +14,7 @@ import * as os from 'node:os'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import { defaultTabUrl } from '../../shared/settings'
 import type { TabManager } from '../browser/tab-manager'
+import { ClosedTabStack, newProfileName, runGesture, type GestureDeps } from '../browser/gestures'
 import { SettingsStore } from '../settings/store'
 import { setOcrEnabled } from '../agent/tools-ocr'
 import { AgentRunner } from '../agent/runner'
@@ -91,6 +92,12 @@ export function registerIpc(
   const applyBrowserDefaults = (s: Settings): void => {
     tabs.setDefaultUrl(defaultTabUrl(s))
     tabs.setSearchEngine(s.searchEngine)
+    // 마우스 제스처 설정은 페이지 preload 가 궤적을 그릴지 판단하는 데 필요하다
+    tabs.setGestureConfig({
+      enabled: s.mouseGesturesEnabled,
+      language: s.language,
+      mapping: s.mouseGestures
+    })
   }
   applyBrowserDefaults(settings.get())
   setOcrEnabled(settings.get().ocrEnabled)
@@ -173,6 +180,7 @@ export function registerIpc(
     ipcMain.removeAllListeners(IPC.vaultCaptureDecision)
     ipcMain.removeAllListeners(IPC.vaultCapture)
     ipcMain.removeAllListeners(IPC.vaultUndoPasswordUpdate)
+    ipcMain.removeAllListeners(IPC.pageGesture)
     sync.current()?.stop()
     sync.release()
     vault.dispose()
@@ -467,6 +475,66 @@ export function registerIpc(
     })
   })
   // === 자체 새 탭 페이지 끝 =============================================================
+
+  // === 마우스 제스처 ====================================================================
+  // 닫은 탭 다시 열기용 스택(최대 10). 탭이 닫힐 때마다 주소를 쌓아 둔다
+  const closedTabs = new ClosedTabStack()
+  tabs.onTabClosed((closed) => closedTabs.push(closed))
+
+  const gestureDeps: GestureDeps = {
+    activeTabId: () => tabs.active()?.id ?? null,
+    back: (id) => tabs.back(id),
+    forward: (id) => tabs.forward(id),
+    reload: (id) => tabs.reload(id),
+    navigate: (id, url) => tabs.navigate(id, url),
+    scrollTo: (id, to) => tabs.scrollTo(id, to),
+    homeUrl: () => settings.get().homeUrl,
+    newTab: () => {
+      tabs.create({})
+    },
+    // 이 앱은 단일 창이라 '새 창 열기' 는 새 탭으로 대체한다(설정 라벨에도 그렇게 적혀 있다)
+    newWindow: () => {
+      tabs.create({})
+    },
+    // 시크릿창 대체 — 세션이 분리된 새 프로필 탭
+    newProfileTab: () => {
+      tabs.create({ profile: newProfileName(Date.now()) })
+    },
+    closeTab: (id) => tabs.close(id),
+    reopenTab: () => {
+      const last = closedTabs.pop()
+      if (last) tabs.create({ url: last.url, profile: last.profile, mobile: last.mobile })
+    },
+    toggleFullScreen: () => {
+      if (!win.isDestroyed()) win.setFullScreen(!win.isFullScreen())
+    },
+    maximize: () => {
+      if (win.isDestroyed()) return
+      if (win.isMaximized()) win.unmaximize()
+      else win.maximize()
+    },
+    minimize: () => {
+      if (!win.isDestroyed()) win.minimize()
+    }
+  }
+
+  // 발신자는 반드시 관리 중인 탭이어야 한다(웹 페이지·확장의 위조 호출 차단)
+  ipcMain.on(IPC.pageGesture, (e, raw: unknown) => {
+    const tab = tabs.findByWebContents(e.sender)
+    if (!tab) return
+    // 방향 4글자(L/R/U/D)를 넘는 값은 인식기가 만들 수 없다 — 들어오면 버린다
+    if (typeof raw !== 'string' || !/^[LRUD]{1,4}$/.test(raw)) return
+    const s = settings.get()
+    if (!s.mouseGesturesEnabled) return
+    // 제스처가 일어난 그 탭을 대상으로 실행한다(활성 탭 추정에 기대지 않는다)
+    void runGesture(raw, s.mouseGestures, {
+      ...gestureDeps,
+      activeTabId: () => tab.id
+    }).catch((err: unknown) => {
+      console.warn('마우스 제스처 실행 실패', err instanceof Error ? err.message : String(err))
+    })
+  })
+  // === 마우스 제스처 끝 =================================================================
 
   // === AI 연결(2b 추가분 — 병합 편의를 위해 이 블록만 별도로 추가) ======================
   // 평문 API 키는 이 저장소와 agent/provider.ts 안에만 머문다. 렌더러로 나가는 것은

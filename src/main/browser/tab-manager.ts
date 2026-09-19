@@ -9,7 +9,8 @@ import {
 } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import type { Layout, TabInfo } from '../../shared/ipc'
+import { IPC, type Layout, type TabInfo } from '../../shared/ipc'
+import type { ClosedTabRecord } from './gestures'
 import { BLOCKED_URL_MESSAGE, isAllowedUrl, isInternalUrl, NEW_TAB_URL } from '../../shared/url'
 import { attachInternalProtocol } from './internal-protocol'
 import type { PermissionMode, SearchEngine } from '../../shared/settings'
@@ -145,6 +146,12 @@ export class TabManager {
   private dialogConfirm: ((message: string) => Promise<boolean>) | undefined
   // 자동 처리한 대화상자 문구(탭별 1건). 다음 도구 결과 앞에 붙이고 비운다
   private lastDialogMessage = new Map<string, string>()
+  // === 마우스 제스처 ========================================================
+  // 페이지 preload 에 밀어 줄 제스처 설정(켜짐 여부·언어·매핑). 설정이 바뀌면 handlers 가 갈아 끼운다
+  private gestureConfig: unknown = null
+  // 탭이 닫힐 때 알리는 구독자(닫은 탭 다시 열기 스택)
+  private closedListeners: Array<(tab: ClosedTabRecord) => void> = []
+  // === 마우스 제스처 끝 ======================================================
 
   constructor(private win: BrowserWindow) {
     // 창이 닫히면 남은 리스너·탭을 정리해 파괴된 창에 접근하지 않게 한다
@@ -207,6 +214,46 @@ export class TabManager {
     })
   }
 
+  // === 마우스 제스처 ========================================================
+  /**
+   * 페이지 preload 에 밀어 줄 제스처 설정을 갈아 끼운다.
+   * 이미 열려 있는 탭에도 즉시 반영한다(설정 화면에서 끄면 바로 궤적이 사라지도록)
+   */
+  setGestureConfig(config: unknown): void {
+    this.gestureConfig = config
+    for (const tab of this.tabs) this.sendGestureConfig(tab.view.webContents)
+  }
+
+  private sendGestureConfig(wc: WebContents): void {
+    if (this.gestureConfig === null || wc.isDestroyed()) return
+    wc.send(IPC.pageGestureConfig, this.gestureConfig)
+  }
+
+  /** 탭이 닫힐 때(다시 열기 스택에 쌓을 수 있게) 알린다 */
+  onTabClosed(cb: (tab: ClosedTabRecord) => void): void {
+    this.closedListeners.push(cb)
+  }
+
+  /**
+   * 페이지를 맨 위·맨 아래로 보낸다(제스처 ↑/↓).
+   * 페이지가 window.scrollTo 를 덮어썼어도 영향을 받지 않도록 격리 월드에서 실행한다
+   */
+  async scrollTo(id: string, to: 'top' | 'bottom'): Promise<void> {
+    const tab = this.get(id)
+    if (!tab) return
+    const wc = tab.view.webContents
+    if (wc.isDestroyed()) return
+    const top = to === 'top' ? '0' : 'el.scrollHeight'
+    // preload 가 사는 격리 월드 id(Electron WorldId.ISOLATED_WORLD). page-bridge 와 같은 값이지만
+    // 순환 import 를 만들지 않으려고 여기서는 숫자를 직접 쓴다
+    await wc.executeJavaScriptInIsolatedWorld(999, [
+      {
+        code: `(() => { const el = document.scrollingElement || document.documentElement; el.scrollTo({ top: ${top}, behavior: 'smooth' }); return '' })()`
+      }
+    ])
+  }
+  // === 마우스 제스처 끝 ======================================================
+
   /** AI 작업 실행 여부 판정기를 연결한다(대화상자 자동 처리 조건) */
   setAgentRunningProvider(fn: () => boolean): void {
     this.agentRunning = fn
@@ -249,6 +296,7 @@ export class TabManager {
     if (this.disposed) return
     this.disposed = true
     this.listeners = []
+    this.closedListeners = []
     this.tabs = []
     this.activeId = null
   }
@@ -355,6 +403,8 @@ export class TabManager {
       if (isMainFrame && code !== -3) console.error(`탭 로드 실패 ${code} ${desc}: ${failedUrl}`)
     })
     wc.on('did-navigate-in-page', () => this.emit())
+    // 문서가 바뀔 때마다 제스처 설정을 다시 밀어 준다(preload 는 매 문서마다 새로 뜬다)
+    wc.on('dom-ready', () => this.sendGestureConfig(wc))
     // 탭이 실제로 받은 파비콘을 파비콘 서비스 캐시에 넣어 둔다.
     // 이미 열고 있는 페이지에서 나온 정보라 추가로 노출되는 것이 없고,
     // /favicon.ico 가 없는 사이트의 아이콘도 이 경로로 채워진다
@@ -423,6 +473,15 @@ export class TabManager {
     if (idx < 0) return
     const [tab] = this.tabs.splice(idx, 1)
     this.lastDialogMessage.delete(id)
+    // 닫히기 전에 주소를 챙겨 둔다(제스처 '닫은 탭 다시 열기')
+    if (!tab.view.webContents.isDestroyed()) {
+      const record: ClosedTabRecord = {
+        url: tab.view.webContents.getURL(),
+        profile: tab.profile,
+        mobile: tab.mobile
+      }
+      for (const cb of this.closedListeners) cb(record)
+    }
     if (!this.win.isDestroyed()) this.win.contentView.removeChildView(tab.view)
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
     if (this.activeId === id) {
