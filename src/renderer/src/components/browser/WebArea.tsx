@@ -12,6 +12,7 @@ export function WebArea(): React.JSX.Element {
   useUiStore((s) => s.resizing)
   useUiStore((s) => s.captureOverlayOpen)
   useOverlayStore((s) => s.webviewHidden)
+  const snapshot = useOverlayStore((s) => s.snapshot)
   const send = useCallback((): void => {
     const el = ref.current
     if (!el) return
@@ -74,7 +75,22 @@ export function WebArea(): React.JSX.Element {
   // 웨일 모바일 창처럼 보이게 한다(실제 정렬은 tab-manager 의 computeViewBounds 가 담당)
   return (
     <div ref={ref} className="min-h-0 flex-1 bg-[var(--bg)]">
-      {mobile && (
+      {snapshot && (
+        // 웹뷰를 접은 동안 그 자리에 정지 이미지를 깔아 페이지가 사라져 보이지 않게 한다
+        <img
+          src={snapshot.dataUrl}
+          alt=""
+          draggable={false}
+          className="pointer-events-none fixed select-none"
+          style={{
+            left: snapshot.rect.x,
+            top: snapshot.rect.y,
+            width: snapshot.rect.width,
+            height: snapshot.rect.height
+          }}
+        />
+      )}
+      {mobile && !snapshot && (
         <div className="flex h-full w-full items-stretch justify-center">
           <div className="w-[412px] max-w-full rounded-t-2xl bg-white shadow-lg" />
         </div>
