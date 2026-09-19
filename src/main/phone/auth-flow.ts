@@ -15,7 +15,8 @@ import { watchSms, type SmsCandidate } from './sms'
 // --- 인증번호 입력칸 탐지(순수) ----------------------------------------------
 
 // 인증 문맥 문구(이름·라벨·placeholder 모두 같은 규칙으로 본다)
-const CODE_HINT_RE = /인증\s?번호|확인\s?번호|verif(?:y|ication)|auth(?:_|-)?(?:code|num)|\botp\b|one[-_ ]?time|\bcode\b|sms.?code/i
+const CODE_HINT_RE =
+  /인증\s?번호|확인\s?번호|verif(?:y|ication)|auth(?:_|-)?(?:code|num)|\botp\b|one[-_ ]?time|\bcode\b|sms.?code/i
 // 숫자 칸이라도 인증과 무관한 칸(우편번호·쿠폰·주문번호 등)은 후보에서 뺀다
 const NOT_CODE_RE =
   /zip|post(?:al)?[-_ ]?code|coupon|promo|referr|discount|barcode|country|area[-_ ]?code|card|birth|주민|우편|쿠폰|카드/i
@@ -234,3 +235,40 @@ export async function detectIncomingCall(
 export const ARS_POLL_INTERVAL_MS = 3000
 /** 인증 대기 상한과 같은 3분 */
 export const ARS_WATCH_TIMEOUT_MS = AUTH_TIMEOUT_MS
+/** 전화 인증을 감지했을 때 채팅에 남기는 진행 로그(자동 응답은 하지 않는다) */
+export const ARS_NOTICE = '전화 인증 수신 감지: 폰 화면을 확인하세요'
+
+export interface ArsWatchDeps {
+  adb: AdbRunner
+  serials: () => string[]
+  now: () => number
+  sleep?: (ms: number) => Promise<void>
+  cancelled?: () => boolean
+  /** 수신을 처음 감지했을 때 한 번만 부른다 */
+  onDetected: (serial: string) => void
+}
+
+const defaultSleep = (ms: number): Promise<void> =>
+  new Promise((r) => {
+    const t = setTimeout(r, ms)
+    t.unref?.()
+  })
+
+/**
+ * 인증 대기 동안 3초마다 전화 수신을 살핀다. 감지되면 알리고 멈춘다 —
+ * 받지도, 키패드를 누르지도 않는다(5단계 몫)
+ */
+export async function watchIncomingCall(deps: ArsWatchDeps): Promise<string | null> {
+  const sleep = deps.sleep ?? defaultSleep
+  const start = deps.now()
+  while (deps.now() - start < ARS_WATCH_TIMEOUT_MS) {
+    if (deps.cancelled?.()) return null
+    const serial = await detectIncomingCall(deps.adb, deps.serials())
+    if (serial) {
+      deps.onDetected(serial)
+      return serial
+    }
+    await sleep(ARS_POLL_INTERVAL_MS)
+  }
+  return null
+}

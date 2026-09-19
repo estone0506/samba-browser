@@ -8,7 +8,10 @@ import {
   runSmsAuth,
   callState,
   detectIncomingCall,
+  watchIncomingCall,
   CALL_STATE_ARGS,
+  ARS_POLL_INTERVAL_MS,
+  ARS_WATCH_TIMEOUT_MS,
   type AuthFlowDeps
 } from '../src/main/phone/auth-flow'
 import { AUTH_TIMEOUT_MS } from '../src/shared/phone'
@@ -278,7 +281,10 @@ describe('pageBridge.findCodeField', () => {
     const calls: string[] = []
     const webContents = {
       isDestroyed: () => false,
-      executeJavaScriptInIsolatedWorld: async (_world: number, scripts: Array<{ code: string }>) => {
+      executeJavaScriptInIsolatedWorld: async (
+        _world: number,
+        scripts: Array<{ code: string }>
+      ) => {
         calls.push(scripts[0].code)
         return result
       }
@@ -336,5 +342,61 @@ describe('ARS 수신 감지', () => {
     const adb = new FakeAdb()
     adb.reply('telephony.registry', 'mCallState=0')
     expect(await detectIncomingCall(adb, [SERIAL, 'OTHER'])).toBeNull()
+  })
+
+  it('감시는 3초 주기로 돌고 감지되면 한 번만 알리고 멈춘다', async () => {
+    let clock = START
+    const adb = new FakeAdb()
+    adb.reply('telephony.registry', 'mCallState=0')
+    const seen: string[] = []
+    const watch = watchIncomingCall({
+      adb,
+      serials: () => [SERIAL],
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms
+        // 두 번째 폴링에서 전화가 오기 시작한다
+        adb.reply('telephony.registry', 'mCallState=1')
+      },
+      onDetected: (s) => seen.push(s)
+    })
+    expect(await watch).toBe(SERIAL)
+    expect(seen).toEqual([SERIAL])
+    expect(clock - START).toBe(ARS_POLL_INTERVAL_MS)
+  })
+
+  it('3분 동안 수신이 없으면 알리지 않고 끝난다', async () => {
+    let clock = START
+    const adb = new FakeAdb()
+    adb.reply('telephony.registry', 'mCallState=0')
+    const seen: string[] = []
+    const r = await watchIncomingCall({
+      adb,
+      serials: () => [SERIAL],
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms
+      },
+      onDetected: (s) => seen.push(s)
+    })
+    expect(r).toBeNull()
+    expect(seen).toEqual([])
+    expect(clock - START).toBeGreaterThanOrEqual(ARS_WATCH_TIMEOUT_MS)
+  })
+
+  it('중단 요청이 오면 폰을 더 보지 않는다', async () => {
+    const adb = new FakeAdb()
+    const r = await watchIncomingCall({
+      adb,
+      serials: () => [SERIAL],
+      now: () => START,
+      sleep: async () => {},
+      cancelled: () => true,
+      onDetected: () => {
+        throw new Error('불려서는 안 된다')
+      }
+    })
+    expect(r).toBeNull()
+    expect(adb.calls.length).toBe(0)
   })
 })
