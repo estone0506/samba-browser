@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { app } from 'electron'
+import { app, crashReporter } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { createMainWindow } from './window'
 import { TabManager } from './browser/tab-manager'
@@ -10,6 +10,9 @@ import { openDatabase, type Db } from './db/client'
 import type { VaultService } from './vault/service'
 import type { SyncEngineHolder } from './sync/engine'
 import { runLoginHarness, writeVaultLocked } from './e2e/login-harness'
+
+// 브라우저 프로세스 크래시 덤프를 로컬에 남긴다(서버 업로드 없음). 원인 추적용
+crashReporter.start({ uploadToServer: false, compress: false })
 
 // 콘솔 출력 파이프가 끊겨도(EPIPE — 로그를 받던 터미널·파일 핸들이 먼저 닫힘) 앱이 죽지 않게 한다.
 // console.* 이 실패하며 uncaughtException 으로 번져 "A JavaScript error occurred" 창이 뜨던 문제
