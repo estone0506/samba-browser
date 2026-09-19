@@ -555,6 +555,35 @@
     },
     "security": {
       "autofillTitle": "Autofill"
+    },
+    "keymaster": {
+      "open": "Open Key Master",
+      "export": "Export",
+      "exportUnavailable": "Export is coming in a later stage"
+    },
+    "gestures": {
+      "title": "Mouse gestures",
+      "desc": "Hold the right button and drag to run the action mapped to that direction. A blue trail and the action name appear while you gesture.",
+      "enable": "Use mouse gestures",
+      "enableDesc": "When off, the right-click menu always opens as usual.",
+      "restore": "Restore defaults",
+      "actions": {
+        "none": "None",
+        "back": "Back",
+        "forward": "Forward",
+        "scrollTop": "Scroll to top",
+        "scrollBottom": "Scroll to bottom",
+        "home": "Home page",
+        "reload": "Reload",
+        "newTab": "New tab",
+        "newWindow": "New window (opens a tab)",
+        "newProfileTab": "New profile tab",
+        "closeTab": "Close tab",
+        "reopenTab": "Reopen closed tab",
+        "fullscreen": "Full screen",
+        "maximize": "Maximize window",
+        "minimize": "Minimize window"
+      }
     }
   },
   "account": {

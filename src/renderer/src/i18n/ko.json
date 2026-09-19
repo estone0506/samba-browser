@@ -555,6 +555,35 @@
     },
     "security": {
       "autofillTitle": "자동 채우기"
+    },
+    "keymaster": {
+      "open": "키마스터 열기",
+      "export": "내보내기",
+      "exportUnavailable": "내보내기는 다음 단계에서 제공돼요"
+    },
+    "gestures": {
+      "title": "마우스 제스처",
+      "desc": "오른쪽 버튼을 누른 채 움직이면 그 방향에 연결된 동작을 실행해요. 제스처 중에는 파란 궤적과 동작 이름이 화면에 보여요",
+      "enable": "마우스 제스처 사용",
+      "enableDesc": "끄면 오른쪽 버튼 메뉴가 항상 그대로 열려요",
+      "restore": "기본값 복원",
+      "actions": {
+        "none": "없음",
+        "back": "이전 페이지",
+        "forward": "다음 페이지",
+        "scrollTop": "맨 위로",
+        "scrollBottom": "맨 아래로",
+        "home": "홈페이지로",
+        "reload": "새로고침",
+        "newTab": "새 탭 열기",
+        "newWindow": "새 창 열기(새 탭)",
+        "newProfileTab": "새 프로필 탭",
+        "closeTab": "탭 닫기",
+        "reopenTab": "닫은 탭 다시 열기",
+        "fullscreen": "전체화면",
+        "maximize": "창 최대화",
+        "minimize": "창 최소화"
+      }
     }
   },
   "account": {

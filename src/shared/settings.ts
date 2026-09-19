@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { AI_PROVIDERS, type AiProviderId, type TaskModels } from './ai'
 import { DEFAULT_DANGER_WORDS, mergeDangerWords } from './danger'
 import { EXTENSION_SOURCES, type ExtensionSource } from './extensions'
+import { defaultMouseGestures, GESTURE_ACTIONS } from './gestures'
 import { DEFAULT_PAYMENT_LIMIT_KRW, type ScreenFps, type ScreenSize } from './phone'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 
@@ -136,8 +137,13 @@ export const DEFAULT_SETTINGS = {
   paymentLimitKrw: DEFAULT_PAYMENT_LIMIT_KRW,
   // 개발·검증용 Pro 게이트 우회(기기 로컬·설정 UI 없음·동기화 안 함).
   // 환경변수 SAMBA_PHONE_PRO_OVERRIDE=1 로도 켜지고, 배포판에서는 통째로 무시된다
-  phoneDevOverridePro: false
+  phoneDevOverridePro: false,
   // === 폰 연동 끝 ===========================================================
+  // === 마우스 제스처 ========================================================
+  // 오른쪽 버튼 드래그 제스처 사용 여부와 시퀀스→동작 매핑(웨일 기본값 16종)
+  mouseGesturesEnabled: true,
+  mouseGestures: defaultMouseGestures()
+  // === 마우스 제스처 끝 =====================================================
 }
 
 // 손상된 config.json 이어도 앱이 뜨도록 필드마다 catch 로 기본값으로 되돌린다
@@ -236,8 +242,13 @@ export const settingsSchema = z.object({
     .catch(DEFAULT_SETTINGS.phoneScreenFps),
   phoneAutoReconnect: z.boolean().catch(DEFAULT_SETTINGS.phoneAutoReconnect),
   paymentLimitKrw: z.number().int().min(0).catch(DEFAULT_SETTINGS.paymentLimitKrw),
-  phoneDevOverridePro: z.boolean().catch(DEFAULT_SETTINGS.phoneDevOverridePro)
+  phoneDevOverridePro: z.boolean().catch(DEFAULT_SETTINGS.phoneDevOverridePro),
   // === 폰 연동 끝 =============================================================
+  // === 마우스 제스처 ==========================================================
+  mouseGesturesEnabled: z.boolean().catch(DEFAULT_SETTINGS.mouseGesturesEnabled),
+  // 알 수 없는 동작 이름이 섞이면 표 전체를 기본값으로 되돌린다(부분 손상 방지)
+  mouseGestures: z.record(z.string(), z.enum(GESTURE_ACTIONS)).catch(() => defaultMouseGestures())
+  // === 마우스 제스처 끝 =======================================================
 })
 
 export type Settings = z.infer<typeof settingsSchema>

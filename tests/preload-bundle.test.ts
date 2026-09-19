@@ -6,9 +6,11 @@ import { MAX_ELEMENTS } from '../src/shared/snapshot'
 import {
   MAX_ELEMENTS as PAGE_MAX_ELEMENTS,
   PAGE_IPC,
-  INTERNAL_PROTOCOL
+  INTERNAL_PROTOCOL,
+  GESTURE_ACTION_LABELS
 } from '../src/preload/page-constants'
 import { INTERNAL_SCHEME } from '../src/shared/url'
+import { GESTURE_ACTIONS } from '../src/shared/gestures'
 
 // 웹페이지 preload 는 sandbox:true 로 주입되므로 다른 파일을 require() 할 수 없다.
 // src/shared/* 의 값을 page.ts/page-core.ts 가 import 하면 renderer.ts 와 공유되어
@@ -34,6 +36,17 @@ describe('page-constants 는 shared 원본과 동기화되어야 한다', () => 
     expect(PAGE_IPC.newTabInit).toBe(IPC.newTabInit)
     expect(PAGE_IPC.newTabSearch).toBe(IPC.newTabSearch)
     expect(PAGE_IPC.newTabOpen).toBe(IPC.newTabOpen)
+  })
+
+  it('마우스 제스처 채널명이 shared/ipc 와 같다', () => {
+    expect(PAGE_IPC.gesture).toBe(IPC.pageGesture)
+    expect(PAGE_IPC.gestureConfig).toBe(IPC.pageGestureConfig)
+  })
+
+  it('제스처 동작 이름표가 shared/gestures 의 동작 목록을 빠짐없이 덮는다', () => {
+    const expected = [...GESTURE_ACTIONS].sort()
+    expect(Object.keys(GESTURE_ACTION_LABELS.ko).sort()).toEqual(expected)
+    expect(Object.keys(GESTURE_ACTION_LABELS.en).sort()).toEqual(expected)
   })
 
   it('내부 스킴 상수가 shared/url 과 같다', () => {
