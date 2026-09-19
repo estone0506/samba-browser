@@ -201,14 +201,22 @@ export function createCodeReader(deps: CodeReaderDeps): (png: Buffer) => Promise
 
 /**
  * 비밀번호 화면을 직접 캡처해 Visual 에게 "숫자 위치" 만 묻는다.
- * 이 캡처는 렌더러로도 모델 대화로도 가지 않는다 — 좌표를 얻는 즉시 버린다
+ *
+ * 이 경로는 결제 키패드 원본 화면을 외부 AI 제공자에게 그대로 보낸다.
+ * 그래서 기본값은 꺼짐이고(enabled 가 거짓이면 캡처조차 뜨지 않는다),
+ * 꺼져 있으면 null 을 돌려줘 결제 실행기가 사람에게 넘기도록(handOff) 한다.
+ * 좌표를 얻은 캡처는 렌더러로도 모델 대화로도 가지 않고 즉시 버린다
  */
 export function createKeypadReader(deps: {
   adb: AdbRunner
+  /** 설정의 phoneKeypadVisual. 기본은 꺼짐 */
+  enabled: () => boolean
   screen: (serial: string) => Promise<PhoneScreen>
   readLayout: (png: Buffer, size: { width: number; height: number }) => Promise<KeypadLayout | null>
 }): (serial: string) => Promise<KeypadLayout | null> {
   return async (serial) => {
+    // 꺼져 있으면 화면을 뜨지 않는다 — 배치 없음과 같고, 호출부가 사람에게 넘긴다
+    if (!deps.enabled()) return null
     try {
       const screen = await deps.screen(serial)
       const png = await deps.adb.runBinary(execOutArgs(serial, ['screencap', '-p']))

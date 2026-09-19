@@ -233,6 +233,7 @@ describe('createKeypadReader — 비밀번호 화면 캡처는 배치만 얻고 
     const sizes: Array<{ width: number; height: number }> = []
     const read = createKeypadReader({
       adb,
+      enabled: () => true,
       screen: async () => screen(),
       readLayout: async (_png, size) => {
         sizes.push(size)
@@ -246,7 +247,12 @@ describe('createKeypadReader — 비밀번호 화면 캡처는 배치만 얻고 
   it('캡처가 비었으면 모델을 부르지 않는다', async () => {
     const adb = new FakeAdb()
     const readLayout = vi.fn(async () => null)
-    const read = createKeypadReader({ adb, screen: async () => screen(), readLayout })
+    const read = createKeypadReader({
+      adb,
+      enabled: () => true,
+      screen: async () => screen(),
+      readLayout
+    })
     expect(await read(SERIAL)).toBeNull()
     expect(readLayout).not.toHaveBeenCalled()
   })
@@ -255,9 +261,25 @@ describe('createKeypadReader — 비밀번호 화면 캡처는 배치만 얻고 
     const adb = new FakeAdb()
     const read = createKeypadReader({
       adb,
+      enabled: () => true,
       screen: () => Promise.reject(new Error('덤프 실패')),
       readLayout: async () => ({ digits: {} })
     })
     expect(await read(SERIAL)).toBeNull()
+  })
+
+  it('기본은 꿫 있어 화면을 뜨지도 않는다(결제 키패드 원본이 외부 AI 로 나가지 않게)', async () => {
+    const adb = new FakeAdb()
+    adb.replyBinary('screencap', Buffer.from([9, 9, 9]))
+    const readLayout = vi.fn(async () => ({ digits: {} }))
+    const read = createKeypadReader({
+      adb,
+      enabled: () => false,
+      screen: async () => screen(),
+      readLayout
+    })
+    expect(await read(SERIAL)).toBeNull()
+    expect(readLayout).not.toHaveBeenCalled()
+    expect(adb.calls).toHaveLength(0)
   })
 })

@@ -1056,6 +1056,8 @@ export function registerIpc(
     }),
     readKeypad: createKeypadReader({
       adb: phoneAdb,
+      // 결제 키패드 원본 화면을 외부 AI 로 보내는 경로다 — 기본은 꺼짐
+      enabled: () => settings.get().phoneKeypadVisual,
       screen: (serial) => phoneOps.screen(serial),
       readLayout: (png, size) => readKeypadLayout(visualDeps, png, size)
     }),

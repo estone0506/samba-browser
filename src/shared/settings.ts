@@ -156,6 +156,10 @@ export const DEFAULT_SETTINGS = {
   phoneAutoReconnect: true,
   // 결제 상한(원). 초과하면 권한 모드와 무관하게 사람 확인을 받는다
   paymentLimitKrw: DEFAULT_PAYMENT_LIMIT_KRW,
+  // 결제 비밀번호 키패드 배치를 외부 AI(Visual)에게 물어볼지.
+  // 켜면 키패드 화면 원본이 AI 제공자로 전송되므로 기본은 꺼짐이고,
+  // 꺼져 있으면 UI 트리로 못 읽은 키패드는 사람에게 넘긴다
+  phoneKeypadVisual: false,
   // 개발·검증용 Pro 게이트 우회(기기 로컬·설정 UI 없음·동기화 안 함).
   // 환경변수 SAMBA_PHONE_PRO_OVERRIDE=1 로도 켜지고, 배포판에서는 통째로 무시된다
   phoneDevOverridePro: false,
@@ -303,6 +307,7 @@ export const settingsSchema = z.object({
     .catch(DEFAULT_SETTINGS.phoneScreenFps),
   phoneAutoReconnect: z.boolean().catch(DEFAULT_SETTINGS.phoneAutoReconnect),
   paymentLimitKrw: z.number().int().min(0).catch(DEFAULT_SETTINGS.paymentLimitKrw),
+  phoneKeypadVisual: z.boolean().catch(DEFAULT_SETTINGS.phoneKeypadVisual),
   phoneDevOverridePro: z.boolean().catch(DEFAULT_SETTINGS.phoneDevOverridePro),
   // === 폰 연동 끝 =============================================================
   // === 마우스 제스처 ==========================================================
