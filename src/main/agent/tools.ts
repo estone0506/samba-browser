@@ -7,7 +7,7 @@ import { serializeSnapshot } from '../../shared/snapshot'
 import { isDangerous } from '../../shared/danger'
 import type { PermissionMode, VaultAccessPolicy } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
-import type { AccountDto, VaultItemType } from '../../shared/vault'
+import type { AccountDto, PaymentProvider, VaultItemType } from '../../shared/vault'
 import { normalizeHost } from '../../shared/host'
 import {
   checkFillGate,
@@ -47,6 +47,11 @@ const HOST_UNKNOWN = 'host unknown: navigate to the site first'
 const HOST_MISMATCH = 'refused: host must match the current tab'
 // 계정을 특정하지 못했을 때 돌려주는 문자열
 const ACCOUNT_NOT_FOUND = 'account not found: use list_accounts'
+// 계정에 결제 비밀번호가 둘 이상인데 provider 를 주지 않았을 때 돌려주는 문자열.
+// 임의로 고르면 잘못 눌러 계정이 잠기므로 반드시 모델에게 되묻게 한다
+const PAYMENT_PROVIDER_AMBIGUOUS =
+  'ambiguous: this account has several payment passwords; pass provider ' +
+  '(site for the site own pay such as 무신사머니, toss, kakao, naver, payco, samsung, apple, other)'
 // guard 모드에서 추가 확인을 받아야 하는 민감 항목
 const CONFIRM_ITEM_TYPES: VaultItemType[] = ['password', 'card']
 // fill_secret 대상 요소가 실제로 비밀 입력칸(type=password)이어야 하는 항목 종류.
@@ -93,6 +98,23 @@ const ITEM_TYPES = [
   'identity',
   'document'
 ] as const satisfies readonly VaultItemType[]
+
+// 결제 수단(도구 스키마용). shared/vault 의 PaymentProvider 와 단일 소스로 유지한다
+const PAYMENT_PROVIDER_NAMES = [
+  'site',
+  'toss',
+  'kakao',
+  'naver',
+  'payco',
+  'samsung',
+  'apple',
+  'other'
+] as const satisfies readonly PaymentProvider[]
+
+type PaymentProvidersComplete =
+  [PaymentProvider] extends [(typeof PAYMENT_PROVIDER_NAMES)[number]] ? true : never
+const _paymentProvidersComplete: PaymentProvidersComplete = true
+void _paymentProvidersComplete
 
 // 타입 레벨 완전성 체크 — VaultItemType 에 값이 추가되고 ITEM_TYPES 갱신을 잊으면 컴파일 에러가 난다
 type ItemTypesComplete = [VaultItemType] extends [(typeof ITEM_TYPES)[number]] ? true : never
@@ -640,14 +662,22 @@ ${snapshot}`
 
   const fillSecret = tool(
     'fill_secret',
-    'Fill a saved secret (password, card number, ...) into input [n] without ever revealing its value. Use field for a specific field such as "card.number".',
+    'Fill a saved secret (password, card number, ...) into input [n] without ever revealing its value. ' +
+      'Use field for a specific field such as "card.number". ' +
+      'For itemType "password" (a payment password) pass provider to say which checkout it is: ' +
+      'site when the site pays with its own money such as 무신사머니 or SSG머니, ' +
+      'toss for 토스페이, kakao for 카카오페이, naver for 네이버페이, payco for 페이코.',
     {
       elementId: z.number().int(),
       itemType: z.enum(ITEM_TYPES),
       field: z.string().optional(),
-      accountLabel: z.string().optional()
+      accountLabel: z.string().optional(),
+      provider: z
+        .enum(PAYMENT_PROVIDER_NAMES)
+        .optional()
+        .describe('payment method for itemType "password"')
     },
-    ({ elementId, itemType, field, accountLabel }) =>
+    ({ elementId, itemType, field, accountLabel, provider }) =>
       guard(`입력: ${itemType}${field ? `.${field}` : ''} (#${elementId})`, async () => {
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
@@ -681,6 +711,22 @@ ${snapshot}`
           if (!ok) return 'denied by user'
         }
         const fieldKey = field ?? DEFAULT_FIELD_KEY
+        // 결제 비밀번호는 계정당 여러 개다 — 못 좁히면 채우지 않고 되묻게 한다
+        if (itemType === 'password') {
+          const found = v.getPaymentSecretForFill({
+            accountId: account.id,
+            ...(provider === undefined ? {} : { provider }),
+            fieldKey,
+            ...(ctx.jobId === undefined ? {} : { jobId: ctx.jobId })
+          })
+          if (found.reason === 'ambiguous') return PAYMENT_PROVIDER_AMBIGUOUS
+          if (found.value === null) {
+            return `not found: no payment password${provider ? ` (${provider})` : ''} saved for this account`
+          }
+          const movedPay = verifyFillTarget(account, tab)
+          if (movedPay) return movedPay
+          return await pageBridge.fillValue(tab, elementId, found.value)
+        }
         const value = v.getSecretForFill(account.id, itemType, fieldKey, ctx.jobId)
         if (value === null) return `not found: no ${itemType}.${fieldKey} saved for this account`
         // 확인 대기 사이에 페이지가 옮겨 갔을 수 있어 채우기 직전에 다시 검증한다
