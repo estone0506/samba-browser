@@ -9,6 +9,7 @@ import { SecuritySection } from '@renderer/components/settings/SecuritySection'
 import { AgentSection } from '@renderer/components/settings/AgentSection'
 import { AiSection } from '@renderer/components/settings/AiSection'
 import { KeymasterSection } from '@renderer/components/settings/KeymasterSection'
+import { PhoneSection } from '@renderer/components/settings/PhoneSection'
 import { PlaceholderSection } from '@renderer/components/settings/PlaceholderSection'
 import { ExtensionsSection } from '@renderer/components/settings/ExtensionsSection'
 import {
@@ -130,6 +131,9 @@ function SectionBody({
       return <AiSection />
     case 'keymaster':
       return <KeymasterSection />
+    // 폰 섹션: adb·scrcpy 경로와 폰 목록·화면 품질·결제 상한(Task 11)
+    case 'phone':
+      return <PhoneSection settings={settings} update={update} />
     // 개발자 섹션: 압축 해제된 크롬 확장 폴더 관리(Task 15)
     case 'developer':
       return <ExtensionsSection />
