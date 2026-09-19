@@ -94,7 +94,9 @@ export const IPC = {
   newTabSearch: 'newtab:search', // send, 검색어/URL 을 보낸 탭에서 연다
   newTabOpen: 'newtab:open', // send, 북마크 URL 을 보낸 탭에서 연다
   // --- AI 연결(2b) — 응답에 평문 API 키가 담기는 채널은 하나도 없다 -----------
-  aiProviders: 'ai:providers', // 제공자 카드 3종 상태(마스킹 문자열만)
+  aiProviders: 'ai:providers', // 제공자 카드 4종 상태(마스킹 문자열만)
+  aiConnect: 'ai:connect', // 구독 연결(자격이 없으면 이유만 돌려준다)
+  aiDisconnect: 'ai:disconnect', // 구독 연결 해지(PC 의 CLI 로그인 파일은 건드리지 않는다)
   aiSetProvider: 'ai:setProvider', // 제공자 전환 + 작업별 모델 자동 대체
   aiSetApiKey: 'ai:setApiKey', // 렌더러 → 메인 한 방향으로만 평문 키가 흐른다
   aiTestKey: 'ai:testKey', // 모델 목록 1회 호출로 확인, {ok} 만 반환
@@ -211,9 +213,13 @@ export type {
 
 export type {
   AiProviderId,
+  AiConnectResult,
+  AiConnection,
+  AiConnections,
   AiProviderState,
   AiProviderStatus,
   ApiKeyVendor,
+  SubscriptionProviderId,
   TaskModelKey,
   TaskModels
 } from './ai'

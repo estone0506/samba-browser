@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { AI_PROVIDERS, type AiProviderId, type TaskModels } from './ai'
+import { AI_PROVIDERS, type AiConnections, type AiProviderId, type TaskModels } from './ai'
 import { DEFAULT_DANGER_WORDS, mergeDangerWords } from './danger'
 import { EXTENSION_SOURCES, type ExtensionSource } from './extensions'
 import { DEFAULT_PAYMENT_LIMIT_KRW, type ScreenFps, type ScreenSize } from './phone'
@@ -78,6 +78,14 @@ export const DEFAULT_SETTINGS = {
   // === AI 연결 / 에이전트 / 작업공간 (2b 추가분) ============================
   // AI 연결 경로와 작업별 모델
   aiProvider: 'claude_subscription' as AiProviderId,
+  // 구독 연결 상태(기기 로컬 — 동기화하지 않는다).
+  // 자격 파일이 있어도 connected 가 아니면 에이전트는 그 경로를 쓰지 않는다
+  aiConnections: {
+    claude: { connected: false },
+    codex: { connected: false }
+  } as AiConnections,
+  // 기존 사용자 승계(구독으로 이미 쓰고 있던 상태 → connected)를 한 번만 하기 위한 표식
+  aiConnectionsMigrated: false,
   taskModels: {
     fast: 'haiku',
     standard: 'sonnet',
@@ -114,6 +122,15 @@ export const DEFAULT_SETTINGS = {
   paymentLimitKrw: DEFAULT_PAYMENT_LIMIT_KRW
   // === 폰 연동 끝 ===========================================================
 }
+
+// 구독 연결 기록 한 칸. account 는 화면 표시용 문자열뿐이고 토큰은 담지 않는다
+const aiConnectionSchema = z
+  .object({
+    connected: z.boolean().catch(false),
+    account: z.string().optional().catch(undefined),
+    connectedAt: z.number().optional().catch(undefined)
+  })
+  .catch({ connected: false })
 
 // 손상된 config.json 이어도 앱이 뜨도록 필드마다 catch 로 기본값으로 되돌린다
 export const settingsSchema = z.object({
@@ -166,6 +183,14 @@ export const settingsSchema = z.object({
   // === 신규 추가분 끝 =========================================================
   // === AI 연결 / 에이전트 / 작업공간 (2b 추가분) ==============================
   aiProvider: z.enum(AI_PROVIDERS).catch(DEFAULT_SETTINGS.aiProvider),
+  // 연결 기록이 깨졌으면 "미연결"로 되돌린다 — 의심스러우면 쓰지 않는 쪽이 안전하다
+  aiConnections: z
+    .object({
+      claude: aiConnectionSchema,
+      codex: aiConnectionSchema
+    })
+    .catch(DEFAULT_SETTINGS.aiConnections),
+  aiConnectionsMigrated: z.boolean().catch(DEFAULT_SETTINGS.aiConnectionsMigrated),
   taskModels: z
     .object({
       fast: z.string(),
