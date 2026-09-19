@@ -103,6 +103,55 @@ export function runCodexQuery(input: CodexInput): AsyncGenerator<CodexEvent> {
   return runCodex(input)
 }
 
+/** 도구 없는 "프롬프트 한 덩어리 → 텍스트 한 덩어리" 1회 호출 입력. 번역 등이 쓴다 */
+export interface AskTextInput {
+  model: string
+  system: string
+  prompt: string
+  abort: AbortController
+}
+
+/**
+ * 연결된 백엔드(Claude 구독/내 API 키 vs Codex 구독)에 맞춰 알아서 갈아 타는 얇은 공용 호출.
+ * 도구를 하나도 붙이지 않는 순수 텍스트 응답 경로라 번역처럼 "프롬프트 → 텍스트" 만
+ * 필요한 호출부가 백엔드 분기를 직접 신경 쓰지 않도록 여기서 한 번만 처리한다.
+ * 연결이 없으면 runQuery 와 같은 규칙으로 NOT_CONNECTED_ERROR 를 던진다
+ */
+export async function askText(input: AskTextInput): Promise<string | null> {
+  const backend = agentBackend()
+  if (backend === 'none') throw new Error(NOT_CONNECTED_ERROR)
+  if (backend === 'codex') {
+    let text = ''
+    for await (const event of runCodexQuery({
+      prompt: input.prompt,
+      systemPrompt: input.system,
+      model: input.model,
+      abort: input.abort
+    })) {
+      if (input.abort.signal.aborted) break
+      if (event.type === 'text') text += event.text
+    }
+    return text.trim() || null
+  }
+  const stream = runQuery({
+    prompt: input.prompt,
+    systemPrompt: input.system,
+    model: input.model,
+    mcpServers: {},
+    allowedTools: [],
+    abort: input.abort
+  })
+  let text = ''
+  for await (const message of stream) {
+    if (input.abort.signal.aborted) break
+    if (message.type !== 'assistant') continue
+    for (const block of message.message.content) {
+      if (block.type === 'text') text += block.text
+    }
+  }
+  return text.trim() || null
+}
+
 // Claude Agent SDK 호출. 연결된 Claude 구독 또는 내 API 키(ANTHROPIC_API_KEY)를 쓴다
 export function runQuery(input: ProviderInput): Query {
   const auth = currentAuth()
