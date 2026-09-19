@@ -73,7 +73,11 @@ const keypadSchema = z.array(keypadItemSchema)
  * 실패(키 없음·비200·네트워크 오류)는 전부 null 이며 사유를 기록하지 않는다 —
  * 응답 본문에는 비밀번호 화면의 내용이 실릴 수 있다
  */
-async function askVisual(deps: VisualDeps, png: Buffer, prompt: string): Promise<string | null> {
+export async function askVisual(
+  deps: VisualDeps,
+  png: Buffer,
+  prompt: string
+): Promise<string | null> {
   const key = deps.apiKey()
   if (!key || !key.trim()) return null
   const doFetch = deps.fetch ?? (globalThis.fetch as unknown as FetchLike | undefined)

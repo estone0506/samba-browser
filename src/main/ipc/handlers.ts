@@ -58,6 +58,8 @@ import { PhoneRepo } from '../phone/repo'
 import { PhoneService } from '../phone/service'
 import { registerPhoneScreenIpc } from '../phone/screen-ipc'
 import { createPhoneOps } from '../agent/tools-phone'
+// === 화면 번역 · 이미지 번역 — 배선은 translate/register.ts 한 곳에 모여 있다 ==========
+import { registerTranslate } from '../translate/register'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -735,6 +737,17 @@ export function registerIpc(
   })
   win.once('closed', () => phoneScreen.dispose())
   // === 폰 화면 끝 ======================================================================
+
+  // === 화면 번역 · 이미지 번역 =========================================================
+  const translate = registerTranslate({
+    handle: handleFromRenderer,
+    tabs,
+    settings: () => settings.get(),
+    apiKeys,
+    userDataDir: app.getPath('userData')
+  })
+  win.once('closed', () => translate.dispose())
+  // === 번역 끝 ========================================================================
 
   return { settings, agent, db, vault, auth, sync }
 }

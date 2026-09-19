@@ -134,6 +134,8 @@ export class TabManager {
   // 이 창이 실제로 만든 파티션 세션. 새 파티션이 생기면 확장 관리자에게 알려 준다
   private partitionSessions = new Map<string, Session>()
   private sessionHook: ((ses: Session, partition: string) => void) | null = null
+  // 탭 우클릭 메뉴 설치 훅(번역 메뉴). 주입하지 않으면 메뉴를 붙이지 않는다
+  private contextMenuHook: ((wc: WebContents) => void) | null = null
   // 창 안에서만 듣는 키 입력 처리기(작업공간 Ctrl+Alt+1~9). true 를 돌려주면 페이지로 넘기지 않는다
   private inputHandler: ((input: Input) => boolean) | null = null
   // === 신규 추가분 끝 ========================================================
@@ -189,6 +191,12 @@ export class TabManager {
   setSessionHook(fn: (ses: Session, partition: string) => void): void {
     this.sessionHook = fn
     for (const [partition, ses] of this.partitionSessions) fn(ses, partition)
+  }
+
+  /** 탭 우클릭 메뉴 설치 훅을 연결한다. 이미 열려 있는 탭에도 소급 적용한다 */
+  setContextMenuHook(fn: (wc: WebContents) => void): void {
+    this.contextMenuHook = fn
+    for (const tab of this.tabs) fn(tab.view.webContents)
   }
 
   /**
@@ -339,6 +347,7 @@ export class TabManager {
     this.tabs.push(tab)
     const wc = view.webContents
     this.attachInputHandler(wc)
+    this.contextMenuHook?.(wc)
     // 상태 변화 이벤트마다 리스너에 통지 (개별 등록: on() 오버로드가 유니온 리터럴을 받지 않음)
     wc.on('did-start-loading', () => this.emit())
     wc.on('did-stop-loading', () => this.emit())
