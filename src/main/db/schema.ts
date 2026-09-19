@@ -99,6 +99,34 @@ export const workspaces = sqliteTable('workspaces', {
   deletedAt: integer('deleted_at')
 })
 
+// AI 채팅 — 대화 한 건. 제목은 첫 사용자 메시지에서 자동으로 짓는다
+export const chats = sqliteTable('chats', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  remoteId: text('remote_id').unique(),
+  workspaceId: integer('workspace_id'),
+  title: text('title').notNull(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+  deletedAt: integer('deleted_at')
+})
+
+// AI 채팅 메시지. content 는 평문이다 — 채팅은 비밀값이 아니다(스펙).
+// steps 는 진행 로그 JSON 이고 label/ok/key 만 담는다(shared/chat.ts 의 sanitizeSteps)
+export const chatMessages = sqliteTable('chat_messages', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  remoteId: text('remote_id').unique(),
+  chatId: integer('chat_id')
+    .notNull()
+    .references(() => chats.id, { onDelete: 'cascade' }),
+  // 'user' | 'assistant' | 'system'
+  role: text('role').notNull(),
+  content: text('content').notNull(),
+  steps: text('steps'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+  deletedAt: integer('deleted_at')
+})
+
 // 변경 로그 — 로컬 쓰기마다 한 행. 온라인이면 즉시, 아니면 쌓아 두고 재연결 시 전송한다
 export const syncOutbox = sqliteTable('sync_outbox', {
   id: integer('id').primaryKey({ autoIncrement: true }),

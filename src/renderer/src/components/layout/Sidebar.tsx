@@ -5,6 +5,7 @@ import { cn } from '@renderer/lib/utils'
 import logo from '@renderer/assets/logo.png'
 import { useUiStore, type MainView } from '@renderer/stores/uiStore'
 import { BookmarkTree } from './BookmarkTree'
+import { ChatList } from './ChatList'
 import { WorkspaceSwitcher } from '@renderer/components/workspace/WorkspaceSwitcher'
 
 // 사이드바 항목 중 아직 뷰가 없는 항목(작업·자동화·폰·로그)은 클릭해도 아무 일도 하지 않는다
@@ -50,6 +51,8 @@ export function Sidebar({ width }: { width: number }): React.JSX.Element {
       <div className="px-2 pb-1.5 pt-3 text-[11px] font-semibold text-[var(--text3)]">
         {t('sidebar.chats')}
       </div>
+      {/* 최근 대화 목록 (신규 추가분) */}
+      <ChatList />
       {/* 북마크 섹션만 스크롤되어야 아래 설정 푸터가 항상 보인다 */}
       <BookmarkTree />
       {/* 설정 페이지 진입점 (신규 추가분) */}

@@ -49,7 +49,12 @@
     "apiRetry": "AI 응답 대기 중 (재시도 {{n}}회 · {{reason}})",
     "done": "완료",
     "failed": "실패",
-    "toolCalls": "도구 호출 {{n}} / {{max}}"
+    "toolCalls": "도구 호출 {{n}} / {{max}}",
+    "new": "새 대화",
+    "empty": "저장된 대화가 없습니다",
+    "untitled": "제목 없는 대화",
+    "delete": "대화 삭제",
+    "deleteConfirm": "삭제"
   },
   "confirm": {
     "title": "확인이 필요합니다",

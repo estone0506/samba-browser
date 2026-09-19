@@ -5,10 +5,27 @@
 
 import { and, eq, isNotNull, isNull, lt } from 'drizzle-orm'
 import type { Db } from '../db/client'
-import { accounts, bookmarkFolders, bookmarks, sites, syncState, vaultItems } from '../db/schema'
+import {
+  accounts,
+  bookmarkFolders,
+  bookmarks,
+  chatMessages,
+  chats,
+  sites,
+  syncState,
+  vaultItems
+} from '../db/schema'
 import type { SyncTable } from '../../shared/sync'
+import { isChatRole } from '../../shared/chat'
+import { parseSteps } from '../chat/repo'
 import { TOMBSTONE_TTL_MS } from './merge'
-import type { AccountSyncRow, BookmarkSyncRow, VaultItemSyncRow } from './mappers'
+import type {
+  AccountSyncRow,
+  BookmarkSyncRow,
+  ChatMessageSyncRow,
+  ChatSyncRow,
+  VaultItemSyncRow
+} from './mappers'
 
 /** 폴더 경로 구분자. bookmarks_sync.folder_path 도 같은 규칙을 쓴다 */
 const PATH_SEPARATOR = '/'
@@ -378,6 +395,144 @@ export class SyncLocal {
     return inserted[0].id
   }
 
+  // --- AI 채팅 ---------------------------------------------------------------
+
+  chatForSync(id: number): ChatSyncRow | null {
+    const row = this.d.select().from(chats).where(eq(chats.id, id)).get()
+    if (!row) return null
+    return {
+      id: row.id,
+      remoteId: row.remoteId,
+      title: row.title,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      deletedAt: row.deletedAt
+    }
+  }
+
+  chatIdByRemote(remoteId: string): number | null {
+    const row = this.d
+      .select({ id: chats.id })
+      .from(chats)
+      .where(eq(chats.remoteId, remoteId))
+      .get()
+    return row ? row.id : null
+  }
+
+  setChatRemoteId(id: number, remoteId: string): void {
+    this.d.update(chats).set({ remoteId }).where(eq(chats.id, id)).run()
+    this.db.scheduleSave()
+  }
+
+  /** 메시지의 chat_id 가 가리킬 대상이 아직 없으면 원격 id 만 먼저 만들어 붙인다 */
+  ensureChatRemoteId(id: number, generate: () => string): string | null {
+    const row = this.d
+      .select({ remoteId: chats.remoteId })
+      .from(chats)
+      .where(eq(chats.id, id))
+      .get()
+    if (!row) return null
+    if (row.remoteId) return row.remoteId
+    const remoteId = generate()
+    this.setChatRemoteId(id, remoteId)
+    return remoteId
+  }
+
+  applyChat(row: Omit<ChatSyncRow, 'id'> & { remoteId: string }, localId: number | null): number {
+    const patch = {
+      title: row.title,
+      updatedAt: row.updatedAt,
+      remoteId: row.remoteId,
+      deletedAt: row.deletedAt,
+      ...this.workspacePatch
+    }
+    if (localId !== null) {
+      this.d.update(chats).set(patch).where(eq(chats.id, localId)).run()
+      this.db.scheduleSave()
+      return localId
+    }
+    const inserted = this.d
+      .insert(chats)
+      .values({ ...patch, createdAt: row.createdAt })
+      .returning({ id: chats.id })
+      .all()
+    this.db.scheduleSave()
+    return inserted[0].id
+  }
+
+  chatMessageForSync(id: number): ChatMessageSyncRow | null {
+    const row = this.d.select().from(chatMessages).where(eq(chatMessages.id, id)).get()
+    if (!row) return null
+    return {
+      id: row.id,
+      remoteId: row.remoteId,
+      chatId: row.chatId,
+      chatRemoteId: this.chatRemoteIdOf(row.chatId),
+      role: isChatRole(row.role) ? row.role : 'system',
+      content: row.content,
+      steps: parseSteps(row.steps),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      deletedAt: row.deletedAt
+    }
+  }
+
+  chatRemoteIdOf(chatId: number): string | null {
+    const row = this.d
+      .select({ remoteId: chats.remoteId })
+      .from(chats)
+      .where(eq(chats.id, chatId))
+      .get()
+    return row?.remoteId ?? null
+  }
+
+  chatMessageIdByRemote(remoteId: string): number | null {
+    const row = this.d
+      .select({ id: chatMessages.id })
+      .from(chatMessages)
+      .where(eq(chatMessages.remoteId, remoteId))
+      .get()
+    return row ? row.id : null
+  }
+
+  setChatMessageRemoteId(id: number, remoteId: string): void {
+    this.d.update(chatMessages).set({ remoteId }).where(eq(chatMessages.id, id)).run()
+    this.db.scheduleSave()
+  }
+
+  /**
+   * 원격 메시지를 로컬에 반영한다. 대화(chat_id)를 로컬에서 못 찾으면 null 을 돌려준다 —
+   * 호출부는 그 행을 건너뛰고 커서도 올리지 않는다(다음 주기에 대화가 먼저 내려온 뒤 다시 본다)
+   */
+  applyChatMessage(
+    row: Omit<ChatMessageSyncRow, 'id' | 'chatId'> & { remoteId: string },
+    localId: number | null
+  ): number | null {
+    const chatId = row.chatRemoteId === null ? null : this.chatIdByRemote(row.chatRemoteId)
+    if (chatId === null) return null
+    const patch = {
+      chatId,
+      role: row.role,
+      content: row.content,
+      steps: row.steps === null ? null : JSON.stringify(row.steps),
+      updatedAt: row.updatedAt,
+      remoteId: row.remoteId,
+      deletedAt: row.deletedAt
+    }
+    if (localId !== null) {
+      this.d.update(chatMessages).set(patch).where(eq(chatMessages.id, localId)).run()
+      this.db.scheduleSave()
+      return localId
+    }
+    const inserted = this.d
+      .insert(chatMessages)
+      .values({ ...patch, createdAt: row.createdAt })
+      .returning({ id: chatMessages.id })
+      .all()
+    this.db.scheduleSave()
+    return inserted[0].id
+  }
+
   // --- 삭제 스냅샷 -----------------------------------------------------------
 
   /**
@@ -387,10 +542,12 @@ export class SyncLocal {
   snapshotForDelete(
     table: SyncTable,
     rowId: number
-  ): AccountSyncRow | VaultItemSyncRow | BookmarkSyncRow | null {
+  ): AccountSyncRow | VaultItemSyncRow | BookmarkSyncRow | ChatSyncRow | ChatMessageSyncRow | null {
     if (table === 'accounts') return this.accountForSync(rowId)
     if (table === 'vault_items') return this.vaultItemForSync(rowId)
     if (table === 'bookmarks') return this.bookmarkForSync(rowId)
+    if (table === 'chats') return this.chatForSync(rowId)
+    if (table === 'chat_messages') return this.chatMessageForSync(rowId)
     return null
   }
 
@@ -400,7 +557,8 @@ export class SyncLocal {
   pruneExpiredTombstones(now: number): number {
     const cutoff = now - TOMBSTONE_TTL_MS
     let pruned = 0
-    for (const table of [accounts, vaultItems, bookmarks]) {
+    // 메시지를 먼저 지운다 — 대화가 먼저 사라지면 외래 키가 가리킬 대상이 없어진다
+    for (const table of [accounts, vaultItems, bookmarks, chatMessages, chats]) {
       const rows = this.d
         .select({ id: table.id })
         .from(table)

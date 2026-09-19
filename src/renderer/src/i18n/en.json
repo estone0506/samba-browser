@@ -49,7 +49,12 @@
     "apiRetry": "Waiting for AI (retry {{n}} · {{reason}})",
     "done": "Done",
     "failed": "Failed",
-    "toolCalls": "Tool calls {{n}} / {{max}}"
+    "toolCalls": "Tool calls {{n}} / {{max}}",
+    "new": "New chat",
+    "empty": "No saved chats",
+    "untitled": "Untitled chat",
+    "delete": "Delete chat",
+    "deleteConfirm": "Delete"
   },
   "confirm": {
     "title": "Confirmation required",

@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto'
 import { decrypt, encrypt } from '../vault/crypto'
 import { aadFor, isSecretField, parseFields, serializeFields } from '../vault/fields'
+import { isChatRole, sanitizeSteps, type ChatRole, type ChatStepDto } from '../../shared/chat'
 import type { RemoteKeyedRow, RemoteRow } from './backend'
 
 export interface MapCtx {
@@ -222,6 +223,100 @@ export function bookmarkFromRemote(row: RemoteRow): Omit<BookmarkSyncRow, 'id'> 
     position: typeof row.position === 'number' ? row.position : 0,
     updatedAt: fromIso(row.updated_at),
     deletedAt: fromIsoOrNull(row.deleted_at)
+  }
+}
+
+// --- AI 채팅 ----------------------------------------------------------------
+//
+// 채팅 본문은 비밀값이 아니므로 평문으로 올린다(스펙). 진행 로그(steps)는 저장 단계에서
+// 이미 label/ok/key 만 남도록 걸러져 있고, 여기서 한 번 더 같은 필터를 통과시킨다
+
+export interface ChatSyncRow {
+  id: number
+  remoteId: string | null
+  title: string
+  createdAt: number
+  updatedAt: number
+  deletedAt: number | null
+}
+
+export function chatToRemote(row: ChatSyncRow, ctx: MapCtx): RemoteRow {
+  return {
+    id: row.remoteId ?? randomUUID(),
+    user_id: ctx.userId,
+    workspace_id: ctx.workspaceRemoteId,
+    title: row.title,
+    created_at: toIso(row.createdAt),
+    updated_at: toIso(row.updatedAt),
+    deleted_at: toIsoOrNull(row.deletedAt)
+  }
+}
+
+export function chatFromRemote(row: RemoteRow): Omit<ChatSyncRow, 'id'> & { remoteId: string } {
+  const createdAt = fromIso(row.created_at)
+  const updatedAt = fromIso(row.updated_at)
+  return {
+    remoteId: row.id,
+    title: asString(row.title),
+    createdAt: createdAt === 0 ? updatedAt : createdAt,
+    updatedAt,
+    deletedAt: fromIsoOrNull(row.deleted_at)
+  }
+}
+
+export interface ChatMessageSyncRow {
+  id: number
+  remoteId: string | null
+  /** 로컬 대화 id. 원격 행에는 들어가지 않고, 대화의 원격 id 를 찾는 데만 쓴다 */
+  chatId: number
+  chatRemoteId: string | null
+  role: ChatRole
+  content: string
+  steps: ChatStepDto[] | null
+  createdAt: number
+  updatedAt: number
+  deletedAt: number | null
+}
+
+export function chatMessageToRemote(row: ChatMessageSyncRow, ctx: MapCtx): RemoteRow {
+  return {
+    id: row.remoteId ?? randomUUID(),
+    user_id: ctx.userId,
+    workspace_id: ctx.workspaceRemoteId,
+    chat_id: row.chatRemoteId,
+    role: row.role,
+    content: row.content,
+    steps: sanitizeSteps(row.steps),
+    created_at: toIso(row.createdAt),
+    updated_at: toIso(row.updatedAt),
+    deleted_at: toIsoOrNull(row.deletedAt)
+  }
+}
+
+export function chatMessageFromRemote(
+  row: RemoteRow
+): Omit<ChatMessageSyncRow, 'id' | 'chatId'> & { remoteId: string } {
+  const createdAt = fromIso(row.created_at)
+  const updatedAt = fromIso(row.updated_at)
+  return {
+    remoteId: row.id,
+    chatRemoteId: typeof row.chat_id === 'string' ? row.chat_id : null,
+    role: isChatRole(row.role) ? row.role : 'system',
+    content: asString(row.content),
+    steps: sanitizeSteps(asJson(row.steps)),
+    createdAt: createdAt === 0 ? updatedAt : createdAt,
+    updatedAt,
+    deletedAt: fromIsoOrNull(row.deleted_at)
+  }
+}
+
+/** jsonb 가 문자열로 돌아오는 드라이버도 있어 한 번 더 읽어 본다 */
+function asJson(value: unknown): unknown {
+  if (typeof value !== 'string') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
   }
 }
 

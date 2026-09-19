@@ -2,7 +2,14 @@
 // 여기에는 비밀값(토큰·API 키·평문 비밀번호)이 절대 들어가지 않는다
 
 /** 동기화 대상 테이블. 감사 로그(audit_log)는 의도적으로 포함하지 않는다 */
-export const SYNC_TABLES = ['settings', 'accounts', 'vault_items', 'bookmarks'] as const
+export const SYNC_TABLES = [
+  'settings',
+  'accounts',
+  'vault_items',
+  'bookmarks',
+  'chats',
+  'chat_messages'
+] as const
 export type SyncTable = (typeof SYNC_TABLES)[number]
 
 /** 렌더러 상태 표시줄에 그대로 쓰이는 동기화 상태 */

@@ -110,5 +110,17 @@ export const migrations: Migration[] = [
     // 옛 행(NULL)은 푸시 때 활성 작업공간으로 본다
     tag: '0007_outbox_workspace',
     sql: ['ALTER TABLE `sync_outbox` ADD `workspace_id` integer;']
+  },
+  {
+    // AI 채팅 기록 — 대화(chats)와 메시지(chat_messages).
+    // 메시지 본문은 평문으로 둔다(채팅은 비밀값이 아니다). 진행 로그(steps)는 라벨만 담는다
+    tag: '0008_chats',
+    sql: [
+      'CREATE TABLE `chats` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`remote_id` text,\n\t`workspace_id` integer,\n\t`title` text NOT NULL,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL,\n\t`deleted_at` integer\n);',
+      'CREATE UNIQUE INDEX `chats_remote_id_unique` ON `chats` (`remote_id`);',
+      'CREATE TABLE `chat_messages` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`remote_id` text,\n\t`chat_id` integer NOT NULL,\n\t`role` text NOT NULL,\n\t`content` text NOT NULL,\n\t`steps` text,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL,\n\t`deleted_at` integer,\n\tFOREIGN KEY (`chat_id`) REFERENCES `chats`(`id`) ON UPDATE no action ON DELETE cascade\n);',
+      'CREATE UNIQUE INDEX `chat_messages_remote_id_unique` ON `chat_messages` (`remote_id`);',
+      'CREATE INDEX `chat_messages_chat_idx` ON `chat_messages` (`chat_id`);'
+    ]
   }
 ]

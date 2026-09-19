@@ -86,6 +86,31 @@ create table if not exists public.bookmarks_sync (
   deleted_at timestamptz
 );
 
+-- AI 채팅 기록. 본문은 평문이다(채팅은 비밀값이 아니다).
+-- steps 는 진행 로그이고 라벨(label/ok/key)만 담는다 — 평문 비밀값이 들어갈 칸이 없다.
+create table if not exists public.chats_sync (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  workspace_id uuid not null,
+  title text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+
+create table if not exists public.chat_messages_sync (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  workspace_id uuid not null,
+  chat_id uuid,
+  role text not null check (role in ('user', 'assistant', 'system')),
+  content text not null default '',
+  steps jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+
 -- 4단계(자동화 레시피)용 자리. 2b 에서는 읽지도 쓰지도 않는다.
 create table if not exists public.recipes (
   id uuid primary key,
@@ -103,6 +128,9 @@ create index if not exists accounts_sync_pull_idx on public.accounts_sync (user_
 create index if not exists vault_items_sync_pull_idx on public.vault_items_sync (user_id, updated_at);
 create index if not exists bookmarks_sync_pull_idx on public.bookmarks_sync (user_id, updated_at);
 create index if not exists settings_sync_pull_idx on public.settings_sync (user_id, updated_at);
+create index if not exists chats_sync_pull_idx on public.chats_sync (user_id, updated_at);
+create index if not exists chat_messages_sync_pull_idx on public.chat_messages_sync (user_id, updated_at);
+create index if not exists chat_messages_sync_chat_idx on public.chat_messages_sync (user_id, chat_id);
 create index if not exists workspaces_pull_idx on public.workspaces (user_id, updated_at);
 
 -- === 행 수준 보안 ========================================================
@@ -113,6 +141,8 @@ alter table public.settings_sync   enable row level security;
 alter table public.accounts_sync   enable row level security;
 alter table public.vault_items_sync enable row level security;
 alter table public.bookmarks_sync  enable row level security;
+alter table public.chats_sync      enable row level security;
+alter table public.chat_messages_sync enable row level security;
 alter table public.recipes         enable row level security;
 
 -- profiles 는 자기 자신(id = auth.uid())만
@@ -129,7 +159,7 @@ create policy profiles_delete on public.profiles for delete to authenticated usi
 do $$
 declare t text;
 begin
-  foreach t in array array['workspaces','devices','settings_sync','accounts_sync','vault_items_sync','bookmarks_sync','recipes']
+  foreach t in array array['workspaces','devices','settings_sync','accounts_sync','vault_items_sync','bookmarks_sync','chats_sync','chat_messages_sync','recipes']
   loop
     execute format('drop policy if exists %I on public.%I', t || '_select', t);
     execute format('drop policy if exists %I on public.%I', t || '_insert', t);

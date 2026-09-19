@@ -17,6 +17,13 @@ export const IPC = {
   agentStop: 'agent:stop',
   agentEvent: 'agent:event', // main → renderer 이벤트
   agentConfirmReply: 'agent:confirmReply',
+  // --- AI 채팅 기록 — 본문은 평문이지만 비밀값은 담기지 않는다(진행 로그는 라벨만) ----
+  chatList: 'chat:list',
+  chatCreate: 'chat:create',
+  chatGet: 'chat:get',
+  chatAppend: 'chat:append',
+  chatRename: 'chat:rename',
+  chatDelete: 'chat:delete',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   // 금고 — vaultReveal 만이 비밀값(평문)을 돌려주는 유일한 채널이다
@@ -210,3 +217,12 @@ export type {
 } from './import'
 
 export type { SyncStatus, DeviceDto } from './sync'
+
+export type {
+  ChatRole,
+  ChatStepDto,
+  ChatDto,
+  ChatMessageDto,
+  ChatDetailDto,
+  AppendMessageInput
+} from './chat'

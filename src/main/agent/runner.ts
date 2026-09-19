@@ -19,6 +19,19 @@ import {
 // 확인 요청 응답 대기 상한 30분
 const CONFIRM_TIMEOUT_MS = 30 * 60 * 1000
 
+/**
+ * 작업 1건이 남긴 대화 기록. 완료·실패·중단 어느 쪽으로 끝나도 한 번 전달된다.
+ * steps 에는 도구가 붙인 **라벨**만 담긴다 — fill_secret·login 은 평문을 라벨에 넣지 않는다
+ */
+export interface TranscriptEntry {
+  prompt: string
+  text: string
+  steps: { label: string; ok: boolean }[]
+}
+
+/** 대화 기록 저장 훅. 주입하지 않으면 아무것도 저장하지 않는다 */
+export type TranscriptSink = (chatId: number, entry: TranscriptEntry) => void
+
 // 대기 중인 확인 요청(응답 콜백 + 만료 타이머)
 interface PendingConfirm {
   resolve: (ok: boolean) => void
@@ -31,6 +44,8 @@ export class AgentRunner {
   private pending = new Map<string, PendingConfirm>()
   // 실행 세대 번호. 중단된 이전 스트림이 뒤늦게 보내는 이벤트를 걸러낸다
   private generation = 0
+  // 대화 기록 저장 훅(채팅 저장소). 없으면 기록을 남기지 않는다
+  private transcript: TranscriptSink | null = null
 
   constructor(
     private tabs: TabManager,
@@ -39,6 +54,11 @@ export class AgentRunner {
     // 개인정보 금고. 없으면 금고 도구는 잠금으로 동작한다
     private vault?: VaultService
   ) {}
+
+  /** 대화 기록 저장 훅을 붙인다(채팅 저장소). null 이면 기록하지 않는다 */
+  setTranscript(sink: TranscriptSink | null): void {
+    this.transcript = sink
+  }
 
   /** 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다) */
   isRunning(): boolean {
@@ -161,7 +181,8 @@ export class AgentRunner {
     this.emit({ type: 'status', state: 'stopped' })
   }
 
-  async run(prompt: string): Promise<void> {
+  /** chatId 를 주면 이 실행의 대화 기록을 그 대화에 저장한다(완료·실패·중단 모두) */
+  async run(prompt: string, chatId?: number): Promise<void> {
     // 이미 실행 중이면 세대 가드 없이 status 를 emit 하면 진행 중인 실행의 UI 를 덮어쓸 수 있다.
     // 핸들러가 throw 를 { ok: false, error } 로 ack 하므로 에러만 던진다.
     if (this.abort) {
@@ -173,9 +194,14 @@ export class AgentRunner {
     const abort = new AbortController()
     this.abort = abort
     const gen = ++this.generation
+    // 이 실행이 남길 대화 기록. 화면으로 나가는 이벤트와 같은 값만 모은다(라벨·본문)
+    const entry: TranscriptEntry = { prompt, text: '', steps: [] }
     // 이 실행이 최신 세대일 때만 UI 로 이벤트를 보낸다
     const emit = (e: AgentEvent): void => {
-      if (gen === this.generation) this.emit(e)
+      if (gen !== this.generation) return
+      if (e.type === 'text') entry.text = entry.text ? `${entry.text}\n${e.text}` : e.text
+      if (e.type === 'step') entry.steps.push({ label: e.label, ok: e.ok })
+      this.emit(e)
     }
     const counter = makeCounter(s.maxToolCalls)
     const deduper = createTextDeduper()
@@ -287,6 +313,14 @@ export class AgentRunner {
       if (gen === this.generation) {
         this.abort = null
         this.clearPending()
+      }
+      // 중단으로 끝났어도 그때까지의 대화는 남긴다. 저장 실패가 실행을 깨뜨리지는 않는다
+      if (chatId !== undefined && this.transcript) {
+        try {
+          this.transcript(chatId, entry)
+        } catch (e: unknown) {
+          console.error('대화 기록 저장 실패', e instanceof Error ? e.message : String(e))
+        }
       }
     }
   }
