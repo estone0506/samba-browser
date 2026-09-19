@@ -283,7 +283,8 @@ function buildRemote(
     return {
       entry,
       row: chatMessageToRemote(row, ctx),
-      localId: entry.op === 'delete' ? null : rowId
+      localId: entry.op === 'delete' ? null : rowId,
+      bumpedAt: null
     }
   }
 
