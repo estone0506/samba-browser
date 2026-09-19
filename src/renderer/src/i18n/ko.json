@@ -45,6 +45,79 @@
       "length": "{{n}} / {{max}}자"
     }
   },
+  "schedule": {
+    "title": "예약",
+    "next": "다음 실행 {{when}}",
+    "last": "마지막 {{result}} {{when}}",
+    "inherit": "전역 설정 따름",
+    "inheritDesc": "비워 두면 설정에서 고른 값을 그대로 씁니다.",
+    "action": {
+      "runNow": "지금 실행",
+      "pause": "일시정지",
+      "resume": "재개",
+      "toggle": "예약 사용"
+    },
+    "state": {
+      "off": "예약 없음",
+      "paused": "일시정지",
+      "waiting": "대기",
+      "running": "실행 중"
+    },
+    "pauseReason": {
+      "manual": "직접 멈춤",
+      "failed": "연속 실패",
+      "ai-disconnected": "AI 미연결"
+    },
+    "result": {
+      "ok": "성공",
+      "failed": "실패",
+      "skipped": "중단"
+    },
+    "kind": {
+      "manual": "수동",
+      "interval": "간격",
+      "daily": "매일",
+      "weekly": "매주"
+    },
+    "weekday": {
+      "0": "일",
+      "1": "월",
+      "2": "화",
+      "3": "수",
+      "4": "목",
+      "5": "금",
+      "6": "토"
+    },
+    "rel": {
+      "now": "곧",
+      "inMinutes": "{{minutes}}분 후",
+      "minutesAgo": "{{minutes}}분 전",
+      "inHours": "{{hours}}시간 후",
+      "hoursAgo": "{{hours}}시간 전",
+      "inDays": "{{days}}일 후",
+      "daysAgo": "{{days}}일 전"
+    },
+    "rule": {
+      "manual": "예약 없음",
+      "everyHours": "{{hours}}시간마다",
+      "everyMinutes": "{{minutes}}분마다",
+      "daily": "매일 {{at}}",
+      "weekly": "매주 {{days}} {{at}}"
+    },
+    "field": {
+      "kind": "종류",
+      "interval": "주기",
+      "at": "시각",
+      "weekdays": "요일",
+      "model": "모델",
+      "permission": "권한 모드"
+    },
+    "permission": {
+      "read_only": "읽기 전용",
+      "guard": "확인",
+      "full": "자동"
+    }
+  },
   "workspace": {
     "title": "작업공간",
     "add": "새 작업공간",

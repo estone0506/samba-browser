@@ -11,11 +11,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import {
-  emptyRecord,
-  scheduleRunsFileSchema,
-  type ScheduleRunRecord
-} from '../../shared/schedule'
+import { emptyRecord, scheduleRunsFileSchema, type ScheduleRunRecord } from '../../shared/schedule'
 
 export class ScheduleRunStore {
   private records = new Map<string, ScheduleRunRecord>()

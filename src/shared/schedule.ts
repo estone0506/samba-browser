@@ -137,7 +137,15 @@ export function parseHhmm(at: string | undefined): number | null {
  */
 function atOnDay(base: number, dayOffset: number, minutes: number): number {
   const d = new Date(base)
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + dayOffset, 0, minutes, 0, 0).getTime()
+  return new Date(
+    d.getFullYear(),
+    d.getMonth(),
+    d.getDate() + dayOffset,
+    0,
+    minutes,
+    0,
+    0
+  ).getTime()
 }
 
 /** now 이하(같아도 포함)의 가장 최근 예정 시각. 매일·매주만 해당하고, 없으면 null */

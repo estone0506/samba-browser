@@ -45,6 +45,79 @@
       "length": "{{n}} / {{max}} chars"
     }
   },
+  "schedule": {
+    "title": "Schedule",
+    "next": "next run {{when}}",
+    "last": "last {{result}} {{when}}",
+    "inherit": "Follow global setting",
+    "inheritDesc": "Leave this empty to use whatever you picked in Settings.",
+    "action": {
+      "runNow": "Run now",
+      "pause": "Pause",
+      "resume": "Resume",
+      "toggle": "Use schedule"
+    },
+    "state": {
+      "off": "No schedule",
+      "paused": "Paused",
+      "waiting": "Waiting",
+      "running": "Running"
+    },
+    "pauseReason": {
+      "manual": "paused by you",
+      "failed": "repeated failures",
+      "ai-disconnected": "AI not connected"
+    },
+    "result": {
+      "ok": "success",
+      "failed": "failure",
+      "skipped": "stopped"
+    },
+    "kind": {
+      "manual": "Manual",
+      "interval": "Interval",
+      "daily": "Daily",
+      "weekly": "Weekly"
+    },
+    "weekday": {
+      "0": "Sun",
+      "1": "Mon",
+      "2": "Tue",
+      "3": "Wed",
+      "4": "Thu",
+      "5": "Fri",
+      "6": "Sat"
+    },
+    "rel": {
+      "now": "any moment",
+      "inMinutes": "in {{minutes}} min",
+      "minutesAgo": "{{minutes}} min ago",
+      "inHours": "in {{hours}} h",
+      "hoursAgo": "{{hours}} h ago",
+      "inDays": "in {{days}} d",
+      "daysAgo": "{{days}} d ago"
+    },
+    "rule": {
+      "manual": "No schedule",
+      "everyHours": "every {{hours}} h",
+      "everyMinutes": "every {{minutes}} min",
+      "daily": "daily at {{at}}",
+      "weekly": "{{days}} at {{at}}"
+    },
+    "field": {
+      "kind": "Kind",
+      "interval": "Interval",
+      "at": "Time",
+      "weekdays": "Days",
+      "model": "Model",
+      "permission": "Permission mode"
+    },
+    "permission": {
+      "read_only": "Read only",
+      "guard": "Confirm",
+      "full": "Automatic"
+    }
+  },
   "workspace": {
     "title": "Workspace",
     "add": "New workspace",
