@@ -65,7 +65,7 @@ if (window.self === window.top) {
     click: (id: number) => performClick(id),
     type: (id: number, text: string, submit: boolean) => performType(id, text, submit),
     select: (id: number, value: string) => performSelect(id, value),
-    scroll: (dir: 'up' | 'down') => performScroll(dir),
+    scroll: (dir: 'up' | 'down', id?: number) => performScroll(dir, id),
     // SECRET 허용 — 메인 프로세스만 호출(AI 텍스트 도구 경로가 아님)
     fillValue: (id: number, value: string) => fillValue(id, value),
     findLoginFields: () => findLoginFields(),

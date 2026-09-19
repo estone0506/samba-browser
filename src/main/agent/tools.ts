@@ -645,15 +645,18 @@ ${snapshot}`
 
   const scroll = tool(
     'scroll',
-    'Scroll the page up or down.',
-    { direction: z.enum(['up', 'down']) },
-    ({ direction }) =>
-      guard(`스크롤 ${direction}`, async () => {
+    'Scroll the page up or down. Pass id (an element id from get_page/find_elements) to scroll the ' +
+      'scrollable list that contains that element instead - use it when a dropdown or panel shows ' +
+      'only its first items (e.g. sizes up to 250 but you need 255): scroll with the id of a visible ' +
+      'item, then call find_elements again.',
+    { direction: z.enum(['up', 'down']), id: z.number().int().positive().optional() },
+    ({ direction, id }) =>
+      guard(`스크롤 ${direction}${id === undefined ? '' : ` (#${id} 목록)`}`, async () => {
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
         const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
         if (keypad) return keypad
-        return pageBridge.scroll(tab, direction)
+        return pageBridge.scroll(tab, direction, id)
       })
   )
 

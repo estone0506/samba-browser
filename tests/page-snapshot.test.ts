@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { buildSnapshot, performClick, performType, textOf } from '../src/preload/page-core'
+import {
+  buildSnapshot,
+  performClick,
+  performScroll,
+  performType,
+  textOf
+} from '../src/preload/page-core'
 import { MAX_ELEMENTS, serializeSnapshot } from '../src/shared/snapshot'
 
 /** jsdom 에는 레이아웃이 없어 위치를 직접 심어 준다(뷰포트 우선 정렬 테스트용) */
@@ -367,5 +373,41 @@ describe('performClick — React 합성 이벤트', () => {
     }
     expect(performClick(1)).toBe('ok')
     expect(seen).toEqual(['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'])
+  })
+})
+
+describe('performScroll — 목록 내부 스크롤', () => {
+  beforeEach(() => stubCursorStyles())
+  afterEach(() => {
+    window.getComputedStyle = realGetComputedStyle
+  })
+
+  it('id 를 주면 그 요소를 품은 스크롤 상자를 내린다', () => {
+    document.body.innerHTML = `
+      <div id="list" data-overflow="auto" style="height:100px">
+        <div data-cursor="pointer">230</div>
+        <div data-cursor="pointer">255</div>
+      </div>`
+    const list = document.getElementById('list') as HTMLElement
+    // jsdom 은 레이아웃이 없어 scrollHeight/clientHeight 를 직접 심는다
+    Object.defineProperty(list, 'scrollHeight', { value: 600, configurable: true })
+    Object.defineProperty(list, 'clientHeight', { value: 100, configurable: true })
+    const orig = window.getComputedStyle
+    window.getComputedStyle = ((el: Element) => ({
+      ...(orig(el) as unknown as Record<string, string>),
+      overflowY: (el as HTMLElement).dataset?.overflow ?? 'visible'
+    })) as unknown as typeof window.getComputedStyle
+    const s = buildSnapshot()
+    const item = s.elements.find((e) => e.text === '230')
+    expect(item).toBeDefined()
+    if (!item) return
+    expect(performScroll('down', item.id)).toContain('scrolled the list')
+    expect(list.scrollTop).toBe(80)
+  })
+
+  it('없는 id 면 안내를 돌려준다', () => {
+    document.body.innerHTML = '<div data-cursor="pointer">x</div>'
+    buildSnapshot()
+    expect(performScroll('down', 999)).toContain('not found')
   })
 })

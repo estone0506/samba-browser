@@ -357,8 +357,38 @@ export function performSelect(id: number, value: string): string {
   return 'ok'
 }
 
-export function performScroll(dir: 'up' | 'down'): string {
-  window.scrollBy({ top: dir === 'down' ? window.innerHeight * 0.8 : -window.innerHeight * 0.8 })
+// 요소를 품은 가장 가까운 "스크롤 되는" 상자(overflow auto/scroll + 넘치는 내용)를 찾는다
+function scrollableAncestor(el: HTMLElement): HTMLElement | null {
+  let node: HTMLElement | null = el
+  while (node && node !== document.body) {
+    const cs = getComputedStyle(node)
+    const canScroll =
+      /(auto|scroll)/.test(cs.overflowY) && node.scrollHeight > node.clientHeight + 1
+    if (canScroll) return node
+    node = node.parentElement
+  }
+  return null
+}
+
+/**
+ * 페이지를 스크롤한다. id 를 주면 그 요소를 품은 스크롤 상자(드롭다운 목록·패널)를
+ * 대신 스크롤한다 — 목록 안쪽에 잘린 옵션(사이즈 255 등)을 보이게 하려는 것이다.
+ * 스크롤 상자가 없으면 요소를 화면 가운데로 데려온다
+ */
+export function performScroll(dir: 'up' | 'down', id?: number): string {
+  const sign = dir === 'down' ? 1 : -1
+  if (id !== undefined) {
+    const el = get(id)
+    if (!el) return `element ${id} not found (call get_page again)`
+    const box = scrollableAncestor(el)
+    if (box) {
+      box.scrollTop += sign * box.clientHeight * 0.8
+      return `ok (scrolled the list containing element ${id})`
+    }
+    el.scrollIntoView?.({ block: 'center' })
+    return `ok (element ${id} is not inside a scrollable list; brought it into view)`
+  }
+  window.scrollBy({ top: sign * window.innerHeight * 0.8 })
   return 'ok'
 }
 

@@ -107,8 +107,13 @@ export const pageBridge = {
     ),
   select: (tab: Tab, id: number, value: string): Promise<string> =>
     call(tab.view.webContents, `__samba.select(${id}, ${JSON.stringify(value)})`, resultSchema),
-  scroll: (tab: Tab, dir: 'up' | 'down'): Promise<string> =>
-    call(tab.view.webContents, `__samba.scroll(${JSON.stringify(dir)})`, resultSchema),
+  // id 를 주면 그 요소를 품은 스크롤 상자(드롭다운 목록 등)를 스크롤한다
+  scroll: (tab: Tab, dir: 'up' | 'down', id?: number): Promise<string> =>
+    call(
+      tab.view.webContents,
+      `__samba.scroll(${JSON.stringify(dir)}${id === undefined ? '' : `, ${id}`})`,
+      resultSchema
+    ),
   // 값 주입(SECRET 허용) — 값이 code 문자열 안에 들어가므로, 실패해도 code 를 담은 오류를
   // 만들지 않도록 공용 call() 을 쓰지 않고 이 함수 안에서 직접 try/catch 한다
   fillValue: async (tab: Tab, id: number, value: string): Promise<string> => {
