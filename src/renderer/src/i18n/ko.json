@@ -737,6 +737,27 @@
       "inputUnavailable": "화면 조작은 아직 준비 중이에요",
       "openWindow": "큰 창으로 열기"
     },
+    "tools": {
+      "title": "폰 연동 프로그램",
+      "desc": "폰을 제어하려면 adb 와 scrcpy 가 필요해요. 버튼 하나로 받아서 설치하고 경로까지 저장합니다",
+      "missing": "아직 설치되지 않았어요",
+      "installed": "설치됨",
+      "installedWith": "설치됨 · {{versions}}",
+      "installing": "설치 중이에요. 창을 닫지 말아 주세요",
+      "install": "설치",
+      "reinstall": "다시 설치",
+      "failed": "설치에 실패했어요: {{reason}}",
+      "manualHint": "회사 네트워크가 막고 있을 수 있어요. 설정에서 adb·scrcpy 경로를 직접 적어도 됩니다",
+      "step": {
+        "platformTools": "adb(platform-tools) 내려받는 중",
+        "scrcpy": "scrcpy 내려받는 중"
+      },
+      "guideShow": "폰에서 USB 디버깅 켜는 법 보기",
+      "guideHide": "안내 접기",
+      "guide1": "설정 → 휴대전화 정보 → 소프트웨어 정보에서 빌드번호를 일곱 번 누릅니다",
+      "guide2": "설정 → 개발자 옵션에서 USB 디버깅을 켭니다",
+      "guide3": "USB 로 연결한 뒤 폰에 뜨는 “이 컴퓨터를 허용할까요?” 에서 허용을 누릅니다"
+    },
     "settings": {
       "pathsTitle": "adb · scrcpy 경로",
       "pathsDesc": "PATH 에 등록되어 있지 않아도 됩니다. 실행 파일 전체 경로를 적거나 자동으로 찾으세요",
