@@ -344,9 +344,15 @@ const api = {
     // 고른 확장을 앱 데이터로 복사한 뒤 로드한다(항목별 성공·실패)
     importFrom: (ids: string[]): Promise<IpcResult<ExtensionInstallResult[]>> =>
       invoke(IPC.extImportFrom, ids),
-    // 웹스토어 주소 또는 32자 id 로 설치한다
+    // 웹스토어 주소 또는 32자 id 로 설치한다(보조 경로 — 기본은 웹스토어 탭의 "Chrome에 추가")
     installWebstore: (input: string): Promise<IpcResult<ExtensionInstallResult>> =>
-      invoke(IPC.extInstallWebstore, input)
+      invoke(IPC.extInstallWebstore, input),
+    // 웹스토어 탭에서 설치가 끝나는 등 목록이 바뀌면 메인이 알려 준다
+    onChanged: (cb: () => void): (() => void) => {
+      const h = (): void => cb()
+      ipcRenderer.on(IPC.extChanged, h)
+      return () => ipcRenderer.off(IPC.extChanged, h)
+    }
   },
   // 화면 번역 · 이미지 번역 — 원문/번역문만 오간다(입력값·비밀번호는 실리지 않는다)
   translate: {

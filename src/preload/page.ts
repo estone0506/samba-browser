@@ -13,7 +13,13 @@
 //       relative import(./page-core 등)는 같은 엔트리에 인라인되므로 안전하다.
 // 회귀 방지 테스트: tests/preload-bundle.test.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import { GESTURE_ACTION_LABELS, INTERNAL_PROTOCOL, PAGE_IPC, PICKER_LABELS } from './page-constants'
+import {
+  GESTURE_ACTION_LABELS,
+  INTERNAL_PROTOCOL,
+  PAGE_IPC,
+  PICKER_LABELS,
+  WEBSTORE_LABELS
+} from './page-constants'
 import { installGestureRecognizer, type GestureConfig } from './page-gesture'
 import type { IpcResult, Settings } from '../shared/ipc'
 import {
@@ -38,6 +44,7 @@ import {
   type PickerFillResponse
 } from './page-picker'
 import { installRegionPicker, REGION_HINTS } from './page-capture'
+import { installWebstoreHook, isWebstoreHost, type WebstoreInstallResult } from './page-webstore'
 import type { NewTabInitDto } from '../shared/newtab'
 import { installPageTranslate, type ImageOverlayDto } from './page-translate'
 
@@ -157,6 +164,24 @@ ipcRenderer.on(PAGE_IPC.captureRegionMode, (_event, payload: { active?: boolean 
   else regionPicker.stop()
 })
 // === 캡처 끝 ================================================================
+
+// === 크롬 웹스토어 "Chrome에 추가" ==========================================
+// 웹스토어 호스트에서만 건다. 원래 버튼은 Electron 에서 "설치 불가" 안내만 띄우므로
+// 캡처 단계에서 클릭을 가로채고, 메인이 crx 를 내려받아 설치한다.
+// SPA 라 주소가 바뀌어도 리스너는 document 에 한 번만 걸려 있으면 된다
+if (isWebstoreHost(location.host)) {
+  const webstore = installWebstoreHook({
+    install: (id) => ipcRenderer.send(PAGE_IPC.webstoreInstall, id),
+    labels: () => WEBSTORE_LABELS[appLanguage]
+  })
+  ipcRenderer.on(PAGE_IPC.webstoreInstallResult, (_event, payload: unknown) => {
+    if (typeof payload !== 'object' || payload === null) return
+    const result = payload as Partial<WebstoreInstallResult>
+    if (typeof result.id !== 'string') return
+    webstore.finish({ id: result.id, ok: result.ok === true })
+  })
+}
+// === 크롬 웹스토어 끝 =======================================================
 
 // === 자체 새 탭 페이지 브리지 ===============================================
 // 내부 스킴(samba:) 문서에서만 메인 월드에 노출한다. 웹 페이지는 protocol 이 http(s) 라

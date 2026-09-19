@@ -63,3 +63,22 @@ export interface ExtensionInstallResult {
   /** 실패 사유(성공이면 없다) */
   error?: string
 }
+
+// === 크롬 웹스토어에서 바로 설치 =============================================
+// 확장 설치는 크롬과 똑같이 웹스토어 탭에서 "Chrome에 추가" 를 눌러 이뤄진다.
+// page preload 는 shared 의 값을 import 할 수 없어 같은 값을 복제해 두고
+// (src/preload/page-webstore.ts 의 WEBSTORE_HOST), preload-bundle 테스트가 대조한다
+
+/** 크롬 웹스토어 호스트 — 설치 요청은 이 호스트의 탭에서만 받는다 */
+export const WEBSTORE_HOST = 'chromewebstore.google.com'
+
+/** '확장 설치' 버튼이 새 탭으로 여는 주소 */
+export const WEBSTORE_URL = 'https://chromewebstore.google.com/'
+
+/** 확장 id 는 a–p 32자다(크로미움이 공개키 해시를 그렇게 인코딩한다) */
+const EXTENSION_ID_RE = /^[a-p]{32}$/
+
+/** 확장 id 형태인가 */
+export function isExtensionId(value: unknown): value is string {
+  return typeof value === 'string' && EXTENSION_ID_RE.test(value)
+}

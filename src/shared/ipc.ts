@@ -120,6 +120,10 @@ export const IPC = {
   extImportSources: 'ext:importSources', // 다른 브라우저에 설치된 확장 목록
   extImportFrom: 'ext:importFrom', // 고른 확장을 앱 데이터로 복사해서 로드
   extInstallWebstore: 'ext:installWebstore', // 웹스토어 주소 또는 32자 id
+  extChanged: 'ext:changed', // main → renderer 이벤트(목록이 바뀌었으니 다시 읽어라)
+  // 웹스토어 탭에서 "Chrome에 추가" 를 누른 경우 — 크롬과 같은 설치 경험
+  pageWebstoreInstall: 'page:webstoreInstall', // preload(격리 월드) → main (send)
+  pageWebstoreInstallResult: 'page:webstoreInstallResult', // main → preload 이벤트
   // --- 폰 연동(3단계) — 값(결제 비밀번호·문자 본문)은 어느 채널에도 흐르지 않는다 ---
   phoneList: 'phone:list',
   phoneRefresh: 'phone:refresh', // 즉시 스캔

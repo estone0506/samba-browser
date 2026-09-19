@@ -9,8 +9,10 @@ import {
   INTERNAL_PROTOCOL,
   GESTURE_ACTION_LABELS
 } from '../src/preload/page-constants'
+import { WEBSTORE_HOST as PAGE_WEBSTORE_HOST } from '../src/preload/page-webstore'
 import { INTERNAL_SCHEME } from '../src/shared/url'
 import { GESTURE_ACTIONS } from '../src/shared/gestures'
+import { WEBSTORE_HOST } from '../src/shared/extensions'
 
 // 웹페이지 preload 는 sandbox:true 로 주입되므로 다른 파일을 require() 할 수 없다.
 // src/shared/* 의 값을 page.ts/page-core.ts 가 import 하면 renderer.ts 와 공유되어
@@ -47,6 +49,15 @@ describe('page-constants 는 shared 원본과 동기화되어야 한다', () => 
     const expected = [...GESTURE_ACTIONS].sort()
     expect(Object.keys(GESTURE_ACTION_LABELS.ko).sort()).toEqual(expected)
     expect(Object.keys(GESTURE_ACTION_LABELS.en).sort()).toEqual(expected)
+  })
+
+  it('웹스토어 설치 채널명이 shared/ipc 와 같다', () => {
+    expect(PAGE_IPC.webstoreInstall).toBe(IPC.pageWebstoreInstall)
+    expect(PAGE_IPC.webstoreInstallResult).toBe(IPC.pageWebstoreInstallResult)
+  })
+
+  it('웹스토어 호스트 사본이 shared/extensions 와 같다', () => {
+    expect(PAGE_WEBSTORE_HOST).toBe(WEBSTORE_HOST)
   })
 
   it('내부 스킴 상수가 shared/url 과 같다', () => {
