@@ -35,6 +35,33 @@ export function isPinAuthUrl(url: string): boolean {
   return PIN_URL_PATTERNS.some((re) => re.test(url))
 }
 
+// 합친 페이지 텍스트 상한(프레임 수만큼 늘어나지 않도록)
+const MERGED_TEXT_MAX = 8000
+
+/**
+ * 메인 프레임 + iframe 신호를 한 화면 분으로 합친다(순수 함수).
+ *
+ * 페이코·NICE 보안 키패드는 숫자 버튼 10개가 iframe 안에만 있고 문구('결제 비밀번호')는
+ * 바깥 문서에 있는 경우가 많다. 프레임별로 따로 보면 어느 쪽도 기준을 못 넘어
+ * 가드가 풀려 버리므로, 버튼 수는 더하고 문구는 이어 붙여 한 번에 판정한다.
+ * 입력 내용(값)은 어느 프레임에서도 읽지 않는다 — 개수·존재 여부만 오간다
+ */
+export function mergeKeypadSignals(signals: readonly KeypadSignals[]): KeypadSignals {
+  if (signals.length === 0) return { url: '', text: '', digitButtons: 0, pinField: false }
+  // PIN 인증 주소는 iframe 쪽일 수 있다. 그런 프레임이 있으면 그 주소를 대표로 쓴다
+  const pinUrl = signals.find((s) => isPinAuthUrl(s.url))
+  return {
+    url: (pinUrl ?? signals[0]).url,
+    text: signals
+      .map((s) => s.text)
+      .filter((t) => t.length > 0)
+      .join(' ')
+      .slice(0, MERGED_TEXT_MAX),
+    digitButtons: signals.reduce((sum, s) => sum + s.digitButtons, 0),
+    pinField: signals.some((s) => s.pinField)
+  }
+}
+
 // 판정 근거. 로그·넘김 카드 문구에만 쓰고 모델에게는 넘기지 않는다
 export type SecretKeypadReason = 'digit-keypad' | 'pin-url' | 'pin-field'
 
@@ -115,6 +142,11 @@ export function createSecretKeypadGate(deps: SecretKeypadGateDeps): SecretKeypad
 
 /** 앱에서 쓰는 스캐너 하나(도구들이 공유해 캐시도 함께 쓴다) */
 export const secretKeypadGate = createSecretKeypadGate({
-  read: (tab) => pageBridge.keypadSignals(tab),
+  // iframe 안 보안 키패드(페이코 등)까지 보려면 프레임 전체를 읽어 합쳐야 한다.
+  // keypadSignalsAll 을 갖추지 않은 대역(옛 테스트 스텁)은 메인 프레임만 읽는다
+  read: async (tab) =>
+    typeof pageBridge.keypadSignalsAll === 'function'
+      ? mergeKeypadSignals(await pageBridge.keypadSignalsAll(tab))
+      : pageBridge.keypadSignals(tab),
   urlOf: (tab) => (tab.view.webContents.isDestroyed() ? '' : tab.view.webContents.getURL())
 })
