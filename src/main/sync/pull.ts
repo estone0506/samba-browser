@@ -12,7 +12,6 @@ import {
   bookmarkFromRemote,
   chatFromRemote,
   chatMessageFromRemote,
-  fromIso,
   remoteTableOf,
   settingFromRemote,
   vaultItemFromRemote
@@ -34,6 +33,11 @@ export interface PullResult {
    * 덮으면 이 PC 에 이미 저장된 암호문이 영영 열리지 않는다
    */
   vaultKeyMismatch: boolean
+  /**
+   * 이번 주기에 금고 항목 복호화에 실패한 행이 있었다.
+   * 커서를 넘기면 그 행은 영영 다시 내려오지 않으므로 커서를 고정한다(3차 리뷰 C2)
+   */
+  vaultDecryptFailed: boolean
 }
 
 /**
@@ -107,7 +111,13 @@ export async function pullAll(deps: PullDeps): Promise<PullResult> {
   // 내려받은 행에 지금 작업공간을 찍어 둔다 — 그러지 않으면 비기본 작업공간에서 보이지 않는다
   const workspaceLocalId = deps.workspace().localId
   const local = new SyncLocal(deps.db, workspaceLocalId)
-  const result: PullResult = { applied: 0, conflicts: 0, pruned: 0, vaultKeyMismatch: false }
+  const result: PullResult = {
+    applied: 0,
+    conflicts: 0,
+    pruned: 0,
+    vaultKeyMismatch: false,
+    vaultDecryptFailed: false
+  }
   // 단일 커서만 있던 옛 DB 는 그 자리에서 이어 간다
   const legacy = local.getState(PULL_CURSOR_KEY)
 
@@ -137,6 +147,11 @@ export async function pullAll(deps: PullDeps): Promise<PullResult> {
     if (dirty) local.setState(key, formatPullCursor(cursor))
   }
 
+  // 금고 커서는 주기가 끝난 뒤 되돌릴 수 있게 원래 값을 들고 있는다(C2).
+  // 키 재료 불일치는 이 주기의 **맨 마지막**(settings)에서야 드러나기 때문이다
+  const vaultCursorKey = pullCursorKey(workspaceLocalId, 'vault_items')
+  const vaultCursorBefore = local.getState(vaultCursorKey)
+
   await step('accounts', (cursor, limit) => pullAccounts(deps, local, cursor, limit, result))
   await step('vault_items', (cursor, limit) => pullVaultItems(deps, local, cursor, limit, result))
   await step('bookmarks', (cursor, limit) => pullBookmarks(deps, local, cursor, limit, result))
@@ -146,6 +161,13 @@ export async function pullAll(deps: PullDeps): Promise<PullResult> {
     pullChatMessages(deps, local, cursor, limit, result)
   )
   await step('settings', (cursor, limit) => pullSettings(deps, local, cursor, limit, result))
+
+  // 키 재료가 어긋났거나 한 행이라도 열지 못한 주기에는 금고 커서를 원래 자리에 둔다.
+  // 커서가 넘어가면 그 구간의 금고 항목은 키를 맞춘 뒤에도 영영 내려오지 않는다(C2)
+  if (result.vaultKeyMismatch || result.vaultDecryptFailed) {
+    if (vaultCursorBefore === null) local.deleteState(vaultCursorKey)
+    else local.setState(vaultCursorKey, vaultCursorBefore)
+  }
 
   result.pruned = local.pruneExpiredTombstones(Date.now())
   local.setStateNumber(LAST_PULLED_AT_KEY, Date.now())
@@ -239,12 +261,21 @@ async function pullVaultItems(
       } catch {
         // 값도 암호문도 남기지 않는다 — 어느 행인지만 남긴다
         console.warn('금고 항목 복호화 실패(건너뜀)', raw.id)
-        // 커서는 이 행 위로 넘긴다 — 아니면 같은 페이지를 영원히 다시 받는다
-        applied.push({ updatedAt: fromIso(raw.updated_at), id: raw.id })
+        // 커서를 이 행 위로 넘기면 영영 다시 내려오지 않는다. 실패를 알려 이번 주기의
+        // vault_items 커서를 통째로 고정한다 — 키가 맞춰지면 다음 주기에 다시 받는다(C2)
+        result.vaultDecryptFailed = true
         continue
       }
       applied.push({ updatedAt: remote.updatedAt, id: raw.id })
-      const localId = local.vaultItemIdByRemote(remote.remoteId)
+      // 원격 id 로 먼저 찾고, 없으면 (계정, 종류, 라벨) 이 같고 아직 올라간 적 없는
+      // 로컬 항목에 붙인다 — 두 PC 가 같은 CSV 를 각자 가져온 경우 중복을 만들지 않는다(I1)
+      const localId =
+        local.vaultItemIdByRemote(remote.remoteId) ??
+        local.vaultItemIdByIdentity(
+          remote.accountRemoteId === null ? null : local.accountIdByRemote(remote.accountRemoteId),
+          remote.type,
+          remote.label
+        )
       if (localId === null) {
         if (remote.deletedAt !== null) continue
         local.applyVaultItem(remote, null)
@@ -255,6 +286,10 @@ async function pullVaultItems(
       if (wins(current ? toSyncable(current) : null, toSyncable(remote), result)) {
         local.applyVaultItem(remote, localId)
         result.applied += 1
+      } else if (current && current.remoteId === null) {
+        // 로컬이 이겼어도 어느 원격 행과 짝인지는 기억해 둔다 — 그러지 않으면
+        // 다음 주기에 또 "처음 보는 항목" 으로 보여 결국 하나 더 만든다
+        local.setVaultItemRemoteId(localId, remote.remoteId)
       }
     }
     return applied

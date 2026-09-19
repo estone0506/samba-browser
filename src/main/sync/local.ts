@@ -77,6 +77,12 @@ export class SyncLocal {
     this.setState(key, String(value))
   }
 
+  /** 한 줄을 지운다. 값을 "없던 상태" 로 되돌려야 할 때 쓴다(풀 커서 되돌리기) */
+  deleteState(key: string): void {
+    this.d.delete(syncState).where(eq(syncState.key, key)).run()
+    this.db.scheduleSave()
+  }
+
   // --- 계정 -----------------------------------------------------------------
 
   accountForSync(id: number): AccountSyncRow | null {
@@ -226,6 +232,32 @@ export class SyncLocal {
       .select({ id: vaultItems.id })
       .from(vaultItems)
       .where(eq(vaultItems.remoteId, remoteId))
+      .get()
+    return row ? row.id : null
+  }
+
+  /**
+   * 원격 id 로 짝을 못 찾았을 때 쓰는 두 번째 기준 — (계정, 종류, 라벨) 이 같고
+   * 아직 한 번도 올라간 적 없는(remote_id 가 비어 있는) 로컬 항목.
+   *
+   * 두 PC 가 로그인 전에 같은 CSV 를 각자 가져오면 같은 항목이 양쪽에 서로 다른 로컬 id 로
+   * 들어 있다. 원격 id 로만 맞추면 풀이 그것을 "처음 보는 항목" 으로 보고 하나 더 만들어,
+   * 동기화할수록 항목이 배로 늘었다(3차 리뷰 I1).
+   * 이미 올라간 적 있는 행(remote_id 가 있는 행)은 다른 원격 행의 짝이므로 건드리지 않는다
+   */
+  vaultItemIdByIdentity(accountId: number | null, type: string, label: string): number | null {
+    const row = this.d
+      .select({ id: vaultItems.id })
+      .from(vaultItems)
+      .where(
+        and(
+          isNull(vaultItems.remoteId),
+          isNull(vaultItems.deletedAt),
+          eq(vaultItems.type, type),
+          eq(vaultItems.label, label),
+          accountId === null ? isNull(vaultItems.accountId) : eq(vaultItems.accountId, accountId)
+        )
+      )
       .get()
     return row ? row.id : null
   }
@@ -436,8 +468,13 @@ export class SyncLocal {
     return row ? row.id : null
   }
 
-  setChatRemoteId(id: number, remoteId: string): void {
-    this.d.update(chats).set({ remoteId }).where(eq(chats.id, id)).run()
+  /** updatedAt 을 함께 주면 그 값도 적는다(최초 업로드에서 시각을 올려 보낸 경우) */
+  setChatRemoteId(id: number, remoteId: string, updatedAt: number | null = null): void {
+    this.d
+      .update(chats)
+      .set(updatedAt === null ? { remoteId } : { remoteId, updatedAt })
+      .where(eq(chats.id, id))
+      .run()
     this.db.scheduleSave()
   }
 
@@ -512,8 +549,13 @@ export class SyncLocal {
     return row ? row.id : null
   }
 
-  setChatMessageRemoteId(id: number, remoteId: string): void {
-    this.d.update(chatMessages).set({ remoteId }).where(eq(chatMessages.id, id)).run()
+  /** updatedAt 을 함께 주면 그 값도 적는다(최초 업로드에서 시각을 올려 보낸 경우) */
+  setChatMessageRemoteId(id: number, remoteId: string, updatedAt: number | null = null): void {
+    this.d
+      .update(chatMessages)
+      .set(updatedAt === null ? { remoteId } : { remoteId, updatedAt })
+      .where(eq(chatMessages.id, id))
+      .run()
     this.db.scheduleSave()
   }
 
