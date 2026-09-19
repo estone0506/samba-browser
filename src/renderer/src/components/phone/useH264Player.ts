@@ -156,14 +156,24 @@ export function useH264Player(
     }
 
     const handleStillChunk = (chunk: PhoneScreenChunk): void => {
-      if (!chunk.dataUrl) return
+      // 메인은 PNG 바이트(data)를 보낸다. dataUrl 은 테스트·구형 경로 호환용
+      const bytes = chunk.data
+      const url =
+        chunk.dataUrl ??
+        (bytes ? URL.createObjectURL(new Blob([bytes], { type: 'image/png' })) : null)
+      if (!url) return
       const img = new Image()
       img.onload = () => {
-        if (disposed) return
-        draw(img, img.naturalWidth, img.naturalHeight)
-        setStatus('playing')
+        if (!disposed) {
+          draw(img, img.naturalWidth, img.naturalHeight)
+          setStatus('playing')
+        }
+        if (!chunk.dataUrl) URL.revokeObjectURL(url)
       }
-      img.src = chunk.dataUrl
+      img.onerror = () => {
+        if (!chunk.dataUrl) URL.revokeObjectURL(url)
+      }
+      img.src = url
     }
 
     const off = onChunk((chunk) => {

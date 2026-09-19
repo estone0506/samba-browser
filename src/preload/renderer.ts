@@ -40,6 +40,7 @@ import {
   type PhoneAuthWaitingDto,
   type AuthEventDto,
   type PhoneScreenChunkDto,
+  type ScreenMode,
   type PhoneScreenModeDto
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
@@ -355,7 +356,21 @@ const api = {
       ipcRenderer.on(IPC.phoneAuthWaiting, h)
       return () => ipcRenderer.off(IPC.phoneAuthWaiting, h)
     },
-    screenStart: (serial: string): Promise<IpcResult<void>> => invoke(IPC.phoneScreenStart, serial),
+    screenStart: (serial: string): Promise<IpcResult<ScreenMode>> =>
+      invoke(IPC.phoneScreenStart, serial),
+    // 사용자가 화면을 직접 눌렀을 때. 좌표는 0~1 비율
+    tap: (serial: string, rx: number, ry: number): Promise<IpcResult<void>> =>
+      invoke(IPC.phoneTap, serial, rx, ry),
+    swipe: (
+      serial: string,
+      rx1: number,
+      ry1: number,
+      rx2: number,
+      ry2: number,
+      durationMs?: number
+    ): Promise<IpcResult<void>> => invoke(IPC.phoneSwipe, serial, rx1, ry1, rx2, ry2, durationMs),
+    key: (serial: string, keyName: string): Promise<IpcResult<void>> =>
+      invoke(IPC.phoneKey, serial, keyName),
     screenStop: (serial: string): Promise<IpcResult<void>> => invoke(IPC.phoneScreenStop, serial),
     // scrcpy 큰 창으로 열기(앱 안 임베드와 별개다)
     openWindow: (serial: string): Promise<IpcResult<void>> => invoke(IPC.phoneOpenWindow, serial),
