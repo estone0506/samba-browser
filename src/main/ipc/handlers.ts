@@ -58,6 +58,9 @@ import { PhoneRepo } from '../phone/repo'
 import { PhoneService } from '../phone/service'
 import { registerPhoneScreenIpc } from '../phone/screen-ipc'
 import { createPhoneOps } from '../agent/tools-phone'
+// === 사진·영상 캡처 — 배선은 capture/capture-ipc.ts 한 곳에 모여 있다 =================
+import { registerCaptureIpc } from '../capture/capture-ipc'
+import type { CaptureShortcutInput } from '../../shared/capture'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -589,10 +592,14 @@ export function registerIpc(
       return false
     }
   }
+  // 캡처 단축키(Alt+1~6)도 같은 창 안 입력 경로를 쓴다. 캡처 배선은 아래에서 붙는다
+  let handleCaptureShortcut: (input: CaptureShortcutInput) => boolean = () => false
+  const handleWindowShortcut = (input: CaptureShortcutInput): boolean =>
+    handleWorkspaceShortcut(input) || handleCaptureShortcut(input)
   win.webContents.on('before-input-event', (e, input) => {
-    if (handleWorkspaceShortcut(input)) e.preventDefault()
+    if (handleWindowShortcut(input)) e.preventDefault()
   })
-  tabs.setInputHandler(handleWorkspaceShortcut)
+  tabs.setInputHandler(handleWindowShortcut)
 
   handleFromRenderer(IPC.workspaceList, () => workspace.list())
   handleFromRenderer(IPC.workspaceCreate, (o: { name: string; color?: string }) =>
@@ -735,6 +742,21 @@ export function registerIpc(
   })
   win.once('closed', () => phoneScreen.dispose())
   // === 폰 화면 끝 ======================================================================
+
+  // === 사진·영상 캡처 ==================================================================
+  // 파일은 설정의 저장 폴더에만 쓰인다. 단축키는 위에서 만든 창 안 입력 경로에 붙는다
+  const capture = registerCaptureIpc({
+    handle: handleFromRenderer,
+    send,
+    settings: () => settings.get(),
+    setSettings: (patch) => settings.set(patch),
+    win,
+    tabs,
+    downloadsDir: () => app.getPath('downloads')
+  })
+  handleCaptureShortcut = capture.handleShortcut
+  win.once('closed', () => capture.dispose())
+  // === 캡처 끝 =========================================================================
 
   return { settings, agent, db, vault, auth, sync }
 }
