@@ -159,6 +159,7 @@ function fakeVault(over: Partial<WiringVault> = {}): WiringVault {
     state: () => 'unlocked',
     listAccounts: () => [ACCOUNT],
     getSecretForFill: () => SECRET,
+    getPaymentSecretForFill: () => ({ value: SECRET }),
     ...over
   }
 }
@@ -482,9 +483,9 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     // 비밀번호를 누르는 순간의 표식 상태를 기록한다
     const seen: boolean[] = []
     h.deps.vault = fakeVault({
-      getSecretForFill: () => {
+      getPaymentSecretForFill: () => {
         seen.push(h.gate.isSecret(SERIAL))
-        return SECRET
+        return { value: SECRET }
       }
     })
     const bridge = createPhoneAgentBridge(h.deps)
