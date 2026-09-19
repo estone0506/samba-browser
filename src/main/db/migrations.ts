@@ -127,5 +127,18 @@ export const migrations: Migration[] = [
       'CREATE UNIQUE INDEX IF NOT EXISTS `chat_messages_remote_id_unique` ON `chat_messages` (`remote_id`);',
       'CREATE INDEX IF NOT EXISTS `chat_messages_chat_idx` ON `chat_messages` (`chat_id`);'
     ]
+  },
+  {
+    // 3단계 폰 연동 — 폰 목록·인증 이벤트·계정 매핑. 셋 다 PC 로컬 전용이라
+    // remote_id/deleted_at 컬럼이 없고 SYNC_TABLES 에도 들어가지 않는다
+    tag: '0009_phones',
+    optional: true,
+    sql: [
+      "CREATE TABLE IF NOT EXISTS `phones` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`serial` text NOT NULL,\n\t`label` text NOT NULL,\n\t`country` text NOT NULL,\n\t`transport` text NOT NULL,\n\t`wifi_address` text,\n\t`model` text DEFAULT '' NOT NULL,\n\t`sms_query_ok` integer,\n\t`last_seen_at` integer NOT NULL,\n\t`workspace_id` integer\n);",
+      'CREATE UNIQUE INDEX IF NOT EXISTS `phones_serial_unique` ON `phones` (`serial`);',
+      'CREATE TABLE IF NOT EXISTS `auth_events` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`job_id` text,\n\t`phone_id` integer,\n\t`kind` text NOT NULL,\n\t`site_host` text NOT NULL,\n\t`ok` integer NOT NULL,\n\t`method` text NOT NULL,\n\t`elapsed_ms` integer NOT NULL,\n\t`code` text,\n\t`sender_tail` text,\n\t`at` integer NOT NULL\n);',
+      'CREATE INDEX IF NOT EXISTS `auth_events_at_idx` ON `auth_events` (`at`);',
+      'CREATE TABLE IF NOT EXISTS `account_phones` (\n\t`account_id` integer PRIMARY KEY NOT NULL,\n\t`phone_id` integer NOT NULL,\n\t`updated_at` integer NOT NULL\n);'
+    ]
   }
 ]
