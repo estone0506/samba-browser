@@ -1,7 +1,7 @@
 // [규칙] 이 파일은 page.ts 와 함께 sandbox preload 로 번들된다.
 // src/shared/* 에서 **값(value)** 을 import 하지 말 것 — Rollup 청크 분리로 require() 가 생겨
 // preload 로드가 실패한다. 타입은 `import type` 만 사용(번들에 남지 않음), 값은 ./page-constants 에서.
-import type { PageElement, PageSnapshot } from '../shared/snapshot'
+import type { KeypadSignals, PageElement, PageSnapshot } from '../shared/snapshot'
 import { MAX_ELEMENTS } from './page-constants'
 import {
   detectLoginFields,
@@ -237,6 +237,46 @@ export function signedInHint(): SignedInHint {
 // 캡차·2FA 징후를 돌려준다. 푸는 것은 언제나 사용자 몫이다
 export function captchaHint(): CaptchaHint {
   return detectCaptchaHint()
+}
+
+// --- 결제 비밀번호 키패드 신호 ---------------------------------------------
+
+// 문구 판정에만 쓰므로 페이지 텍스트는 앞부분만 본다(결제 팝업은 짧다)
+const KEYPAD_TEXT_MAX = 8000
+// 결제 비밀번호 칸으로 볼 자릿수 범위(간편결제 PIN 은 보통 4~6자리)
+const PIN_MAXLENGTH_MIN = 4
+const PIN_MAXLENGTH_MAX = 6
+
+/**
+ * 결제 비밀번호 키패드 판정에 필요한 신호만 모은다.
+ * 입력칸의 **값은 절대 읽지 않는다** — 있는지·몇 개인지만 센다.
+ * 실제 판정은 메인 쪽 순수 함수(main/agent/secret-page.ts)가 한다
+ */
+export function keypadSignals(): KeypadSignals {
+  let digitButtons = 0
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>(SELECTOR))) {
+    const label = (el.textContent ?? '').trim()
+    if (label.length !== 1 || label < '0' || label > '9') continue
+    if (!isVisible(el)) continue
+    digitButtons += 1
+  }
+  const pinField = Array.from(document.querySelectorAll<HTMLInputElement>('input')).some((el) => {
+    // 평문 입력칸(문자 인증번호 등)은 대상이 아니다 — 비밀 입력칸만 본다
+    if (el.type !== 'password') return false
+    const max = el.maxLength
+    const short = max >= PIN_MAXLENGTH_MIN && max <= PIN_MAXLENGTH_MAX
+    const numeric = (el.getAttribute('inputmode') ?? '').toLowerCase() === 'numeric'
+    // maxlength 가 없어도(-1) 숫자 전용 비밀 입력칸이면 결제 비밀번호로 본다
+    return short || (numeric && (max === -1 || max <= PIN_MAXLENGTH_MAX))
+  })
+  const body = document.body
+  const text = ((body?.innerText || body?.textContent) ?? '').replace(/\s+/g, ' ').trim()
+  return {
+    url: location.href,
+    text: text.slice(0, KEYPAD_TEXT_MAX),
+    digitButtons,
+    pinField
+  }
 }
 
 // --- 로그인 상태 유지 체크박스 ---------------------------------------------

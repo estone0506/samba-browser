@@ -17,6 +17,20 @@ export interface PageSnapshot {
   elements: PageElement[]
 }
 
+/**
+ * 결제 비밀번호 키패드 판정용 신호.
+ * 값(입력 내용)은 절대 담기지 않는다 — "있는지·몇 개인지" 만 센다
+ */
+export interface KeypadSignals {
+  url: string
+  // 문구 판정용 페이지 텍스트(앞부분만)
+  text: string
+  // 0~9 숫자 하나만 보이는 클릭 요소 개수
+  digitButtons: number
+  // 결제 비밀번호로 보이는 짧은 비밀 입력칸이 있는가
+  pinField: boolean
+}
+
 export const MAX_TEXT_CHARS = 8000
 export const MAX_ELEMENTS = 150
 

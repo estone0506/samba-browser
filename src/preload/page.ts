@@ -36,6 +36,7 @@ import {
   checkKeepSignedIn,
   submitForm,
   isSecretField,
+  keypadSignals,
   installCaptureListener
 } from './page-core'
 import {
@@ -75,7 +76,9 @@ if (window.self === window.top) {
     checkKeepSignedIn: (anchorId?: number) => checkKeepSignedIn(anchorId),
     submitForm: (id: number) => submitForm(id),
     // 최신 스냅샷 기준으로 요소가 비밀 입력칸(type=password)인지 확인(fill_secret 대상 검증용)
-    isSecretField: (id: number) => isSecretField(id)
+    isSecretField: (id: number) => isSecretField(id),
+    // 결제 비밀번호 키패드 판정용 신호(값은 담기지 않는다)
+    keypadSignals: () => keypadSignals()
   }
 
   // globalThis 에 직접 대입(any 없이 타입 안전하게)

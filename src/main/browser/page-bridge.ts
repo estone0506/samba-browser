@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import { z } from 'zod'
-import type { PageElement, PageSnapshot } from '../../shared/snapshot'
+import type { KeypadSignals, PageElement, PageSnapshot } from '../../shared/snapshot'
 import { findCodeField as pickCodeField } from '../phone/auth-flow'
 import type { Tab } from './tab-manager'
 
@@ -24,6 +24,14 @@ const snapshotSchema = z.object({
   title: z.string(),
   text: z.string(),
   elements: z.array(elementSchema)
+})
+
+// 결제 비밀번호 키패드 판정용 신호. 값은 담기지 않는다(개수·존재 여부만)
+const keypadSignalsSchema = z.object({
+  url: z.string(),
+  text: z.string(),
+  digitButtons: z.number().int(),
+  pinField: z.boolean()
 })
 
 // 행동 도구(click/type/select/scroll/textOf)는 결과가 항상 문자열이어야 한다
@@ -114,6 +122,9 @@ export const pageBridge = {
   // 이미 로그인된 상태인지 힌트(로그인 폼을 못 찾았을 때만 쓴다)
   signedInHint: (tab: Tab): Promise<SignedInHintResult> =>
     call(tab.view.webContents, '__samba.signedInHint()', signedInHintSchema),
+  // 결제 비밀번호 키패드 신호(비밀 화면 판정용). 입력 내용은 읽지 않는다
+  keypadSignals: (tab: Tab): Promise<KeypadSignals> =>
+    call(tab.view.webContents, '__samba.keypadSignals()', keypadSignalsSchema),
   // 캡차·2FA 징후 감지(사용자 넘김 판단용)
   captchaHint: (tab: Tab): Promise<CaptchaHintResult> =>
     call(tab.view.webContents, '__samba.captchaHint()', captchaHintSchema),
