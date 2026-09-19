@@ -1,6 +1,7 @@
 // adb 경로 탐지와 명령 조립. 여기에는 프로세스 실행 코드가 없다(process.ts 가 담당).
 // 전부 순수 함수라 폰 없이 테스트한다
 
+import { delimiter, join } from 'node:path'
 import type { PhoneTransport, PhoneState } from '../../shared/phone'
 
 // 실행기 타입은 process.ts 가 원본이다. 위 계층이 한 파일만 보게 여기서도 다시 내보낸다
@@ -15,17 +16,54 @@ export interface RawDevice {
 }
 
 // 경로 자동 찾기 후보(앞에서부터 먼저 존재하는 것을 쓴다).
-// 사용자의 실제 설치 위치를 1순위에 둔다 — PATH 에는 등록돼 있지 않다
+// 개인 PC 절대경로는 두지 않는다 — 앱 데이터 설치본 → PATH → 아래 후보 순서로 찾는다
 export const ADB_CANDIDATES = [
-  'C:\\Users\\canno\\Downloads\\pt\\platform-tools\\adb.exe',
   `${process.env.LOCALAPPDATA ?? ''}\\Android\\Sdk\\platform-tools\\adb.exe`,
-  `${process.env.USERPROFILE ?? ''}\\Downloads\\pt\\platform-tools\\adb.exe`
+  `${process.env.USERPROFILE ?? ''}\\Downloads\\pt\\platform-tools\\adb.exe`,
+  `${process.env.USERPROFILE ?? ''}\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe`
 ]
 
 export const SCRCPY_CANDIDATES = [
-  'C:\\Users\\canno\\Downloads\\pt\\scrcpy-win64-v4.1\\scrcpy.exe',
   `${process.env.USERPROFILE ?? ''}\\Downloads\\pt\\scrcpy-win64-v4.1\\scrcpy.exe`
 ]
+
+/** 앱이 설치한 실행 파일의 자리(tools-install.ts 가 이 모양으로 푼다) */
+export function installedToolPath(toolsRoot: string, exe: 'adb.exe' | 'scrcpy.exe'): string {
+  const folder = exe === 'adb.exe' ? 'platform-tools' : 'scrcpy'
+  return join(toolsRoot, folder, exe)
+}
+
+/** PATH 에 등록된 폴더마다 실행 파일 하나씩 후보로 만든다 */
+export function pathCandidates(pathEnv: string, exe: string): string[] {
+  return pathEnv
+    .split(delimiter)
+    .map((dir) => dir.trim().replace(/^"|"$/g, ''))
+    .filter(Boolean)
+    .map((dir) => join(dir, exe))
+}
+
+export interface ToolLookup {
+  /** 설정에 이미 적혀 있는 경로(비어 있으면 무시) */
+  settingsPath?: string
+  /** 앱 데이터 설치 폴더 */
+  toolsRoot?: string
+  /** process.env.PATH */
+  pathEnv?: string
+}
+
+/**
+ * 탐지 순서대로 후보를 늘어놓는다: 설정 경로 → 앱 데이터 설치본 → PATH → 기존 후보.
+ * 실제로 있는지는 보지 않는다(detectAdbPath 가 앞에서부터 확인한다)
+ */
+export function toolCandidates(exe: 'adb.exe' | 'scrcpy.exe', lookup: ToolLookup = {}): string[] {
+  const fallback = exe === 'adb.exe' ? ADB_CANDIDATES : SCRCPY_CANDIDATES
+  return [
+    ...(lookup.settingsPath ? [lookup.settingsPath] : []),
+    ...(lookup.toolsRoot ? [installedToolPath(lookup.toolsRoot, exe)] : []),
+    ...pathCandidates(lookup.pathEnv ?? '', exe),
+    ...fallback
+  ].filter(Boolean)
+}
 
 // 와이파이 연결은 serial 이 'ip:port' 꼴이다
 const WIFI_SERIAL_RE = /^\d{1,3}(?:\.\d{1,3}){3}:\d+$/
