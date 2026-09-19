@@ -90,6 +90,8 @@ export const DEFAULT_SETTINGS = {
   vaultKeepSignedIn: true,
   // 저장된 값과 다른 값으로 로그인에 성공하면 묻지 않고 자동으로 비밀번호를 갱신할지 여부
   vaultAutoUpdatePassword: true,
+  // 계정 선택기에서 계정을 고르면 로그인 버튼까지 눌러 준다
+  autofillAutoSubmit: true,
   vaultExcludedHosts: [] as string[],
   // === 홈/새 탭/검색엔진 기본값 (신규 추가분) ===============================
   // 로컬 OCR(ocr 도구) 사용 여부. 첫 사용 시 모델(약 18MB)을 내려받는다
@@ -235,6 +237,7 @@ export const settingsSchema = z.object({
   // 로그인 성공 감지 시 비밀번호 자동 갱신 여부(끄면 기존 "갱신할까요?" 프롬프트로 동작)
   vaultAutoUpdatePassword: z.boolean().catch(DEFAULT_SETTINGS.vaultAutoUpdatePassword),
   // 제외 도메인(정규화된 host 문자열 목록). 손상된 값은 빈 배열로 되돌린다
+  autofillAutoSubmit: z.boolean().catch(DEFAULT_SETTINGS.autofillAutoSubmit),
   vaultExcludedHosts: z.array(z.string()).catch(DEFAULT_SETTINGS.vaultExcludedHosts),
   // === 홈/새 탭/검색엔진 (신규 추가분) =======================================
   // 홈 주소. http/https 나 내부 페이지(samba://newtab)가 아니면 기본값으로 되돌린다

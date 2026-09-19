@@ -26,6 +26,8 @@ export interface AutofillDeps {
   vault: VaultService
   activeTab: () => Tab | null
   excludedHosts: () => string[]
+  /** 채운 뒤 로그인 폼을 바로 제출할지(계정 고르면 곧바로 로그인) */
+  autoSubmit?: () => boolean
 }
 
 // 채울 대상을 호출부가 지정할 때 쓰는 값(피커 경로).
@@ -84,5 +86,13 @@ export async function autofillAccount(
   }
   const filled = await pageBridge.fillValue(tab, fields.password, password)
   if (filled !== 'ok') return 'fill-failed'
+  // 계정을 고르면 로그인 버튼까지 눌러 준다(아이디까지 채운 경우만 — 비밀번호만 채웠으면 사용자가 확인)
+  if (usernameFilled && deps.autoSubmit?.()) {
+    try {
+      await pageBridge.submitForm(tab, fields.password)
+    } catch {
+      // 제출 실패는 채우기 성공을 뒤집지 않는다 — 사용자가 버튼을 누르면 된다
+    }
+  }
   return usernameFilled ? 'ok' : 'filled-password-only'
 }

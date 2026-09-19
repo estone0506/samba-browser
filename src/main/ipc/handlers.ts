@@ -396,7 +396,8 @@ export function registerIpc(
   const autofillDeps: AutofillDeps = {
     vault,
     activeTab: () => tabs.active(),
-    excludedHosts: () => settings.get().vaultExcludedHosts
+    excludedHosts: () => settings.get().vaultExcludedHosts,
+    autoSubmit: () => settings.get().autofillAutoSubmit
   }
   handleFromRenderer(IPC.vaultAutofill, (accountId: number) =>
     autofillAccount(autofillDeps, accountId)

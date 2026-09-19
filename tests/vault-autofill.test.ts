@@ -9,7 +9,8 @@ import type { AccountDto } from '../src/shared/vault'
 const { pageBridge } = vi.hoisted(() => ({
   pageBridge: {
     findLoginFields: vi.fn(async () => ({ username: 1, password: 2, submit: 3 })),
-    fillValue: vi.fn(async () => 'ok')
+    fillValue: vi.fn(async () => 'ok'),
+    submitForm: vi.fn(async () => 'ok')
   }
 }))
 vi.mock('../src/main/browser/page-bridge', () => ({ pageBridge }))
@@ -66,6 +67,18 @@ describe('autofillAccount', () => {
   it('같은 등록 도메인이면 서브도메인이 달라도 채운다(nid.naver.com 계정 → www.naver.com)', async () => {
     expect(await autofillAccount(deps(), 1)).toBe('ok')
     expect(pageBridge.fillValue).toHaveBeenCalledTimes(2)
+  })
+
+  it('autoSubmit 이 켜져 있고 아이디까지 채웠으면 로그인 폼을 바로 제출한다', async () => {
+    pageBridge.submitForm.mockClear()
+    expect(await autofillAccount({ ...deps(), autoSubmit: () => true }, 1)).toBe('ok')
+    expect(pageBridge.submitForm).toHaveBeenCalledTimes(1)
+  })
+
+  it('autoSubmit 이 꺼져 있으면 채우기만 한다', async () => {
+    pageBridge.submitForm.mockClear()
+    expect(await autofillAccount({ ...deps(), autoSubmit: () => false }, 1)).toBe('ok')
+    expect(pageBridge.submitForm).not.toHaveBeenCalled()
   })
 
   it('등록 도메인이 다르면 채우지 않는다', async () => {

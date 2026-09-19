@@ -91,6 +91,7 @@ export const SYNCED_SETTING_KEYS = [
   'vaultKeepSignedIn',
   'vaultAutoUpdatePassword',
   'vaultExcludedHosts',
+  'autofillAutoSubmit',
   'homeUrl',
   'newTabUrl',
   'searchEngine',
