@@ -8,7 +8,7 @@
 // 범위는 웹스토어 호스트 요청으로 못 박는다 — 다른 사이트의 UA 는 건드리지 않는다.
 // (모바일 모드의 UA 교체는 src/main/browser/emulation.ts 가 webContents 단위로 따로 한다)
 
-import type { Session } from 'electron'
+import type { Session, WebContents } from 'electron'
 import { WEBSTORE_HOST } from '../../shared/extensions'
 
 /** webRequest 필터 — 이 패턴에 걸리는 요청만 UA 를 갈아 끼운다 */
@@ -45,5 +45,37 @@ export function installWebstoreUserAgent(ses: Session): void {
   const ua = chromeUserAgent(ses.getUserAgent())
   ses.webRequest.onBeforeSendHeaders({ urls: WEBSTORE_URL_PATTERNS }, (details, callback) => {
     callback({ requestHeaders: { ...details.requestHeaders, 'User-Agent': ua } })
+  })
+}
+
+/** url 의 호스트가 웹스토어인가(파싱 실패는 아니라고 본다) */
+export function isWebstoreUrl(url: string): boolean {
+  try {
+    return new URL(url).host === WEBSTORE_HOST
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 요청 헤더의 UA 는 installWebstoreUserAgent 가 이미 세션 단위로 바꿔 주지만,
+ * 웹스토어 페이지 JS 가 직접 읽는 `navigator.userAgent` 는 webContents 단위로 따로 설정해야
+ * 같이 바뀐다. 그렇지 않으면 헤더와 `navigator.userAgent` 가 서로 달라져 "Chrome으로
+ * 전환할까요?" 배너가 계속 뜬다.
+ *
+ * 탭이 웹스토어 호스트로 이동을 시작하면(메인 프레임만) 순수 크롬 UA 를 걸고,
+ * 다른 호스트로 벗어나면 원래 UA(앱 기본값)로 되돌린다.
+ *
+ * 모바일 모드가 켜진 탭은 emulation.ts 가 UA(모바일 UA)를 따로 관리하므로 건드리지 않는다 —
+ * isMobile() 이 true 를 돌려주는 동안은 아무 것도 하지 않는다
+ */
+export function installWebstoreNavigatorUserAgent(wc: WebContents, isMobile: () => boolean): void {
+  // 앱 기본 UA(모바일 모드가 아닐 때 되돌아갈 값). 이후 언제 호출해도 같은 값이 나오도록
+  // getUserAgent() 를 매번 다시 읽지 않고 최초 값을 고정해 둔다
+  const defaultUa = wc.getUserAgent()
+  const webstoreUa = chromeUserAgent(defaultUa)
+  wc.on('did-start-navigation', (details) => {
+    if (!details.isMainFrame || isMobile()) return
+    wc.setUserAgent(isWebstoreUrl(details.url) ? webstoreUa : defaultUa)
   })
 }

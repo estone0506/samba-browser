@@ -21,7 +21,7 @@ import {
 import { attachInternalProtocol } from './internal-protocol'
 import type { PermissionMode, SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
-import { installWebstoreUserAgent } from './webstore-ua'
+import { installWebstoreNavigatorUserAgent, installWebstoreUserAgent } from './webstore-ua'
 import { installDialogHandler, isAutomationActive } from './dialogs'
 import { getFaviconService, type FaviconResponse } from '../favicon/service'
 
@@ -511,6 +511,9 @@ export class TabManager {
         })
     })
     guardNavigation(wc, allowExtension)
+    // 웹스토어 페이지 JS 가 읽는 navigator.userAgent 도 헤더와 같은 크롬 UA 로 맞춘다.
+    // 모바일 탭은 emulation.ts 가 UA 를 따로 관리하므로 건드리지 않는다
+    installWebstoreNavigatorUserAgent(wc, () => tab.mobile)
     // 페이지 JS 대화상자(alert/confirm/prompt)는 작업 실행 중에만 자동으로 닫는다
     installDialogHandler(wc, {
       // SAMBA_E2E 환경변수는 개발 빌드에서만 인정한다(패키징된 앱에서 자동 처리 금지)
