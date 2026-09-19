@@ -43,6 +43,8 @@ import {
   type PlaybookInput,
   type ScheduleDispatchDto,
   type ScheduleStatusDto,
+  type RecommendApplyDto,
+  type RecommendDto,
   type PhoneDto,
   type PhoneUpdatedDto,
   type PhoneAuthWaitingDto,
@@ -210,6 +212,14 @@ const api = {
       ipcRenderer.on(IPC.scheduleDispatch, h)
       return () => ipcRenderer.off(IPC.scheduleDispatch, h)
     }
+  },
+  // 활동 기록·추천 — 기록 자체는 오가지 않는다. 화면이 받는 것은 후보 목록뿐이다
+  activity: {
+    recommend: (): Promise<IpcResult<RecommendDto[]>> => invoke(IPC.activityRecommend),
+    dismiss: (key: string): Promise<IpcResult<boolean>> => invoke(IPC.activityDismiss, key),
+    apply: (key: string): Promise<IpcResult<RecommendApplyDto | null>> =>
+      invoke(IPC.activityApply, key),
+    clear: (): Promise<IpcResult<boolean>> => invoke(IPC.activityClear)
   },
   settings: {
     get: (): Promise<IpcResult<Settings>> => invoke(IPC.settingsGet),
