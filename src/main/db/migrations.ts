@@ -113,14 +113,19 @@ export const migrations: Migration[] = [
   },
   {
     // AI 채팅 기록 — 대화(chats)와 메시지(chat_messages).
-    // 메시지 본문은 평문으로 둔다(채팅은 비밀값이 아니다). 진행 로그(steps)는 라벨만 담는다
+    // 메시지 본문은 평문으로 둔다(채팅은 비밀값이 아니다). 진행 로그(steps)는 라벨만 담는다.
+    //
+    // 표·인덱스를 손으로 먼저 만들어 둔 DB(개발 중 시험판)에서 그대로 걸면 마이그레이션이
+    // 던져 앱이 아예 뜨지 못한다. IF NOT EXISTS 로 걸고, 그래도 실패하면 기동은 막지 않는다
+    // (optional — 다음 기동에 다시 시도한다)
     tag: '0008_chats',
+    optional: true,
     sql: [
-      'CREATE TABLE `chats` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`remote_id` text,\n\t`workspace_id` integer,\n\t`title` text NOT NULL,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL,\n\t`deleted_at` integer\n);',
-      'CREATE UNIQUE INDEX `chats_remote_id_unique` ON `chats` (`remote_id`);',
-      'CREATE TABLE `chat_messages` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`remote_id` text,\n\t`chat_id` integer NOT NULL,\n\t`role` text NOT NULL,\n\t`content` text NOT NULL,\n\t`steps` text,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL,\n\t`deleted_at` integer,\n\tFOREIGN KEY (`chat_id`) REFERENCES `chats`(`id`) ON UPDATE no action ON DELETE cascade\n);',
-      'CREATE UNIQUE INDEX `chat_messages_remote_id_unique` ON `chat_messages` (`remote_id`);',
-      'CREATE INDEX `chat_messages_chat_idx` ON `chat_messages` (`chat_id`);'
+      'CREATE TABLE IF NOT EXISTS `chats` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`remote_id` text,\n\t`workspace_id` integer,\n\t`title` text NOT NULL,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL,\n\t`deleted_at` integer\n);',
+      'CREATE UNIQUE INDEX IF NOT EXISTS `chats_remote_id_unique` ON `chats` (`remote_id`);',
+      'CREATE TABLE IF NOT EXISTS `chat_messages` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`remote_id` text,\n\t`chat_id` integer NOT NULL,\n\t`role` text NOT NULL,\n\t`content` text NOT NULL,\n\t`steps` text,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL,\n\t`deleted_at` integer,\n\tFOREIGN KEY (`chat_id`) REFERENCES `chats`(`id`) ON UPDATE no action ON DELETE cascade\n);',
+      'CREATE UNIQUE INDEX IF NOT EXISTS `chat_messages_remote_id_unique` ON `chat_messages` (`remote_id`);',
+      'CREATE INDEX IF NOT EXISTS `chat_messages_chat_idx` ON `chat_messages` (`chat_id`);'
     ]
   }
 ]

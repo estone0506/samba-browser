@@ -215,8 +215,8 @@ async function pushTable(
     if (table === 'accounts') local.setAccountRemoteId(p.localId, remoteId, p.bumpedAt)
     else if (table === 'vault_items') local.setVaultItemRemoteId(p.localId, remoteId, p.bumpedAt)
     else if (table === 'bookmarks') local.setBookmarkRemoteId(p.localId, remoteId, p.bumpedAt)
-    else if (table === 'chats') local.setChatRemoteId(p.localId, remoteId)
-    else local.setChatMessageRemoteId(p.localId, remoteId)
+    else if (table === 'chats') local.setChatRemoteId(p.localId, remoteId, p.bumpedAt)
+    else local.setChatMessageRemoteId(p.localId, remoteId, p.bumpedAt)
   }
   deps.outbox.clear(prepared.map((p) => p.entry.id))
   result.sent += prepared.length
@@ -262,11 +262,12 @@ function buildRemote(
   if (table === 'chats') {
     const row = entry.op === 'delete' ? tombstone<ChatSyncRow>(entry) : local.chatForSync(rowId)
     if (!row) return null
+    const bumpedAt = bumpForFirstUpload(row, entry)
     return {
       entry,
       row: chatToRemote(row, ctx),
       localId: entry.op === 'delete' ? null : rowId,
-      bumpedAt: null
+      bumpedAt
     }
   }
   if (table === 'chat_messages') {
@@ -280,11 +281,12 @@ function buildRemote(
       row.chatRemoteId = chatRemoteId
       deps.outbox.record('chats', String(row.chatId), 'upsert', undefined, entry.workspaceId)
     }
+    const bumpedAt = bumpForFirstUpload(row, entry)
     return {
       entry,
       row: chatMessageToRemote(row, ctx),
       localId: entry.op === 'delete' ? null : rowId,
-      bumpedAt: null
+      bumpedAt
     }
   }
 

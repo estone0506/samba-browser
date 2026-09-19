@@ -9,6 +9,8 @@ import {
   extractExtensionId,
   extractZip,
   installFromWebstore,
+  MAX_UNZIPPED_BYTES,
+  MAX_ZIP_ENTRIES,
   parseCrx3,
   safeEntryPath
 } from '../src/main/extensions/webstore'
@@ -186,6 +188,38 @@ describe('ZIP 해제와 zip-slip 차단', () => {
     expect(() => safeEntryPath(dir, 'C:/Windows/system32/x.dll')).toThrow()
     expect(() => safeEntryPath(dir, 'a/../../b')).toThrow()
   })
+
+  // 3차 리뷰 I4 — zip bomb 방어. 상한은 기본값(5,000개 / 200MB)이 있고,
+  // 테스트는 같은 경로를 작은 값으로 확인한다
+  it('기본 상한이 5,000개 / 200MB 다', () => {
+    expect(MAX_ZIP_ENTRIES).toBe(5000)
+    expect(MAX_UNZIPPED_BYTES).toBe(200 * 1024 * 1024)
+  })
+
+  it('항목 수 상한을 넘으면 아무것도 쓰지 않는다', () => {
+    const zip = makeZip([
+      { name: 'a.txt', data: 'x' },
+      { name: 'b.txt', data: 'y' },
+      { name: 'c.txt', data: 'z' }
+    ])
+    expect(() => extractZip(zip, dir, { maxEntries: 2 })).toThrow(/파일이 너무 많아요/)
+    expect(existsSync(join(dir, 'a.txt'))).toBe(false)
+  })
+
+  it('해제 총량 상한을 넘으면 아무것도 쓰지 않는다', () => {
+    const zip = makeZip([
+      { name: 'a.txt', data: 'x'.repeat(100) },
+      { name: 'b.txt', data: 'y'.repeat(100) }
+    ])
+    expect(() => extractZip(zip, dir, { maxBytes: 150 })).toThrow(/너무 커져요/)
+    expect(existsSync(join(dir, 'a.txt'))).toBe(false)
+  })
+
+  it('상한 안이면 그대로 푼다', () => {
+    const zip = makeZip([{ name: 'a.txt', data: 'x'.repeat(100) }])
+    extractZip(zip, dir, { maxBytes: 150, maxEntries: 5 })
+    expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toHaveLength(100)
+  })
 })
 
 describe('CRX 내려받기 방어', () => {
@@ -221,6 +255,49 @@ describe('CRX 내려받기 방어', () => {
     await expect(downloadCrx('https://x', async () => okResponse(Buffer.alloc(0)))).rejects.toThrow(
       /비어 있어요/
     )
+  })
+
+  // 3차 리뷰 I4 — 통째로 메모리에 올린 뒤 재지 않고, 받으면서 끊는다
+  describe('스트리밍 상한', () => {
+    /** 조각을 흘려 보내며 몇 개까지 읽혔는지 센다 */
+    const streamResponse = (
+      chunks: Buffer[],
+      read: { count: number }
+    ): {
+      ok: boolean
+      status: number
+      body: AsyncIterable<Uint8Array>
+      arrayBuffer: () => Promise<ArrayBuffer>
+    } => ({
+      ok: true,
+      status: 200,
+      body: (async function* () {
+        for (const chunk of chunks) {
+          read.count += 1
+          yield new Uint8Array(chunk)
+        }
+      })(),
+      arrayBuffer: async () => {
+        throw new Error('스트림이 있으면 arrayBuffer 를 쓰면 안 된다')
+      }
+    })
+
+    it('상한을 넘는 순간 더 읽지 않고 끊는다', async () => {
+      const read = { count: 0 }
+      const chunks = Array.from({ length: 10 }, () => Buffer.alloc(100))
+      await expect(
+        downloadCrx('https://x', async () => streamResponse(chunks, read), 250)
+      ).rejects.toThrow(/너무 커요/)
+      // 3조각째에 250 바이트를 넘어 멈춘다 — 10조각을 다 읽지 않는다
+      expect(read.count).toBe(3)
+    })
+
+    it('상한 안이면 조각을 모두 이어 붙인다', async () => {
+      const read = { count: 0 }
+      const chunks = [Buffer.from('Cr2'), Buffer.from('4rest')]
+      const buf = await downloadCrx('https://x', async () => streamResponse(chunks, read), 1000)
+      expect(buf.toString('utf8')).toBe('Cr24rest')
+    })
   })
 })
 

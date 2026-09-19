@@ -20,6 +20,12 @@ export interface EngineDeps extends PushDeps {
    */
   onCycleStart?: () => Promise<void>
   /**
+   * 풀이 끝나고 푸시가 시작되기 **전에** 불린다.
+   * 설정 최초 업로드가 여기 붙는다 — "서버에 이 키가 있었는가" 는 풀을 한 번 돌려 봐야
+   * 알 수 있고, 여기서 변경 로그에 얹으면 바로 이어지는 푸시가 같은 주기에 보낸다(C1)
+   */
+  onAfterPull?: () => void
+  /**
    * 인증이 만료됐을 때 한 번 불린다. 로그아웃·금고 잠금 연결은 호출부(Task 9)가 한다 —
    * 엔진은 여기서 아무것도 스스로 정리하지 않는다
    */
@@ -100,6 +106,7 @@ export class SyncEngine {
       await this.deps.onCycleStart?.()
       // 먼저 받고(pull) 나서 보낸다(push) — 로컬 변경이 원격 최신본 위에 얹히도록
       const pulled = await pullAll(this.deps)
+      this.deps.onAfterPull?.()
       await pushAll(this.deps)
       this.online = true
       // 키 재료 불일치는 통신 실패가 아니다 — 연결은 살아 있고 경고만 상태에 싣는다

@@ -253,7 +253,7 @@
       "excludedHostsDesc": "Comma-separated list (e.g. bank.example.com, gov.example.com)",
       "excludedHostsPlaceholder": "example.com, another.com",
       "keepSignedIn": "Tick “keep me signed in”",
-      "keepSignedInDesc": "Turns on the “keep me signed in” checkbox when signing in, so the session lasts longer and fewer captchas appear"
+      "keepSignedInDesc": "Turns on the “keep me signed in” checkbox when signing in, so the session lasts longer and fewer captchas appear. Turn it off on a shared PC — the next person would land on your signed-in session"
     },
     "detail": {
       "openInBrowser": "Open in browser",

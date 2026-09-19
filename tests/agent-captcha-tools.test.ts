@@ -217,8 +217,10 @@ describe('login — 캡차·2FA 사용자 넘김', () => {
   })
 })
 
-describe('get_page — 캡차 징후를 만나면 사용자에게 넘긴다', () => {
-  it('넘김 결과와 새로 읽은 화면을 함께 돌려준다', async () => {
+// 3차 리뷰 I5 — 읽기 도구는 넘김을 **시작하지 않는다**.
+// get_page 가 넘김을 걸면 화면을 한 번 읽어 보려던 호출이 최장 10분 막힌다
+describe('get_page — 캡차 징후는 알리기만 하고 기다리지 않는다', () => {
+  it('넘김을 시작하지 않고 안내와 화면을 함께 돌려준다', async () => {
     pageBridge.captchaHint.mockResolvedValue({ needsUser: true, matched: 'captcha frame' })
     const handoff = vi.fn(async () => ({
       outcome: 'resumed' as const,
@@ -226,15 +228,34 @@ describe('get_page — 캡차 징후를 만나면 사용자에게 넘긴다', ()
     }))
     const { tools } = build({ handoff })
     const r = await run(tools.get_page)
-    expect(r).toMatch(/^user completed the check/)
-    expect(pageBridge.snapshot).toHaveBeenCalledTimes(2)
+    expect(r).toMatch(/^needs_user: captcha \(captcha frame\)/)
+    expect(r).toContain('URL: https://shop.example/')
+    expect(handoff).not.toHaveBeenCalled()
+    // 넘김이 없으니 화면도 한 번만 읽는다
+    expect(pageBridge.snapshot).toHaveBeenCalledTimes(1)
   })
 
   it('징후가 없으면 평소처럼 화면만 돌려준다', async () => {
     const handoff = vi.fn(async () => ({ outcome: 'skipped' as const, url: '' }))
     const { tools } = build({ handoff })
     const r = await run(tools.get_page)
-    expect(r).not.toMatch(/user completed/)
+    expect(r).not.toMatch(/needs_user/)
     expect(handoff).not.toHaveBeenCalled()
+  })
+})
+
+// 3차 리뷰 I5 — 감시 중에 탭이 사라지면 currentUrl 이 던진다.
+// 그대로 전파하면 도구 호출 전체가 예외로 끝나 모델이 아무 정보도 받지 못한다
+describe('넘김 도중 탭이 사라지면 넘김만 접는다', () => {
+  it('login 이 예외로 끝나지 않고 취소 안내를 돌려준다', async () => {
+    pageBridge.findLoginFields.mockResolvedValue(FULL_FORM)
+    pageBridge.captchaHint.mockResolvedValue({ needsUser: true, matched: 'captcha' })
+    const handoff = vi.fn(async () => {
+      throw new Error('Object has been destroyed')
+    })
+    const { tools } = build({ handoff })
+    const r = await run(tools.login)
+    expect(handoff).toHaveBeenCalled()
+    expect(r).toMatch(/handoff was cancelled/)
   })
 })

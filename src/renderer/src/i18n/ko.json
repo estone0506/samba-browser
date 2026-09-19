@@ -253,7 +253,7 @@
       "excludedHostsDesc": "쉼표로 구분해서 입력하세요 (예: bank.example.com, gov.example.com)",
       "excludedHostsPlaceholder": "example.com, another.com",
       "keepSignedIn": "로그인 상태 유지 자동 체크",
-      "keepSignedInDesc": "로그인할 때 '로그인 상태 유지' 체크박스를 켭니다. 세션이 오래 유지돼 재로그인과 캡차가 줄어듭니다"
+      "keepSignedInDesc": "로그인할 때 '로그인 상태 유지' 체크박스를 켭니다. 세션이 오래 유지돼 재로그인과 캡차가 줄어듭니다. 공용 PC 에서는 다음 사람이 로그인된 화면을 그대로 보게 되니 꺼 두세요"
     },
     "detail": {
       "openInBrowser": "브라우저에서 열기",

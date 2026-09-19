@@ -3,6 +3,7 @@ import {
   AuthExpiredError,
   DEFAULT_SELECT_LIMIT,
   isAfterCursor,
+  isAtOrAfterCursor,
   toPullCursor,
   type RemoteKeyedRow,
   type RemoteRow,
@@ -118,12 +119,16 @@ export function createFakeBackend(): FakeBackend {
       calls.select += 1
       const c = toPullCursor(cursor)
       const idOf = (r: Record<string, unknown>): string => String(r.id)
-      return [...table(name).values()]
-        .filter((r) => isAfterCursor(updatedAtMs(r), idOf(r), c))
-        .filter((r) => workspaceId === undefined || r.workspace_id === workspaceId)
-        .sort((a, b) => byUpdatedAtThenId(a, b, idOf))
-        .slice(0, limit ?? DEFAULT_SELECT_LIMIT)
-        .map((r) => ({ ...r }))
+      return (
+        [...table(name).values()]
+          // 서버와 같은 순서 — 먼저 넓게(>= ts) 고르고, 그 뒤 (ts, id) 로 정확히 거른다
+          .filter((r) => isAtOrAfterCursor(updatedAtMs(r), c))
+          .filter((r) => isAfterCursor(updatedAtMs(r), idOf(r), c))
+          .filter((r) => workspaceId === undefined || r.workspace_id === workspaceId)
+          .sort((a, b) => byUpdatedAtThenId(a, b, idOf))
+          .slice(0, limit ?? DEFAULT_SELECT_LIMIT)
+          .map((r) => ({ ...r }))
+      )
     },
     async selectAll(name) {
       guard()
@@ -144,6 +149,7 @@ export function createFakeBackend(): FakeBackend {
       // 이 표에는 id 컬럼이 없다 — 동률 판정·정렬에 key 를 쓴다
       const idOf = (r: Record<string, unknown>): string => String(r.key)
       return [...keyedTable(name).values()]
+        .filter((r) => isAtOrAfterCursor(updatedAtMs(r), c))
         .filter((r) => isAfterCursor(updatedAtMs(r), idOf(r), c))
         .filter((r) => workspaceId === undefined || r.workspace_id === workspaceId)
         .sort((a, b) => byUpdatedAtThenId(a, b, idOf))

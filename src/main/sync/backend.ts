@@ -40,6 +40,19 @@ export function isAfterCursor(ts: number, id: string, cursor: PullCursor): boole
   return cursor.id !== null && ts === cursor.ts && id > cursor.id
 }
 
+/**
+ * 서버에 거는 **넓은** 조건 — 커서 시각 이상인가.
+ *
+ * 로컬 커서는 ms 이고 서버의 timestamptz 는 µs 다. 커서를 만든 행의 실제 값이
+ * 12:00:00.123456 이어도 커서에는 …123 만 남아, `updated_at > …123.000` 같은 좁은 조건을
+ * 걸면 µs 자리를 가진 같은 ms 의 행이 조건 밖으로 새어 나갈 수 있다.
+ * 그래서 서버에는 `>=` 로 넓게 걸어 **받고**, 실제 통과 여부는 받은 뒤 (ts, id) 로 거른다
+ * (isAfterCursor). 가짜 백엔드도 같은 순서를 쓴다
+ */
+export function isAtOrAfterCursor(ts: number, cursor: PullCursor): boolean {
+  return ts >= cursor.ts
+}
+
 /** 한 번에 받아 올 최대 행 수의 기본값(supabase 기본 상한과 같다) */
 export const DEFAULT_SELECT_LIMIT = 1000
 

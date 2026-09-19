@@ -90,26 +90,56 @@ export function safeEntryPath(destRoot: string, entryName: string): string {
 }
 
 /**
- * ZIP 을 대상 폴더에 해제한다.
- * 한 항목이라도 폴더 밖을 가리키면 아무것도 쓰지 않고 던진다(먼저 전부 검사한다)
+ * 해제 후 총 바이트 상한 — 50MB 짜리 CRX 가 수십 GB 로 부풀 수 있다(zip bomb).
+ * 웹스토어 확장은 압축을 풀어도 보통 수십 MB 다
  */
-export function extractZip(zip: Buffer, destDir: string): void {
+export const MAX_UNZIPPED_BYTES = 200 * 1024 * 1024
+/** 항목 수 상한 — 작은 파일 수백만 개로 디스크를 채우는 경우를 막는다 */
+export const MAX_ZIP_ENTRIES = 5000
+
+/**
+ * ZIP 을 대상 폴더에 해제한다.
+ * 한 항목이라도 폴더 밖을 가리키거나 상한(항목 수·해제 총량)을 넘으면
+ * 아무것도 쓰지 않고 던진다(먼저 전부 검사한다)
+ */
+export function extractZip(
+  zip: Buffer,
+  destDir: string,
+  limits: { maxBytes?: number; maxEntries?: number } = {}
+): void {
+  const maxBytes = limits.maxBytes ?? MAX_UNZIPPED_BYTES
+  const maxEntries = limits.maxEntries ?? MAX_ZIP_ENTRIES
+  const tooBig = (): Error =>
+    new Error(`확장 압축을 풀면 너무 커져요 (${Math.floor(maxBytes / (1024 * 1024))}MB 초과)`)
+
   const archive = new AdmZip(zip)
   const entries = archive.getEntries()
   if (entries.length === 0) throw new Error('확장 압축 파일이 비어 있어요')
-  // 1) 경로 검사를 먼저 끝낸다 — 반쯤 풀린 폴더를 남기지 않기 위해서다
-  const planned = entries.map((entry) => ({
-    entry,
-    target: safeEntryPath(destDir, entry.entryName)
-  }))
-  // 2) 실제로 쓴다
+  if (entries.length > maxEntries) {
+    throw new Error(`확장 안의 파일이 너무 많아요 (${maxEntries}개 초과)`)
+  }
+  // 1) 경로·크기 검사를 먼저 끝낸다 — 반쯤 풀린 폴더를 남기지 않기 위해서다.
+  //    크기는 헤더의 원본 크기(header.size)로 재, 실제로 풀기 전에 거른다
+  let total = 0
+  const planned = entries.map((entry) => {
+    if (!entry.isDirectory) {
+      total += entry.header.size
+      if (total > maxBytes) throw tooBig()
+    }
+    return { entry, target: safeEntryPath(destDir, entry.entryName) }
+  })
+  // 2) 실제로 쓴다. 헤더가 거짓말을 할 수 있으니 풀면서도 누적량을 다시 잰다
+  let written = 0
   for (const { entry, target } of planned) {
     if (entry.isDirectory) {
       mkdirSync(target, { recursive: true })
       continue
     }
+    const data = entry.getData()
+    written += data.byteLength
+    if (written > maxBytes) throw tooBig()
     mkdirSync(dirname(target), { recursive: true })
-    writeFileSync(target, entry.getData())
+    writeFileSync(target, data)
   }
 }
 
@@ -121,8 +151,66 @@ export interface CrxFetcher {
   ): Promise<{
     ok: boolean
     status: number
+    /** 스트림. 있으면 조각 단위로 읽어 상한을 넘는 즉시 끊는다 */
+    body?: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array> | null
     arrayBuffer: () => Promise<ArrayBuffer>
   }>
+}
+
+/** 상한 초과 메시지 — 스트림 경로와 통짜 경로가 같은 문구를 쓴다 */
+function tooLarge(maxBytes: number): Error {
+  return new Error(`확장 파일이 너무 커요 (${Math.floor(maxBytes / (1024 * 1024))}MB 초과)`)
+}
+
+/**
+ * 응답 몸통을 조각 단위로 모은다. 누적 크기가 상한을 넘으면 그 자리에서 끊는다 —
+ * 통째로 메모리에 올린 뒤 재는 방식은 서버가 무한정 보내면 그대로 따라 커진다.
+ * 스트림을 주지 않는 구현(옛 테스트 스텁)은 arrayBuffer 로 되돌아간다
+ */
+async function readCapped(
+  res: {
+    body?: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array> | null
+    arrayBuffer: () => Promise<ArrayBuffer>
+  },
+  maxBytes: number,
+  abort: () => void
+): Promise<Buffer> {
+  const body = res.body
+  if (!body) {
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length > maxBytes) throw tooLarge(maxBytes)
+    return buf
+  }
+  // web ReadableStream 과 node 스트림(AsyncIterable) 을 모두 받는다
+  const iterable =
+    Symbol.asyncIterator in body
+      ? (body as AsyncIterable<Uint8Array>)
+      : streamToIterable(body as ReadableStream<Uint8Array>)
+  const chunks: Buffer[] = []
+  let total = 0
+  for await (const chunk of iterable) {
+    total += chunk.byteLength
+    if (total > maxBytes) {
+      // 더 받지 않는다 — 연결을 끊고 모아 둔 조각도 버린다
+      abort()
+      throw tooLarge(maxBytes)
+    }
+    chunks.push(Buffer.from(chunk))
+  }
+  return Buffer.concat(chunks, total)
+}
+
+async function* streamToIterable(stream: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
+  const reader = stream.getReader()
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) return
+      if (value) yield value
+    }
+  } finally {
+    reader.releaseLock?.()
+  }
 }
 
 /** CRX 를 내려받는다. 크기 상한·제한 시간을 넘기면 던진다 */
@@ -137,8 +225,7 @@ export async function downloadCrx(
   try {
     const res = await fetchImpl(url, { signal: controller.signal })
     if (!res.ok) throw new Error(`내려받기에 실패했어요 (HTTP ${res.status})`)
-    const buf = Buffer.from(await res.arrayBuffer())
-    if (buf.length > maxBytes) throw new Error('확장 파일이 너무 커요 (50MB 초과)')
+    const buf = await readCapped(res, maxBytes, () => controller.abort())
     if (buf.length === 0) throw new Error('내려받은 파일이 비어 있어요')
     return buf
   } catch (e: unknown) {

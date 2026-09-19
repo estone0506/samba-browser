@@ -6,7 +6,7 @@
 // 그 복사본만 ExtensionManager.add 로 로드한다.
 
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import type { ImportBrowserDto, ImportExtensionDto } from '../../shared/extensions'
 
 /** 가져오기를 지원하는 브라우저 한 종류 */
@@ -132,8 +132,14 @@ const ICON_MIME: Record<string, string> = {
 export function readIconDataUrl(extDir: string, relative: string | null): string | undefined {
   if (!relative) return undefined
   const file = join(extDir, ...relative.split(/[\\/]+/))
-  // 확장 폴더 밖을 가리키는 아이콘 경로는 읽지 않는다
-  if (!file.startsWith(extDir)) return undefined
+  // 확장 폴더 밖을 가리키는 아이콘 경로는 읽지 않는다.
+  // 접두 비교는 반드시 구분자까지 포함해야 한다 — `...\ext` 옆의 `...\ext-evil` 이
+  // 단순 startsWith 를 통과해 버린다
+  const root = resolve(extDir)
+  const target = resolve(file)
+  if (target !== root && !target.startsWith(root.endsWith(sep) ? root : root + sep)) {
+    return undefined
+  }
   if (!existsSync(file)) return undefined
   const dot = file.lastIndexOf('.')
   const mime = ICON_MIME[file.slice(dot).toLowerCase()]
