@@ -95,6 +95,8 @@ export const DEFAULT_SETTINGS = {
   extensionPaths: [] as string[],
   // 확장 경로별 출처(스토어/가져옴/폴더). 기록이 없으면 'folder' 로 본다
   extensionSources: {} as Record<string, ExtensionSource>,
+  // 꺼 둔 확장의 id. 목록·경로는 그대로 두고 세션에만 올리지 않는다
+  disabledExtensionIds: [] as string[],
   // 모양(기기 로컬 — 동기화하지 않는다)
   theme: 'system' as ThemeMode,
   uiZoom: 100,
@@ -182,6 +184,7 @@ export const settingsSchema = z.object({
   extensionSources: z
     .record(z.string(), z.enum(EXTENSION_SOURCES))
     .catch(DEFAULT_SETTINGS.extensionSources),
+  disabledExtensionIds: z.array(z.string()).catch(DEFAULT_SETTINGS.disabledExtensionIds),
   // 모양 — 범위를 벗어나거나 타입이 틀리면 기본값으로 되돌린다
   theme: z.enum(THEME_MODES).catch(DEFAULT_SETTINGS.theme),
   uiZoom: z.number().int().min(MIN_UI_ZOOM).max(MAX_UI_ZOOM).catch(DEFAULT_SETTINGS.uiZoom),

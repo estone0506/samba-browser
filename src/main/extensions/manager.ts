@@ -36,6 +36,15 @@ export interface ExtensionManifest {
   name: string
   version: string
   manifestVersion: 2 | 3
+  /** 카드 설명(없으면 빈 문자열) */
+  description: string
+  /** permissions + host_permissions 를 합친 것. 세부정보의 권한 요약에 쓴다 */
+  permissions: string[]
+}
+
+/** manifest 의 문자열 배열 필드를 안전하게 읽는다(형식이 틀리면 빈 배열) */
+function stringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
 }
 
 /** 지원하는 manifest 버전 — MV1 은 크로미움이 더 이상 읽지 않는다 */
@@ -58,7 +67,15 @@ export function parseManifest(raw: unknown): ExtensionManifest {
   if (!SUPPORTED_MANIFEST_VERSIONS.includes(manifestVersion)) {
     throw new Error('지원하지 않는 manifest_version 이에요 (2 또는 3만 지원)')
   }
-  return { name, version, manifestVersion: manifestVersion as 2 | 3 }
+  // 권한은 화면에 보여 주기만 하는 값이라, 형식이 틀려도 거부하지 않고 걸러 낸다
+  const permissions = [...stringArray(o.permissions), ...stringArray(o.host_permissions)]
+  return {
+    name,
+    version,
+    manifestVersion: manifestVersion as 2 | 3,
+    description: typeof o.description === 'string' ? o.description.trim() : '',
+    permissions
+  }
 }
 
 /**
@@ -162,13 +179,14 @@ export class ExtensionManager {
     this.hosts.push(host)
   }
 
-  /** 설정에 저장된 경로·출처를 현재 목록으로 덮어쓴다 */
+  /** 설정에 저장된 경로·출처·꺼 둔 확장을 현재 목록으로 덮어쓴다 */
   private persist(): void {
     const sources: Record<string, ExtensionSource> = {}
     for (const e of this.entries) sources[e.path] = e.source
     this.settings.set({
       extensionPaths: this.entries.map((e) => e.path),
-      extensionSources: sources
+      extensionSources: sources,
+      disabledExtensionIds: this.entries.filter((e) => !e.enabled).map((e) => e.id)
     })
   }
 
@@ -192,6 +210,7 @@ export class ExtensionManager {
    */
   async loadSaved(): Promise<ExtensionDto[]> {
     const saved = this.settings.get().extensionPaths
+    const disabled = new Set(this.settings.get().disabledExtensionIds)
     this.entries = []
     this.failures = []
     const seen = new Set<string>()
@@ -199,7 +218,14 @@ export class ExtensionManager {
       if (seen.has(path)) continue
       seen.add(path)
       try {
-        this.entries.push(await this.loadInto(this.hosts[0], path, this.sourceOf(path)))
+        const dto = await this.loadInto(this.hosts[0], path, this.sourceOf(path))
+        // 확장 id 는 세션에 올려 봐야 알 수 있어서, 꺼 둔 확장도 일단 올린 뒤 바로 걷어낸다.
+        // 목록에는 남아 있어야 화면에서 다시 켤 수 있다
+        if (disabled.has(dto.id)) {
+          dto.enabled = false
+          this.removeFromHosts(dto.id)
+        }
+        this.entries.push(dto)
       } catch (e: unknown) {
         this.failures.push({ path, error: messageOf(e) })
         console.error('확장 로드 실패', path, messageOf(e))
@@ -224,8 +250,51 @@ export class ExtensionManager {
       name: loaded.name?.trim() || manifest.name,
       version: loaded.version?.trim() || manifest.version,
       path: resolved,
-      source
+      source,
+      description: manifest.description,
+      permissions: manifest.permissions,
+      enabled: true
     }
+  }
+
+  /** 모든 세션에서 확장을 걷어낸다. 한 세션이 실패해도 나머지는 계속 걷어낸다 */
+  private removeFromHosts(id: string): void {
+    for (const host of this.hosts) {
+      try {
+        host.removeExtension(id)
+      } catch (e: unknown) {
+        console.error('확장 제거 실패', messageOf(e))
+      }
+    }
+  }
+
+  /**
+   * 확장을 켜거나 끈다. 끄면 세션에서만 걷어내고 목록·경로는 그대로 두므로
+   * 다시 켤 때 폴더를 고를 필요가 없다.
+   *
+   * 켜는 쪽이 실패하면(폴더가 사라졌다 등) 꺼진 상태 그대로 두고 던진다 —
+   * 켜졌다고 표시해 놓고 실제로는 안 도는 상태가 더 나쁘기 때문이다
+   */
+  async setEnabled(id: string, enabled: boolean): Promise<ExtensionDto> {
+    const entry = this.entries.find((e) => e.id === id)
+    if (!entry) throw new Error('목록에 없는 확장이에요')
+    if (entry.enabled === enabled) return { ...entry }
+    if (enabled) {
+      // 첫 세션이 실패하면 아무것도 바꾸지 않는다
+      await this.hosts[0].loadExtension(entry.path)
+      for (const host of this.hosts.slice(1)) {
+        try {
+          await host.loadExtension(entry.path)
+        } catch (e: unknown) {
+          this.failures.push({ path: entry.path, error: messageOf(e) })
+        }
+      }
+    } else {
+      this.removeFromHosts(id)
+    }
+    entry.enabled = enabled
+    this.persist()
+    return { ...entry }
   }
 
   /**
@@ -265,14 +334,9 @@ export class ExtensionManager {
   remove(id: string): void {
     const index = this.entries.findIndex((e) => e.id === id)
     if (index < 0) throw new Error('목록에 없는 확장이에요')
-    this.entries.splice(index, 1)
-    for (const host of this.hosts) {
-      try {
-        host.removeExtension(id)
-      } catch (e: unknown) {
-        console.error('확장 제거 실패', messageOf(e))
-      }
-    }
+    const [removed] = this.entries.splice(index, 1)
+    // 꺼 둔 확장은 이미 세션에 없으므로 다시 걷어낼 것이 없다
+    if (removed.enabled) this.removeFromHosts(id)
     this.persist()
   }
 
@@ -283,6 +347,7 @@ export class ExtensionManager {
   async attachHost(host: ExtensionHost): Promise<void> {
     this.hosts.push(host)
     for (const entry of this.entries) {
+      if (!entry.enabled) continue
       try {
         await host.loadExtension(entry.path)
       } catch (e: unknown) {

@@ -111,6 +111,7 @@ export const IPC = {
   extList: 'ext:list',
   extLoad: 'ext:load', // 경로를 안 주면 메인에서 폴더 선택 다이얼로그를 연다
   extRemove: 'ext:remove',
+  extSetEnabled: 'ext:setEnabled', // 목록에는 남기고 세션에서만 올리거나 걷어낸다
   extImportSources: 'ext:importSources', // 다른 브라우저에 설치된 확장 목록
   extImportFrom: 'ext:importFrom', // 고른 확장을 앱 데이터로 복사해서 로드
   extInstallWebstore: 'ext:installWebstore', // 웹스토어 주소 또는 32자 id

@@ -49,7 +49,13 @@ function makeHost(fail: (path: string) => boolean = () => false): ExtensionHost 
 describe('확장 manifest 검증', () => {
   it('name·version·manifest_version(3) 이 있으면 통과한다', () => {
     const m = parseManifest({ name: '테스트', version: '1.2.3', manifest_version: 3 })
-    expect(m).toEqual({ name: '테스트', version: '1.2.3', manifestVersion: 3 })
+    expect(m).toEqual({
+      name: '테스트',
+      version: '1.2.3',
+      manifestVersion: 3,
+      description: '',
+      permissions: []
+    })
   })
 
   it('manifest_version 2 도 허용한다', () => {
@@ -63,6 +69,30 @@ describe('확장 manifest 검증', () => {
   it('name 이나 version 이 비면 거부한다', () => {
     expect(() => parseManifest({ version: '1', manifest_version: 3 })).toThrow()
     expect(() => parseManifest({ name: 'a', manifest_version: 3 })).toThrow()
+  })
+
+  it('permissions 와 host_permissions 를 합쳐 권한 요약으로 돌려준다', () => {
+    const m = parseManifest({
+      name: 'a',
+      version: '1',
+      manifest_version: 3,
+      description: '  설명  ',
+      permissions: ['tabs', 'storage'],
+      host_permissions: ['https://example.com/*']
+    })
+    expect(m.permissions).toEqual(['tabs', 'storage', 'https://example.com/*'])
+    expect(m.description).toBe('설명')
+  })
+
+  it('권한 형식이 틀려도 거부하지 않고 걸러 낸다(화면 표시용 값이다)', () => {
+    const m = parseManifest({
+      name: 'a',
+      version: '1',
+      manifest_version: 3,
+      permissions: ['tabs', 7, null],
+      host_permissions: '문자열'
+    })
+    expect(m.permissions).toEqual(['tabs'])
   })
 
   it('객체가 아니면 거부한다', () => {
@@ -244,7 +274,9 @@ describe('ExtensionManager', () => {
     expect(readExtensionFolder(dir)).toEqual({
       name: '읽기',
       version: '1.0.0',
-      manifestVersion: 3
+      manifestVersion: 3,
+      description: '',
+      permissions: []
     })
   })
 
@@ -287,6 +319,95 @@ describe('ExtensionManager', () => {
 
     expect(dto.path).toBe(realpathSync(real))
     expect(host.loaded).toEqual([realpathSync(real)])
+  })
+
+  it('끄면 세션에서만 빠지고 목록·경로는 그대로 남는다', async () => {
+    const host = makeHost()
+    const mgr = new ExtensionManager(host, settings)
+    const dir = makeFolder('toggle', validManifest('토글'))
+    const dto = await mgr.add(dir)
+
+    const off = await mgr.setEnabled(dto.id, false)
+
+    expect(off.enabled).toBe(false)
+    expect(host.removed).toEqual([dto.id])
+    // 다시 켤 수 있어야 하므로 목록과 저장된 경로는 그대로다
+    expect(mgr.list()).toHaveLength(1)
+    expect(settings.get().extensionPaths).toEqual([dir])
+    expect(settings.get().disabledExtensionIds).toEqual([dto.id])
+  })
+
+  it('다시 켜면 세션에 한 번 더 로드하고 꺼짐 목록에서 빠진다', async () => {
+    const host = makeHost()
+    const mgr = new ExtensionManager(host, settings)
+    const dir = makeFolder('again', validManifest('다시'))
+    const dto = await mgr.add(dir)
+    await mgr.setEnabled(dto.id, false)
+
+    const on = await mgr.setEnabled(dto.id, true)
+
+    expect(on.enabled).toBe(true)
+    expect(host.loaded).toEqual([dir, dir])
+    expect(settings.get().disabledExtensionIds).toEqual([])
+  })
+
+  it('같은 상태로 다시 부르면 세션을 건드리지 않는다', async () => {
+    const host = makeHost()
+    const mgr = new ExtensionManager(host, settings)
+    const dto = await mgr.add(makeFolder('noop', validManifest('그대로')))
+
+    await mgr.setEnabled(dto.id, true)
+
+    expect(host.loaded).toHaveLength(1)
+    expect(host.removed).toHaveLength(0)
+  })
+
+  it('없는 id 를 켜고 끄면 throw 한다', async () => {
+    const mgr = new ExtensionManager(makeHost(), settings)
+    await expect(mgr.setEnabled('없는-id', false)).rejects.toThrow()
+  })
+
+  it('켜다가 실패하면 꺼진 상태 그대로 둔다', async () => {
+    const dir = makeFolder('fail-on', validManifest('실패'))
+    let blocked = false
+    const host = makeHost(() => blocked)
+    const mgr = new ExtensionManager(host, settings)
+    const dto = await mgr.add(dir)
+    await mgr.setEnabled(dto.id, false)
+
+    blocked = true
+    await expect(mgr.setEnabled(dto.id, true)).rejects.toThrow()
+
+    expect(mgr.list()[0].enabled).toBe(false)
+    expect(settings.get().disabledExtensionIds).toEqual([dto.id])
+  })
+
+  it('loadSaved 는 꺼 둔 확장을 목록에 남기되 세션에서는 걷어낸다', async () => {
+    const on = makeFolder('on', validManifest('켜짐'))
+    const off = makeFolder('off', validManifest('꺼짐'))
+    settings.set({ extensionPaths: [on, off] })
+    const host = makeHost()
+    // 가짜 호스트는 로드 순서대로 id 를 주므로 두 번째가 id-2 다
+    settings.set({ disabledExtensionIds: ['id-2'] })
+    const mgr = new ExtensionManager(host, settings)
+
+    const list = await mgr.loadSaved()
+
+    expect(list.map((e) => e.enabled)).toEqual([true, false])
+    expect(host.removed).toEqual(['id-2'])
+    expect(settings.get().extensionPaths).toEqual([on, off])
+  })
+
+  it('attachHost 는 꺼 둔 확장을 새 세션에 올리지 않는다', async () => {
+    const mgr = new ExtensionManager(makeHost(), settings)
+    const kept = await mgr.add(makeFolder('kept', validManifest('켜짐')))
+    const hidden = await mgr.add(makeFolder('hidden', validManifest('꺼짐')))
+    await mgr.setEnabled(hidden.id, false)
+
+    const second = makeHost()
+    await mgr.attachHost(second)
+
+    expect(second.loaded).toEqual([kept.path])
   })
 
   it('extensionPaths 는 동기화 대상이 아니다(기기 로컬 설정)', async () => {
