@@ -1,11 +1,23 @@
-// AI 연결 경로 감지. Claude Code 로그인 여부는 자격 파일 존재 + `claude --version` 으로 본다.
-// 어떤 반환값에도 키·토큰이 담기지 않는다(마스킹 문자열만 실어 보낸다)
+// AI 연결 경로 감지. 구독(Claude Code · Codex CLI)은 자격 파일 존재 + `--version` 으로 본다.
+//
+// **중요**: 자격 파일이 있다고 해서 "연결됨" 이 아니다. 사용자가 설정에서 [연결] 을 누른
+// 기록(settings.aiConnections)이 있어야 connected 이고, 그 전에는 '연결 가능(available)'
+// 으로만 보이며 에이전트는 그 경로를 쓰지 않는다.
+//
+// 어떤 반환값에도 키·토큰이 담기지 않는다(표시용 계정 문자열과 마스킹 문자열만 실어 보낸다)
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
-import type { AiProviderStatus, ApiKeyVendor } from '../../shared/ai'
+import {
+  connectionKeyOf,
+  type AiConnections,
+  type AiProviderState,
+  type AiProviderStatus,
+  type ApiKeyVendor,
+  type SubscriptionProviderId
+} from '../../shared/ai'
 
 export const VERSION_TIMEOUT_MS = 3000
 
@@ -18,21 +30,99 @@ export const CLAUDE_CREDENTIAL_PATHS = [
   join(homedir(), '.claude.json')
 ]
 
+// OpenAI Codex CLI 의 로그인 자격(`codex login` 이 만든다)
+export const CODEX_CREDENTIAL_PATHS = [join(homedir(), '.codex', 'auth.json')]
+
+// Claude 는 계정 정보를 ~/.claude.json 의 oauthAccount 에 둔다(자격 파일에는 이메일이 없다)
+export const CLAUDE_ACCOUNT_PATH = join(homedir(), '.claude.json')
+export const CODEX_ACCOUNT_PATH = join(homedir(), '.codex', 'auth.json')
+
+/** 구독 경로별 실행 파일 이름 · 자격 파일 자리 · 로그인 명령 */
+export const SUBSCRIPTION_CLI: Record<
+  SubscriptionProviderId,
+  { bin: string; credentialPaths: string[]; loginCommand: string }
+> = {
+  claude_subscription: {
+    bin: 'claude',
+    credentialPaths: CLAUDE_CREDENTIAL_PATHS,
+    loginCommand: 'claude login'
+  },
+  codex_subscription: {
+    bin: 'codex',
+    credentialPaths: CODEX_CREDENTIAL_PATHS,
+    loginCommand: 'codex login'
+  }
+}
+
 export interface ProviderProbes {
   fileExists: (path: string) => boolean
-  runVersion: () => Promise<boolean>
+  /** `<bin> --version` 이 성공하는가 */
+  runVersion: (provider: SubscriptionProviderId) => Promise<boolean>
+  /** 표시용 계정 문자열(이메일 등). 못 읽으면 null — 토큰은 절대 돌려주지 않는다 */
+  readAccount: (provider: SubscriptionProviderId) => string | null
 }
 
 export function defaultProbes(): ProviderProbes {
   return {
     fileExists: existsSync,
-    runVersion: () =>
+    runVersion: (provider) =>
       new Promise((resolve) => {
-        const child = execFile('claude', ['--version'], { timeout: VERSION_TIMEOUT_MS }, (err) => {
-          resolve(!err)
-        })
+        const child = execFile(
+          SUBSCRIPTION_CLI[provider].bin,
+          ['--version'],
+          { timeout: VERSION_TIMEOUT_MS },
+          (err) => resolve(!err)
+        )
         child.on('error', () => resolve(false))
-      })
+      }),
+    readAccount: (provider) => readAccountFromDisk(provider)
+  }
+}
+
+/** 자격/계정 파일에서 표시용 계정만 뽑는다. 파일을 못 읽어도 조용히 null */
+export function readAccountFromDisk(
+  provider: SubscriptionProviderId,
+  readFile: (path: string) => string = (p) => readFileSync(p, 'utf8')
+): string | null {
+  try {
+    if (provider === 'claude_subscription') return parseClaudeAccount(readFile(CLAUDE_ACCOUNT_PATH))
+    return parseCodexAccount(readFile(CODEX_ACCOUNT_PATH))
+  } catch {
+    // 파일 없음·권한 없음·깨진 JSON 모두 "계정 모름" 으로 본다(값은 로그에 남기지 않는다)
+    return null
+  }
+}
+
+/** ~/.claude.json 의 oauthAccount 에서 이메일만 꺼낸다(토큰은 이 파일에 없다) */
+export function parseClaudeAccount(raw: string): string | null {
+  const parsed: unknown = JSON.parse(raw)
+  if (!parsed || typeof parsed !== 'object') return null
+  const account = (parsed as Record<string, unknown>).oauthAccount
+  if (!account || typeof account !== 'object') return null
+  const email = (account as Record<string, unknown>).emailAddress
+  return typeof email === 'string' && email.trim() ? email.trim() : null
+}
+
+/**
+ * ~/.codex/auth.json 의 id_token(JWT) 에서 email 클레임만 꺼낸다.
+ * 서명은 검증하지 않는다 — 이 값은 화면 표시에만 쓰고 권한 판정에는 쓰지 않는다
+ */
+export function parseCodexAccount(raw: string): string | null {
+  const parsed: unknown = JSON.parse(raw)
+  if (!parsed || typeof parsed !== 'object') return null
+  const tokens = (parsed as Record<string, unknown>).tokens
+  const idToken =
+    tokens && typeof tokens === 'object' ? (tokens as Record<string, unknown>).id_token : null
+  if (typeof idToken !== 'string') return null
+  const payload = idToken.split('.')[1]
+  if (!payload) return null
+  try {
+    const json: unknown = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
+    if (!json || typeof json !== 'object') return null
+    const email = (json as Record<string, unknown>).email
+    return typeof email === 'string' && email.trim() ? email.trim() : null
+  } catch {
+    return null
   }
 }
 
@@ -53,36 +143,62 @@ function withTimeout(p: Promise<boolean>, ms: number): Promise<boolean> {
   })
 }
 
-/** Claude 구독(= Claude Code 로그인) 상태 */
-export async function detectClaudeSubscription(
+/** CLI 설치 여부 + 자격 파일 존재 여부. 연결 여부(사용자 동의)는 여기서 보지 않는다 */
+export async function probeSubscription(
+  provider: SubscriptionProviderId,
   probes: ProviderProbes,
   timeoutMs: number = VERSION_TIMEOUT_MS
+): Promise<{ installed: boolean; hasCredential: boolean }> {
+  const installed = await withTimeout(probes.runVersion(provider), timeoutMs)
+  if (!installed) return { installed: false, hasCredential: false }
+  const hasCredential = SUBSCRIPTION_CLI[provider].credentialPaths.some((p) => probes.fileExists(p))
+  return { installed, hasCredential }
+}
+
+/**
+ * 구독 카드 상태.
+ * 설치 안 됨 → 자격 없음(로그인 필요) → 자격 있고 미연결(연결 가능) → 연결됨 순으로 판정한다
+ */
+export async function detectSubscription(
+  provider: SubscriptionProviderId,
+  probes: ProviderProbes,
+  connections: AiConnections,
+  timeoutMs: number = VERSION_TIMEOUT_MS
 ): Promise<AiProviderStatus> {
-  const installed = await withTimeout(probes.runVersion(), timeoutMs)
-  if (!installed) {
-    return { id: 'claude_subscription', state: 'not_installed', maskedKeys: {} }
-  }
-  const loggedIn = CLAUDE_CREDENTIAL_PATHS.some((p) => probes.fileExists(p))
+  const { installed, hasCredential } = await probeSubscription(provider, probes, timeoutMs)
+  const record = connections[connectionKeyOf(provider)] ?? { connected: false }
+  let state: AiProviderState
+  if (!installed) state = 'not_installed'
+  else if (!hasCredential) state = 'needs_login'
+  else state = record.connected ? 'connected' : 'available'
+  // 연결된 카드는 저장해 둔 계정을, 아직 미연결이면 지금 파일에서 읽은 계정을 보여 준다
+  const account = state === 'connected' ? (record.account ?? undefined) : undefined
+  const preview = state === 'available' ? (probes.readAccount(provider) ?? undefined) : undefined
   return {
-    id: 'claude_subscription',
-    state: loggedIn ? 'connected' : 'needs_login',
-    maskedKeys: {}
+    id: provider,
+    state,
+    maskedKeys: {},
+    connected: state === 'connected',
+    account: account ?? preview
   }
 }
 
 /**
- * 제공자 카드 3종. `maskedKeys` 는 ApiKeyStore.masked() 결과만 받는다 —
+ * 제공자 카드 4종. `maskedKeys` 는 ApiKeyStore.masked() 결과만 받는다 —
  * 평문 키는 이 함수의 입력도 출력도 아니다
  */
 export async function detectProviders(
   probes: ProviderProbes,
   maskedKeys: Partial<Record<ApiKeyVendor, string>>,
+  connections: AiConnections,
   timeoutMs: number = VERSION_TIMEOUT_MS
 ): Promise<AiProviderStatus[]> {
-  const subscription = await detectClaudeSubscription(probes, timeoutMs)
+  const claude = await detectSubscription('claude_subscription', probes, connections, timeoutMs)
+  const codex = await detectSubscription('codex_subscription', probes, connections, timeoutMs)
   const hasKey = Object.keys(maskedKeys).length > 0
   return [
-    subscription,
+    claude,
+    codex,
     { id: 'api_key', state: hasKey ? 'connected' : 'unset', maskedKeys: { ...maskedKeys } },
     {
       id: 'service_credit',
