@@ -111,8 +111,9 @@ const PAYMENT_PROVIDER_NAMES = [
   'other'
 ] as const satisfies readonly PaymentProvider[]
 
-type PaymentProvidersComplete =
-  [PaymentProvider] extends [(typeof PAYMENT_PROVIDER_NAMES)[number]] ? true : never
+type PaymentProvidersComplete = [PaymentProvider] extends [(typeof PAYMENT_PROVIDER_NAMES)[number]]
+  ? true
+  : never
 const _paymentProvidersComplete: PaymentProvidersComplete = true
 void _paymentProvidersComplete
 

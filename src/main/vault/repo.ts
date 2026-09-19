@@ -32,8 +32,7 @@ export interface VaultItemRow {
 
 // 결제 비밀번호 조회 결과. 못 찾은 이유를 호출부가 구분할 수 있게 담는다
 export type PaymentItemLookup =
-  | { row: VaultItemRow; reason?: undefined }
-  | { row: null; reason: 'not-found' | 'ambiguous' }
+  { row: VaultItemRow; reason?: undefined } | { row: null; reason: 'not-found' | 'ambiguous' }
 
 export interface AccountRow {
   id: number

@@ -15,6 +15,12 @@ import { useVaultStore, type PutSectionInput } from '@renderer/stores/vaultStore
 import { useBrowserStore } from '@renderer/stores/browserStore'
 import { normalizeHost } from '@shared/host'
 import { PasswordGenerator } from './PasswordGenerator'
+import {
+  DEFAULT_PAYMENT_PROVIDER,
+  PAYMENT_PROVIDER_FIELD_KEY,
+  PAYMENT_PROVIDERS,
+  paymentProviderOfSections
+} from '@shared/vault'
 import type { AccountDto, FieldKind, VaultItemMeta, VaultItemType } from '@shared/ipc'
 
 // 항목 종류별 폼 정의(섹션 > 필드). 값은 여기 담지 않고 state 에만 둔다
@@ -22,6 +28,9 @@ interface FieldSpec {
   key: string
   labelKey: string
   kind: FieldKind
+  // kind === 'select' 일 때 고를 값 목록(라벨은 i18n 접두사 + 값으로 만든다)
+  options?: readonly string[]
+  optionLabelPrefix?: string
 }
 
 interface SectionSpec {
@@ -41,11 +50,21 @@ const FORM_SPECS: Record<VaultItemType, SectionSpec[]> = {
       fields: [{ key: 'value', labelKey: 'vault.fieldNames.password', kind: 'secret' }]
     }
   ],
+  // 결제 비밀번호는 계정당 여러 개다 — 어느 결제창의 비밀번호인지 제공자로 구분한다
   password: [
     {
       key: 'main',
       labelKey: 'vault.sections.payment',
-      fields: [{ key: 'value', labelKey: 'vault.fieldNames.password', kind: 'secret' }]
+      fields: [
+        {
+          key: PAYMENT_PROVIDER_FIELD_KEY,
+          labelKey: 'vault.fieldNames.paymentProvider',
+          kind: 'select',
+          options: PAYMENT_PROVIDERS,
+          optionLabelPrefix: 'vault.paymentProvider'
+        },
+        { key: 'value', labelKey: 'vault.fieldNames.password', kind: 'secret' }
+      ]
     }
   ],
   card: [
@@ -100,6 +119,29 @@ interface CustomField {
   kind: FieldKind
 }
 
+/**
+ * 편집 중인 항목의 평문 필드를 폼 초기값으로 옮긴다.
+ * secret 필드는 값이 아예 내려오지 않으므로 여기 담기지 않는다(빈칸 = 기존 값 유지)
+ */
+function initialValues(
+  item: VaultItemMeta | undefined,
+  type: VaultItemType
+): Record<string, string> {
+  const values: Record<string, string> = {}
+  for (const section of item?.sections ?? []) {
+    for (const field of section.fields) {
+      if (field.kind !== 'secret' && field.value !== undefined) values[field.key] = field.value
+    }
+  }
+  // 제공자 필드가 없는 옛 결제 비밀번호는 사이트 자체 결제로 본다
+  if (type === 'password' && values[PAYMENT_PROVIDER_FIELD_KEY] === undefined) {
+    values[PAYMENT_PROVIDER_FIELD_KEY] = item
+      ? paymentProviderOfSections(item.sections)
+      : DEFAULT_PAYMENT_PROVIDER
+  }
+  return values
+}
+
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -130,19 +172,34 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
   const tabHost = normalizeHost(activeTab?.url ?? '')
   const tabUrl = activeTab?.url ?? ''
 
-  const [label, setLabel] = useState(
-    item?.label ?? account?.label ?? (isAccountForm ? tabHost : t(`vault.itemType.${itemType}`))
-  )
+  const [values, setValues] = useState<Record<string, string>>(() => initialValues(item, itemType))
+  // 결제 비밀번호의 기본 라벨은 결제 수단 이름이다(사용자가 '무신사머니'처럼 바꿀 수 있다)
+  const defaultLabel = (): string => {
+    if (isAccountForm) return tabHost
+    if (itemType === 'password') {
+      return t(
+        `vault.paymentProvider.${values[PAYMENT_PROVIDER_FIELD_KEY] ?? DEFAULT_PAYMENT_PROVIDER}`
+      )
+    }
+    return t(`vault.itemType.${itemType}`)
+  }
+  const [label, setLabel] = useState(item?.label ?? account?.label ?? defaultLabel())
+  // 사용자가 라벨을 직접 고쳤는가 — 고치기 전까지는 결제 수단을 바꾸면 라벨도 따라간다
+  const [labelTouched, setLabelTouched] = useState(item !== undefined)
   const [username, setUsername] = useState(account?.username ?? '')
   const [host, setHost] = useState(account?.host ?? (isAccountForm ? tabHost : ''))
-  const [values, setValues] = useState<Record<string, string>>({})
   const [customFields, setCustomFields] = useState<CustomField[]>([])
   const [saving, setSaving] = useState(false)
 
   const specs = FORM_SPECS[itemType]
 
-  const setValue = (key: string, value: string): void =>
+  const setValue = (key: string, value: string): void => {
     setValues((prev) => ({ ...prev, [key]: value }))
+    // 결제 수단을 고르면 손대지 않은 라벨을 그 이름으로 맞춰 준다
+    if (key === PAYMENT_PROVIDER_FIELD_KEY && !labelTouched) {
+      setLabel(t(`vault.paymentProvider.${value}`))
+    }
+  }
 
   // 값이 빈 문자열인 필드는 아예 보내지 않는다 → 메인이 기존 값을 유지한다
   const toSections = (): PutSectionInput[] => {
@@ -230,7 +287,14 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
         </DialogHeader>
         <form onSubmit={submit} className="flex flex-col gap-3">
           <Field label={t('vault.editor.label')}>
-            <Input value={label} onChange={(e) => setLabel(e.target.value)} required />
+            <Input
+              value={label}
+              onChange={(e) => {
+                setLabelTouched(true)
+                setLabel(e.target.value)
+              }}
+              required
+            />
           </Field>
           {isAccountForm && (
             <>
@@ -255,40 +319,57 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
               </h4>
               {section.fields.map((field) => (
                 <Field key={field.key} label={t(field.labelKey)}>
-                  <div className="flex items-center gap-1.5">
-                    <Input
-                      type={
-                        field.kind === 'secret'
-                          ? 'password'
-                          : field.kind === 'date'
-                            ? 'date'
-                            : 'text'
-                      }
-                      autoComplete="off"
-                      data-lpignore="true"
-                      spellCheck={false}
-                      value={values[field.key] ?? ''}
+                  {field.kind === 'select' ? (
+                    <select
+                      value={values[field.key] ?? field.options?.[0] ?? ''}
                       onChange={(e) => setValue(field.key, e.target.value)}
-                      placeholder={item ? t('vault.editor.keepHint') : ''}
-                    />
-                    {field.kind === 'secret' && (
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-9 shrink-0 rounded-[9px]"
-                          >
-                            {t('vault.editor.generate')}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent align="end" className="w-[280px]">
-                          <PasswordGenerator onUse={(pw) => setValue(field.key, pw)} />
-                        </PopoverContent>
-                      </Popover>
-                    )}
-                  </div>
+                      required
+                      className="h-9 w-full rounded-md border border-[var(--line)] bg-transparent px-2 text-[13px] outline-none"
+                    >
+                      {(field.options ?? []).map((option) => (
+                        <option key={option} value={option}>
+                          {field.optionLabelPrefix
+                            ? t(`${field.optionLabelPrefix}.${option}`)
+                            : option}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <Input
+                        type={
+                          field.kind === 'secret'
+                            ? 'password'
+                            : field.kind === 'date'
+                              ? 'date'
+                              : 'text'
+                        }
+                        autoComplete="off"
+                        data-lpignore="true"
+                        spellCheck={false}
+                        value={values[field.key] ?? ''}
+                        onChange={(e) => setValue(field.key, e.target.value)}
+                        placeholder={item ? t('vault.editor.keepHint') : ''}
+                      />
+                      {field.kind === 'secret' && (
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-9 shrink-0 rounded-[9px]"
+                            >
+                              {t('vault.editor.generate')}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent align="end" className="w-[280px]">
+                            <PasswordGenerator onUse={(pw) => setValue(field.key, pw)} />
+                          </PopoverContent>
+                        </Popover>
+                      )}
+                    </div>
+                  )}
                 </Field>
               ))}
             </section>

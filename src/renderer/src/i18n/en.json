@@ -372,6 +372,10 @@
       "copyClearHint": "Cleared from clipboard after 30 seconds",
       "open": "Open",
       "dangerBadge": "Sensitive",
+      "paymentSection": "Payment passwords",
+      "addPayment": "+ Add payment password",
+      "noPayment": "No payment password saved yet",
+      "deleteItem": "Delete",
       "value": "Value",
       "empty": "Select an account or item on the left",
       "auditAction": {
@@ -552,7 +556,18 @@
       "phone": "Phone",
       "passport": "Passport number",
       "idCard": "ID card number",
-      "note": "Note"
+      "note": "Note",
+      "paymentProvider": "Payment method"
+    },
+    "paymentProvider": {
+      "site": "Site's own pay",
+      "toss": "Toss Pay",
+      "kakao": "KakaoPay",
+      "naver": "Naver Pay",
+      "payco": "PAYCO",
+      "samsung": "Samsung Pay",
+      "apple": "Apple Pay",
+      "other": "Other"
     }
   },
   "settingsPage": {

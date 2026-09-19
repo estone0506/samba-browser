@@ -39,14 +39,7 @@ export function normalizeItemType(raw: string): VaultItemType {
 // 카카오페이·페이코). 어느 결제창의 비밀번호인지 구분하는 평문 필드 값이다.
 // 'site' 는 사이트 자체 결제(무신사머니·SSG머니처럼 웹에서 끝나는 결제)다
 export type PaymentProvider =
-  | 'site'
-  | 'toss'
-  | 'kakao'
-  | 'naver'
-  | 'payco'
-  | 'samsung'
-  | 'apple'
-  | 'other'
+  'site' | 'toss' | 'kakao' | 'naver' | 'payco' | 'samsung' | 'apple' | 'other'
 
 export const PAYMENT_PROVIDERS: readonly PaymentProvider[] = [
   'site',
