@@ -721,7 +721,13 @@
       "cleanup": "Auto-close tabs opened by the agent",
       "cleanupDesc": "Close agent-opened tabs after the chosen time",
       "cleanupOff": "Off",
-      "cleanupMinutes": "{{n}} min"
+      "cleanupMinutes": "{{n}} min",
+      "activityTitle": "Activity history",
+      "activity": "Record activity on this PC",
+      "activityDesc": "Spots things you repeat and suggests a schedule. The history stays on this PC and is never synced. Sites are kept as a domain only, instructions only after secrets are stripped.",
+      "activityClear": "Clear history",
+      "activityClearDesc": "Delete every activity history file stored on this PC",
+      "activityCleared": "Cleared"
     },
     "security": {
       "autofillTitle": "Autofill"
@@ -1114,5 +1120,19 @@
     "lockedNote": "Unlock Key Master to see account names",
     "unknownAccount": "Deleted account",
     "global": "Global item"
+  },
+  "recommend": {
+    "title": "Suggestions",
+    "desc": "Turn what you repeat into a schedule. Picked by simple rules from this PC history only — no AI call.",
+    "daily": "You ran \"{{label}}\" {{count}} times in the last {{days}} days, usually around {{time}}. Schedule it daily at {{time}}?",
+    "weekly": "You ran \"{{label}}\" {{count}} times in the last {{days}} days, on {{weekday}} around {{time}}. Schedule it every {{weekday}} at {{time}}?",
+    "frequent": "You ran \"{{label}}\" {{count}} times in the last {{days}} days. The times are too scattered to suggest a schedule.",
+    "evidence": "{{count}} times in {{days}} days · last run {{last}}",
+    "failed": "Could not apply it. Check whether the playbook limit has been reached.",
+    "action": {
+      "create": "Create schedule",
+      "savePlaybook": "Save as playbook",
+      "dismiss": "Hide"
+    }
   }
 }
