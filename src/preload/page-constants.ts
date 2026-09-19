@@ -6,6 +6,7 @@
 //   - PAGE_IPC.vaultPickerAccounts/vaultPickerFill ← 같은 파일의 IPC 동명 채널
 //   - PAGE_IPC.settingsGet ← 같은 파일의 IPC.settingsGet
 //   - PAGE_IPC.newTabInit/newTabSearch/newTabOpen ← 같은 파일의 IPC 동명 채널
+//   - PAGE_IPC.captureRegionMode/captureElementRect ← 같은 파일의 IPC 동명 채널
 //   - INTERNAL_PROTOCOL ← src/shared/url.ts 의 INTERNAL_SCHEME + ':'
 //
 // 왜 복제하는가:
@@ -28,7 +29,10 @@ export const PAGE_IPC = {
   settingsGet: 'settings:get',
   newTabInit: 'newtab:init',
   newTabSearch: 'newtab:search',
-  newTabOpen: 'newtab:open'
+  newTabOpen: 'newtab:open',
+  // 캡처 영역 선택(요소 단위). 메인이 모드를 켜고, 클릭한 요소 경계만 돌려보낸다
+  captureRegionMode: 'capture:regionMode',
+  captureElementRect: 'capture:elementRect'
 } as const
 
 // 자동 채움 피커 문구(ko/en). page.ts 는 settings.language 를 IPC 로 물어본 뒤
