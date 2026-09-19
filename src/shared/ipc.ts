@@ -255,6 +255,7 @@ export type {
   VaultField,
   VaultSection,
   FieldKind,
+  PaymentProvider,
   AgentAccess,
   SiteDto,
   AccountDto,

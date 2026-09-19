@@ -34,6 +34,53 @@ export function normalizeItemType(raw: string): VaultItemType {
   return LEGACY_TYPE_MAP[raw] ?? 'note'
 }
 
+// --- 결제 수단(제공자) ------------------------------------------------------
+// 한 계정에 결제 비밀번호가 여러 개일 수 있다(예: 무신사 = 무신사머니·토스페이·
+// 카카오페이·페이코). 어느 결제창의 비밀번호인지 구분하는 평문 필드 값이다.
+// 'site' 는 사이트 자체 결제(무신사머니·SSG머니처럼 웹에서 끝나는 결제)다
+export type PaymentProvider =
+  'site' | 'toss' | 'kakao' | 'naver' | 'payco' | 'samsung' | 'apple' | 'other'
+
+export const PAYMENT_PROVIDERS: readonly PaymentProvider[] = [
+  'site',
+  'toss',
+  'kakao',
+  'naver',
+  'payco',
+  'samsung',
+  'apple',
+  'other'
+]
+
+/** 결제 비밀번호 항목에서 제공자를 담는 평문 필드 키 */
+export const PAYMENT_PROVIDER_FIELD_KEY = 'payment.provider'
+
+/** 제공자 필드가 없는 옛 항목은 사이트 자체 결제로 본다(마이그레이션 없이 읽기 기본값) */
+export const DEFAULT_PAYMENT_PROVIDER: PaymentProvider = 'site'
+
+/** 무엇이 들어와도 8값 중 하나로 맞춘다(기본 'site') */
+export function normalizePaymentProvider(raw: string | null | undefined): PaymentProvider {
+  if (raw && (PAYMENT_PROVIDERS as readonly string[]).includes(raw)) return raw as PaymentProvider
+  return DEFAULT_PAYMENT_PROVIDER
+}
+
+// 제공자 필드를 찾기 위한 최소 구조 — StoredSection·VaultSection 둘 다 그대로 들어맞는다
+interface ProviderLookupSection {
+  fields: readonly { key: string; value?: string }[]
+}
+
+/** 섹션 목록에서 결제 제공자를 읽는다. 필드가 없거나 모르는 값이면 'site' */
+export function paymentProviderOfSections(
+  sections: readonly ProviderLookupSection[]
+): PaymentProvider {
+  for (const section of sections) {
+    for (const field of section.fields) {
+      if (field.key === PAYMENT_PROVIDER_FIELD_KEY) return normalizePaymentProvider(field.value)
+    }
+  }
+  return DEFAULT_PAYMENT_PROVIDER
+}
+
 export type FieldKind = 'text' | 'secret' | 'url' | 'date' | 'select'
 
 export interface VaultField {

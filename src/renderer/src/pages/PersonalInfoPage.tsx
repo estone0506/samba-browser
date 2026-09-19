@@ -59,6 +59,8 @@ export function PersonalInfoPage(): React.JSX.Element {
       <ItemDetail
         onEdit={() => openEditor('login')}
         onEditGlobal={(item) => openEditor(item.type, item)}
+        onAddPayment={() => openEditor('password')}
+        onEditItem={(item) => openEditor(item.type, item)}
       />
       <ItemEditor
         key={editorKey}

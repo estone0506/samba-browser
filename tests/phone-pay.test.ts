@@ -14,6 +14,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }))
 
 import {
+  PAY_APP_TO_PAYMENT_PROVIDER,
   PAY_PROVIDERS,
   checkPaymentGate,
   nextPayState,
@@ -92,7 +93,7 @@ function harness(
     confirmResult?: boolean
     vaultUnlocked?: boolean
     webSuccess?: boolean
-    password?: 'ok' | 'locked' | 'not-found' | 'layout-incomplete'
+    password?: 'ok' | 'locked' | 'not-found' | 'ambiguous' | 'layout-incomplete'
     uiKeypad?: KeypadLayout | null
     visualKeypad?: KeypadLayout | null
     screenshotSecret?: boolean
@@ -121,7 +122,10 @@ function harness(
     },
     launchApp: vi.fn(async () => {}),
     confirm,
-    vault: { state: () => 'unlocked', getSecretForFill: () => '149072' },
+    vault: {
+      state: () => 'unlocked',
+      getPaymentSecretForFill: () => ({ value: '149072' })
+    },
     vaultUnlocked: () => opts.vaultUnlocked ?? true,
     keypad: {
       fromUiTree: () => (opts.uiKeypad === undefined ? fullLayout : opts.uiKeypad),
@@ -137,6 +141,21 @@ function harness(
   }
   return { deps, screens, taps, confirm, tapPassword, records, notices, steps }
 }
+
+describe('PAY_APP_TO_PAYMENT_PROVIDER', () => {
+  it('결제앱 4종이 모두 금고 결제 수단으로 이어진다', () => {
+    expect(PAY_APP_TO_PAYMENT_PROVIDER).toEqual({
+      toss: 'toss',
+      payco: 'payco',
+      kakaopay: 'kakao',
+      naverpay: 'naver'
+    })
+    // 앱 목록과 매핑표가 어긋나면(새 앱 추가 후 매핑 누락) 여기서 걸린다
+    expect(Object.keys(PAY_APP_TO_PAYMENT_PROVIDER).sort()).toEqual(
+      Object.keys(PAY_PROVIDERS).sort()
+    )
+  })
+})
 
 describe('checkPaymentGate', () => {
   const base = {
@@ -258,6 +277,22 @@ describe('runPayApproval', () => {
 
     expect(r).toEqual({ ok: false, reason: 'vault-locked' })
     expect(h.tapPassword).not.toHaveBeenCalled()
+  })
+
+  it('결제앱에 맞는 금고 결제 수단을 비밀번호 입력기에 넘긴다', async () => {
+    const h = harness({ screens: okScreens })
+    await runPayApproval(h.deps, request({ provider: 'toss' }))
+
+    expect(h.tapPassword).toHaveBeenCalledTimes(1)
+    // 계정의 결제 비밀번호 아무거나가 아니라 이 앱(토스)의 항목만 읽게 좁혀 넘긴다
+    expect(h.tapPassword.mock.calls[0][0]).toMatchObject({ provider: 'toss', accountId: 7 })
+  })
+
+  it('어느 결제 비밀번호인지 좁히지 못하면 password-ambiguous 로 멈춘다', async () => {
+    const h = harness({ screens: okScreens, password: 'ambiguous' })
+    const r = await runPayApproval(h.deps, request())
+
+    expect(r).toEqual({ ok: false, reason: 'password-ambiguous' })
   })
 
   it('비밀번호를 넣었는데 성공 표식이 안 뜨면 재시도 없이 verify-failed', async () => {
