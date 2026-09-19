@@ -15,7 +15,11 @@ import { BookmarkRepo } from '../src/main/bookmarks/repo'
 import { ChatRepo } from '../src/main/chat/repo'
 import { SyncOutbox, createOutboxRecorder } from '../src/main/sync/outbox'
 import { backfillOutbox, verifyBackfill } from '../src/main/sync/backfill'
-import { bookmarks as bookmarksTable } from '../src/main/db/schema'
+import {
+  accounts as accountsTable,
+  bookmarks as bookmarksTable,
+  vaultItems as vaultItemsTable
+} from '../src/main/db/schema'
 import { pushAll, type PushDeps, type SettingsAccess } from '../src/main/sync/push'
 import { pullAll } from '../src/main/sync/pull'
 import { DEFAULT_WORKSPACE_REMOTE_ID, workspaceRemoteId } from '../src/main/sync/workspace-id'
@@ -314,6 +318,37 @@ describe('첫 로그인 시 로컬 기존 데이터가 전부 올라간다', () 
 
     pc2.bookmarks.setWorkspaceScope({ id: 1, isDefault: true })
     expect(pc2.bookmarks.tree().links.map((l) => l.url)).toEqual(['https://old.example/page'])
+  })
+
+  it('커서가 이미 앞서 있는 PC2 에도 로그인 전 데이터가 도달한다', async () => {
+    // 실검수 회귀: 어제 가져온 계정·북마크가 **가져오기 시각 그대로** 올라가는 바람에,
+    // 커서가 오늘까지 전진해 있던 PC2 의 풀(updated_at > cursor)에 영영 걸리지 않았다
+    const yesterday = Date.now() - 24 * 60 * 60 * 1000
+    db1.drizzle.update(accountsTable).set({ updatedAt: yesterday }).run()
+    db1.drizzle.update(vaultItemsTable).set({ updatedAt: yesterday }).run()
+    db1.drizzle.update(bookmarksTable).set({ updatedAt: yesterday }).run()
+
+    // PC2 가 자기 변경을 먼저 주고받아, 커서가 오늘까지 전진한다
+    pc2.bookmarks.createLink(null, 'PC2 북마크', 'https://pc2.example')
+    await pushAll(pc2.deps)
+    await pullAll(pc2.deps)
+
+    pc1.signIn()
+    backfillOutbox(db1, pc1.deps.workspace(), pc1.vault)
+    const pushed = await pushAll(pc1.deps)
+    expect(pushed.failed).toBe(0)
+
+    await pullAll(pc2.deps)
+    expect(await pc2.vault.unlock(MASTER)).toBe(true)
+    await pullAll(pc2.deps)
+
+    pc2.vault.setWorkspaceScope({ id: 1, isDefault: true })
+    const accounts = pc2.vault.listAccounts('old.example')
+    expect(accounts).toHaveLength(1)
+    expect(pc2.vault.reveal(pc2.vault.listItems(accounts[0].id)[0].id)).toBe(SECRET)
+
+    pc2.bookmarks.setWorkspaceScope({ id: 1, isDefault: true })
+    expect(pc2.bookmarks.tree().links.map((l) => l.url)).toContain('https://old.example/page')
   })
 
   it('두 번 불러도 같은 행을 두 번 넣지 않는다', () => {

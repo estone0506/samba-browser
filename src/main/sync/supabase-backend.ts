@@ -2,12 +2,43 @@
 // (서비스 롤 키는 어디에도 두지 않는다)
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { AuthExpiredError, type RemoteKeyedRow, type RemoteRow, type SyncBackend } from './backend'
+import {
+  AuthExpiredError,
+  DEFAULT_SELECT_LIMIT,
+  toPullCursor,
+  type PullCursor,
+  type RemoteKeyedRow,
+  type RemoteRow,
+  type SyncBackend
+} from './backend'
 import type { SessionStorageAdapter } from './session-store'
 import { readSupabaseEnv } from './env'
 
 // 인증 만료로 볼 응답 코드/문구
 const AUTH_EXPIRED = ['PGRST301', '401', 'jwt expired', 'invalid refresh token']
+
+/** PostgREST 의 or 필터 값에 그대로 넣을 수 있게 감싼다(쉼표·괄호가 섞여도 안전하다) */
+function quote(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+}
+
+/**
+ * 키셋 조건. updated_at 만 보면 같은 시각을 가진 행이 페이지 경계를 넘을 때 나머지를 잃는다.
+ * id 가 null 인 커서(옛 숫자 커서)는 동률 판정 없이 예전 그대로 gt 만 건다.
+ *
+ * 필터 빌더 타입을 직접 들고 오지 않으려고 필요한 메서드만 구조로 요구한다
+ */
+function whereAfterCursor<Q extends { gt(c: string, v: string): Q; or(filter: string): Q }>(
+  query: Q,
+  cursor: PullCursor,
+  idColumn: string
+): Q {
+  const iso = new Date(cursor.ts).toISOString()
+  if (cursor.id === null) return query.gt('updated_at', iso)
+  return query.or(
+    `updated_at.gt.${iso},and(updated_at.eq.${iso},${idColumn}.gt.${quote(cursor.id)})`
+  )
+}
 
 function raise(message: string): never {
   const m = message.toLowerCase()
@@ -71,11 +102,14 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
       const { data } = await client.auth.getUser()
       return data.user ? { userId: data.user.id, email: data.user.email ?? '' } : null
     },
-    async select(table, sinceMs, workspaceId) {
-      let query = client.from(table).select('*').gt('updated_at', new Date(sinceMs).toISOString())
+    async select(table, cursor, workspaceId, limit) {
+      let query = whereAfterCursor(client.from(table).select('*'), toPullCursor(cursor), 'id')
       // 활성 작업공간의 행만 받는다(다른 작업공간 행은 로컬에서 보이지도 않는다)
       if (workspaceId !== undefined) query = query.eq('workspace_id', workspaceId)
-      const { data, error } = await query.order('updated_at', { ascending: true })
+      const { data, error } = await query
+        .order('updated_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(limit ?? DEFAULT_SELECT_LIMIT)
       if (error) raise(error.message)
       return (data ?? []) as RemoteRow[]
     },
@@ -89,10 +123,14 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
       const { error } = await client.from(table).upsert(rows)
       if (error) raise(error.message)
     },
-    async selectKeyed(table, sinceMs, workspaceId) {
-      let query = client.from(table).select('*').gt('updated_at', new Date(sinceMs).toISOString())
+    async selectKeyed(table, cursor, workspaceId, limit) {
+      // 복합 PK 라 id 컬럼이 없다 — 동률 판정·정렬을 key 로 한다
+      let query = whereAfterCursor(client.from(table).select('*'), toPullCursor(cursor), 'key')
       if (workspaceId !== undefined) query = query.eq('workspace_id', workspaceId)
-      const { data, error } = await query.order('updated_at', { ascending: true })
+      const { data, error } = await query
+        .order('updated_at', { ascending: true })
+        .order('key', { ascending: true })
+        .limit(limit ?? DEFAULT_SELECT_LIMIT)
       if (error) raise(error.message)
       return (data ?? []) as RemoteKeyedRow[]
     },

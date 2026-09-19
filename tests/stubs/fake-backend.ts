@@ -1,6 +1,9 @@
 // 메모리 테이블 기반 가짜 SyncBackend. 이후 모든 sync 테스트는 이것만 쓴다(네트워크 없음)
 import {
   AuthExpiredError,
+  DEFAULT_SELECT_LIMIT,
+  isAfterCursor,
+  toPullCursor,
   type RemoteKeyedRow,
   type RemoteRow,
   type SyncBackend
@@ -35,6 +38,17 @@ function updatedAtMs(row: Record<string, unknown>): number {
     return Number.isNaN(t) ? 0 : t
   }
   return 0
+}
+
+/** 정렬 기준 — 서버와 같아야 한다: (updated_at asc, id asc) */
+function byUpdatedAtThenId(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+  idOf: (row: Record<string, unknown>) => string
+): number {
+  const diff = updatedAtMs(a) - updatedAtMs(b)
+  if (diff !== 0) return diff
+  return idOf(a) < idOf(b) ? -1 : idOf(a) > idOf(b) ? 1 : 0
 }
 
 export function createFakeBackend(): FakeBackend {
@@ -99,13 +113,16 @@ export function createFakeBackend(): FakeBackend {
     async currentUser() {
       return signedIn
     },
-    async select(name, sinceMs, workspaceId) {
+    async select(name, cursor, workspaceId, limit) {
       guard()
       calls.select += 1
+      const c = toPullCursor(cursor)
+      const idOf = (r: Record<string, unknown>): string => String(r.id)
       return [...table(name).values()]
-        .filter((r) => updatedAtMs(r) > sinceMs)
+        .filter((r) => isAfterCursor(updatedAtMs(r), idOf(r), c))
         .filter((r) => workspaceId === undefined || r.workspace_id === workspaceId)
-        .sort((a, b) => updatedAtMs(a) - updatedAtMs(b))
+        .sort((a, b) => byUpdatedAtThenId(a, b, idOf))
+        .slice(0, limit ?? DEFAULT_SELECT_LIMIT)
         .map((r) => ({ ...r }))
     },
     async selectAll(name) {
@@ -120,13 +137,17 @@ export function createFakeBackend(): FakeBackend {
       // id 기준으로 통째로 덮어쓴다
       for (const row of rows) t.set(row.id, { ...row })
     },
-    async selectKeyed(name, sinceMs, workspaceId) {
+    async selectKeyed(name, cursor, workspaceId, limit) {
       guard()
       calls.select += 1
+      const c = toPullCursor(cursor)
+      // 이 표에는 id 컬럼이 없다 — 동률 판정·정렬에 key 를 쓴다
+      const idOf = (r: Record<string, unknown>): string => String(r.key)
       return [...keyedTable(name).values()]
-        .filter((r) => updatedAtMs(r) > sinceMs)
+        .filter((r) => isAfterCursor(updatedAtMs(r), idOf(r), c))
         .filter((r) => workspaceId === undefined || r.workspace_id === workspaceId)
-        .sort((a, b) => updatedAtMs(a) - updatedAtMs(b))
+        .sort((a, b) => byUpdatedAtThenId(a, b, idOf))
+        .slice(0, limit ?? DEFAULT_SELECT_LIMIT)
         .map((r) => ({ ...r }))
     },
     async upsertKeyed(name, rows) {
