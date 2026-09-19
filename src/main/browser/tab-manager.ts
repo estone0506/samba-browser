@@ -89,6 +89,10 @@ const hardenedPartitions = new Set<string>()
 function hardenSession(ses: Session, partition: string): void {
   if (hardenedPartitions.has(partition)) return
   hardenedPartitions.add(partition)
+  // 페이지 preload 는 세션에 등록한다. 탭의 webPreferences.preload 는 window.open 으로 만들어진
+  // 팝업(결제창 등) webContents 에는 적용되지 않아 계정 선택기·AI 스냅샷이 빠졌었다.
+  // 모든 프레임에서 돌지만 page.ts 가 최상위 문서에서만 설치한다
+  ses.registerPreloadScript({ type: 'frame', filePath: join(__dirname, '../preload/page.js') })
   ses.setPermissionRequestHandler((_wc, permission, callback) => {
     console.warn(`권한 요청 거부: ${permission}`)
     callback(false)
@@ -419,9 +423,9 @@ export class TabManager {
     const view =
       opts.view ??
       new WebContentsView({
+        // preload 는 세션에 등록돼 있다(hardenSession) — 여기서 또 주면 두 번 실행된다
         webPreferences: {
           session: ses,
-          preload: join(__dirname, '../preload/page.js'),
           sandbox: true,
           contextIsolation: true
         }
@@ -505,7 +509,6 @@ export class TabManager {
         overrideBrowserWindowOptions: {
           webPreferences: {
             session: ses,
-            preload: join(__dirname, '../preload/page.js'),
             sandbox: true,
             contextIsolation: true,
             nodeIntegration: false
