@@ -589,6 +589,19 @@
       "open": "Open Key Master",
       "export": "Export",
       "exportUnavailable": "Export is coming in a later stage"
+    },
+    "translate": {
+      "title": "Translation",
+      "desc": "Defaults for page and image translation. The cache stays on this PC.",
+      "targetLang": "Default target language",
+      "autoDomains": "Auto-translate domains",
+      "autoDomainsDesc": "Sites on this list are translated as soon as they load. Click an item to remove it.",
+      "add": "Add",
+      "remove": "Remove",
+      "cache": "Translation cache",
+      "cacheDesc": "Keeps up to 10,000 entries on this PC so the same text is not translated twice.",
+      "clearCache": "Clear cache",
+      "cacheCleared": "Cache cleared"
     }
   },
   "account": {
@@ -770,6 +783,23 @@
       "suggestion": "{{host}} was verified on {{phone}}. Make it the assigned phone?",
       "accept": "Assign",
       "dismiss": "Not now"
+    }
+  },
+  "translate": {
+    "title": "Translate",
+    "targetLang": "Target language",
+    "run": "Translate this page",
+    "restore": "Show original",
+    "working": "Translating…",
+    "needsAi": "An AI connection is required. Connect one in Settings → AI.",
+    "autoOn": "Always translate {{host}}",
+    "autoOff": "Stop translating {{host}}",
+    "autoList": "Auto-translate: {{list}}",
+    "lang": {
+      "ko": "Korean",
+      "en": "English",
+      "ja": "Japanese",
+      "zh": "Chinese"
     }
   }
 }

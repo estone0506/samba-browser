@@ -589,6 +589,19 @@
       "open": "키마스터 열기",
       "export": "내보내기",
       "exportUnavailable": "내보내기는 다음 단계에서 제공돼요"
+    },
+    "translate": {
+      "title": "번역",
+      "desc": "화면 번역과 이미지 번역에 쓰는 기본값입니다. 번역 캐시는 이 PC 에만 저장됩니다",
+      "targetLang": "기본 대상 언어",
+      "autoDomains": "자동 번역 도메인",
+      "autoDomainsDesc": "목록에 있는 사이트는 열자마자 번역합니다. 항목을 누르면 지워집니다",
+      "add": "추가",
+      "remove": "지우기",
+      "cache": "번역 캐시",
+      "cacheDesc": "같은 문장을 다시 번역하지 않도록 이 PC 에 최대 1만 건을 보관합니다",
+      "clearCache": "캐시 지우기",
+      "cacheCleared": "캐시를 비웠습니다"
     }
   },
   "account": {
@@ -770,6 +783,23 @@
       "suggestion": "{{host}} 인증을 {{phone}} 에서 받았어요. 이 폰을 담당 폰으로 할까요?",
       "accept": "담당 폰으로",
       "dismiss": "괜찮아요"
+    }
+  },
+  "translate": {
+    "title": "번역",
+    "targetLang": "대상 언어",
+    "run": "이 페이지 번역",
+    "restore": "원문 보기",
+    "working": "번역하는 중…",
+    "needsAi": "AI 연결이 필요합니다. 설정 → AI 연결에서 연결해 주세요",
+    "autoOn": "{{host}} 은(는) 열 때마다 자동 번역",
+    "autoOff": "{{host}} 자동 번역 끄기",
+    "autoList": "자동 번역: {{list}}",
+    "lang": {
+      "ko": "한국어",
+      "en": "영어",
+      "ja": "일본어",
+      "zh": "중국어"
     }
   }
 }
