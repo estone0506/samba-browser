@@ -14,6 +14,33 @@
     "collapse": "Collapse sidebar",
     "expand": "Expand sidebar"
   },
+  "tasks": {
+    "title": "Tasks",
+    "desc": "What is running now, what is scheduled, and what has already run — all in one place.",
+    "running": {
+      "title": "Running now",
+      "empty": "Nothing is running right now",
+      "stop": "Stop",
+      "scheduled": "Scheduled run",
+      "steps": "{{n}} tool calls"
+    },
+    "scheduled": {
+      "title": "Scheduled",
+      "empty": "No scheduled tasks yet",
+      "open": "Open in Settings → Automation"
+    },
+    "history": {
+      "title": "History",
+      "empty": "No tasks have run yet",
+      "more": "Show more",
+      "loading": "Loading…"
+    },
+    "source": {
+      "schedule": "Scheduled",
+      "chat": "Manual"
+    },
+    "untitled": "Untitled"
+  },
   "automation": {
     "title": "Automation",
     "desc": "Write down the work you repeat as a playbook, then type its trigger phrase in chat and the AI follows those steps.",

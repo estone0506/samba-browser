@@ -14,6 +14,33 @@
     "collapse": "사이드바 접기",
     "expand": "사이드바 펼치기"
   },
+  "tasks": {
+    "title": "작업",
+    "desc": "지금 돌고 있는 작업과 예약, 그리고 지금까지 실행한 기록을 한자리에서 봅니다.",
+    "running": {
+      "title": "지금 실행 중",
+      "empty": "지금 돌고 있는 작업이 없어요",
+      "stop": "중단",
+      "scheduled": "예약 실행",
+      "steps": "도구 {{n}}회"
+    },
+    "scheduled": {
+      "title": "예약",
+      "empty": "예약해 둔 작업이 없어요",
+      "open": "설정 → 자동화에서 열기"
+    },
+    "history": {
+      "title": "실행 이력",
+      "empty": "아직 실행한 작업이 없어요",
+      "more": "더 보기",
+      "loading": "불러오는 중…"
+    },
+    "source": {
+      "schedule": "예약",
+      "chat": "수동"
+    },
+    "untitled": "제목 없음"
+  },
   "automation": {
     "title": "자동화",
     "desc": "자주 하는 일을 플레이북으로 적어 두면, 채팅에 트리거 문구만 쳐도 AI 가 그 절차대로 일합니다.",
