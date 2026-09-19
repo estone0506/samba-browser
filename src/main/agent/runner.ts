@@ -8,6 +8,7 @@ import type { PayToolRequest, PhoneToolContext, SmsCodeOutcome } from './tools-p
 import type { PayResult } from '../phone/pay'
 import type { PhoneRunContext } from '../phone/wiring'
 import { buildSystemPrompt } from './prompt'
+import { appendPlaybooks, matchPlaybooks, type PlaybookDto } from '../../shared/playbook'
 import {
   runQuery,
   runCodexQuery,
@@ -43,6 +44,9 @@ export interface TranscriptEntry {
 /** 대화 기록 저장 훅. 주입하지 않으면 아무것도 저장하지 않는다 */
 export type TranscriptSink = (chatId: number, entry: TranscriptEntry) => void
 
+/** 플레이북 목록 공급자. 주입하지 않으면 플레이북이 전혀 적용되지 않는다 */
+export type PlaybookProvider = () => PlaybookDto[]
+
 /**
  * 폰 도구 배선. 권한 모드·호출 상한·확인 카드는 웹 도구 것을 그대로 쓰므로
  * 배선부는 폰 조작 능력과 요금제·배정 폰만 넘긴다(금고는 넘기지 않는다)
@@ -73,6 +77,8 @@ export class AgentRunner {
   private transcript: TranscriptSink | null = null
   // 폰 도구 배선. 없으면 폰 도구를 등록하지 않는다(3단계 전 실행·테스트)
   private phones: PhoneBridge | null = null
+  // 자동화 플레이북 목록 공급자. 없으면 시스템 프롬프트에 아무것도 덧붙이지 않는다
+  private playbooks: PlaybookProvider | null = null
 
   constructor(
     private tabs: TabManager,
@@ -90,6 +96,25 @@ export class AgentRunner {
   /** 대화 기록 저장 훅을 붙인다(채팅 저장소). null 이면 기록하지 않는다 */
   setTranscript(sink: TranscriptSink | null): void {
     this.transcript = sink
+  }
+
+  /** 플레이북 목록 공급자를 붙인다. null 이면 플레이북을 적용하지 않는다 */
+  setPlaybooks(provider: PlaybookProvider | null): void {
+    this.playbooks = provider
+  }
+
+  /**
+   * 이 프롬프트에 걸리는 플레이북을 찾는다.
+   * 공급자가 던져도 실행 자체는 막지 않는다(플레이북 없이 평소대로 돈다)
+   */
+  private matchedPlaybooks(prompt: string): PlaybookDto[] {
+    if (!this.playbooks) return []
+    try {
+      return matchPlaybooks(prompt, this.playbooks())
+    } catch (e: unknown) {
+      console.error('플레이북 조회 실패', e instanceof Error ? e.message : String(e))
+      return []
+    }
   }
 
   /** 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다) */
@@ -235,6 +260,18 @@ export class AgentRunner {
       if (e.type === 'step') entry.steps.push({ label: e.label, ok: e.ok })
       this.emit(e)
     }
+    // 사용자 문장에 걸리는 플레이북 — 시스템 프롬프트 뒤에 절차를 덧붙이고, 화면에는 이름만 알린다
+    const playbooks = this.matchedPlaybooks(prompt)
+    const systemPrompt = (
+      mode: 'read_only' | 'guard' | 'full',
+      effort?: typeof s.agentEffort
+    ): string =>
+      appendPlaybooks(
+        effort === undefined
+          ? buildSystemPrompt(s.language, mode)
+          : buildSystemPrompt(s.language, mode, effort),
+        playbooks
+      )
     const counter = makeCounter(s.maxToolCalls)
     const deduper = createTextDeduper()
     // api_retry 로 관측한 마지막 API 오류(결과 메시지에 문구가 없을 때 사용)
@@ -273,6 +310,12 @@ export class AgentRunner {
       vaultExcludedHosts: s.vaultExcludedHosts,
       tick: counter.tick,
       onStep: (label, ok) => emit({ type: 'step', label, ok }),
+      onProgress: ({ done, total, label }) =>
+        emit(
+          label === undefined
+            ? { type: 'progress', kind: 'task', done, total }
+            : { type: 'progress', kind: 'task', done, total, label }
+        ),
       confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit),
       handoff: (req) => this.requestHandoff(req, emit),
       // 폰 도구는 웹 도구와 같은 모드·상한·확인 카드를 공유한다
@@ -304,6 +347,8 @@ export class AgentRunner {
           : undefined
     })
     emit({ type: 'status', state: 'running', toolCalls: 0 })
+    // 어떤 플레이북이 적용됐는지 채팅에 한 줄로 알린다(절차 본문은 보내지 않는다)
+    if (playbooks.length > 0) emit({ type: 'playbook', names: playbooks.map((p) => p.name) })
     try {
       const backend = agentBackend()
       // 연결된 경로가 없다 — 실행하지 않고 "연결 필요" 안내로 끝낸다
@@ -317,7 +362,7 @@ export class AgentRunner {
         settled = await this.runOnCodex(
           {
             prompt,
-            systemPrompt: buildSystemPrompt(s.language, s.permissionMode),
+            systemPrompt: systemPrompt(s.permissionMode),
             model: resolveModel(s.taskModels, 'standard', s.aiProvider),
             abort
           },
@@ -328,7 +373,7 @@ export class AgentRunner {
       }
       const stream = runQuery({
         prompt,
-        systemPrompt: buildSystemPrompt(s.language, s.permissionMode, s.agentEffort),
+        systemPrompt: systemPrompt(s.permissionMode, s.agentEffort),
         // 작업별 모델 표의 '표준' 칸이 기본 실행 모델이다(s.model 은 하위 호환으로만 남는다)
         model: resolveModel(s.taskModels, 'standard', s.aiProvider),
         // 채팅 입력줄에서 고른 추론 강도
