@@ -1025,11 +1025,11 @@ export function registerIpc(
       onProgress: (p) => send(IPC.phoneInstallProgress, p)
     })
   )
-  // AI 폰 도구 배선. 금고는 넘기지 않는다 — 폰 도구는 비밀값을 볼 수 없다
   // AI 폰 도구 배선. 금고는 넘기지 않는다 — 폰 도구는 비밀값을 볼 수 없다.
   // 문자 인증·결제 승인만 별도 실행기(phone/wiring.ts)를 거치고, 결제 비밀번호는
-  // 그 안의 pay-secret.ts 밖으로 나오지 않는다
-  const phoneOps = createPhoneOps(phoneAdb, () => phones.list())
+  // 그 안의 pay-secret.ts 밖으로 나오지 않는다.
+  // 비밀 화면 표식을 함께 넘겨, 화면 읽기·캡처가 비밀번호 화면을 모델에게 넘기지 않게 한다
+  const phoneOps = createPhoneOps(phoneAdb, () => phones.list(), phoneSecretGate)
   const visualDeps = {
     apiKey: () => apiKeys.get('anthropic'),
     model: () => resolveModel(settings.get().taskModels, 'visual', settings.get().aiProvider)

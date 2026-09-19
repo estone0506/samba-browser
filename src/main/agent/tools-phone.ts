@@ -22,7 +22,7 @@ import {
 } from '../phone/input'
 import { execOutArgs, type AdbRunner } from '../phone/adb'
 import { dumpScreen } from '../phone/uitree'
-import { PAY_PROVIDERS, type PayProvider, type PayResult } from '../phone/pay'
+import { isSecretScreen, PAY_PROVIDERS, type PayProvider, type PayResult } from '../phone/pay'
 
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
 const NOT_PRO = 'refused: phone requires Pro plan'
@@ -83,6 +83,11 @@ export interface PhoneOps {
   typeText: (serial: string, text: string) => Promise<'ok' | 'unsupported-text'>
   key: (serial: string, key: PhoneKey) => Promise<void>
   screenshot: (serial: string) => Promise<{ png: Buffer; secret: boolean }>
+  /**
+   * 이 화면을 모델에게 넘겨도 되는가.
+   * 결제 실행기가 세운 표식(SecretScreenGate)과 결제 앱의 비밀번호 문구를 함께 본다
+   */
+  isSecret: (serial: string, screen: PhoneScreen) => boolean
 }
 
 export interface PhoneToolContext {
@@ -195,10 +200,15 @@ export function createPhoneTools(ctx: PhoneToolContext): PhoneTool[] {
 
   const getScreen = tool(
     'phone_get_screen',
-    'Read the connected phone screen: current app package, screen size and numbered elements. Use those numbers with phone_tap. Password fields appear as (SECRET) with no value.',
+    'Read the connected phone screen: current app package, screen size and numbered elements. Use those numbers with phone_tap. Password and PIN screens are refused.',
     {},
     () =>
-      act('폰 화면 읽기', false, async (_serial, screen) => serializePhoneScreen(await screen()))
+      act('폰 화면 읽기', false, async (serial, screen) => {
+        const got = await screen()
+        // 비밀번호·PIN 화면은 요소 목록도 넘기지 않는다(키패드 배치가 곧 단서다)
+        if (ctx.phones.isSecret(serial, got)) return SECRET_SCREEN
+        return serializePhoneScreen(got)
+      })
   )
 
   const tap = tool(
@@ -333,9 +343,21 @@ export function createPhoneTools(ctx: PhoneToolContext): PhoneTool[] {
  * 화면 프레임은 T4 스냅샷과 같은 `exec-out screencap -p` 경로를 쓴다.
  * 비밀 입력칸이 보이는 화면은 캡처 자체를 뜨지 않는다 — 버퍼로도 만들지 않는다
  */
-export function createPhoneOps(adb: AdbRunner, list: () => PhoneDto[]): PhoneOps {
+export function createPhoneOps(
+  adb: AdbRunner,
+  list: () => PhoneDto[],
+  // 결제 실행기가 "지금 비밀번호 화면" 이라고 세워 둔 표식. 주지 않으면 화면만 보고 판정한다
+  secretGate?: { isSecret: (serial: string) => boolean }
+): PhoneOps {
+  const isSecret = (serial: string, screen: PhoneScreen): boolean => {
+    if (secretGate?.isSecret(serial)) return true
+    // 결제 앱마다 비밀번호 화면 문구가 다르다 — 어느 하나라도 맞으면 비밀 화면으로 본다
+    // (isSecretScreen 은 password 속성이 붙은 입력칸도 함께 본다)
+    return Object.values(PAY_PROVIDERS).some((spec) => isSecretScreen(screen, spec))
+  }
   return {
     list,
+    isSecret,
     screen: (serial) => dumpScreen(adb, serial),
     tap: (serial, x, y) => adbTap(adb, serial, x, y),
     swipe: (serial, from, to, ms) => adbSwipe(adb, serial, from, to, ms),
@@ -343,8 +365,8 @@ export function createPhoneOps(adb: AdbRunner, list: () => PhoneDto[]): PhoneOps
     key: (serial, key) => pressKey(adb, serial, key),
     screenshot: async (serial) => {
       const screen = await dumpScreen(adb, serial)
-      const secret = screen.elements.some((e) => e.isSecret)
-      if (secret) return { png: Buffer.alloc(0), secret: true }
+      // 비밀 화면이면 캡처를 아예 뜨지 않는다 — 버퍼로도 만들지 않는다
+      if (isSecret(serial, screen)) return { png: Buffer.alloc(0), secret: true }
       return { png: await adb.runBinary(execOutArgs(serial, ['screencap', '-p'])), secret: false }
     }
   }
