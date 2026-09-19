@@ -21,6 +21,7 @@ export const IPC = {
   settingsSet: 'settings:set',
   // 금고 — vaultReveal 만이 비밀값(평문)을 돌려주는 유일한 채널이다
   vaultState: 'vault:state',
+  vaultKeyFromSync: 'vault:keyFromSync', // 키 재료가 다른 PC 에서 내려왔는가(안내 문구용)
   vaultSetup: 'vault:setup',
   vaultUnlock: 'vault:unlock',
   vaultLock: 'vault:lock',

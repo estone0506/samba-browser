@@ -204,6 +204,7 @@ export function registerIpc(
   // --- 금고 ---------------------------------------------------------------
   // 비밀값(평문)을 돌려주는 채널은 vault:reveal 하나뿐이다. 나머지는 전부 메타/상태만 보낸다.
   handleFromRenderer(IPC.vaultState, () => vault.state())
+  handleFromRenderer(IPC.vaultKeyFromSync, () => vault.isKeyFromSync())
   handleFromRenderer(IPC.vaultSetup, (master: string) => vault.setup(master))
   handleFromRenderer(IPC.vaultUnlock, (master: string) => vault.unlock(master))
   handleFromRenderer(IPC.vaultLock, () => vault.lock())
