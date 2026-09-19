@@ -318,11 +318,10 @@ ${raw}`
   // 계정을 특정하지 않는 경로(현재는 없음)를 위한 전역 정책 게이트
 
   /**
-   * 캡차·2FA 징후가 있으면 사용자에게 화면을 넘기고, 처리될 때까지 작업을 멈춘다.
-   * 징후가 없으면 null 을 돌려준다.
-   * AI 는 캡차를 대신 풀지 않는다 — 입력은 언제나 사용자가 한다
+   * 캡차·2FA 징후만 살펴 안내 문자열을 만든다(기다리지 않는다).
+   * 징후가 없으면 null
    */
-  const captchaHandoff = async (tab: Tab): Promise<string | null> => {
+  const captchaNotice = async (tab: Tab): Promise<string | null> => {
     let hint: { needsUser: boolean; matched: string }
     try {
       hint = await pageBridge.captchaHint(tab)
@@ -331,15 +330,42 @@ ${raw}`
       return null
     }
     if (!hint.needsUser) return null
+    return `${NEEDS_USER_CAPTCHA} (${hint.matched}): ask the user to complete it on screen`
+  }
+
+  /**
+   * 캡차·2FA 징후가 있으면 사용자에게 화면을 넘기고, 처리될 때까지 작업을 멈춘다.
+   * 징후가 없으면 null 을 돌려준다.
+   * AI 는 캡차를 대신 풀지 않는다 — 입력은 언제나 사용자가 한다.
+   *
+   * **읽기 도구(get_page)에서는 부르지 않는다** — 화면을 한 번 읽어 보려던 호출이
+   * 최장 10분 막혀 버린다. 넘김은 login·click 처럼 사용자가 행동을 지시한 경로에서만 건다
+   */
+  const captchaHandoff = async (tab: Tab): Promise<string | null> => {
+    let hint: { needsUser: boolean; matched: string }
+    try {
+      hint = await pageBridge.captchaHint(tab)
+    } catch {
+      return null
+    }
+    if (!hint.needsUser) return null
     if (!ctx.handoff) {
       return `${NEEDS_USER_CAPTCHA} (${hint.matched}): ask the user to complete it on screen`
     }
-    const result = await ctx.handoff({
-      matched: hint.matched,
-      currentUrl: () => currentUrl(tab),
-      stillBlocked: async () => (await pageBridge.captchaHint(tab)).needsUser
-    })
-    return handoffToolResult(result)
+    try {
+      const result = await ctx.handoff({
+        matched: hint.matched,
+        currentUrl: () => currentUrl(tab),
+        stillBlocked: async () => (await pageBridge.captchaHint(tab)).needsUser
+      })
+      return handoffToolResult(result)
+    } catch (e: unknown) {
+      // 감시 중에 탭이 사라지면 currentUrl 이 던진다 — 넘김만 접고 도구는 계속 답한다
+      // (여기서 전파하면 도구 호출 전체가 예외로 끝나 모델이 아무 정보도 받지 못한다)
+      const reason = e instanceof Error ? e.message : String(e)
+      console.warn('캡차 넘김이 끊겼습니다(탭 종료 등)', reason)
+      return `${NEEDS_USER_CAPTCHA} (${hint.matched}): handoff was cancelled; the tab may have closed`
+    }
   }
 
   /**
@@ -365,13 +391,12 @@ ${raw}`
         if (!tab) return 'no active tab'
         await pageBridge.waitForLoad(tab)
         const snapshot = serializeSnapshot(await pageBridge.snapshot(tab))
-        // 사이트가 사람의 추가 확인을 요구하면 사용자에게 넘기고 기다린다.
-        // 사용자가 처리하면 바뀐 화면을 다시 읽어 돌려준다
-        const handed = await captchaHandoff(tab)
-        if (!handed) return snapshot
-        await pageBridge.waitForLoad(tab)
-        return `${handed}
-${serializeSnapshot(await pageBridge.snapshot(tab))}`
+        // 사람의 추가 확인이 필요하면 **알리기만** 한다 — 읽기 도구가 최장 10분 막히면
+        // 모델이 다음 수를 두지 못한다. 실제 넘김·대기는 login 같은 행동 도구가 건다
+        const notice = await captchaNotice(tab)
+        if (!notice) return snapshot
+        return `${notice}
+${snapshot}`
       })
   )
 
