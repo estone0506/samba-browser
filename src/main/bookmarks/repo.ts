@@ -124,7 +124,7 @@ export class BookmarkRepo {
     position: number,
     addedAt?: number
   ): void {
-    this.d
+    const inserted = this.d
       .insert(bookmarks)
       .values({
         folderId,
@@ -134,7 +134,11 @@ export class BookmarkRepo {
         addedAt: addedAt ?? null,
         workspaceId: this.scopeId
       })
-      .run()
+      .returning({ id: bookmarks.id })
+      .all()
+    // 대량 가져오기도 한 줄씩 변경 로그를 남긴다 — 예전에는 여기만 빠져 있어,
+    // 로그인 뒤에 가져온 북마크 수백 개가 다른 PC 로 넘어가지 않았다
+    this.record(inserted[0].id, 'upsert')
   }
 
   private insertNode(
