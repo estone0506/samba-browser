@@ -4,6 +4,7 @@ import type { SettingsStore } from '../settings/store'
 import type { AgentEvent } from '../../shared/ipc'
 import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
+import type { PhoneToolContext } from './tools-phone'
 import { buildSystemPrompt } from './prompt'
 import { runQuery, classifyAuthError, isFatalApiError } from './provider'
 import { resolveModel } from '../ai/models'
@@ -32,6 +33,12 @@ export interface TranscriptEntry {
 /** 대화 기록 저장 훅. 주입하지 않으면 아무것도 저장하지 않는다 */
 export type TranscriptSink = (chatId: number, entry: TranscriptEntry) => void
 
+/**
+ * 폰 도구 배선. 권한 모드·호출 상한·확인 카드는 웹 도구 것을 그대로 쓰므로
+ * 배선부는 폰 조작 능력과 요금제·배정 폰만 넘긴다(금고는 넘기지 않는다)
+ */
+export type PhoneBridge = Pick<PhoneToolContext, 'phones' | 'isPro' | 'assigned'>
+
 // 대기 중인 확인 요청(응답 콜백 + 만료 타이머)
 interface PendingConfirm {
   resolve: (ok: boolean) => void
@@ -46,6 +53,8 @@ export class AgentRunner {
   private generation = 0
   // 대화 기록 저장 훅(채팅 저장소). 없으면 기록을 남기지 않는다
   private transcript: TranscriptSink | null = null
+  // 폰 도구 배선. 없으면 폰 도구를 등록하지 않는다(3단계 전 실행·테스트)
+  private phones: PhoneBridge | null = null
 
   constructor(
     private tabs: TabManager,
@@ -54,6 +63,11 @@ export class AgentRunner {
     // 개인정보 금고. 없으면 금고 도구는 잠금으로 동작한다
     private vault?: VaultService
   ) {}
+
+  /** 폰 도구 배선을 붙인다. null 이면 폰 도구를 등록하지 않는다 */
+  setPhones(bridge: PhoneBridge | null): void {
+    this.phones = bridge
+  }
 
   /** 대화 기록 저장 훅을 붙인다(채팅 저장소). null 이면 기록하지 않는다 */
   setTranscript(sink: TranscriptSink | null): void {
@@ -225,7 +239,17 @@ export class AgentRunner {
       tick: counter.tick,
       onStep: (label, ok) => emit({ type: 'step', label, ok }),
       confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit),
-      handoff: (req) => this.requestHandoff(req, emit)
+      handoff: (req) => this.requestHandoff(req, emit),
+      // 폰 도구는 웹 도구와 같은 모드·상한·확인 카드를 공유한다
+      phone: this.phones
+        ? {
+            ...this.phones,
+            mode: s.permissionMode,
+            tick: counter.tick,
+            onStep: (label, ok) => emit({ type: 'step', label, ok }),
+            confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit)
+          }
+        : undefined
     })
     emit({ type: 'status', state: 'running', toolCalls: 0 })
     try {

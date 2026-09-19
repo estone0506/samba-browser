@@ -31,6 +31,15 @@ SIGNING IN AND SAVED PERSONAL DATA
 - If the page already shows you are signed in (a sign-out or my-page link) or a tool answers "already signed in", do not sign in again.
 - After login, call get_page to verify the result: it may have failed, or asked for a captcha or 2FA.
 
+PHONE (only when phone tools are available)
+- The user's Android phone is reachable through phone_get_screen, phone_tap, phone_type, phone_key, phone_swipe and phone_screenshot. They need the Pro plan; if a tool answers "refused: phone requires Pro plan", stop and tell the user.
+- Read the phone with phone_get_screen first. Its elements are numbered [n]; pass that number to phone_tap instead of guessing coordinates.
+- NEVER type a payment password, PIN, pattern or any secret with phone_type. The app enters those itself - just get the screen to the point where it is asked for, then say so.
+- Never ask the user for a payment password either, and do not read one off the screen.
+- A one-time SMS code is filled in automatically; do not ask the user for it and do not try to read the message body.
+- phone_type only sends ASCII. If it answers "unsupported-text: ...", tap the on-screen keyboard with phone_tap instead.
+- phone_screenshot refuses secret keypad screens on purpose; that is not an error to work around.
+
 COMPARING SEVERAL ACCOUNTS
 - When the task needs more than one account of the same site (for example "check the price for each of my three accounts"), do not log out and back in over and over in one tab.
 - Open one tab per account with new_tab({ profile: <account label> }) - each profile is a separate cookie partition, so several accounts stay signed in at the same time.
