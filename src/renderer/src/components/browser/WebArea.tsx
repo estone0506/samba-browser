@@ -1,14 +1,30 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import type React from 'react'
 import { useBrowserStore } from '../../stores/browserStore'
+import { useUiStore } from '../../stores/uiStore'
 
 // 실제 웹페이지(WebContentsView)는 메인이 그림. 이 컴포넌트는 빈 자리를 만들고 좌표만 보고
 export function WebArea(): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const mobile = useBrowserStore((s) => s.activeTab?.mobile ?? false)
+  // 구독만으로도 resizing 이 바뀌면 리렌더 → useLayoutEffect 가 다시 측정한다
+  useUiStore((s) => s.resizing)
   const send = useCallback((): void => {
     const el = ref.current
     if (!el) return
+    // 패널 폭을 드래그하는 동안은 네이티브 뷰를 접어 둔다. 뷰가 렌더러 위에 떠 있어
+    // 포인터가 그 위로 가면 드래그가 끊기기 때문. 놓으면 원래 크기로 다시 보고된다
+    if (useUiStore.getState().resizing) {
+      void window.samba.layout.set({
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight
+      })
+      return
+    }
     const r = el.getBoundingClientRect()
     // 가장자리를 각각 반올림한 뒤 빼서 폭·높이를 낸다.
     // width 를 따로 반올림하면 서브픽셀 위치에서 오른쪽·아래가 1px 어긋난다

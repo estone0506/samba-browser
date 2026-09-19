@@ -8,8 +8,11 @@ export const MIN_TOOL_CALLS = 1
 export const MAX_TOOL_CALLS = 200
 
 // 오른쪽 패널 폭 허용 범위
-const MIN_PANEL_WIDTH = 280
-const MAX_PANEL_WIDTH = 900
+// 패널 폭 한계(렌더러 uiStore 와 공유)
+export const MIN_SIDEBAR_WIDTH = 180
+export const MAX_SIDEBAR_WIDTH = 420
+export const MIN_PANEL_WIDTH = 280
+export const MAX_PANEL_WIDTH = 900
 
 // 자동 잠금 대기 시간(분) 허용 범위. 상한(43200 = 30일)은 "안 함"에 해당하는 매우 긴 시간이다
 export const MIN_VAULT_AUTO_LOCK_MINUTES = 1
@@ -45,6 +48,8 @@ export const DEFAULT_SETTINGS = {
   model: 'sonnet' as const,
   language: 'ko' as const,
   panelWidth: 380,
+  // 왼쪽 환경 탭(사이드바) 폭. 기기별 값이라 동기화하지 않는다
+  sidebarWidth: 232,
   lastUrl: NEW_TAB_URL,
   dangerWords: DEFAULT_DANGER_WORDS,
   maxToolCalls: 40,
@@ -101,6 +106,11 @@ export const settingsSchema = z.object({
     .min(MIN_PANEL_WIDTH)
     .max(MAX_PANEL_WIDTH)
     .catch(DEFAULT_SETTINGS.panelWidth),
+  sidebarWidth: z
+    .number()
+    .min(MIN_SIDEBAR_WIDTH)
+    .max(MAX_SIDEBAR_WIDTH)
+    .catch(DEFAULT_SETTINGS.sidebarWidth),
   lastUrl: z.string().min(1).catch(DEFAULT_SETTINGS.lastUrl),
   dangerWords: z.array(z.string()).catch([]),
   maxToolCalls: z.number().catch(DEFAULT_SETTINGS.maxToolCalls),
