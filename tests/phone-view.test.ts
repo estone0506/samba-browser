@@ -174,7 +174,8 @@ describe('폰 i18n 키', () => {
       'phone.settings.paymentLimit',
       'phone.assign.title',
       'phone.assign.suggestion',
-      'settingsPage.sections.phone'
+      // 폰 설정은 설정 페이지가 아니라 폰 화면의 톱니 패널에 있다
+      'phone.settings.settingsOpen'
     ]) {
       expect(koKeys).toContain(key)
       expect(enKeys).toContain(key)

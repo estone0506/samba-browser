@@ -133,7 +133,9 @@ export function PhonesPage(): React.JSX.Element {
                 type="button"
                 onClick={() => setSettingsOpen((v) => !v)}
                 title={
-                  settingsOpen ? t('phone.settings.settingsClose') : t('phone.settings.settingsOpen')
+                  settingsOpen
+                    ? t('phone.settings.settingsClose')
+                    : t('phone.settings.settingsOpen')
                 }
                 aria-expanded={settingsOpen}
                 className={cn(
