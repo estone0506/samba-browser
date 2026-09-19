@@ -21,11 +21,15 @@ import { SyncLocal } from './local'
 import {
   accountToRemote,
   bookmarkToRemote,
+  chatMessageToRemote,
+  chatToRemote,
   remoteTableOf,
   settingToRemote,
   vaultItemToRemote,
   type AccountSyncRow,
   type BookmarkSyncRow,
+  type ChatMessageSyncRow,
+  type ChatSyncRow,
   type MapCtx,
   type VaultItemSyncRow
 } from './mappers'
@@ -84,8 +88,16 @@ export interface PushResult {
   skipped: number
 }
 
-// 계정을 먼저 올려야 금고 항목의 account_id 가 가리킬 대상이 생긴다
-const PUSH_ORDER: SyncTable[] = ['accounts', 'vault_items', 'bookmarks', 'settings']
+// 계정을 먼저 올려야 금고 항목의 account_id 가, 대화를 먼저 올려야 메시지의 chat_id 가
+// 가리킬 대상이 생긴다
+const PUSH_ORDER: SyncTable[] = [
+  'accounts',
+  'vault_items',
+  'bookmarks',
+  'chats',
+  'chat_messages',
+  'settings'
+]
 
 export async function pushAll(deps: PushDeps): Promise<PushResult> {
   const result: PushResult = { sent: 0, failed: 0, skipped: 0 }
@@ -200,7 +212,9 @@ async function pushTable(
     const remoteId = String(p.row.id)
     if (table === 'accounts') local.setAccountRemoteId(p.localId, remoteId)
     else if (table === 'vault_items') local.setVaultItemRemoteId(p.localId, remoteId)
-    else local.setBookmarkRemoteId(p.localId, remoteId)
+    else if (table === 'bookmarks') local.setBookmarkRemoteId(p.localId, remoteId)
+    else if (table === 'chats') local.setChatRemoteId(p.localId, remoteId)
+    else local.setChatMessageRemoteId(p.localId, remoteId)
   }
   deps.outbox.clear(prepared.map((p) => p.entry.id))
   result.sent += prepared.length
@@ -230,6 +244,28 @@ function buildRemote(
       entry.op === 'delete' ? tombstone<BookmarkSyncRow>(entry) : local.bookmarkForSync(rowId)
     if (!row) return null
     return { entry, row: bookmarkToRemote(row, ctx), localId: entry.op === 'delete' ? null : rowId }
+  }
+  if (table === 'chats') {
+    const row = entry.op === 'delete' ? tombstone<ChatSyncRow>(entry) : local.chatForSync(rowId)
+    if (!row) return null
+    return { entry, row: chatToRemote(row, ctx), localId: entry.op === 'delete' ? null : rowId }
+  }
+  if (table === 'chat_messages') {
+    const row =
+      entry.op === 'delete' ? tombstone<ChatMessageSyncRow>(entry) : local.chatMessageForSync(rowId)
+    if (!row) return null
+    // 대화가 한 번도 올라간 적이 없으면 원격 id 만 먼저 붙이고, 대화 자체도 다음 주기에 올린다
+    if (row.chatRemoteId === null) {
+      const chatRemoteId = local.ensureChatRemoteId(row.chatId, randomUUID)
+      if (chatRemoteId === null) return null
+      row.chatRemoteId = chatRemoteId
+      deps.outbox.record('chats', String(row.chatId), 'upsert', undefined, entry.workspaceId)
+    }
+    return {
+      entry,
+      row: chatMessageToRemote(row, ctx),
+      localId: entry.op === 'delete' ? null : rowId
+    }
   }
 
   const item =

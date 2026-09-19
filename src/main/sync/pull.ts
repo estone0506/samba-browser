@@ -10,6 +10,8 @@ import { SyncLocal } from './local'
 import {
   accountFromRemote,
   bookmarkFromRemote,
+  chatFromRemote,
+  chatMessageFromRemote,
   remoteTableOf,
   settingFromRemote,
   vaultItemFromRemote
@@ -56,7 +58,8 @@ export function legacyTableCursorKey(table: PullTable): string {
 export const LAST_PULLED_AT_KEY = 'lastPulledAt'
 
 /** 풀이 도는 표. 커서를 표마다 따로 센다 */
-export type PullTable = 'accounts' | 'vault_items' | 'bookmarks' | 'settings'
+export type PullTable =
+  'accounts' | 'vault_items' | 'bookmarks' | 'chats' | 'chat_messages' | 'settings'
 
 /**
  * 한 표에서 본 행들. null 이면 이번 주기에 그 표를 읽지 못했다는 뜻이다.
@@ -90,6 +93,9 @@ export async function pullAll(deps: PullDeps): Promise<PullResult> {
   await step('accounts', (since) => pullAccounts(deps, local, since, result))
   await step('vault_items', (since) => pullVaultItems(deps, local, since, result))
   await step('bookmarks', (since) => pullBookmarks(deps, local, since, result))
+  // 대화를 먼저 내려받아야 메시지의 chat_id 가 가리킬 대상이 생긴다
+  await step('chats', (since) => pullChats(deps, local, since, result))
+  await step('chat_messages', (since) => pullChatMessages(deps, local, since, result))
   await step('settings', (since) => pullSettings(deps, local, since, result))
 
   result.pruned = local.pruneExpiredTombstones(Date.now())
@@ -227,6 +233,69 @@ async function pullBookmarks(
       result.applied += 1
     } else if (matched.remoteId === null && remote.remoteId) {
       local.setBookmarkRemoteId(matched.id, remote.remoteId)
+    }
+  }
+  return seen
+}
+
+async function pullChats(
+  deps: PullDeps,
+  local: SyncLocal,
+  since: number,
+  result: PullResult
+): Promise<Seen> {
+  const rows = await deps.backend.select(remoteTableOf('chats'), since, workspaceOf(deps))
+  const seen: { updatedAt: number }[] = []
+
+  for (const raw of rows) {
+    const remote = chatFromRemote(raw)
+    seen.push({ updatedAt: remote.updatedAt })
+    const localId = local.chatIdByRemote(remote.remoteId)
+    if (localId === null) {
+      // 원격에서 이미 지워진 대화는 로컬에 되살리지 않는다
+      if (remote.deletedAt !== null) continue
+      local.applyChat(remote, null)
+      result.applied += 1
+      continue
+    }
+    const current = local.chatForSync(localId)
+    if (wins(current ? toSyncable(current) : null, toSyncable(remote), result)) {
+      local.applyChat(remote, localId)
+      result.applied += 1
+    }
+  }
+  return seen
+}
+
+async function pullChatMessages(
+  deps: PullDeps,
+  local: SyncLocal,
+  since: number,
+  result: PullResult
+): Promise<Seen> {
+  const rows = await deps.backend.select(remoteTableOf('chat_messages'), since, workspaceOf(deps))
+  const seen: { updatedAt: number }[] = []
+
+  for (const raw of rows) {
+    const remote = chatMessageFromRemote(raw)
+    const localId = local.chatMessageIdByRemote(remote.remoteId)
+    if (localId === null) {
+      if (remote.deletedAt !== null) {
+        // 본 적 없는 메시지의 삭제 표식은 되살릴 것이 없다 — 커서만 통과시킨다
+        seen.push({ updatedAt: remote.updatedAt })
+        continue
+      }
+      const applied = local.applyChatMessage(remote, null)
+      // 대화를 아직 못 찾았다(대화가 다음 주기에 내려온다) — 커서를 올리지 않고 다시 본다
+      if (applied === null) continue
+      seen.push({ updatedAt: remote.updatedAt })
+      result.applied += 1
+      continue
+    }
+    seen.push({ updatedAt: remote.updatedAt })
+    const current = local.chatMessageForSync(localId)
+    if (wins(current ? toSyncable(current) : null, toSyncable(remote), result)) {
+      if (local.applyChatMessage(remote, localId) !== null) result.applied += 1
     }
   }
   return seen

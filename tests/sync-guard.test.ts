@@ -110,7 +110,14 @@ describe('SYNC_TABLES', () => {
     expect(SYNC_TABLES).not.toContain('audit_log')
   })
 
-  it('설정·계정·금고·북마크만 동기화한다', () => {
-    expect([...SYNC_TABLES]).toEqual(['settings', 'accounts', 'vault_items', 'bookmarks'])
+  it('설정·계정·금고·북마크·채팅만 동기화한다', () => {
+    expect([...SYNC_TABLES]).toEqual([
+      'settings',
+      'accounts',
+      'vault_items',
+      'bookmarks',
+      'chats',
+      'chat_messages'
+    ])
   })
 })

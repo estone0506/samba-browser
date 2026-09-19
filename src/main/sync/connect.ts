@@ -46,6 +46,8 @@ export interface SyncConnectionDeps {
   settings: SyncSettingsTarget
   /** 북마크 저장소(ImportService 가 위임한다) */
   bookmarks: OutboxTarget
+  /** AI 채팅 저장소. 없으면 채팅은 동기화되지 않는다(옛 테스트 호환) */
+  chats?: OutboxTarget
   /** 지금 활성 작업공간(로컬 id + 원격 uuid). 주기마다 다시 불린다 */
   workspace: () => WorkspaceRef
   /** 기기 표시 정보 — 테스트에서는 주입한다 */
@@ -190,6 +192,7 @@ export class SyncConnection {
     this.deps.vault.setOutboxRecorder(recorder)
     this.deps.settings.setOutboxRecorder(recorder)
     this.deps.bookmarks.setOutboxRecorder(recorder)
+    this.deps.chats?.setOutboxRecorder(recorder)
     // 로그아웃 상태에서 만든 금고는 키 재료를 남길 훅이 없었다. 한 번도 오간 적이 없을 때만
     // 지금 기록한다 — 매 로그인마다 올리면 서버 값을 같은 값으로 계속 덮어쓴다
     const local = new SyncLocal(this.deps.db)
@@ -202,5 +205,6 @@ export class SyncConnection {
     this.deps.vault.setOutboxRecorder(null)
     this.deps.settings.setOutboxRecorder(null)
     this.deps.bookmarks.setOutboxRecorder(null)
+    this.deps.chats?.setOutboxRecorder(null)
   }
 }

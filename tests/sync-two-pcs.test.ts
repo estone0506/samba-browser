@@ -12,6 +12,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { openDatabase, type Db } from '../src/main/db/client'
 import { VaultService } from '../src/main/vault/service'
 import { BookmarkRepo } from '../src/main/bookmarks/repo'
+import { ChatRepo } from '../src/main/chat/repo'
 import { SyncOutbox, createOutboxRecorder } from '../src/main/sync/outbox'
 import { pushAll, type PushDeps, type SettingsAccess } from '../src/main/sync/push'
 import { pullAll } from '../src/main/sync/pull'
@@ -38,6 +39,7 @@ interface Pc {
   db: Db
   vault: VaultService
   bookmarks: BookmarkRepo
+  chats: ChatRepo
   outbox: SyncOutbox
   deps: PushDeps
 }
@@ -47,6 +49,8 @@ function makePc(db: Db, backend: FakeBackend): Pc {
   const settings = makeSettings()
   const vault = new VaultService(db, { get: settings.get })
   const bookmarks = new BookmarkRepo(db)
+  const chats = new ChatRepo(db)
+  chats.setWorkspaceScope({ id: 1, isDefault: true })
   // 각 PC 는 자기 DB 에서 기본 작업공간(로컬 id 1)의 원격 uuid 를 스스로 구한다
   const workspace = (): { localId: number; remoteId: string } => ({
     localId: 1,
@@ -55,10 +59,12 @@ function makePc(db: Db, backend: FakeBackend): Pc {
   const recorder = createOutboxRecorder(db, outbox, () => 1)
   vault.setOutboxRecorder(recorder)
   bookmarks.setOutboxRecorder(recorder)
+  chats.setOutboxRecorder(recorder)
   return {
     db,
     vault,
     bookmarks,
+    chats,
     outbox,
     deps: { db, backend, outbox, vault, settings, userId: FAKE_USER_ID, workspace }
   }
@@ -229,5 +235,82 @@ describe('마스터 키 재료 동기화의 경계', () => {
     pc2.vault.lock()
     expect(await pc2.vault.unlock(MASTER)).toBe(false)
     expect(await pc2.vault.unlock('another-master-9999')).toBe(true)
+  })
+})
+
+describe('AI 채팅 기록이 두 PC 사이를 오간다', () => {
+  let backend: FakeBackend
+  let pc1: Pc
+  let pc2: Pc
+
+  beforeEach(async () => {
+    backend = createFakeBackend()
+    pc1 = makePc(await openDatabase(':memory:'), backend)
+    pc2 = makePc(await openDatabase(':memory:'), backend)
+  })
+
+  afterEach(() => {
+    pc1.vault.dispose()
+    pc2.vault.dispose()
+    pc1.db.close()
+    pc2.db.close()
+  })
+
+  it('A 의 대화와 메시지가 B 에 그대로 보인다', async () => {
+    const chat = pc1.chats.create('구글 검색')
+    pc1.chats.append({ chatId: chat.id, role: 'user', content: '구글 열어줘' })
+    pc1.chats.append({
+      chatId: chat.id,
+      role: 'assistant',
+      content: '열었습니다',
+      steps: [{ label: '이동: google.com', ok: true }]
+    })
+
+    const pushed = await pushAll(pc1.deps)
+    expect(pushed.failed).toBe(0)
+    expect(backend.rows('chats_sync')).toHaveLength(1)
+    expect(backend.rows('chat_messages_sync')).toHaveLength(2)
+
+    await pullAll(pc2.deps)
+
+    const list = pc2.chats.list()
+    expect(list.map((c) => c.title)).toEqual(['구글 검색'])
+    const detail = pc2.chats.get(list[0].id)
+    expect(detail?.messages.map((m) => m.content)).toEqual(['구글 열어줘', '열었습니다'])
+    expect(detail?.messages[1].steps).toEqual([{ label: '이동: google.com', ok: true }])
+  })
+
+  it('B 에서 지운 대화는 A 에서도 사라진다', async () => {
+    const chat = pc1.chats.create('지울 대화')
+    pc1.chats.append({ chatId: chat.id, role: 'user', content: '안녕' })
+    await pushAll(pc1.deps)
+    await pullAll(pc2.deps)
+
+    const onPc2 = pc2.chats.list()[0]
+    expect(onPc2).toBeTruthy()
+    // 삭제 시각이 원래 수정 시각보다 확실히 뒤가 되도록 한 틱 쉰다(LWW 는 큰 쪽이 이긴다)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(pc2.chats.remove(onPc2.id)).toBe(true)
+    await pushAll(pc2.deps)
+
+    await pullAll(pc1.deps)
+    expect(pc1.chats.list()).toEqual([])
+    expect(pc1.chats.get(chat.id)).toBeNull()
+  })
+
+  it('올라간 메시지 어디에도 비밀 문자열이 없다', async () => {
+    const chat = pc1.chats.create('로그인')
+    pc1.chats.append({
+      chatId: chat.id,
+      role: 'assistant',
+      content: '로그인했습니다',
+      // 도구가 실수로 값을 덧붙였다고 가정한다(실제 경로에는 없다)
+      steps: [{ label: '로그인: example.com (내 계정)', ok: true, password: SECRET } as never]
+    })
+    await pushAll(pc1.deps)
+
+    const uploaded = JSON.stringify(backend.rows('chat_messages_sync'))
+    expect(uploaded).toContain('로그인: example.com (내 계정)')
+    expect(uploaded).not.toContain(SECRET)
   })
 })

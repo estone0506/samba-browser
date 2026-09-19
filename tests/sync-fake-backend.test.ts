@@ -80,7 +80,14 @@ describe('createFakeBackend', () => {
   })
 
   it('감사 로그는 동기화 대상이 아니다', () => {
-    expect(SYNC_TABLES).toEqual(['settings', 'accounts', 'vault_items', 'bookmarks'])
+    expect(SYNC_TABLES).toEqual([
+      'settings',
+      'accounts',
+      'vault_items',
+      'bookmarks',
+      'chats',
+      'chat_messages'
+    ])
     expect(SYNC_TABLES).not.toContain('audit_log')
   })
 })
