@@ -11,6 +11,7 @@
 //   - PAGE_IPC.pageTranslate ← 같은 파일의 IPC.pageTranslate
 //   - TRANSLATE_MAX_NODES/TRANSLATE_MAX_CHARS ← src/shared/translate.ts 의 동명 상수
 //   - PAGE_IPC.captureRegionMode/captureElementRect ← 같은 파일의 IPC 동명 채널
+//   - PAGE_IPC.webstoreInstall/webstoreInstallResult ← 같은 파일의 IPC.pageWebstoreInstall/pageWebstoreInstallResult
 //   - INTERNAL_PROTOCOL ← src/shared/url.ts 의 INTERNAL_SCHEME + ':'
 //
 // 왜 복제하는가:
@@ -41,7 +42,11 @@ export const PAGE_IPC = {
   pageTranslate: 'page:translate',
   // 캡처 영역 선택(요소 단위). 메인이 모드를 켜고, 클릭한 요소 경계만 돌려보낸다
   captureRegionMode: 'capture:regionMode',
-  captureElementRect: 'capture:elementRect'
+  captureElementRect: 'capture:elementRect',
+  // 크롬 웹스토어 탭에서 "Chrome에 추가" 를 눌렀을 때 설치를 요청하는 채널(page → main)
+  webstoreInstall: 'page:webstoreInstall',
+  // 설치 결과를 눌렀던 그 탭으로 돌려주는 채널(main → page)
+  webstoreInstallResult: 'page:webstoreInstallResult'
 } as const
 
 // 번역 배치 상한 사본 ← src/shared/translate.ts 의 TRANSLATE_MAX_NODES / TRANSLATE_MAX_CHARS
@@ -102,5 +107,20 @@ export const GESTURE_ACTION_LABELS = {
     fullscreen: 'Full screen',
     maximize: 'Maximize window',
     minimize: 'Minimize window'
+  }
+} as const
+
+// 웹스토어 설치 버튼 문구(ko/en). 격리 월드에는 i18n 모듈을 쓸 수 없어 여기 복제해 둔다.
+// 버튼을 누른 뒤 '설치 중…' → 'SAMBA에 추가됨' 으로 바뀐다(스타일은 페이지 것을 그대로 쓴다)
+export const WEBSTORE_LABELS = {
+  ko: {
+    installing: '설치 중…',
+    done: 'SAMBA에 추가됨',
+    failed: '설치 실패'
+  },
+  en: {
+    installing: 'Installing…',
+    done: 'Added to SAMBA',
+    failed: 'Install failed'
   }
 } as const
