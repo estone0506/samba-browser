@@ -23,10 +23,10 @@ interface OverlayState {
   setWebviewHidden: (v: boolean) => void
 }
 
-// 열기 요청 뒤 닫기 요청이 먼저 처리되는 경합을 막는 일련번호
+// 정지 이미지가 늦게 도착했을 때 이미 닫힌 상태를 덮어쓰지 않기 위한 일련번호
 let ticket = 0
 
-export const useOverlayStore = create<OverlayState>((set) => ({
+export const useOverlayStore = create<OverlayState>((set, get) => ({
   webviewHidden: false,
   snapshot: null,
   setWebviewHidden: (v) => {
@@ -35,24 +35,16 @@ export const useOverlayStore = create<OverlayState>((set) => ({
       set({ webviewHidden: false, snapshot: null })
       return
     }
-    // 정지 이미지는 웹뷰가 아직 보일 때 찍어야 하므로 접기 전에 먼저 요청한다.
-    // 실패해도(빈 탭 등) 접기는 진행한다
+    if (get().webviewHidden) return
+    // 접힘은 즉시(동기) 반영한다 — 비동기 완료를 기다리면 열기/닫기가 엇갈려 접힌 채 남을 수 있다.
+    // 정지 이미지 요청은 접기보다 먼저 보내 두므로(IPC 순서 보장) 아직 보이는 웹뷰를 찍는다
     const still = window.samba.capture?.still
-    if (!still) {
-      set({ webviewHidden: true, snapshot: null })
-      return
-    }
-    void still()
-      .then((r) => {
-        if (mine !== ticket) return
-        set({
-          webviewHidden: true,
-          snapshot:
-            r.ok && r.data.rect.width > 0 ? { dataUrl: r.data.dataUrl, rect: r.data.rect } : null
-        })
-      })
-      .catch(() => {
-        if (mine === ticket) set({ webviewHidden: true, snapshot: null })
-      })
+    const pending = still ? still().catch(() => null) : Promise.resolve(null)
+    set({ webviewHidden: true, snapshot: null })
+    void pending.then((r) => {
+      if (mine !== ticket || !get().webviewHidden) return
+      if (r && r.ok && r.data.rect.width > 0)
+        set({ snapshot: { dataUrl: r.data.dataUrl, rect: r.data.rect } })
+    })
   }
 }))

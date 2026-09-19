@@ -867,9 +867,16 @@ export function registerIpc(
   // 발신자는 반드시 관리 중인 탭이면서 지금 보고 있는 주소가 웹스토어여야 한다
   // (웹 페이지·확장이 아무 id 나 밀어 넣어 설치시키는 것을 막는다)
   ipcMain.on(IPC.pageWebstoreInstall, (e, raw: unknown) => {
+    console.log(
+      '[DBG webstore] recv',
+      String(raw),
+      e.sender.getURL(),
+      !!tabs.findByWebContents(e.sender)
+    )
     if (!tabs.findByWebContents(e.sender)) return
     if (normalizeHost(e.sender.getURL()) !== WEBSTORE_HOST) return
     if (!isExtensionId(raw)) return
+    console.log('[DBG webstore] gate ok')
     const id = raw
     const sender = e.sender
     void extensionInstaller
