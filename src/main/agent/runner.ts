@@ -6,8 +6,16 @@ import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
 import type { PhoneToolContext } from './tools-phone'
 import { buildSystemPrompt } from './prompt'
-import { runQuery, classifyAuthError, isFatalApiError } from './provider'
+import {
+  runQuery,
+  runCodexQuery,
+  agentBackend,
+  classifyAuthError,
+  isFatalApiError,
+  NOT_CONNECTED_ERROR
+} from './provider'
 import { resolveModel } from '../ai/models'
+import type { CodexInput } from './provider-codex'
 import { makeCounter } from './counter'
 import { createTextDeduper } from './dedupe'
 import {
@@ -253,6 +261,27 @@ export class AgentRunner {
     })
     emit({ type: 'status', state: 'running', toolCalls: 0 })
     try {
+      const backend = agentBackend()
+      // 연결된 경로가 없다 — 실행하지 않고 "연결 필요" 안내로 끝낸다
+      if (backend === 'none') {
+        settled = true
+        emit({ type: 'status', state: 'failed', message: 'auth:notConnected', toolCalls: 0 })
+        return
+      }
+      // Codex 구독 경로: Codex CLI 를 백엔드로 텍스트 응답을 받는다(samba 도구는 붙지 않는다)
+      if (backend === 'codex') {
+        settled = await this.runOnCodex(
+          {
+            prompt,
+            systemPrompt: buildSystemPrompt(s.language, s.permissionMode),
+            model: resolveModel(s.taskModels, 'standard', s.aiProvider),
+            abort
+          },
+          deduper,
+          emit
+        )
+        return
+      }
       const stream = runQuery({
         prompt,
         systemPrompt: buildSystemPrompt(s.language, s.permissionMode),
@@ -324,6 +353,16 @@ export class AgentRunner {
       // stop() 또는 result 처리에서 이미 종료 상태를 보냈으면 중복 emit 하지 않는다
       if (!abort.signal.aborted && !settled) {
         const message = e instanceof Error ? e.message : String(e)
+        // 연결된 경로가 없어 멈춘 경우는 "연결 필요" 안내로 바꿔 보여 준다
+        if (message === NOT_CONNECTED_ERROR) {
+          emit({
+            type: 'status',
+            state: 'failed',
+            message: 'auth:notConnected',
+            toolCalls: counter.count()
+          })
+          return
+        }
         const kind = classifyAuthError(`${message} ${apiError}`)
         emit({
           type: 'status',
@@ -347,5 +386,40 @@ export class AgentRunner {
         }
       }
     }
+  }
+
+  /**
+   * Codex CLI 백엔드로 1건을 실행한다. samba 도구는 인프로세스 MCP 라 붙지 않으므로
+   * 이 경로는 텍스트 응답(그리고 codex 자신이 쓴 도구 흔적)만 화면에 올린다.
+   * 종료 상태를 보냈으면 true 를 돌려준다
+   */
+  private async runOnCodex(
+    input: CodexInput,
+    deduper: ReturnType<typeof createTextDeduper>,
+    emit: (e: AgentEvent) => void
+  ): Promise<boolean> {
+    let lastError = ''
+    for await (const event of runCodexQuery(input)) {
+      if (input.abort.signal.aborted) return false
+      if (event.type === 'text') {
+        const text = deduper.accept(event.text)
+        if (text) emit({ type: 'text', text })
+      } else if (event.type === 'step') {
+        emit({ type: 'step', label: event.label, ok: event.ok })
+      } else if (event.type === 'error') {
+        lastError = event.message
+      } else {
+        const message = event.ok ? undefined : event.message || lastError
+        const kind = message ? classifyAuthError(message) : null
+        emit({
+          type: 'status',
+          state: event.ok ? 'done' : 'failed',
+          toolCalls: 0,
+          message: event.ok ? undefined : kind ? `auth:${kind}` : message
+        })
+        return true
+      }
+    }
+    return false
   }
 }

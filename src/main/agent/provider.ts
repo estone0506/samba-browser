@@ -1,4 +1,6 @@
 import { query, type Options, type Query } from '@anthropic-ai/claude-agent-sdk'
+import type { AgentAuth } from '../ai/auth-route'
+import { runCodex, type CodexEvent, type CodexInput } from './provider-codex'
 
 export interface ProviderInput {
   prompt: string
@@ -18,25 +20,67 @@ export function setApiKeyResolver(fn: (() => string | null) | null): void {
   apiKeyResolver = fn
 }
 
+// 이번 실행에 쓸 인증 경로를 알려 주는 함수(메인 프로세스가 주입한다).
+// 주입되지 않은 테스트 환경에서는 예전처럼 Claude 구독 경로로 본다
+let authResolver: (() => AgentAuth) | null = null
+
+export function setAuthResolver(fn: (() => AgentAuth) | null): void {
+  authResolver = fn
+}
+
+/** 이번 실행의 인증 경로. 조회에 실패하면 "연결 필요" 로 본다(몰래 구독을 쓰지 않는다) */
+export function currentAuth(): AgentAuth {
+  if (!authResolver) return { mode: 'claude_subscription' }
+  try {
+    return authResolver()
+  } catch {
+    return { mode: 'none', reason: 'not_connected' }
+  }
+}
+
+// 인증 경로가 없을 때 실행부가 그대로 실패 사유로 쓰는 표식(UI 는 "연결 필요" 안내로 바꾼다)
+export const NOT_CONNECTED_ERROR = 'auth:not_connected'
+
 // 내 API 키를 쓸 때만 환경을 교체한다(교체 시 process.env 를 통째로 펼쳐 PATH 등을 유지)
-function resolveEnv(): Record<string, string | undefined> | undefined {
+function resolveEnv(auth: AgentAuth): Record<string, string | undefined> | undefined {
+  // 구독 경로에서는 키를 꺼내지도 않는다
+  if (auth.mode !== 'api_key') return undefined
   let key: string | null = null
   try {
     key = apiKeyResolver?.() ?? null
   } catch {
-    // 키 조회 실패는 구독 경로로 조용히 되돌린다(값은 로그에 남기지 않는다)
+    // 키 조회 실패는 값 없음으로 본다(값은 로그에 남기지 않는다)
     key = null
   }
   if (!key) return undefined
   return { ...process.env, ANTHROPIC_API_KEY: key }
 }
 
-// Claude Agent SDK 호출. Claude Code 로그인 또는 ANTHROPIC_API_KEY 자동 사용
+/** 이번 실행을 어느 백엔드로 돌릴지. 'none' 이면 실행하지 않고 "연결 필요" 안내로 끝낸다 */
+export function agentBackend(auth: AgentAuth = currentAuth()): 'claude' | 'codex' | 'none' {
+  if (auth.mode === 'codex_subscription') return 'codex'
+  if (auth.mode === 'none') return 'none'
+  return 'claude'
+}
+
+/** Codex CLI 백엔드 실행(도구 없이 텍스트 응답 경로). 사건은 정규화된 CodexEvent 로 온다 */
+export function runCodexQuery(input: CodexInput): AsyncGenerator<CodexEvent> {
+  return runCodex(input)
+}
+
+// Claude Agent SDK 호출. 연결된 Claude 구독 또는 내 API 키(ANTHROPIC_API_KEY)를 쓴다
 export function runQuery(input: ProviderInput): Query {
+  const auth = currentAuth()
+  // 연결된 경로가 없으면 SDK 를 아예 부르지 않는다 —
+  // 부르면 이 PC 에 남아 있는 CLI 로그인 자격을 SDK 가 알아서 집어 쓴다
+  if (auth.mode === 'none') throw new Error(NOT_CONNECTED_ERROR)
+  const env = resolveEnv(auth)
+  // 키 경로인데 키가 사라졌으면 구독 자격으로 조용히 넘어가지 않고 멈춘다
+  if (auth.mode === 'api_key' && !env) throw new Error(NOT_CONNECTED_ERROR)
   return query({
     prompt: input.prompt,
     options: {
-      env: resolveEnv(),
+      env,
       systemPrompt: input.systemPrompt,
       model: input.model,
       mcpServers: input.mcpServers,
