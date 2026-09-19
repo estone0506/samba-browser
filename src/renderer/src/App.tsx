@@ -13,6 +13,7 @@ import { PhonesPage } from '@renderer/pages/PhonesPage'
 import { ExtensionsPage } from '@renderer/pages/ExtensionsPage'
 import { AutomationPage } from '@renderer/pages/AutomationPage'
 import { SettingsPage } from '@renderer/pages/SettingsPage'
+import { LogsPage } from '@renderer/pages/LogsPage'
 import { useBrowserStore } from '@renderer/stores/browserStore'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { useChatStore } from '@renderer/stores/chatStore'
@@ -126,6 +127,8 @@ export default function App(): React.JSX.Element {
             <AutomationPage />
           ) : view === 'settings' ? (
             <SettingsPage />
+          ) : view === 'logs' ? (
+            <LogsPage />
           ) : (
             <PersonalInfoPage />
           )}

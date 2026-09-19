@@ -293,7 +293,9 @@
       "desc": "마스터 비밀번호를 입력하세요",
       "placeholder": "마스터 비밀번호",
       "submit": "잠금 해제",
-      "failed": "비밀번호가 올바르지 않아요"
+      "failed": "비밀번호가 올바르지 않아요",
+      "showPassword": "비밀번호 보기",
+      "hidePassword": "비밀번호 숨기기"
     },
     "list": {
       "searchPlaceholder": "계정·사이트 검색",
@@ -377,7 +379,9 @@
         "reveal": "값 보기",
         "save": "저장",
         "import": "가져오기",
-        "delete": "삭제"
+        "delete": "삭제",
+        "allow": "AI 접근 허용",
+        "deny": "AI 접근 거부"
       },
       "auditSource": {
         "ai": "AI",
@@ -590,7 +594,8 @@
       "security": "보안",
       "behavior": "동작",
       "ai": "AI 연결",
-      "automation": "자동화"
+      "automation": "자동화",
+      "keymaster": "키마스터"
     },
     "general": {
       "searchTitle": "검색",
@@ -981,5 +986,13 @@
       "ja": "일본어",
       "zh": "중국어"
     }
+  },
+  "logs": {
+    "title": "로그",
+    "desc": "키마스터 사용 기록 — 어느 계정이 언제 자동 입력되고, AI 접근이 허용·거부됐는지",
+    "empty": "아직 기록이 없어요",
+    "lockedNote": "키마스터를 잠금 해제하면 계정 이름이 함께 보여요",
+    "unknownAccount": "삭제된 계정",
+    "global": "전역 항목"
   }
 }

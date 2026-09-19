@@ -293,7 +293,9 @@
       "desc": "Enter your master password",
       "placeholder": "Master password",
       "submit": "Unlock",
-      "failed": "Incorrect password"
+      "failed": "Incorrect password",
+      "showPassword": "Show password",
+      "hidePassword": "Hide password"
     },
     "list": {
       "searchPlaceholder": "Search accounts or sites",
@@ -377,7 +379,9 @@
         "reveal": "Value shown",
         "save": "Saved",
         "import": "Imported",
-        "delete": "Deleted"
+        "delete": "Deleted",
+        "allow": "AI access allowed",
+        "deny": "AI access denied"
       },
       "auditSource": {
         "ai": "AI",
@@ -590,7 +594,8 @@
       "security": "Security",
       "behavior": "Behavior",
       "ai": "AI connection",
-      "automation": "Automation"
+      "automation": "Automation",
+      "keymaster": "Key Master"
     },
     "general": {
       "searchTitle": "Search",
@@ -981,5 +986,13 @@
       "ja": "Japanese",
       "zh": "Chinese"
     }
+  },
+  "logs": {
+    "title": "Logs",
+    "desc": "Key Master activity — which account was filled when, and when AI access was allowed or denied",
+    "empty": "No activity yet",
+    "lockedNote": "Unlock Key Master to see account names",
+    "unknownAccount": "Deleted account",
+    "global": "Global item"
   }
 }

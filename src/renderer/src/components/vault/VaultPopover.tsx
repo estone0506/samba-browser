@@ -20,7 +20,7 @@ const LIST_LIMIT = 6
 export function VaultPopover(): React.JSX.Element {
   const { t } = useTranslation()
   const closeVaultPanel = useUiStore((s) => s.closeVaultPanel)
-  const setView = useUiStore((s) => s.setView)
+  const openSettings = useUiStore((s) => s.openSettings)
   const state = useVaultStore((s) => s.state)
   const accounts = useVaultStore((s) => s.accounts)
   const refreshState = useVaultStore((s) => s.refreshState)
@@ -86,7 +86,7 @@ export function VaultPopover(): React.JSX.Element {
           type="button"
           onClick={() => {
             closeVaultPanel()
-            setView('personal')
+            openSettings('keymaster')
           }}
           className="text-[11.5px] text-[var(--text3)] underline"
         >
@@ -147,7 +147,7 @@ export function VaultPopover(): React.JSX.Element {
               onClick={() => {
                 closeVaultPanel()
                 select(null)
-                setView('personal')
+                openSettings('keymaster')
               }}
               className="text-[11.5px] text-[var(--text3)] underline"
             >

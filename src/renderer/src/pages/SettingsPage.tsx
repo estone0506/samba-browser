@@ -9,9 +9,12 @@ import { SecuritySection } from '@renderer/components/settings/SecuritySection'
 import { AgentSection } from '@renderer/components/settings/AgentSection'
 import { AiSection } from '@renderer/components/settings/AiSection'
 import { PlaceholderSection } from '@renderer/components/settings/PlaceholderSection'
+import { PersonalInfoPage } from '@renderer/pages/PersonalInfoPage'
+import { AutomationPage } from '@renderer/pages/AutomationPage'
 import {
   SECTIONS,
   SETTINGS_GROUPS,
+  isFullWidthSection,
   sectionsOfGroup,
   type SettingsSectionDef
 } from '@renderer/components/settings/sections'
@@ -89,12 +92,18 @@ export function SettingsPage(): React.JSX.Element {
         ))}
       </aside>
 
-      {/* 우측 패널 */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-[560px] flex-col gap-4 p-6">
+      {/* 우측 패널 — 키마스터·자동화는 자체 레이아웃이라 폭 틀 없이 그대로 채운다 */}
+      {isFullWidthSection(active) ? (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {settings && <SectionBody active={active} settings={settings} update={update} />}
         </div>
-      </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-[560px] flex-col gap-4 p-6">
+            {settings && <SectionBody active={active} settings={settings} update={update} />}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -125,6 +134,10 @@ function SectionBody({
       return <AgentSection settings={settings} update={update} />
     case 'ai':
       return <AiSection />
+    case 'keymaster':
+      return <PersonalInfoPage />
+    case 'automation':
+      return <AutomationPage />
     default:
       return <PlaceholderSection titleKey={labelKey} />
   }

@@ -21,15 +21,16 @@ describe('설정 섹션 상수', () => {
       'general',
       'appearance',
       'account',
-      'security'
+      'security',
+      'keymaster'
     ])
-    expect(sectionsOfGroup('agent').map((s) => s.key)).toEqual(['behavior', 'ai'])
+    expect(sectionsOfGroup('agent').map((s) => s.key)).toEqual(['behavior', 'ai', 'automation'])
   })
 
   it('다른 화면에 이미 있는 것은 설정에 두지 않는다', () => {
-    // 키마스터·폰·확장(개발자)은 각각 개인정보·폰·확장 프로그램 화면이 담당한다.
-    // 요금제 구분은 폐지돼 설정에 자리가 없다
-    for (const gone of ['keymaster', 'phone', 'developer', 'plan']) {
+    // 폰·확장(개발자)은 각각 폰·확장 프로그램 화면이 담당한다.
+    // 요금제 구분은 폐지돼 설정에 자리가 없다(키마스터·자동화는 2026-09-19 설정 안으로 들어왔다)
+    for (const gone of ['phone', 'developer', 'plan']) {
       expect(isSectionKey(gone)).toBe(false)
     }
   })
