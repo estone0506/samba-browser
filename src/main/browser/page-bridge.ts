@@ -1,6 +1,7 @@
 import type { WebContents } from 'electron'
 import { z } from 'zod'
-import type { PageSnapshot } from '../../shared/snapshot'
+import type { PageElement, PageSnapshot } from '../../shared/snapshot'
+import { findCodeField as pickCodeField } from '../phone/auth-flow'
 import type { Tab } from './tab-manager'
 
 // preload 가 실행되는 격리 월드 id. Electron 의 WorldId.ISOLATED_WORLD = 999
@@ -106,6 +107,10 @@ export const pageBridge = {
   },
   findLoginFields: (tab: Tab): Promise<LoginFieldsResult> =>
     call(tab.view.webContents, '__samba.findLoginFields()', loginFieldsSchema),
+  // 문자 인증번호 입력칸 후보. 새 페이지 채널을 만들지 않고 스냅샷을 다시 받아
+  // 순수 판정 함수(auth-flow)를 메인 쪽에서 적용한다
+  findCodeField: async (tab: Tab): Promise<PageElement | null> =>
+    pickCodeField(await call(tab.view.webContents, '__samba.snapshot()', snapshotSchema)),
   // 이미 로그인된 상태인지 힌트(로그인 폼을 못 찾았을 때만 쓴다)
   signedInHint: (tab: Tab): Promise<SignedInHintResult> =>
     call(tab.view.webContents, '__samba.signedInHint()', signedInHintSchema),

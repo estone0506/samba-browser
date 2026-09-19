@@ -8,6 +8,7 @@ import { isPhoneCountry } from '../../shared/phone'
 import { ADB_CANDIDATES, SCRCPY_CANDIDATES, detectAdbPath, shellArgs } from './adb'
 import type { AdbRunner } from './adb'
 import { DeviceManager, type DeviceRepo, type PhoneRowLike } from './devices'
+import { ARS_NOTICE, watchIncomingCall } from './auth-flow'
 
 /**
  * Task 2 의 `PhoneRepo` 를 구조적으로 받는다(파일 import 없음 — devices.ts 와 같은 이유).
@@ -33,6 +34,8 @@ export interface PhoneServiceDeps {
   isPro: () => boolean
   emit: (list: PhoneDto[], warning?: string) => void
   emitAuthWaiting: (dto: PhoneAuthWaitingDto) => void
+  /** 채팅 진행 로그(ARS 안내처럼 사용자가 봐야 하는 한 줄). 없으면 통지만 한다 */
+  onProgress?: (text: string) => void
   now?: () => number
   // 경로 후보가 실제로 있는지 보는 함수(테스트에서 갈아 끼운다)
   exists?: (path: string) => boolean
@@ -118,6 +121,38 @@ export class PhoneService {
   /** 인증 대기 알림을 렌더러로 밀어 준다(문자 본문은 담기지 않는다) */
   notifyAuthWaiting(dto: PhoneAuthWaitingDto): void {
     this.deps.emitAuthWaiting(dto)
+  }
+
+  /**
+   * 인증을 기다리는 동안 ARS(전화 인증) 수신을 3초마다 살핀다.
+   * 감지되면 카드 강조 통지와 진행 로그만 남긴다 — 전화를 받거나 키패드를 누르지 않는다.
+   * 돌려주는 함수를 부르면 감시를 멈춘다
+   */
+  watchArs(siteHost: string): () => void {
+    let stopped = false
+    void watchIncomingCall({
+      adb: this.deps.adb,
+      serials: () =>
+        this.devices
+          .list()
+          .filter((p) => p.state === 'online')
+          .map((p) => p.serial),
+      now: this.deps.now ?? ((): number => Date.now()),
+      cancelled: () => stopped,
+      onDetected: (serial) => {
+        const phone = this.devices.list().find((p) => p.serial === serial) ?? null
+        this.deps.emitAuthWaiting({
+          waiting: true,
+          kind: 'ars',
+          siteHost,
+          phoneId: phone?.id ?? null
+        })
+        this.deps.onProgress?.(ARS_NOTICE)
+      }
+    })
+    return () => {
+      stopped = true
+    }
   }
 
   /**
