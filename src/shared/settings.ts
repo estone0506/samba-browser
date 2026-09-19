@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { AI_PROVIDERS, type AiProviderId, type TaskModels } from './ai'
 import { DEFAULT_DANGER_WORDS, mergeDangerWords } from './danger'
 import { EXTENSION_SOURCES, type ExtensionSource } from './extensions'
+import { DEFAULT_PAYMENT_LIMIT_KRW, type ScreenFps, type ScreenSize } from './phone'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 
 // 도구 호출 상한 허용 범위
@@ -98,8 +99,20 @@ export const DEFAULT_SETTINGS = {
   theme: 'system' as ThemeMode,
   uiZoom: 100,
   sidebarShowBookmarks: true,
-  sidebarShowChat: true
+  sidebarShowChat: true,
   // === 2b 추가분 끝 =========================================================
+  // === 폰 연동(3단계 추가분) ================================================
+  // adb/scrcpy 실행 파일 경로. 빈 문자열이면 설정 화면의 "자동 찾기" 를 안내한다
+  adbPath: '',
+  scrcpyPath: '',
+  // 폰 화면 품질(긴 변 픽셀 · 초당 프레임)
+  phoneScreenMaxSize: 720 as ScreenSize,
+  phoneScreenFps: 15 as ScreenFps,
+  // 끊겼을 때 kill-server/start-server 로 1회 자동 복구할지
+  phoneAutoReconnect: true,
+  // 결제 상한(원). 초과하면 권한 모드와 무관하게 사람 확인을 받는다
+  paymentLimitKrw: DEFAULT_PAYMENT_LIMIT_KRW
+  // === 폰 연동 끝 ===========================================================
 }
 
 // 손상된 config.json 이어도 앱이 뜨도록 필드마다 catch 로 기본값으로 되돌린다
@@ -173,8 +186,20 @@ export const settingsSchema = z.object({
   theme: z.enum(THEME_MODES).catch(DEFAULT_SETTINGS.theme),
   uiZoom: z.number().int().min(MIN_UI_ZOOM).max(MAX_UI_ZOOM).catch(DEFAULT_SETTINGS.uiZoom),
   sidebarShowBookmarks: z.boolean().catch(DEFAULT_SETTINGS.sidebarShowBookmarks),
-  sidebarShowChat: z.boolean().catch(DEFAULT_SETTINGS.sidebarShowChat)
+  sidebarShowChat: z.boolean().catch(DEFAULT_SETTINGS.sidebarShowChat),
   // === 2b 추가분 끝 ===========================================================
+  // === 폰 연동(3단계 추가분) — 경로는 기기별 값이라 동기화하지 않는다 ==========
+  adbPath: z.string().catch(DEFAULT_SETTINGS.adbPath),
+  scrcpyPath: z.string().catch(DEFAULT_SETTINGS.scrcpyPath),
+  phoneScreenMaxSize: z
+    .union([z.literal(720), z.literal(1080)])
+    .catch(DEFAULT_SETTINGS.phoneScreenMaxSize),
+  phoneScreenFps: z
+    .union([z.literal(10), z.literal(15), z.literal(30)])
+    .catch(DEFAULT_SETTINGS.phoneScreenFps),
+  phoneAutoReconnect: z.boolean().catch(DEFAULT_SETTINGS.phoneAutoReconnect),
+  paymentLimitKrw: z.number().int().min(0).catch(DEFAULT_SETTINGS.paymentLimitKrw)
+  // === 폰 연동 끝 =============================================================
 })
 
 export type Settings = z.infer<typeof settingsSchema>
