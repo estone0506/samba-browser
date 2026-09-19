@@ -90,7 +90,10 @@ export function applyMobileEmulation(wc: WebContents): Promise<void> {
       deviceScaleFactor: 2.6,
       mobile: true
     })
-    await send(wc, 'Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
+    // 터치 에뮬레이션은 켜지 않는다. 켜면 Chromium TouchEmulator 가 오른쪽 버튼 입력을 통째로
+    // 삼키고 mousedown 시점에 컨텍스트 메뉴를 띄워, 마우스 제스처(우클릭 드래그)가 불가능해지고
+    // 메뉴도 놓는 순간이 아니라 누르는 순간에 뜬다. 모바일 UA + 뷰포트 메트릭만으로 모바일 화면을 받는다
+    await send(wc, 'Emulation.setTouchEmulationEnabled', { enabled: false })
     await send(wc, 'Emulation.setUserAgentOverride', {
       userAgent: MOBILE_UA,
       platform: 'Android'
