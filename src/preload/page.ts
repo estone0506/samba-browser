@@ -24,6 +24,9 @@ import {
   performScroll,
   fillValue,
   findLoginFields,
+  signedInHint,
+  captchaHint,
+  checkKeepSignedIn,
   submitForm,
   isSecretField,
   installCaptureListener
@@ -50,6 +53,12 @@ const api = {
   // SECRET 허용 — 메인 프로세스만 호출(AI 텍스트 도구 경로가 아님)
   fillValue: (id: number, value: string) => fillValue(id, value),
   findLoginFields: () => findLoginFields(),
+  // 이미 로그인돼 있는지 힌트(로그인 폼이 없을 때만 의미가 있다)
+  signedInHint: () => signedInHint(),
+  // 캡차·2FA 징후. 사용자에게 넘기기 위한 감지 전용이다
+  captchaHint: () => captchaHint(),
+  // 제출 직전 "로그인 상태 유지" 체크박스 켜기
+  checkKeepSignedIn: (anchorId?: number) => checkKeepSignedIn(anchorId),
   submitForm: (id: number) => submitForm(id),
   // 최신 스냅샷 기준으로 요소가 비밀 입력칸(type=password)인지 확인(fill_secret 대상 검증용)
   isSecretField: (id: number) => isSecretField(id)
