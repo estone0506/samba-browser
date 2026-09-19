@@ -11,6 +11,14 @@ import type { VaultService } from './vault/service'
 import type { SyncEngineHolder } from './sync/engine'
 import { runLoginHarness, writeVaultLocked } from './e2e/login-harness'
 
+// 콘솔 출력 파이프가 끊겨도(EPIPE — 로그를 받던 터미널·파일 핸들이 먼저 닫힘) 앱이 죽지 않게 한다.
+// console.* 이 실패하며 uncaughtException 으로 번져 "A JavaScript error occurred" 창이 뜨던 문제
+for (const stream of [process.stdout, process.stderr]) {
+  stream?.on?.('error', (err: NodeJS.ErrnoException) => {
+    if (err.code !== 'EPIPE') throw err
+  })
+}
+
 // E2E 하네스용 userData 분리 — 실행 중인 사용자 앱의 DB 를 건드리지 않기 위해 복사본을 쓴다.
 // app.whenReady() 이전에 지정해야 하므로 모듈 최상단에서 처리한다
 const userDataOverride = process.env.SAMBA_USER_DATA
