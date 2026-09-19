@@ -56,7 +56,9 @@ import {
   type CaptureBeginVideoDto,
   type CaptureResultDto,
   type CaptureStillDto,
-  type CaptureVideoSourceDto
+  type CaptureVideoSourceDto,
+  type NotifyChannel,
+  type NotifySendResult
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
@@ -167,6 +169,11 @@ const api = {
     rename: (chatId: number, title: string): Promise<IpcResult<ChatDto | null>> =>
       invoke(IPC.chatRename, chatId, title),
     remove: (chatId: number): Promise<IpcResult<boolean>> => invoke(IPC.chatDelete, chatId)
+  },
+  // 알림 연동 — 설정 화면의 [테스트 보내기]. 웹훅 주소·봇 토큰은 메인이 쥔 값을 쓴다
+  notify: {
+    test: (channel: NotifyChannel): Promise<IpcResult<NotifySendResult>> =>
+      invoke(IPC.notifyTest, channel)
   },
   // 자동화 플레이북 — 이름·트리거·절차 마크다운뿐이다(비밀값은 담기지 않는다)
   playbooks: {

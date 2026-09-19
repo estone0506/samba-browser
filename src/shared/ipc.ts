@@ -179,6 +179,9 @@ export const IPC = {
   captureDone: 'capture:done', // main → renderer 이벤트(캡처 완료 → 토스트)
   captureRegionMode: 'capture:regionMode', // main → page preload(격리 월드) 요소 선택 모드
   captureElementRect: 'capture:elementRect', // page preload(격리 월드) → main, 전용 게이트
+  // --- 알림 연동 — 설정 화면의 [테스트 보내기] 하나뿐이다 ---------------------
+  // (알림 본문은 메인이 만들어 곧바로 메신저로 보낸다. 렌더러를 거치지 않는다)
+  notifyTest: 'notify:test',
   // --- 자동화 플레이북 — 절차 문서뿐이라 비밀값은 오가지 않는다 ---------------
   playbookList: 'playbook:list',
   playbookPut: 'playbook:put', // 새로 만들기 + 수정(id 없으면 새로 만든다)
@@ -345,3 +348,5 @@ export type {
   ChatDetailDto,
   AppendMessageInput
 } from './chat'
+
+export type { NotifyChannel, NotifyEvent, NotifySendResult } from './notify'
