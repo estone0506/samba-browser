@@ -15,6 +15,34 @@ export interface RemoteKeyedRow {
   [column: string]: unknown
 }
 
+/**
+ * 풀 커서 — (updated_at, id) 복합.
+ * updated_at 만으로는 같은 시각을 가진 행이 페이지 경계를 넘을 때 나머지를 영영 못 받는다
+ * (gt 커서가 그 시각 전체를 건너뛴다). id 를 동률 판정에 함께 쓴다.
+ * id 가 null 이면 동률 판정이 없다 — 커서에 id 가 없던 옛 DB(숫자 커서)의 뜻 그대로 읽는다
+ */
+export interface PullCursor {
+  ts: number
+  id: string | null
+}
+
+/** 옛 호출부(숫자 커서)도 그대로 받는다 */
+export type PullCursorInput = PullCursor | number
+
+/** 숫자 커서를 복합 커서로 올린다. 동률 판정이 없으므로 id 는 null */
+export function toPullCursor(input: PullCursorInput): PullCursor {
+  return typeof input === 'number' ? { ts: input, id: null } : input
+}
+
+/** 커서보다 뒤에 있는 행인가. 정렬 (updated_at asc, id asc) 과 같은 기준이다 */
+export function isAfterCursor(ts: number, id: string, cursor: PullCursor): boolean {
+  if (ts > cursor.ts) return true
+  return cursor.id !== null && ts === cursor.ts && id > cursor.id
+}
+
+/** 한 번에 받아 올 최대 행 수의 기본값(supabase 기본 상한과 같다) */
+export const DEFAULT_SELECT_LIMIT = 1000
+
 export interface SyncBackend {
   signUp(email: string, password: string): Promise<{ userId: string; email: string }>
   signIn(email: string, password: string): Promise<{ userId: string; email: string }>
@@ -27,11 +55,17 @@ export interface SyncBackend {
   clearLocalSession(): Promise<void>
   currentUser(): Promise<{ userId: string; email: string } | null>
   /**
-   * updated_at 이 sinceMs 보다 큰 행만 오래된 순으로 준다.
+   * 커서보다 뒤에 있는 행을 (updated_at asc, id asc) 순으로 최대 limit 행 준다.
    * workspaceId 를 주면 그 작업공간의 행만 받는다 — 다른 작업공간 행까지 내려받아 봐야
-   * 로컬에서는 보이지 않고, 커서만 앞으로 밀어 버린다
+   * 로컬에서는 보이지 않고, 커서만 앞으로 밀어 버린다.
+   * 받은 행이 limit 과 같으면 뒤에 더 있다는 뜻이다(호출부가 커서를 옮겨 한 번 더 부른다)
    */
-  select(table: string, sinceMs: number, workspaceId?: string): Promise<RemoteRow[]>
+  select(
+    table: string,
+    cursor: PullCursorInput,
+    workspaceId?: string,
+    limit?: number
+  ): Promise<RemoteRow[]>
   /**
    * 표의 행을 전부 준다. updated_at 컬럼이 없는 표(devices)용이다 —
    * 커서로 걸러 낼 수 없고 행 수도 기기 수만큼이라 통째로 읽는다
@@ -39,8 +73,16 @@ export interface SyncBackend {
   selectAll(table: string): Promise<RemoteRow[]>
   upsert(table: string, rows: RemoteRow[]): Promise<void>
   remove(table: string, ids: string[]): Promise<void>
-  /** 복합 PK 표(settings_sync)에서 읽는다. workspaceId 를 주면 그 작업공간의 행만 받는다 */
-  selectKeyed(table: string, sinceMs: number, workspaceId?: string): Promise<RemoteKeyedRow[]>
+  /**
+   * 복합 PK 표(settings_sync)에서 읽는다. workspaceId 를 주면 그 작업공간의 행만 받는다.
+   * 이 표에는 id 컬럼이 없어 동률 판정에 key 컬럼을 쓴다 — 정렬도 (updated_at asc, key asc)
+   */
+  selectKeyed(
+    table: string,
+    cursor: PullCursorInput,
+    workspaceId?: string,
+    limit?: number
+  ): Promise<RemoteKeyedRow[]>
   /** 복합 PK 표(settings_sync)에 올린다. 충돌 해결은 서버의 기본키를 따른다 */
   upsertKeyed(table: string, rows: RemoteKeyedRow[]): Promise<void>
   /** 변경 알림 구독. 반환값을 호출하면 구독을 푼다 */

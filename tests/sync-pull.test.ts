@@ -14,7 +14,10 @@ import {
   pullAll,
   pullCursorKey,
   legacyTableCursorKey,
-  PULL_CURSOR_KEY
+  parsePullCursor,
+  PULL_CURSOR_KEY,
+  PULL_PAGE_SIZE,
+  type PullTable
 } from '../src/main/sync/pull'
 import { TOMBSTONE_TTL_MS } from '../src/main/sync/merge'
 import { vaultSyncAad } from '../src/main/sync/mappers'
@@ -27,6 +30,12 @@ import type { RemoteRow } from '../src/main/sync/backend'
 const MASTER = 'master-pass-1234'
 const SECRET = 'sup3rs3cret!'
 const WORKSPACE = '00000000-0000-4000-8000-0000000000ws'
+
+/** 커서는 (updated_at, id) 복합이라 문자열로 저장된다. 시각만 꺼내 본다 */
+function cursorTs(local: SyncLocal, workspaceLocalId: number, table: PullTable): number | null {
+  const raw = local.getState(pullCursorKey(workspaceLocalId, table))
+  return raw === null ? null : parsePullCursor(raw).ts
+}
 
 function makeSettings(patch: Partial<Settings> = {}): SettingsAccess {
   let value: Settings = { ...DEFAULT_SETTINGS, ...patch }
@@ -215,8 +224,8 @@ describe('pullAll', () => {
     expect(local.accountIdByRemote('acc-1')).not.toBeNull()
     expect(local.vaultItemIdByRemote('item-2')).toBeNull()
     // 계정 표의 커서만 전진하고, 금고 표의 커서는 그대로다
-    expect(local.getStateNumber(pullCursorKey(1, 'accounts'))).toBe(9_000_000)
-    expect(local.getStateNumber(pullCursorKey(1, 'vault_items'))).toBeNull()
+    expect(cursorTs(local, 1, 'accounts')).toBe(9_000_000)
+    expect(cursorTs(local, 1, 'vault_items')).toBeNull()
 
     await vault.unlock(MASTER)
     await pullAll(deps)
@@ -224,7 +233,7 @@ describe('pullAll', () => {
     const restored = local.vaultItemIdByRemote('item-2')
     expect(restored).not.toBeNull()
     expect(local.vaultItemForSync(restored!)?.label).toBe('메모')
-    expect(local.getStateNumber(pullCursorKey(1, 'vault_items'))).toBe(2_000_000)
+    expect(cursorTs(local, 1, 'vault_items')).toBe(2_000_000)
   })
 
   it('옛 DB 의 단일 커서(비0)를 표별 커서가 그대로 이어받는다', async () => {
@@ -245,8 +254,8 @@ describe('pullAll', () => {
     expect(local.bookmarkIdByRemote('bm-new')).not.toBeNull()
     expect(result.applied).toBe(1)
     // 승계 이후에는 (작업공간, 표) 커서에만 적힌다
-    expect(local.getStateNumber(pullCursorKey(1, 'accounts'))).toBe(5_000_000)
-    expect(local.getStateNumber(pullCursorKey(1, 'bookmarks'))).toBe(6_000_000)
+    expect(cursorTs(local, 1, 'accounts')).toBe(5_000_000)
+    expect(cursorTs(local, 1, 'bookmarks')).toBe(6_000_000)
   })
 
   it('작업공간 축이 없던 표별 커서도 이어받는다', async () => {
@@ -261,6 +270,55 @@ describe('pullAll', () => {
     expect(local.getStateNumber(pullCursorKey(1, 'bookmarks'))).toBe(5_000_000)
   })
 
+  it('같은 수정 시각을 가진 행이 페이지를 넘겨도 전부 내려온다', async () => {
+    // 실검수 회귀: select 가 한 번에 N 행만 주는데 커서가 updated_at 하나뿐이라,
+    // 같은 시각의 행이 페이지 경계를 넘으면 gt 커서가 그 시각을 통째로 건너뛰어
+    // 나머지가 영영 내려오지 않았다(계정 607 에서 정지)
+    const total = PULL_PAGE_SIZE * 2 + 200
+    const sameTime = new Date(2_000_000).toISOString()
+    backend.seed(
+      'bookmarks_sync',
+      Array.from({ length: total }, (_, i) => {
+        const id = `bm-${String(i).padStart(5, '0')}`
+        return bookmarkRow({ id, url: `https://page.example/${i}`, updated_at: sameTime })
+      })
+    )
+
+    const result = await pullAll(deps)
+
+    expect(result.applied).toBe(total)
+    expect(local.bookmarkIdByRemote('bm-00000')).not.toBeNull()
+    expect(local.bookmarkIdByRemote(`bm-${String(total - 1).padStart(5, '0')}`)).not.toBeNull()
+    // 커서는 마지막 행의 (시각, id) 로 남아 다음 주기가 그 뒤부터 이어 간다
+    expect(local.getState(pullCursorKey(1, 'bookmarks'))).toBe(
+      `2000000:bm-${String(total - 1).padStart(5, '0')}`
+    )
+
+    // 다시 돌려도 같은 행을 또 받지 않는다
+    const again = await pullAll(deps)
+    expect(again.applied).toBe(0)
+  })
+
+  it('옛 숫자 커서 값도 그대로 읽어 이어 간다', async () => {
+    // 커서 형식이 'ts' → 'ts:id' 로 바뀌기 전의 DB
+    local.setState(pullCursorKey(1, 'bookmarks'), '5000000')
+    backend.seed('bookmarks_sync', [
+      bookmarkRow({ id: 'bm-old', updated_at: new Date(4_000_000).toISOString() }),
+      bookmarkRow({
+        id: 'bm-new',
+        url: 'https://new.example',
+        updated_at: new Date(6_000_000).toISOString()
+      })
+    ])
+
+    await pullAll(deps)
+
+    expect(local.bookmarkIdByRemote('bm-old')).toBeNull()
+    expect(local.bookmarkIdByRemote('bm-new')).not.toBeNull()
+    // 이어 간 뒤에는 새 형식으로 적힌다
+    expect(local.getState(pullCursorKey(1, 'bookmarks'))).toBe('6000000:bm-new')
+  })
+
   it('커서는 작업공간마다 따로 센다', async () => {
     // I2 — 커서에 작업공간 축이 없으면, 1번에서 커서가 T 까지 간 뒤 2번으로 옮겼을 때
     // 2번의 updated_at ≤ T 인 행이 영영 내려오지 않는다
@@ -268,7 +326,7 @@ describe('pullAll', () => {
       bookmarkRow({ id: 'bm-ws1', updated_at: new Date(9_000_000).toISOString() })
     ])
     await pullAll(deps)
-    expect(local.getStateNumber(pullCursorKey(1, 'bookmarks'))).toBe(9_000_000)
+    expect(cursorTs(local, 1, 'bookmarks')).toBe(9_000_000)
 
     // 2번 작업공간 — 더 오래된 행이지만 커서가 따로라 내려온다
     const ws2: PushDeps = { ...deps, workspace: () => ({ localId: 2, remoteId: 'ws-2' }) }
@@ -284,7 +342,7 @@ describe('pullAll', () => {
     await pullAll(ws2)
 
     expect(local.bookmarkIdByRemote('bm-ws2')).not.toBeNull()
-    expect(local.getStateNumber(pullCursorKey(2, 'bookmarks'))).toBe(3_000_000)
+    expect(cursorTs(local, 2, 'bookmarks')).toBe(3_000_000)
   })
 
   it('비기본 작업공간에서도 내려받은 행이 보인다', async () => {

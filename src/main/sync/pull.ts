@@ -10,10 +10,12 @@ import { SyncLocal } from './local'
 import {
   accountFromRemote,
   bookmarkFromRemote,
+  fromIso,
   remoteTableOf,
   settingFromRemote,
   vaultItemFromRemote
 } from './mappers'
+import type { PullCursor } from './backend'
 import { settingUpdatedAtKey } from './outbox'
 import { isVaultKeySyncKey, SYNCED_SETTING_KEYS, type VaultKeySyncKey } from '../../shared/sync'
 import { parseSettings, type Settings } from '../../shared/settings'
@@ -58,12 +60,45 @@ export const LAST_PULLED_AT_KEY = 'lastPulledAt'
 /** 풀이 도는 표. 커서를 표마다 따로 센다 */
 export type PullTable = 'accounts' | 'vault_items' | 'bookmarks' | 'settings'
 
+/** 한 번에 받아 올 행 수. 이만큼 꽉 차서 왔으면 뒤에 더 있다고 본다 */
+export const PULL_PAGE_SIZE = 500
+
 /**
- * 한 표에서 본 행들. null 이면 이번 주기에 그 표를 읽지 못했다는 뜻이다.
- * 커서를 하나만 쓰면 금고가 잠겨 vault_items 를 통째로 건너뛴 주기에도 다른 표의
- * updated_at 때문에 커서가 전진해, 잠금 해제 후 그 구간의 금고 행이 영영 내려오지 않았다
+ * 한 주기에 한 표가 넘길 수 있는 최대 페이지 수. 남은 것은 다음 주기가 이어 간다 —
+ * 첫 동기화가 수만 행이어도 한 주기를 무한정 붙잡지 않는다
  */
-type Seen = { updatedAt: number }[] | null
+export const MAX_PAGES_PER_CYCLE = 20
+
+/**
+ * 한 페이지에서 **받아 본** 행들(적용 여부와 무관하다). null 이면 이번 주기에 그 표를
+ * 읽지 못했다는 뜻이다.
+ * 커서를 하나만 쓰면 금고가 잠겨 vault_items 를 통째로 건너뛴 주기에도 다른 표의
+ * updated_at 때문에 커서가 전진해, 잠금 해제 후 그 구간의 금고 행이 영영 내려오지 않았다.
+ * 복호화에 실패해 건너뛴 행도 여기에는 담는다 — 담지 않으면 커서가 그 자리에 붙박여
+ * 같은 페이지를 영원히 다시 받는다
+ */
+type Seen = { updatedAt: number; id: string }[] | null
+
+/** 커서 한 줄을 sync_state 문자열로. id 가 없으면 옛 형식(숫자)과 같은 모양이다 */
+export function formatPullCursor(cursor: PullCursor): string {
+  return cursor.id === null ? String(cursor.ts) : `${cursor.ts}:${cursor.id}`
+}
+
+/**
+ * sync_state 에 적힌 커서를 읽는다.
+ * - 'ts:id' — 지금 형식
+ * - 'ts'    — 커서에 id 가 없던 옛 DB. 동률 판정 없이 그대로 이어 간다
+ */
+export function parsePullCursor(raw: string | null): PullCursor {
+  if (raw === null) return { ts: 0, id: null }
+  const at = raw.indexOf(':')
+  if (at < 0) {
+    const ts = Number(raw)
+    return { ts: Number.isFinite(ts) ? ts : 0, id: null }
+  }
+  const ts = Number(raw.slice(0, at))
+  return { ts: Number.isFinite(ts) ? ts : 0, id: raw.slice(at + 1) }
+}
 
 export async function pullAll(deps: PullDeps): Promise<PullResult> {
   // 내려받은 행에 지금 작업공간을 찍어 둔다 — 그러지 않으면 비기본 작업공간에서 보이지 않는다
@@ -71,26 +106,38 @@ export async function pullAll(deps: PullDeps): Promise<PullResult> {
   const local = new SyncLocal(deps.db, workspaceLocalId)
   const result: PullResult = { applied: 0, conflicts: 0, pruned: 0, vaultKeyMismatch: false }
   // 단일 커서만 있던 옛 DB 는 그 자리에서 이어 간다
-  const legacy = local.getStateNumber(PULL_CURSOR_KEY) ?? 0
+  const legacy = local.getState(PULL_CURSOR_KEY)
 
-  const step = async (table: PullTable, fn: (since: number) => Promise<Seen>): Promise<void> => {
+  const step = async (
+    table: PullTable,
+    fn: (cursor: PullCursor, limit: number) => Promise<Seen>
+  ): Promise<void> => {
     const key = pullCursorKey(workspaceLocalId, table)
     // 승계 순서: (작업공간, 표) → 표만 있던 커서 → 단일 커서
-    const own = local.getStateNumber(key)
-    const since = own ?? local.getStateNumber(legacyTableCursorKey(table)) ?? legacy
-    const seen = await fn(since)
-    // 건너뛴 표는 커서를 두고 간다 — 다음 주기에 같은 구간을 다시 본다
-    if (seen === null) return
-    let next = since
-    for (const row of seen) if (row.updatedAt > next) next = row.updatedAt
+    const own = local.getState(key)
+    const raw = own ?? local.getState(legacyTableCursorKey(table)) ?? legacy
+    let cursor = parsePullCursor(raw)
     // 옛 키에서 물려받았으면 값이 그대로여도 새 키에 한 번 적어 둔다(승계 완료)
-    if (next > since || own === null) local.setStateNumber(key, next)
+    let dirty = own === null
+    for (let page = 0; page < MAX_PAGES_PER_CYCLE; page += 1) {
+      const seen = await fn(cursor, PULL_PAGE_SIZE)
+      // 건너뛴 표는 커서를 두고 간다 — 다음 주기에 같은 구간을 다시 본다
+      if (seen === null) return
+      const last = seen[seen.length - 1]
+      if (last) {
+        cursor = { ts: last.updatedAt, id: last.id }
+        dirty = true
+      }
+      // 꽉 차지 않았으면 이 표는 끝까지 읽었다
+      if (seen.length < PULL_PAGE_SIZE) break
+    }
+    if (dirty) local.setState(key, formatPullCursor(cursor))
   }
 
-  await step('accounts', (since) => pullAccounts(deps, local, since, result))
-  await step('vault_items', (since) => pullVaultItems(deps, local, since, result))
-  await step('bookmarks', (since) => pullBookmarks(deps, local, since, result))
-  await step('settings', (since) => pullSettings(deps, local, since, result))
+  await step('accounts', (cursor, limit) => pullAccounts(deps, local, cursor, limit, result))
+  await step('vault_items', (cursor, limit) => pullVaultItems(deps, local, cursor, limit, result))
+  await step('bookmarks', (cursor, limit) => pullBookmarks(deps, local, cursor, limit, result))
+  await step('settings', (cursor, limit) => pullSettings(deps, local, cursor, limit, result))
 
   result.pruned = local.pruneExpiredTombstones(Date.now())
   local.setStateNumber(LAST_PULLED_AT_KEY, Date.now())
@@ -120,15 +167,21 @@ function toSyncable(row: {
 async function pullAccounts(
   deps: PullDeps,
   local: SyncLocal,
-  since: number,
+  cursor: PullCursor,
+  limit: number,
   result: PullResult
 ): Promise<Seen> {
-  const rows = await deps.backend.select(remoteTableOf('accounts'), since, workspaceOf(deps))
-  const seen: { updatedAt: number }[] = []
+  const rows = await deps.backend.select(
+    remoteTableOf('accounts'),
+    cursor,
+    workspaceOf(deps),
+    limit
+  )
+  const seen: { updatedAt: number; id: string }[] = []
 
   for (const raw of rows) {
     const remote = accountFromRemote(raw)
-    seen.push({ updatedAt: remote.updatedAt })
+    seen.push({ updatedAt: remote.updatedAt, id: raw.id })
     // 원격 id 로 먼저 찾고, 처음 합치는 기기라면 (host, username) 으로 짝을 맞춘다
     const localId =
       (remote.remoteId ? local.accountIdByRemote(remote.remoteId) : null) ??
@@ -156,15 +209,21 @@ async function pullAccounts(
 async function pullVaultItems(
   deps: PullDeps,
   local: SyncLocal,
-  since: number,
+  cursor: PullCursor,
+  limit: number,
   result: PullResult
 ): Promise<Seen> {
-  const rows = await deps.backend.select(remoteTableOf('vault_items'), since, workspaceOf(deps))
+  const rows = await deps.backend.select(
+    remoteTableOf('vault_items'),
+    cursor,
+    workspaceOf(deps),
+    limit
+  )
   if (rows.length === 0) return []
 
   // 금고가 잠겨 있으면 복호화할 수 없다 — 커서도 올리지 않고 다음 주기에 다시 본다
   const seen = deps.vault.useMasterKey((key) => {
-    const applied: { updatedAt: number }[] = []
+    const applied: { updatedAt: number; id: string }[] = []
     for (const raw of rows) {
       let remote: ReturnType<typeof vaultItemFromRemote>
       try {
@@ -172,9 +231,11 @@ async function pullVaultItems(
       } catch {
         // 값도 암호문도 남기지 않는다 — 어느 행인지만 남긴다
         console.warn('금고 항목 복호화 실패(건너뜀)', raw.id)
+        // 커서는 이 행 위로 넘긴다 — 아니면 같은 페이지를 영원히 다시 받는다
+        applied.push({ updatedAt: fromIso(raw.updated_at), id: raw.id })
         continue
       }
-      applied.push({ updatedAt: remote.updatedAt })
+      applied.push({ updatedAt: remote.updatedAt, id: raw.id })
       const localId = local.vaultItemIdByRemote(remote.remoteId)
       if (localId === null) {
         if (remote.deletedAt !== null) continue
@@ -197,20 +258,26 @@ async function pullVaultItems(
 async function pullBookmarks(
   deps: PullDeps,
   local: SyncLocal,
-  since: number,
+  cursor: PullCursor,
+  limit: number,
   result: PullResult
 ): Promise<Seen> {
-  const rows = await deps.backend.select(remoteTableOf('bookmarks'), since, workspaceOf(deps))
+  const rows = await deps.backend.select(
+    remoteTableOf('bookmarks'),
+    cursor,
+    workspaceOf(deps),
+    limit
+  )
   if (rows.length === 0) return []
 
   // 북마크는 합집합이다. 같은 (폴더 경로, URL) 만 한 개로 합치고 나머지는 양쪽 다 남는다
   const locals = local.listBookmarksForSync()
   const byKey = new Map(locals.map((b) => [bookmarkKey(b), b]))
-  const seen: { updatedAt: number }[] = []
+  const seen: { updatedAt: number; id: string }[] = []
 
   for (const raw of rows) {
     const remote = bookmarkFromRemote(raw)
-    seen.push({ updatedAt: remote.updatedAt })
+    seen.push({ updatedAt: remote.updatedAt, id: raw.id })
     const matched =
       locals.find((b) => b.remoteId !== null && b.remoteId === remote.remoteId) ??
       byKey.get(bookmarkKey(remote)) ??
@@ -235,18 +302,20 @@ async function pullBookmarks(
 async function pullSettings(
   deps: PullDeps,
   local: SyncLocal,
-  since: number,
+  cursor: PullCursor,
+  limit: number,
   result: PullResult
 ): Promise<Seen> {
-  const rows = await deps.backend.selectKeyed('settings_sync', since, workspaceOf(deps))
-  const seen: { updatedAt: number }[] = []
+  const rows = await deps.backend.selectKeyed('settings_sync', cursor, workspaceOf(deps), limit)
+  const seen: { updatedAt: number; id: string }[] = []
   // 마스터 키 재료는 세 키가 다 모여야 심을 수 있다 — 먼저 모아 두고 끝에서 한 번에 적용한다
   const keyMaterial: Partial<Record<VaultKeySyncKey, string>> = {}
   const keyMaterialAt = new Map<VaultKeySyncKey, number>()
 
   for (const raw of rows) {
     const remote = settingFromRemote(raw)
-    seen.push({ updatedAt: remote.updatedAt })
+    // 복합 PK 표라 동률 판정 축이 id 가 아니라 key 다
+    seen.push({ updatedAt: remote.updatedAt, id: remote.key })
     if (isVaultKeySyncKey(remote.key)) {
       // 다른 설정과 달리 수정 시각으로 거르지 않는다 — 로컬이 더 최신이어도 "같은 금고인가"는
       // 확인해야 하고, 심을지 말지는 금고 상태(설정 전인가)가 정한다
