@@ -73,6 +73,7 @@ import { WorkspaceService } from '../workspace/service'
 import { workspaceShortcutIndex } from '../workspace/shortcut'
 import { ExtensionManager, createSessionExtensionHost } from '../extensions/manager'
 import { createExtensionInstaller } from '../extensions/install-service'
+import { WEBSTORE_HOST, isExtensionId } from '../../shared/extensions'
 // === 폰 연동(3단계) — child_process 는 phone/process.ts 안에만 있다 ===================
 import { createAdbRunner } from '../phone/process'
 import { PhoneRepo } from '../phone/repo'
@@ -219,6 +220,7 @@ export function registerIpc(
     ipcMain.removeAllListeners(IPC.vaultCapture)
     ipcMain.removeAllListeners(IPC.vaultUndoPasswordUpdate)
     ipcMain.removeAllListeners(IPC.pageGesture)
+    ipcMain.removeAllListeners(IPC.pageWebstoreInstall)
     sync.current()?.stop()
     sync.release()
     vault.dispose()
@@ -860,6 +862,33 @@ export function registerIpc(
   handleFromRenderer(IPC.extInstallWebstore, (input: string) =>
     extensionInstaller.installWebstore(input)
   )
+
+  // 웹스토어 탭에서 "Chrome에 추가" 를 누른 경우 — 크롬과 같은 설치 경험.
+  // 발신자는 반드시 관리 중인 탭이면서 지금 보고 있는 주소가 웹스토어여야 한다
+  // (웹 페이지·확장이 아무 id 나 밀어 넣어 설치시키는 것을 막는다)
+  ipcMain.on(IPC.pageWebstoreInstall, (e, raw: unknown) => {
+    if (!tabs.findByWebContents(e.sender)) return
+    if (normalizeHost(e.sender.getURL()) !== WEBSTORE_HOST) return
+    if (!isExtensionId(raw)) return
+    const id = raw
+    const sender = e.sender
+    void extensionInstaller
+      .installWebstore(id)
+      .then((result) => {
+        const ok = !result.error
+        if (!ok) console.warn(`웹스토어 설치 실패(${id}): ${result.error}`)
+        // 버튼 문구를 바꿔 주도록 누른 그 탭으로 결과를 돌려준다
+        if (!sender.isDestroyed()) {
+          sender.send(IPC.pageWebstoreInstallResult, { id, ok })
+        }
+        // 확장 페이지·퍼즐 메뉴가 열려 있으면 목록을 다시 읽게 한다
+        if (ok) send(IPC.extChanged, null)
+      })
+      .catch((err: unknown) => {
+        console.error('웹스토어 설치 처리 실패', err instanceof Error ? err.message : String(err))
+        if (!sender.isDestroyed()) sender.send(IPC.pageWebstoreInstallResult, { id, ok: false })
+      })
+  })
   // === 확장 끝 =========================================================================
 
   // === 폰 연동(3단계) — 이 블록만 따로 추가한다 ========================================
