@@ -20,7 +20,14 @@ import {
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
 import { formatDialogNote } from '../browser/dialogs'
 import { createOcrTool } from './tools-ocr'
-import { createPhoneTools, PHONE_TOOL_NAMES, type PhoneToolContext } from './tools-phone'
+import {
+  createPayTool,
+  createPhoneTools,
+  PAY_TOOL_NAME,
+  PHONE_TOOL_NAMES,
+  type PayToolContext,
+  type PhoneToolContext
+} from './tools-phone'
 import { handoffToolResult, type HandoffResult } from './handoff'
 import { knownLoginUrl, isLikelyLoginUrl } from '../../shared/site-rules'
 import { BLOCKED_URL_MESSAGE, isInternalUrl } from '../../shared/url'
@@ -141,6 +148,8 @@ export interface ToolContext {
   // 폰 도구 문맥. 주입되지 않은 실행에서는 폰 도구가 아예 등록되지 않는다.
   // 금고(vault)는 여기에 들어가지 않는다 — 폰 도구는 비밀값을 볼 수 없다
   phone?: PhoneToolContext
+  // 결제 승인 문맥. 폰 도구와 따로 주입한다 — 결제만 금고를 보는 실행기를 갖는다
+  pay?: PayToolContext
 }
 
 const text = (t: string): { content: [{ type: 'text'; text: string }] } => ({
@@ -817,7 +826,8 @@ ${snapshot}`
       fillSecret,
       login,
       done,
-      ...(ctx.phone ? createPhoneTools(ctx.phone) : [])
+      ...(ctx.phone ? createPhoneTools(ctx.phone) : []),
+      ...(ctx.pay ? [createPayTool(ctx.pay)] : [])
     ]
   })
 }
@@ -839,5 +849,6 @@ export const SAMBA_TOOL_NAMES = [
   'login',
   'done',
   // 폰 도구가 주입되지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
-  ...PHONE_TOOL_NAMES
+  ...PHONE_TOOL_NAMES,
+  PAY_TOOL_NAME
 ].map((n) => `mcp__samba__${n}`)

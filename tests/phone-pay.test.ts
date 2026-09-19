@@ -1,14 +1,29 @@
 // 간편결제 앱 승인 흐름. 상한 검사·확인 카드·상태 전이와 "재시도 없음" 을 단언한다
 
 import { describe, it, expect, vi } from 'vitest'
+
+// SDK 의 tool() 을 얇게 대체해 도구 핸들러를 직접 부른다(다른 agent 테스트와 같은 방식)
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  tool: (
+    name: string,
+    description: string,
+    schema: unknown,
+    handler: (args: Record<string, unknown>) => Promise<unknown>
+  ) => ({ name, description, schema, handler }),
+  createSdkMcpServer: (o: unknown) => o
+}))
+
 import {
   PAY_PROVIDERS,
   checkPaymentGate,
   nextPayState,
   runPayApproval,
   type PayRequest,
+  type PayResult,
   type PayRunDeps
 } from '../src/main/phone/pay'
+import { createPayTool, PAY_TOOL_NAME, PHONE_TOOL_NAMES } from '../src/main/agent/tools-phone'
+import { SAMBA_TOOL_NAMES } from '../src/main/agent/tools'
 import { DEFAULT_PAYMENT_LIMIT_KRW, FIRST_RUN_LIMIT_KRW } from '../src/shared/phone'
 import type { PhoneElement, PhoneScreen } from '../src/shared/phone-snapshot'
 import type { KeypadLayout } from '../src/main/ai/visual'
@@ -321,5 +336,71 @@ describe('runPayApproval', () => {
     expect(handoff).toHaveBeenCalledTimes(1)
     expect(r).toEqual({ ok: false, reason: 'layout-incomplete' })
     expect(h.tapPassword).not.toHaveBeenCalled()
+  })
+})
+
+describe('phone_approve_payment 도구', () => {
+  interface ToolStub {
+    name: string
+    handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>
+  }
+
+  function buildTool(opts: { isPro?: boolean; over?: string | null; result?: PayResult } = {}): {
+    tool: ToolStub
+    run: ReturnType<typeof vi.fn>
+    steps: Array<{ label: string; ok: boolean }>
+  } {
+    const run = vi.fn(async () => opts.result ?? { ok: true })
+    const steps: Array<{ label: string; ok: boolean }> = []
+    const built = createPayTool({
+      isPro: () => opts.isPro ?? true,
+      tick: () => opts.over ?? null,
+      onStep: (label, ok) => steps.push({ label, ok }),
+      run
+    })
+    return { tool: built as unknown as ToolStub, run, steps }
+  }
+
+  const args = {
+    provider: 'toss',
+    amountKrw: 12_000,
+    merchant: '삼바상회',
+    methodLabel: '토스페이'
+  }
+
+  it('도구 이름은 phone_approve_payment 이며 폰 도구 목록과 분리돼 있다', () => {
+    expect(buildTool().tool.name).toBe(PAY_TOOL_NAME)
+    expect(PHONE_TOOL_NAMES).not.toContain(PAY_TOOL_NAME)
+    expect(SAMBA_TOOL_NAMES).toContain(`mcp__samba__${PAY_TOOL_NAME}`)
+  })
+
+  it('실행기 결과를 상태 이름으로만 돌려준다', async () => {
+    const good = buildTool()
+    expect((await good.tool.handler(args)).content[0].text).toBe('ok')
+
+    const bad = buildTool({ result: { ok: false, reason: 'over-limit' } })
+    expect((await bad.tool.handler(args)).content[0].text).toBe('refused: over-limit')
+  })
+
+  it('Pro 가 아니면 실행기를 부르지 않는다', async () => {
+    const t = buildTool({ isPro: false })
+    const out = await t.tool.handler(args)
+
+    expect(out.content[0].text).toContain('Pro')
+    expect(t.run).not.toHaveBeenCalled()
+  })
+
+  it('호출 상한에 걸리면 실행기를 부르지 않는다', async () => {
+    const t = buildTool({ over: 'refused: tool call limit reached' })
+    const out = await t.tool.handler(args)
+
+    expect(out.content[0].text).toContain('limit')
+    expect(t.run).not.toHaveBeenCalled()
+  })
+
+  it('도구 문맥에 금고가 없다', () => {
+    type PayCtxKeys = keyof import('../src/main/agent/tools-phone').PayToolContext
+    const hasVault: Extract<PayCtxKeys, 'vault'> extends never ? true : false = true
+    expect(hasVault).toBe(true)
   })
 })
