@@ -172,7 +172,12 @@ export const IPC = {
   captureShortcut: 'capture:shortcut', // main → renderer 이벤트(Alt+1~6)
   captureDone: 'capture:done', // main → renderer 이벤트(캡처 완료 → 토스트)
   captureRegionMode: 'capture:regionMode', // main → page preload(격리 월드) 요소 선택 모드
-  captureElementRect: 'capture:elementRect' // page preload(격리 월드) → main, 전용 게이트
+  captureElementRect: 'capture:elementRect', // page preload(격리 월드) → main, 전용 게이트
+  // --- 자동화 플레이북 — 절차 문서뿐이라 비밀값은 오가지 않는다 ---------------
+  playbookList: 'playbook:list',
+  playbookPut: 'playbook:put', // 새로 만들기 + 수정(id 없으면 새로 만든다)
+  playbookDelete: 'playbook:delete',
+  playbookRestore: 'playbook:restore' // 내장 플레이북 기본값 복원
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -209,8 +214,12 @@ export type AgentEvent =
   | { type: 'text'; text: string }
   | { type: 'step'; label: string; ok: boolean }
   | { type: 'confirm'; requestId: string; action: string; kind?: 'danger' | 'finish' }
-  // 진행 상황만 알리는 이벤트(도구 호출 아님). 지금은 SDK 재시도 대기 표시에 쓴다
+  // 진행 상황만 알리는 이벤트(도구 호출 아님). SDK 재시도 대기와, 플레이북이 부르는
+  // progress 도구의 "3/26" 표시 두 가지가 이 자리에 온다
   | { type: 'progress'; kind: 'apiRetry'; attempt: number; reason: string }
+  | { type: 'progress'; kind: 'task'; done: number; total: number; label?: string }
+  // 이번 실행에 적용된 플레이북 이름들(채팅 상단 배지). 절차 본문은 보내지 않는다
+  | { type: 'playbook'; names: string[] }
   // 캡차·2FA 를 사용자에게 넘김. 응답은 agentConfirmReply 채널을 그대로 쓴다
   // (approved=true → 건너뛰고 계속, false → 작업 중단)
   | { type: 'handoff'; requestId: string; kind: 'captcha'; matched: string; url: string }
@@ -318,6 +327,8 @@ export type {
   CaptureStillDto,
   CaptureVideoSourceDto
 } from './capture'
+
+export type { PlaybookDto, PlaybookInput } from './playbook'
 
 export type {
   ChatRole,

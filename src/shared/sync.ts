@@ -100,7 +100,10 @@ export const SYNCED_SETTING_KEYS = [
   // 번역 기본 대상 언어·자동 번역 도메인은 PC 가 달라도 같아야 한다.
   // (번역 캐시는 기기 로컬 파일이라 동기화 대상이 아니다)
   'translateTargetLang',
-  'translateAutoDomains'
+  'translateAutoDomains',
+  // 자동화 플레이북 — 절차는 기기와 무관한 사용자 자산이라 PC 간 같아야 한다.
+  // 값은 사용자가 쓴 절차 마크다운일 뿐, 비밀값은 담기지 않는다(계정은 키마스터가 쥔다)
+  'playbooks'
 ] as const
 
 export type SyncedSettingKey = (typeof SYNCED_SETTING_KEYS)[number]

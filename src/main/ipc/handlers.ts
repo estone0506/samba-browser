@@ -23,6 +23,8 @@ import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vau
 import { exportVault, writeOwnerOnlyFile, type ExportRequest } from '../vault/export'
 import { ImportService, type ImportDialogs } from '../import/service'
 import { ChatRepo } from '../chat/repo'
+import { PlaybookStore } from '../playbooks/store'
+import type { PlaybookInput } from '../../shared/playbook'
 import { RECENT_CHAT_LIMIT, type AppendMessageInput } from '../../shared/chat'
 import { VaultCaptureGate } from './vault-capture'
 import { watchLoginSuccess } from './login-watch'
@@ -176,6 +178,9 @@ export function registerIpc(
     chats.append({ chatId, role: 'user', content: entry.prompt })
     chats.append({ chatId, role: 'assistant', content: entry.text, steps: entry.steps })
   })
+  // 자동화 플레이북. 사용자 문장에 트리거가 들어 있으면 러너가 절차를 시스템 프롬프트에 덧붙인다
+  const playbooks = new PlaybookStore(settings)
+  agent.setPlaybooks(() => playbooks.list())
   // 페이지 JS 대화상자는 AI 작업이 도는 동안에만 자동 처리한다
   tabs.setAgentRunningProvider(() => agent.isRunning())
   // guard 모드에서 confirm/beforeunload 는 사용자 확인 카드를 거쳐야 '예' 가 된다
@@ -274,6 +279,12 @@ export function registerIpc(
   handleFromRenderer(IPC.chatRename, (chatId: number, title: string) => chats.rename(chatId, title))
   handleFromRenderer(IPC.chatDelete, (chatId: number) => chats.remove(chatId))
   handleFromRenderer(IPC.agentStop, () => agent.stop())
+
+  // --- 자동화 플레이북 — 절차 문서만 오간다(비밀값 없음) --------------------
+  handleFromRenderer(IPC.playbookList, () => playbooks.list())
+  handleFromRenderer(IPC.playbookPut, (input: PlaybookInput) => playbooks.put(input))
+  handleFromRenderer(IPC.playbookDelete, (id: string) => playbooks.remove(id))
+  handleFromRenderer(IPC.playbookRestore, (id: string) => playbooks.restore(id))
   onFromRenderer(IPC.agentConfirmReply, (requestId: string, approved: boolean) =>
     agent.resolveConfirm(requestId, approved)
   )

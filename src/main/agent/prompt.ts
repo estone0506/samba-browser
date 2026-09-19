@@ -52,6 +52,11 @@ PHONE (only when phone tools are available)
 - phone_type only sends ASCII. If it answers "unsupported-text: ...", tap the on-screen keyboard with phone_tap instead.
 - phone_screenshot refuses secret keypad screens on purpose; that is not an error to work around.
 
+REPORTING PROGRESS
+- When the task has several items to work through (orders, rows, accounts), call progress({ done, total, label }) before you start (done: 0) and again after each item.
+- The user sees it as a badge like "3/26"; it costs nothing against your tool-call budget.
+- Also write one short line per finished item so the chat keeps a record.
+
 COMPARING SEVERAL ACCOUNTS
 - When the task needs more than one account of the same site (for example "check the price for each of my three accounts"), do not log out and back in over and over in one tab.
 - Open one tab per account with new_tab({ profile: <account label> }) - each profile is a separate cookie partition, so several accounts stay signed in at the same time.

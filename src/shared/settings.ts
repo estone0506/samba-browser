@@ -14,6 +14,7 @@ import {
   type CaptureShortcuts
 } from './capture'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
+import { playbookListSchema, type PlaybookDto } from './playbook'
 
 // 도구 호출 상한 허용 범위
 export const MIN_TOOL_CALLS = 1
@@ -179,8 +180,13 @@ export const DEFAULT_SETTINGS = {
   // 이미지 저장 직후 클립보드에도 복사할지
   captureCopyToClipboard: false,
   // 캡처 단축키 표(설정에서 바꿀 수 있다)
-  captureShortcuts: { ...DEFAULT_CAPTURE_SHORTCUTS } as CaptureShortcuts
+  captureShortcuts: { ...DEFAULT_CAPTURE_SHORTCUTS } as CaptureShortcuts,
   // === 캡처 끝 ==============================================================
+  // === 자동화 플레이북 ======================================================
+  // 저장된 플레이북 전체(JSON 배열). 비어 있으면 저장소가 내장 플레이북을 채워 준다.
+  // 표를 따로 만들지 않고 설정 한 칸에 담아 기존 설정 동기화 경로를 그대로 탄다
+  playbooks: [] as PlaybookDto[]
+  // === 자동화 플레이북 끝 ===================================================
 }
 
 // 구독 연결 기록 한 칸. account 는 화면 표시용 문자열뿐이고 토큰은 담지 않는다
@@ -317,8 +323,10 @@ export const settingsSchema = z.object({
   captureShortcuts: z
     .record(z.enum(CAPTURE_MODES), z.string())
     .catch({ ...DEFAULT_CAPTURE_SHORTCUTS })
-    .transform((v): CaptureShortcuts => mergeCaptureShortcuts(v))
+    .transform((v): CaptureShortcuts => mergeCaptureShortcuts(v)),
   // === 캡처 끝 ================================================================
+  // === 자동화 플레이북 — 한 칸이라도 깨지면 목록 전체를 비운다(저장소가 내장을 다시 채운다) ===
+  playbooks: playbookListSchema.catch(() => [])
 })
 
 export type Settings = z.infer<typeof settingsSchema>

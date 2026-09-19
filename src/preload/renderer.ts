@@ -39,6 +39,8 @@ import {
   type ChatDetailDto,
   type ChatMessageDto,
   type AppendMessageInput,
+  type PlaybookDto,
+  type PlaybookInput,
   type PhoneDto,
   type PhoneUpdatedDto,
   type PhoneAuthWaitingDto,
@@ -164,6 +166,16 @@ const api = {
     rename: (chatId: number, title: string): Promise<IpcResult<ChatDto | null>> =>
       invoke(IPC.chatRename, chatId, title),
     remove: (chatId: number): Promise<IpcResult<boolean>> => invoke(IPC.chatDelete, chatId)
+  },
+  // 자동화 플레이북 — 이름·트리거·절차 마크다운뿐이다(비밀값은 담기지 않는다)
+  playbooks: {
+    list: (): Promise<IpcResult<PlaybookDto[]>> => invoke(IPC.playbookList),
+    // id 를 빼면 새로 만든다. 이름이 비었거나 없는 id 면 null 이 온다
+    put: (input: PlaybookInput): Promise<IpcResult<PlaybookDto | null>> =>
+      invoke(IPC.playbookPut, input),
+    // 내장 플레이북은 지워지지 않는다(false) — 대신 restore 로 되돌린다
+    remove: (id: string): Promise<IpcResult<boolean>> => invoke(IPC.playbookDelete, id),
+    restore: (id: string): Promise<IpcResult<PlaybookDto | null>> => invoke(IPC.playbookRestore, id)
   },
   settings: {
     get: (): Promise<IpcResult<Settings>> => invoke(IPC.settingsGet),

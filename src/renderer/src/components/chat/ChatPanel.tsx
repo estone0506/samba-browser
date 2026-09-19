@@ -25,6 +25,8 @@ const PROVIDER_LABEL_KEYS: Record<AiProviderId, string> = {
 export function ChatPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const handleEvent = useChatStore((s) => s.handleEvent)
+  // 이번 실행에 적용된 플레이북 이름(없으면 줄 자체가 뜨지 않는다)
+  const playbookNames = useChatStore((s) => s.playbookNames)
   const togglePanel = useUiStore((s) => s.togglePanel)
   useEffect(() => window.samba.agent.onEvent(handleEvent), [handleEvent])
   // 상단 배지는 지금 고른 경로와 **실제 연결 상태**를 그대로 비춘다
@@ -62,6 +64,17 @@ export function ChatPanel(): React.JSX.Element {
         </span>
       </div>
       <AuthBanner />
+      {/* 플레이북 적용 안내 한 줄 — 어떤 절차를 따르는지 사용자가 바로 알 수 있게 한다 */}
+      {playbookNames.length > 0 && (
+        <div className="border-b border-black/5 px-3.5 py-2 text-[11.5px] text-[var(--text2)]">
+          <span className="inline-flex h-[20px] items-center rounded-full border border-[var(--text)] bg-[var(--text)] px-2 font-medium text-white">
+            {t('automation.appliedBadge')}
+          </span>
+          <span className="ml-2">
+            {t('automation.applied', { names: playbookNames.join(', ') })}
+          </span>
+        </div>
+      )}
       {/* 자동 저장 제안 카드 · 자동 갱신 토스트는 메시지 목록 맨 위에 고정한다 */}
       <CapturePrompt />
       <PasswordUpdatedToast />

@@ -29,6 +29,13 @@ export interface Retry {
   reason: string
 }
 
+// 여러 건짜리 작업의 진행 상황(progress 도구). 화면에는 "3/26" 배지로 뜬다
+export interface TaskProgress {
+  done: number
+  total: number
+  label?: string
+}
+
 interface ChatState {
   messages: ChatMessage[]
   // 사이드바에 걸리는 최근 대화 목록
@@ -41,6 +48,10 @@ interface ChatState {
   toolCalls: number
   currentLabel: string
   retry: Retry | null
+  // 이번 실행에 적용된 플레이북 이름들(빈 배열이면 배지를 숨긴다)
+  playbookNames: string[]
+  // 여러 건짜리 작업의 진행 상황. null 이면 진행 배지를 숨긴다
+  taskProgress: TaskProgress | null
   confirm: { requestId: string; action: string; kind: 'danger' | 'finish' } | null
   // 사이트가 사람의 추가 확인을 요구해 작업이 멈춰 있는 상태
   handoff: Handoff | null
@@ -82,6 +93,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   toolCalls: 0,
   currentLabel: '',
   retry: null,
+  playbookNames: [],
+  taskProgress: null,
   confirm: null,
   handoff: null,
   authError: null,
@@ -118,6 +131,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       toolCalls: 0,
       currentLabel: '',
       retry: null,
+      playbookNames: [],
+      taskProgress: null,
       confirm: null,
       handoff: null,
       authError: null
@@ -132,6 +147,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       toolCalls: 0,
       currentLabel: '',
       retry: null,
+      playbookNames: [],
+      taskProgress: null,
       confirm: null,
       handoff: null,
       authError: null
@@ -157,6 +174,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       toolCalls: 0,
       currentLabel: '',
       retry: null,
+      playbookNames: [],
+      taskProgress: null,
       confirm: null,
       handoff: null,
       authError: null
@@ -204,7 +223,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       patchLast({ steps: [...(last.steps ?? []), { label: e.label, ok: e.ok }] })
       set((s) => ({ toolCalls: s.toolCalls + 1, currentLabel: e.label, retry: null }))
     }
-    if (e.type === 'progress') set({ retry: { attempt: e.attempt, reason: e.reason } })
+    if (e.type === 'progress' && e.kind === 'apiRetry')
+      set({ retry: { attempt: e.attempt, reason: e.reason } })
+    // progress 도구가 알려 준 "n/N" — 화면 위쪽 진행 배지에 그대로 뜬다
+    if (e.type === 'progress' && e.kind === 'task')
+      set({
+        taskProgress:
+          e.label === undefined
+            ? { done: e.done, total: e.total }
+            : { done: e.done, total: e.total, label: e.label }
+      })
+    // 이번 실행에 적용된 플레이북(이름만 온다)
+    if (e.type === 'playbook') set({ playbookNames: e.names })
     if (e.type === 'confirm')
       set({ confirm: { requestId: e.requestId, action: e.action, kind: e.kind ?? 'danger' } })
     if (e.type === 'handoff') {

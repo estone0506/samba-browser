@@ -14,6 +14,37 @@
     "collapse": "Collapse sidebar",
     "expand": "Expand sidebar"
   },
+  "automation": {
+    "title": "Automation",
+    "desc": "Write down the work you repeat as a playbook, then type its trigger phrase in chat and the AI follows those steps.",
+    "empty": "No playbooks saved yet",
+    "builtin": "Built-in",
+    "off": "Off",
+    "saveFailed": "Could not save. Check that the name is not empty.",
+    "appliedBadge": "Playbook",
+    "applied": "Following '{{names}}'",
+    "progress": "{{done}}/{{total}}",
+    "action": {
+      "new": "New playbook",
+      "run": "Run now",
+      "edit": "Edit",
+      "delete": "Delete",
+      "restore": "Restore default",
+      "save": "Save",
+      "cancel": "Cancel",
+      "toggle": "Enabled"
+    },
+    "field": {
+      "name": "Name",
+      "namePlaceholder": "e.g. Samba unfulfilled orders",
+      "triggers": "Trigger phrases",
+      "triggersDesc": "The playbook fires when your message contains one of these. Separate several with commas.",
+      "triggersPlaceholder": "samba unfulfilled, unfulfilled orders",
+      "instructions": "Steps",
+      "instructionsDesc": "Write the steps the AI should follow, in Markdown.",
+      "length": "{{n}} / {{max}} chars"
+    }
+  },
   "workspace": {
     "title": "Workspace",
     "add": "New workspace",
