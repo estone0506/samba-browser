@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { AgentEvent, ChatDto, ChatMessageDto } from '@shared/ipc'
 import { RECENT_CHAT_LIMIT, titleFromMessage } from '@shared/chat'
+import { DEFAULT_SETTINGS, type AgentEffort } from '@shared/settings'
 
 export interface ChatMessage {
   id: string
@@ -44,6 +45,14 @@ interface ChatState {
   // 사이트가 사람의 추가 확인을 요구해 작업이 멈춰 있는 상태
   handoff: Handoff | null
   authError: 'missing' | 'limit' | null
+  // 입력줄 아래 "모델 · 강도" 선택. 모델의 진실은 설정의 작업별 모델 표 중 '표준' 칸이다
+  model: string
+  modelChoices: string[]
+  effort: AgentEffort
+  // 설정에서 현재 모델·후보·추론 강도를 읽어 온다(입력줄이 뜰 때 한 번)
+  loadModelMenu: () => Promise<void>
+  setModel: (model: string) => Promise<void>
+  setEffort: (effort: AgentEffort) => Promise<void>
   // 최근 대화 목록을 다시 읽는다(앱 시작·작업 종료 후)
   loadChats: () => Promise<void>
   // 저장된 대화를 열어 메시지를 화면에 올린다
@@ -76,6 +85,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
   confirm: null,
   handoff: null,
   authError: null,
+  model: DEFAULT_SETTINGS.taskModels.standard,
+  modelChoices: [],
+  effort: DEFAULT_SETTINGS.agentEffort,
+  loadModelMenu: async () => {
+    const r = await window.samba.ai?.taskModels()
+    if (r?.ok) set({ model: r.data.taskModels.standard, modelChoices: r.data.choices })
+    const s = await window.samba.settings?.get()
+    if (s?.ok) set({ effort: s.data.agentEffort })
+  },
+  setModel: async (model) => {
+    // 화면을 먼저 바꾸고 저장한다(실패하면 다음 loadModelMenu 에서 되돌아온다)
+    set({ model })
+    await window.samba.ai?.setTaskModel('standard', model)
+  },
+  setEffort: async (effort) => {
+    set({ effort })
+    await window.samba.settings?.set({ agentEffort: effort })
+  },
   loadChats: async () => {
     const r = await window.samba.chats?.list(RECENT_CHAT_LIMIT)
     if (r?.ok) set({ chats: r.data })
