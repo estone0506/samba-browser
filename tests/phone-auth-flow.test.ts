@@ -14,6 +14,8 @@ import {
 import { AUTH_TIMEOUT_MS } from '../src/shared/phone'
 import type { AuthEventDto, PhoneAuthWaitingDto } from '../src/shared/phone'
 import type { PageElement, PageSnapshot } from '../src/shared/snapshot'
+import { pageBridge } from '../src/main/browser/page-bridge'
+import type { Tab } from '../src/main/browser/tab-manager'
 import { FakeAdb } from './stubs/fake-adb'
 
 const SERIAL = 'R3CRA05HY3R'
@@ -267,6 +269,33 @@ describe('runSmsAuth — Visual 폴백', () => {
     })
     const r = await runSmsAuth(b.deps)
     expect(r).toEqual({ ok: false, reason: 'timeout' })
+  })
+})
+
+describe('pageBridge.findCodeField', () => {
+  // 새 페이지 채널 없이 기존 스냅샷 스크립트만 재사용하는지 확인한다
+  function fakeTab(result: unknown): { tab: Tab; calls: string[] } {
+    const calls: string[] = []
+    const webContents = {
+      isDestroyed: () => false,
+      executeJavaScriptInIsolatedWorld: async (_world: number, scripts: Array<{ code: string }>) => {
+        calls.push(scripts[0].code)
+        return result
+      }
+    }
+    return { tab: { view: { webContents } } as unknown as Tab, calls }
+  }
+
+  it('__samba.snapshot() 만 부르고 순수 판정을 적용한다', async () => {
+    const { tab, calls } = fakeTab(snap([el({ id: 9, name: 'authNumber' })]))
+    const found = await pageBridge.findCodeField(tab)
+    expect(found?.id).toBe(9)
+    expect(calls).toEqual(['__samba.snapshot()'])
+  })
+
+  it('후보가 없으면 null 이다', async () => {
+    const { tab } = fakeTab(snap([el({ id: 1, name: 'nickname' })]))
+    expect(await pageBridge.findCodeField(tab)).toBeNull()
   })
 })
 
