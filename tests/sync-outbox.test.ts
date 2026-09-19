@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { openDatabase, type Db } from '../src/main/db/client'
 import { syncOutbox } from '../src/main/db/schema'
-import { SyncOutbox } from '../src/main/sync/outbox'
+import { SyncOutbox, createOutboxRecorder } from '../src/main/sync/outbox'
 
 describe('SyncOutbox', () => {
   let db: Db
@@ -90,6 +90,27 @@ describe('SyncOutbox', () => {
     outbox.record('accounts', '1', 'upsert')
     outbox.record('bookmarks', '9', 'upsert')
     expect(outbox.pendingFor('bookmarks').map((r) => r.rowId)).toEqual(['9'])
+  })
+
+  it('기록 시점의 작업공간을 행에 남긴다', () => {
+    // New-I3 — 예전에는 행에 작업공간이 없어, 푸시 시점의 활성 작업공간 uuid 가
+    // 전환 전에 쌓인 변경에까지 찍혔다
+    outbox.record('accounts', '1', 'upsert', undefined, 2)
+    expect(outbox.pending()[0].workspaceId).toBe(2)
+  })
+
+  it('작업공간을 주지 않으면 null 로 남는다(옛 행과 같은 취급)', () => {
+    outbox.record('accounts', '1', 'upsert')
+    expect(outbox.pending()[0].workspaceId).toBeNull()
+  })
+
+  it('기록 훅이 활성 작업공간을 따라간다', () => {
+    let active = 1
+    const recorder = createOutboxRecorder(db, outbox, () => active)
+    recorder('bookmarks', '1', 'upsert')
+    active = 3
+    recorder('bookmarks', '2', 'upsert')
+    expect(outbox.pending().map((r) => r.workspaceId)).toEqual([1, 3])
   })
 
   it('알 수 없는 표 이름이 섞여 있어도 pending 에서 걸러진다', () => {

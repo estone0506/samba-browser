@@ -24,6 +24,7 @@ import {
   type VaultItemSyncRow
 } from './mappers'
 import { settingUpdatedAtKey, type OutboxRow, type SyncOutbox } from './outbox'
+import { storedWorkspaceRemoteId } from './workspace-id'
 
 /** 설정 읽기·쓰기. SettingsStore 가 그대로 만족한다(테스트에서는 최소 스텁) */
 export interface SettingsAccess {
@@ -76,18 +77,42 @@ const PUSH_ORDER: SyncTable[] = ['accounts', 'vault_items', 'bookmarks', 'settin
 export async function pushAll(deps: PushDeps): Promise<PushResult> {
   const result: PushResult = { sent: 0, failed: 0, skipped: 0 }
   const local = new SyncLocal(deps.db)
-  const ctx: MapCtx = { userId: deps.userId, workspaceRemoteId: deps.workspace().remoteId }
+  const ctxOf = workspaceResolver(deps)
 
   for (const table of PUSH_ORDER) {
     const entries = deps.outbox.pendingFor(table)
     if (entries.length === 0) continue
     if (table === 'settings') {
-      await pushSettings(deps, local, ctx, entries, result)
+      await pushSettings(deps, local, ctxOf, entries, result)
       continue
     }
-    await pushTable(deps, local, ctx, table, entries, result)
+    await pushTable(deps, local, ctxOf, table, entries, result)
   }
   return result
+}
+
+/** 변경 로그 한 줄 → 그 행을 올릴 때 쓸 매핑 문맥(작업공간 uuid 가 행마다 다를 수 있다) */
+type CtxOf = (entry: OutboxRow) => MapCtx
+
+/**
+ * 행에 적힌 작업공간(로컬 id)으로 원격 uuid 를 고른다.
+ * 예전에는 푸시 시점의 활성 작업공간 uuid 를 모든 대기 행에 찍어, 작업공간을 바꾸기 전에
+ * 쌓인 변경이 새 작업공간으로 올라갔다.
+ * 작업공간이 비어 있는 옛 행과, uuid 를 아직 정하지 못한 행은 활성 작업공간으로 본다
+ */
+function workspaceResolver(deps: PushDeps): CtxOf {
+  const active = deps.workspace()
+  const cache = new Map<number, string>()
+  return (entry) => {
+    const localId = entry.workspaceId
+    if (localId === null || localId === active.localId)
+      return { userId: deps.userId, workspaceRemoteId: active.remoteId }
+    const cached = cache.get(localId)
+    if (cached !== undefined) return { userId: deps.userId, workspaceRemoteId: cached }
+    const remoteId = storedWorkspaceRemoteId(deps.db, localId) ?? active.remoteId
+    cache.set(localId, remoteId)
+    return { userId: deps.userId, workspaceRemoteId: remoteId }
+  }
 }
 
 /** 전송한 행과 로컬 행을 이어 두었다가, 성공하면 remote_id 를 로컬에 적는다 */
@@ -101,7 +126,7 @@ interface Prepared {
 async function pushTable(
   deps: PushDeps,
   local: SyncLocal,
-  ctx: MapCtx,
+  ctxOf: CtxOf,
   table: Exclude<SyncTable, 'settings'>,
   entries: OutboxRow[],
   result: PushResult
@@ -113,7 +138,7 @@ async function pushTable(
 
   try {
     for (const entry of entries) {
-      const built = buildRemote(deps, local, ctx, table, entry)
+      const built = buildRemote(deps, local, ctxOf(entry), table, entry)
       if (built === 'skip') {
         result.skipped += 1
         continue
@@ -203,7 +228,8 @@ function buildRemote(
     const accountRemoteId = ensureAccountRemoteId(local, item.accountId)
     if (accountRemoteId !== null) {
       item.accountRemoteId = accountRemoteId
-      deps.outbox.record('accounts', String(item.accountId), 'upsert')
+      // 계정도 같은 작업공간으로 올라가야 한다 — 변경 로그 행의 작업공간을 그대로 물려준다
+      deps.outbox.record('accounts', String(item.accountId), 'upsert', undefined, entry.workspaceId)
     }
   }
   const row = deps.vault.useMasterKey((key) => vaultItemToRemote(item, { ...ctx, key }))
@@ -227,7 +253,7 @@ function tombstone<T extends { deletedAt: number | null }>(entry: OutboxRow): T 
 async function pushSettings(
   deps: PushDeps,
   local: SyncLocal,
-  ctx: MapCtx,
+  ctxOf: CtxOf,
   entries: OutboxRow[],
   result: PushResult
 ): Promise<void> {
@@ -246,7 +272,7 @@ async function pushSettings(
         continue
       }
       const updatedAt = local.getStateNumber(settingUpdatedAtKey(key)) ?? entry.createdAt
-      const row = settingToRemote(key, current[key], updatedAt, ctx)
+      const row = settingToRemote(key, current[key], updatedAt, ctxOf(entry))
       assertNoPlaintext('settings_sync', row)
       rows.push(row)
       ids.push(entry.id)
