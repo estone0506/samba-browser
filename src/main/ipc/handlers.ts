@@ -585,7 +585,6 @@ export function registerIpc(
   // === 동기화(2b) ======================================================================
   // 엔진은 로그인 이후에 만들어져 holder 에 붙는다. 붙기 전에는 오프라인 상태를 답한다
   handleFromRenderer(IPC.syncStatus, () => sync.status())
-  handleFromRenderer(IPC.syncNow, () => sync.syncNow())
   sync.onStatusChanged((status) => send(IPC.syncStatusChanged, status))
   // 로그인하면 이 PC 를 기기 목록에 올리고, 저장소에 변경 로그 훅을 붙인 뒤 엔진을 돌린다.
   // 로그아웃·토큰 만료·기기 원격 로그아웃은 모두 같은 정리 경로(엔진 정지·훅 해제·금고 잠금)를 탄다
@@ -609,6 +608,8 @@ export function registerIpc(
       appVersion: () => app.getVersion()
     }
   })
+  // 수동 동기화는 연결을 거친다 — 최초 업로드가 놓친 행을 먼저 보충하고 한 주기를 돈다
+  handleFromRenderer(IPC.syncNow, () => connection.syncNow())
   // 세션 복구가 이 시점보다 먼저 끝났을 수 있다 — 지금 상태를 한 번 반영한다
   void connection.refresh()
   win.once('closed', () => connection.dispose())

@@ -11,9 +11,10 @@
 // 변경 로그 훅은 **로그인 상태에서만** 붙는다. 로그아웃 상태에서 한 변경은 쌓이지 않는다
 // (이미 쌓인 sync_outbox 는 지우지 않는다 — 재로그인 시 그대로 전송된다)
 
-import type { OutboxRecorder, AuthState } from '../../shared/sync'
+import type { OutboxRecorder, AuthState, SyncStatus } from '../../shared/sync'
 import type { Db } from '../db/client'
 import type { AuthService } from './auth'
+import { backfillOutbox, verifyBackfill } from './backfill'
 import { AuthExpiredError, type SyncBackend } from './backend'
 import { DeviceService } from './devices'
 import { SyncEngine, SyncEngineHolder } from './engine'
@@ -76,6 +77,15 @@ export class SyncConnection {
     return this.deviceService
   }
 
+  /**
+   * 수동 "지금 동기화". 최초 업로드가 놓친 행이 있으면 먼저 보충하고 한 주기를 돈다 —
+   * 사용자가 "안 올라간 것 같다" 고 느꼈을 때 누르는 버튼이라, 여기서 한 번 더 훑어 준다
+   */
+  async syncNow(): Promise<SyncStatus> {
+    if (this.engine) this.runBackfill(verifyBackfill)
+    return this.deps.holder.syncNow()
+  }
+
   /** 지금 인증 상태를 한 번 반영한다(세션 복구가 먼저 끝난 경우) */
   async refresh(): Promise<void> {
     await this.apply(this.deps.auth.state())
@@ -119,6 +129,9 @@ export class SyncConnection {
       this.deviceService = devices
       this.deps.auth.setDeviceId(deviceId)
       this.attachRecorders()
+      // 로그인 전부터 있던 데이터를 변경 로그에 얹는다(작업공간마다 1회) — 이게 없으면
+      // 로그인 이후의 변경만 올라가, 두 번째 PC 는 기존 데이터를 영영 받지 못한다
+      this.runBackfill(backfillOutbox)
       const engine = new SyncEngine({
         db: this.deps.db,
         backend,
@@ -130,6 +143,9 @@ export class SyncConnection {
         workspace: this.deps.workspace,
         // 주기마다 이 PC 가 아직 살아 있다고 알리고, 원격 로그아웃 여부를 확인한다
         onCycleStart: async () => {
+          // 작업공간을 바꾸면 엔진을 다시 세우지 않는다 — 새 작업공간의 최초 업로드는
+          // 여기서 챙긴다(이미 끝난 작업공간이면 플래그만 읽고 곧바로 빠져나온다)
+          this.runBackfill(backfillOutbox)
           await devices.heartbeat()
           if (await devices.isRevoked()) {
             throw new AuthExpiredError('이 기기는 다른 기기에서 로그아웃되었습니다')
@@ -177,6 +193,18 @@ export class SyncConnection {
     // 돌던 엔진이 있을 때만 잠근다 — 앱 시작 직후의 "아직 로그아웃" 상태에서까지 잠그면
     // 기기 키로 열어 둔 금고를 매번 도로 닫아 버린다
     if (hadEngine) this.deps.vault.lock()
+  }
+
+  /** 최초 업로드·재검사 공통 호출부. 실패해도 동기화 자체는 계속 돈다(사유만 남긴다) */
+  private runBackfill(fn: typeof backfillOutbox): void {
+    try {
+      const result = fn(this.deps.db, this.deps.workspace(), this.deps.vault)
+      if (result.skipped) return
+      const total = result.accounts + result.vaultItems + result.bookmarks + result.settings
+      if (total > 0) console.info('기존 데이터를 동기화 대기열에 올렸습니다', total)
+    } catch (e: unknown) {
+      console.error('기존 데이터 업로드 준비 실패', e instanceof Error ? e.message : String(e))
+    }
   }
 
   private attachRecorders(): void {
