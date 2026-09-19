@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { buildSnapshot, performClick, performType, textOf } from '../src/preload/page-core'
 import { MAX_ELEMENTS, serializeSnapshot } from '../src/shared/snapshot'
 
@@ -195,5 +195,164 @@ describe('serializeSnapshot 상한', () => {
       total: 0
     })
     expect(out).not.toContain('more elements')
+  })
+})
+
+// --- 커서 휴리스틱 --------------------------------------------------------
+// jsdom 의 getComputedStyle 은 cursor 를 계산하지 않는다 — data-cursor 속성으로 대신 심는다.
+// isVisible 이 보는 display/visibility 도 함께 돌려줘야 한다
+const realGetComputedStyle = window.getComputedStyle.bind(window)
+
+function stubCursorStyles(): void {
+  window.getComputedStyle = ((el: Element): CSSStyleDeclaration => {
+    const hel = el as HTMLElement
+    return {
+      cursor: hel.dataset?.cursor === 'pointer' ? 'pointer' : 'auto',
+      display: hel.style?.display === 'none' ? 'none' : 'block',
+      visibility: hel.style?.visibility === 'hidden' ? 'hidden' : 'visible'
+    } as unknown as CSSStyleDeclaration
+  }) as typeof window.getComputedStyle
+}
+
+function restoreComputedStyles(): void {
+  window.getComputedStyle = realGetComputedStyle
+}
+
+describe('커서 휴리스틱 — role·onclick 없는 클릭 가능한 DIV', () => {
+  beforeEach(stubCursorStyles)
+  afterEach(restoreComputedStyles)
+
+  it('cursor:pointer 인 DIV 를 role "clickable" 로 줍는다', () => {
+    document.body.innerHTML = `
+      <div data-cursor="pointer" id="opt">구매옵션(19)BLACK · 255</div>
+      <div id="plain">그냥 설명 문구</div>
+    `
+    const s = buildSnapshot()
+    expect(s.elements).toHaveLength(1)
+    expect(s.elements[0].role).toBe('clickable')
+    expect(s.elements[0].tag).toBe('div')
+    expect(s.elements[0].text).toContain('255')
+  })
+
+  it('그 DIV 를 id 로 클릭할 수 있다', () => {
+    document.body.innerHTML = '<div data-cursor="pointer" id="opt">BLACK · 255</div>'
+    buildSnapshot()
+    let clicked = false
+    document.getElementById('opt')!.addEventListener('click', () => {
+      clicked = true
+    })
+    expect(performClick(1)).toBe('ok')
+    expect(clicked).toBe(true)
+  })
+
+  it('img·svg 는 텍스트가 없어도 줍는다', () => {
+    document.body.innerHTML = `
+      <img data-cursor="pointer" alt="컬러칩">
+      <span data-cursor="pointer"></span>
+    `
+    const s = buildSnapshot()
+    expect(s.elements.map((e) => e.tag)).toEqual(['img'])
+  })
+
+  it('텍스트가 120자를 넘으면 본문 덩어리로 보고 거른다', () => {
+    document.body.innerHTML = `<div data-cursor="pointer">${'가'.repeat(121)}</div>`
+    expect(buildSnapshot().elements).toEqual([])
+  })
+
+  it('안에 이미 수집된 버튼이 있으면 바깥 DIV 는 거른다', () => {
+    document.body.innerHTML = `
+      <div data-cursor="pointer"><button>장바구니</button></div>
+    `
+    const s = buildSnapshot()
+    expect(s.elements.map((e) => e.tag)).toEqual(['button'])
+  })
+
+  it('조상·자손이 둘 다 pointer 면 안쪽(텍스트가 짧은 쪽)만 남긴다', () => {
+    document.body.innerHTML = `
+      <div data-cursor="pointer" id="row">
+        <div data-cursor="pointer" id="inner">255</div>
+      </div>
+    `
+    const s = buildSnapshot()
+    expect(s.elements).toHaveLength(1)
+    expect(s.elements[0].text).toBe('255')
+  })
+
+  it('보이지 않는 요소는 줍지 않는다', () => {
+    document.body.innerHTML = `
+      <div style="display:none"><div data-cursor="pointer">숨김옵션</div></div>
+      <div data-cursor="pointer">보임옵션</div>
+    `
+    expect(buildSnapshot().elements.map((e) => e.text)).toEqual(['보임옵션'])
+  })
+
+  it('후보 4000개·결과 600개 상한을 지킨다', () => {
+    const divs = Array.from(
+      { length: 5000 },
+      (_, i) => `<div data-cursor="pointer">옵션${i}</div>`
+    ).join('')
+    document.body.innerHTML = divs
+    const started = Date.now()
+    const s = buildSnapshot()
+    const elapsed = Date.now() - started
+    expect(s.total).toBe(600)
+    // 회귀 방지용 넉넉한 상한(실측은 수 ms 수준)
+    expect(elapsed).toBeLessThan(3000)
+  })
+})
+
+describe('추가 role 수집', () => {
+  beforeEach(stubCursorStyles)
+  afterEach(restoreComputedStyles)
+
+  it('option·tab·switch·tabindex·summary·label[for] 를 모두 잡는다', () => {
+    document.body.innerHTML = `
+      <div role="option">255</div>
+      <div role="tab">상품정보</div>
+      <div role="menuitem">메뉴</div>
+      <div role="switch">알림</div>
+      <div tabindex="0">포커스 가능</div>
+      <div tabindex="-1">포커스 불가</div>
+      <summary>더보기</summary>
+      <label for="x">라벨</label>
+      <input id="x">
+    `
+    const s = buildSnapshot()
+    const roles = s.elements.map((e) => e.role)
+    expect(roles).toEqual([
+      'option',
+      'tab',
+      'menuitem',
+      'switch',
+      'clickable',
+      'summary',
+      'label',
+      'textbox'
+    ])
+    expect(s.elements.map((e) => e.text)).not.toContain('포커스 불가')
+  })
+
+  it('listbox 안의 li 는 role "option" 으로 표기한다', () => {
+    document.body.innerHTML = `
+      <ul role="listbox"><li>BLACK</li><li>WHITE</li></ul>
+      <ul><li>목록 항목</li></ul>
+    `
+    const s = buildSnapshot()
+    expect(s.elements.map((e) => e.role)).toEqual(['option', 'option'])
+    expect(s.elements.map((e) => e.text)).toEqual(['BLACK', 'WHITE'])
+  })
+})
+
+describe('performClick — React 합성 이벤트', () => {
+  it('pointerdown·mousedown·mouseup·click 순서로 쏜다', () => {
+    document.body.innerHTML = '<button id="b">사이즈</button>'
+    buildSnapshot()
+    const seen: string[] = []
+    const el = document.getElementById('b')!
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      el.addEventListener(type, () => seen.push(type))
+    }
+    expect(performClick(1)).toBe('ok')
+    expect(seen).toEqual(['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'])
   })
 })

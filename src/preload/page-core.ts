@@ -17,8 +17,24 @@ import {
 // 스냅샷 id → 실제 DOM 요소 매핑 (스냅샷마다 갱신)
 let registry: HTMLElement[] = []
 
+// 기본 수집 셀렉터. 역할(role)·시맨틱으로 "누를 수 있다"고 선언한 요소들.
+// 옵션·탭·메뉴 항목까지 넓힌 이유: 쇼핑몰 상품 페이지의 컬러/사이즈 선택이 대부분 이 부류다
 const SELECTOR =
-  'a[href], button, input, select, textarea, [role="button"], [role="link"], [onclick], [contenteditable="true"]'
+  'a[href], button, input, select, textarea, [role="button"], [role="link"], [onclick], ' +
+  '[contenteditable="true"], [role="option"], [role="menuitem"], [role="menuitemcheckbox"], ' +
+  '[role="menuitemradio"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"], ' +
+  '[role="combobox"], [role="listbox"] li, [tabindex]:not([tabindex="-1"]), summary, label[for]'
+
+// --- 커서 휴리스틱 --------------------------------------------------------
+// 무신사처럼 role·onclick·tabindex 가 하나도 없는 순수 DIV 에 React 핸들러만 달아 둔 UI 대응.
+// CSS 가 cursor:pointer 를 준 "가장 안쪽" 요소만 주워 담는다.
+const CURSOR_CANDIDATES = 'div,span,li,p,img,svg'
+// 성능 상한: 후보 탐색 개수 / 최종 수집 개수 / 라벨 길이
+const CURSOR_SCAN_MAX = 4000
+const CURSOR_PICK_MAX = 600
+const CURSOR_TEXT_MAX = 120
+// 그 자체로는 의미가 없는 태그들(수집됐다면 클릭 가능해서 잡힌 것이다)
+const GENERIC_TAGS = new Set(['div', 'span', 'li', 'p', 'img', 'svg'])
 
 // jsdom 등 CSS.escape 미지원 환경을 위한 간단한 폴백
 function cssEscape(value: string): string {
@@ -26,21 +42,31 @@ function cssEscape(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`)
 }
 
-function isVisible(el: HTMLElement): boolean {
-  if (el.hidden) return false
-  let node: HTMLElement | null = el
-  while (node) {
-    const cs = getComputedStyle(node)
-    if (cs.display === 'none' || cs.visibility === 'hidden') return false
-    node = node.parentElement
+// 한 번의 스냅샷 안에서 같은 조상을 몇 번씩 다시 계산하지 않도록 쓰는 캐시
+type VisibilityCache = Map<HTMLElement, boolean>
+
+function isVisible(el: HTMLElement, cache?: VisibilityCache): boolean {
+  const cached = cache?.get(el)
+  if (cached !== undefined) return cached
+  let ok = !el.hidden
+  if (ok) {
+    const cs = getComputedStyle(el)
+    ok = cs.display !== 'none' && cs.visibility !== 'hidden'
   }
-  return true
+  if (ok) {
+    const parent = el.parentElement
+    ok = parent === null ? true : isVisible(parent, cache)
+  }
+  cache?.set(el, ok)
+  return ok
 }
 
-function roleOf(el: HTMLElement): string {
+function roleOf(el: HTMLElement, clickable = false): string {
   const explicit = el.getAttribute('role')
   if (explicit) return explicit
   const tag = el.tagName.toLowerCase()
+  // 리스트박스 안의 항목은 드롭다운 선택지다 — 모델이 바로 알아보도록 option 으로 표기
+  if (tag === 'li' && el.closest?.('[role="listbox"]')) return 'option'
   if (tag === 'a') return 'link'
   if (tag === 'button') return 'button'
   if (tag === 'select') return 'combobox'
@@ -52,6 +78,9 @@ function roleOf(el: HTMLElement): string {
     if (t === 'radio') return 'radio'
     return 'textbox'
   }
+  // 의미 없는 태그(div/span/…)가 수집됐다는 건 tabindex·onclick·커서 휴리스틱으로 잡혔다는 뜻이다.
+  // 모델에게는 태그명보다 "누를 수 있다"가 필요한 정보라 clickable 로 알린다
+  if (clickable || GENERIC_TAGS.has(tag)) return 'clickable'
   return tag
 }
 
@@ -75,13 +104,13 @@ function labelOf(el: HTMLElement): string {
 }
 
 /** 요소 하나를 스냅샷 항목으로 만든다(id 는 registry 순서 그대로) */
-function describeElement(el: HTMLElement, id: number): PageElement {
+function describeElement(el: HTMLElement, id: number, clickable = false): PageElement {
   const input = el as HTMLInputElement
   const inputType = el.tagName === 'INPUT' ? input.type : undefined
   return {
     id,
     tag: el.tagName.toLowerCase(),
-    role: roleOf(el),
+    role: roleOf(el, clickable),
     text: labelOf(el),
     name: input.name || undefined,
     href: (el as HTMLAnchorElement).getAttribute?.('href') || undefined,
@@ -115,6 +144,64 @@ function matchesQuery(el: HTMLElement, item: PageElement, query: string): boolea
   return haystack.includes(query)
 }
 
+/** 문서에 나타나는 순서대로 정렬(jsdom 에도 compareDocumentPosition 은 있다) */
+function sortByDocumentOrder(els: HTMLElement[]): HTMLElement[] {
+  return els.slice().sort((a, b) => {
+    if (a === b) return 0
+    const pos = a.compareDocumentPosition(b)
+    if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1
+    if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1
+    return 0
+  })
+}
+
+/** 커서 휴리스틱 후보인가 — 텍스트가 짧게라도 있거나(≤120자) 그림(img/svg)이어야 한다 */
+function hasClickableLabel(el: HTMLElement): boolean {
+  const tag = el.tagName.toLowerCase()
+  if (tag === 'img' || tag === 'svg') return true
+  const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  return text.length > 0 && text.length <= CURSOR_TEXT_MAX
+}
+
+/**
+ * CSS 가 cursor:pointer 를 준 순수 DIV/SPAN 류를 줍는다(role·onclick 이 없는 React UI 대응).
+ *
+ * 규칙
+ * - SELECTOR 로 이미 잡힌 요소, 그리고 그런 요소를 품고 있는 요소는 제외한다(가장 안쪽만).
+ * - pointer 인 조상-자손이 겹치면 안쪽(= 텍스트가 더 짧은 쪽)만 남긴다.
+ * - 성능: 후보 탐색 4000개, 결과 600개까지. 비싼 검사(isVisible)는 마지막에 한다.
+ */
+function collectCursorClickable(base: HTMLElement[]): HTMLElement[] {
+  const body = document.body
+  if (!body) return []
+  // base 와 그 조상들을 미리 표시해 둔다 — 후보마다 querySelector 를 돌리는 것보다 훨씬 싸다
+  const blocked = new Set<HTMLElement>(base)
+  for (const el of base) {
+    let node = el.parentElement
+    while (node && !blocked.has(node)) {
+      blocked.add(node)
+      node = node.parentElement
+    }
+  }
+  const visible: VisibilityCache = new Map()
+  const nodes = body.querySelectorAll<HTMLElement>(CURSOR_CANDIDATES)
+  const scanned = Math.min(nodes.length, CURSOR_SCAN_MAX)
+  const picked: HTMLElement[] = []
+  for (let i = 0; i < scanned; i += 1) {
+    if (picked.length >= CURSOR_PICK_MAX) break
+    const el = nodes[i]
+    // 자기 자신이 이미 수집됐거나, 안에 수집된 인터랙티브 요소가 있으면 건너뛴다(가장 안쪽만)
+    if (blocked.has(el)) continue
+    if (getComputedStyle(el).cursor !== 'pointer') continue
+    if (!hasClickableLabel(el)) continue
+    if (!isVisible(el, visible)) continue
+    // 문서 순서라 조상이 먼저 담긴다 — 자손이 들어오면 조상을 걷어낸다
+    while (picked.length > 0 && picked[picked.length - 1].contains(el)) picked.pop()
+    picked.push(el)
+  }
+  return picked
+}
+
 export interface SnapshotOptions {
   /** 주면 라벨·name·href·placeholder 가 부분일치하는 요소만 나열한다(id 는 그대로) */
   query?: string
@@ -129,10 +216,17 @@ export interface SnapshotOptions {
  * query 를 주면 일치하는 요소만 원래 id 그대로 돌려준다(find_elements).
  */
 export function buildSnapshot(options: SnapshotOptions = {}): PageSnapshot {
-  const all = Array.from(document.querySelectorAll<HTMLElement>(SELECTOR)).filter(isVisible)
+  const baseVisible: VisibilityCache = new Map()
+  const base = Array.from(document.querySelectorAll<HTMLElement>(SELECTOR)).filter((el) =>
+    isVisible(el, baseVisible)
+  )
+  const clickable = collectCursorClickable(base)
+  const clickableSet = new Set<HTMLElement>(clickable)
+  // 두 목록을 합쳐 문서 순서로 정렬한다(id 가 화면 순서와 어긋나지 않도록)
+  const all = clickable.length > 0 ? sortByDocumentOrder(base.concat(clickable)) : base
   // id 는 문서 순서로 매기고 registry 에는 전부 남긴다(나열 순서가 바뀌어도 id 는 안정적이다)
   registry = all
-  const described = all.map((el, i) => describeElement(el, i + 1))
+  const described = all.map((el, i) => describeElement(el, i + 1, clickableSet.has(el)))
   const query = options.query?.trim().toLowerCase()
   let picked: PageElement[]
   let total: number
@@ -184,11 +278,32 @@ export function textOf(id: number): string {
   return parts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
 }
 
+/** 마우스/포인터 이벤트 한 개를 쏜다(PointerEvent 가 없는 환경은 MouseEvent 로 대체) */
+function fireMouseEvent(el: HTMLElement, type: string): void {
+  const init = { bubbles: true, cancelable: true, composed: true }
+  let ev: Event
+  if (type.startsWith('pointer') && typeof PointerEvent === 'function') {
+    ev = new PointerEvent(type, init)
+  } else if (typeof MouseEvent === 'function') {
+    ev = new MouseEvent(type, init)
+  } else {
+    ev = new Event(type, init)
+  }
+  el.dispatchEvent(ev)
+}
+
 export function performClick(id: number): string {
   const el = get(id)
   if (!el) return `element ${id} not found (call get_page again)`
   // jsdom 등 일부 환경은 scrollIntoView 를 구현하지 않음
   el.scrollIntoView?.({ block: 'center' })
+  // React 합성 이벤트(onPointerDown/onMouseDown 으로만 반응하는 옵션 UI)를 위해
+  // 실제 사용자 클릭과 같은 순서로 쏜다. 마지막 click 은 네이티브 기본동작(링크 이동·체크박스
+  // 토글)이 살아 있도록 el.click() 으로 낸다
+  fireMouseEvent(el, 'pointerdown')
+  fireMouseEvent(el, 'mousedown')
+  fireMouseEvent(el, 'pointerup')
+  fireMouseEvent(el, 'mouseup')
   el.click()
   return 'ok'
 }
@@ -421,7 +536,7 @@ export function installCaptureListener(
   const attempt = (): void => {
     const pwEls = Array.from(
       document.querySelectorAll<HTMLInputElement>('input[type="password"]')
-    ).filter(isVisible)
+    ).filter((el) => isVisible(el))
     const pw = pwEls[0]
     if (!pw || !pw.value) return // 값이 없으면 저장 제안을 띄우지 않는다
     const userEl = usernameElementFor(pw)
@@ -467,7 +582,7 @@ export function installCaptureListener(
       if (!(clicked instanceof HTMLElement)) return
       const pwEls = Array.from(
         document.querySelectorAll<HTMLInputElement>('input[type="password"]')
-      ).filter(isVisible)
+      ).filter((el) => isVisible(el))
       const pw = pwEls[0]
       if (!pw) return
       if (!isRelevantSubmitClick(clicked, pw)) return
