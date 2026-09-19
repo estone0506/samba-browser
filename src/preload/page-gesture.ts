@@ -217,11 +217,18 @@ export function installGestureRecognizer(deps: GestureRecognizerDeps): void {
   // 창 밖으로 나가거나 포커스를 잃으면 궤적을 지우고 조용히 취소한다
   window.addEventListener('blur', cancel, true)
   // 창 밖으로 나간 경우만 취소한다. mouseout 의 relatedTarget===null 은 hover 중인 요소가
-  // 사라지거나(메뉴 닫힘) iframe 위로 지나갈 때도 생겨 제스처 도중 취소돼 버리므로 쓰지 않는다.
-  // 루트 요소의 mouseleave 는 버블링이 없어 문서 자체를 벗어날 때만 한 번 온다
-  document.documentElement.addEventListener('mouseleave', () => {
-    if (tracking) cancel()
-  })
+  // 사라지거나(메뉴 닫힘) iframe 위로 지나갈 때도 생기므로, 좌표가 실제로 뷰포트 밖일 때만 취소한다.
+  // (preload 는 document 가 생기기 전에 돌아 documentElement 에 직접 걸 수 없다)
+  document.addEventListener(
+    'mouseout',
+    (e: MouseEvent) => {
+      if (!tracking || e.relatedTarget !== null) return
+      const outside =
+        e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth || e.clientY >= innerHeight
+      if (outside) cancel()
+    },
+    true
+  )
 
   // 제스처 중에는 링크 드래그가 시작되지 않게 한다(오른쪽 버튼이라 보통 발생하지 않지만 방어)
   window.addEventListener(
