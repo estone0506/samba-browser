@@ -144,6 +144,15 @@ export type AgentEvent =
   | { type: 'confirm'; requestId: string; action: string; kind?: 'danger' | 'finish' }
   // 진행 상황만 알리는 이벤트(도구 호출 아님). 지금은 SDK 재시도 대기 표시에 쓴다
   | { type: 'progress'; kind: 'apiRetry'; attempt: number; reason: string }
+  // 캡차·2FA 를 사용자에게 넘김. 응답은 agentConfirmReply 채널을 그대로 쓴다
+  // (approved=true → 건너뛰고 계속, false → 작업 중단)
+  | { type: 'handoff'; requestId: string; kind: 'captcha'; matched: string; url: string }
+  // 넘김 종료(사용자 처리 감지로 자동 재개 포함). 카드를 닫고 진행 로그를 남긴다
+  | {
+      type: 'handoffDone'
+      requestId: string
+      outcome: 'resumed' | 'skipped' | 'aborted' | 'timeout'
+    }
   | {
       type: 'status'
       state: 'running' | 'done' | 'failed' | 'stopped'

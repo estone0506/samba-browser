@@ -120,6 +120,15 @@ export function SecuritySection({ settings, update }: SectionProps): React.JSX.E
           />
         </SettingsToggleRow>
         <SettingsToggleRow
+          label={t('vault.settings.keepSignedIn')}
+          description={t('vault.settings.keepSignedInDesc')}
+        >
+          <Switch
+            checked={settings.vaultKeepSignedIn}
+            onCheckedChange={(v) => update({ vaultKeepSignedIn: v })}
+          />
+        </SettingsToggleRow>
+        <SettingsToggleRow
           label={t('vault.settings.autoUpdatePassword')}
           description={t('vault.settings.autoUpdatePasswordDesc')}
         >

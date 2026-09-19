@@ -9,6 +9,12 @@ import { runQuery, classifyAuthError, isFatalApiError } from './provider'
 import { resolveModel } from '../ai/models'
 import { makeCounter } from './counter'
 import { createTextDeduper } from './dedupe'
+import {
+  watchHandoff,
+  HANDOFF_TIMEOUT_MS,
+  type HandoffResult,
+  type HandoffWatchDeps
+} from './handoff'
 
 // 확인 요청 응답 대기 상한 30분
 const CONFIRM_TIMEOUT_MS = 30 * 60 * 1000
@@ -48,17 +54,79 @@ export class AgentRunner {
     kind: 'danger' | 'finish' = 'danger',
     emit: (e: AgentEvent) => void = this.emit
   ): Promise<boolean> {
+    const id = randomUUID()
+    const reply = this.registerPending(id, CONFIRM_TIMEOUT_MS)
+    emit({ type: 'confirm', requestId: id, action, kind })
+    return reply
+  }
+
+  /**
+   * 캡차·2FA 를 사용자에게 넘기고 작업을 일시정지한다.
+   * 사용자가 화면에서 직접 처리하면(페이지 이동·징후 소멸) 자동으로 재개하고,
+   * 카드 버튼을 누르면 건너뛰기(skipped)/중단(aborted)으로 끝난다.
+   * 캡차를 대신 푸는 일은 하지 않는다 — 입력은 언제나 사용자가 한다
+   */
+  async requestHandoff(
+    req: {
+      matched: string
+      currentUrl: () => string
+      stillBlocked: () => Promise<boolean>
+      // 테스트에서 폴링 주기·시계를 갈아 끼우기 위한 통로
+      watch?: Pick<HandoffWatchDeps, 'sleep' | 'pollMs' | 'timeoutMs'>
+    },
+    emit: (e: AgentEvent) => void = this.emit
+  ): Promise<HandoffResult> {
+    const id = randomUUID()
+    // 사용자 버튼 응답: true = 건너뛰고 계속, false = 작업 중단
+    const reply = this.registerPending(id, HANDOFF_TIMEOUT_MS + 60_000)
+    emit({
+      type: 'handoff',
+      requestId: id,
+      kind: 'captcha',
+      matched: req.matched,
+      url: req.currentUrl()
+    })
+    let replied = false
+    const userOutcome = reply.then((ok): HandoffResult => {
+      replied = true
+      return { outcome: ok ? 'skipped' : 'aborted', url: req.currentUrl() }
+    })
+    const watched = watchHandoff({
+      currentUrl: req.currentUrl,
+      stillBlocked: req.stillBlocked,
+      cancelled: () => replied,
+      ...req.watch
+    }).then((r): HandoffResult | null =>
+      r.outcome === 'cancelled' ? null : { outcome: r.outcome, url: r.url }
+    )
+    // 먼저 끝나는 쪽이 결과가 된다. 감시가 취소(null)면 사용자 응답을 기다린다
+    const result = await Promise.race([userOutcome, watched.then((r) => r ?? userOutcome)])
+    // 자동 재개·시간 초과로 끝났으면 남은 응답 대기를 정리한다(카드도 닫힌다)
+    this.settlePending(id)
+    emit({ type: 'handoffDone', requestId: id, outcome: result.outcome })
+    return result
+  }
+
+  // 응답 대기 1건 등록 — 확인 카드와 넘김 카드가 같은 응답 채널을 쓴다
+  private registerPending(id: string, timeoutMs: number): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
-      const id = randomUUID()
       const timer = setTimeout(() => {
         // 응답이 없으면 거부 처리
         if (this.pending.delete(id)) resolve(false)
-      }, CONFIRM_TIMEOUT_MS)
+      }, timeoutMs)
       // 대기 타이머가 앱 종료를 막지 않도록 한다
       timer.unref?.()
       this.pending.set(id, { resolve, timer })
-      emit({ type: 'confirm', requestId: id, action, kind })
     })
+  }
+
+  // 아직 남아 있는 대기 1건을 조용히 정리한다(거부로 resolve)
+  private settlePending(id: string): void {
+    const p = this.pending.get(id)
+    if (!p) return
+    this.pending.delete(id)
+    clearTimeout(p.timer)
+    p.resolve(false)
   }
 
   resolveConfirm(id: string, approved: boolean): void {
@@ -126,10 +194,12 @@ export class AgentRunner {
       finalConfirm: s.finalConfirm,
       vaultAccessPolicy: s.vaultAccessPolicy,
       vaultAutoSubmit: s.vaultAutoSubmit,
+      vaultKeepSignedIn: s.vaultKeepSignedIn,
       vaultExcludedHosts: s.vaultExcludedHosts,
       tick: counter.tick,
       onStep: (label, ok) => emit({ type: 'step', label, ok }),
-      confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit)
+      confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit),
+      handoff: (req) => this.requestHandoff(req, emit)
     })
     emit({ type: 'status', state: 'running', toolCalls: 0 })
     try {

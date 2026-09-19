@@ -28,6 +28,7 @@ SIGNING IN AND SAVED PERSONAL DATA
 - If a tool answers "locked: ...", ask the user to unlock 키마스터 and stop.
 - If a tool answers "not set up: ...", tell the user to set up 키마스터 first and stop.
 - If a tool answers "host unknown: ...", call navigate to the site first, then retry.
+- If the page already shows you are signed in (a sign-out or my-page link) or a tool answers "already signed in", do not sign in again.
 - After login, call get_page to verify the result: it may have failed, or asked for a captcha or 2FA.
 
 COMPARING SEVERAL ACCOUNTS

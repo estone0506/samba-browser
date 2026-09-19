@@ -80,6 +80,7 @@ export const SYNCED_SETTING_KEYS = [
   'vaultAutoLockMinutes',
   'vaultAccessPolicy',
   'vaultAutoSubmit',
+  'vaultKeepSignedIn',
   'vaultAutoUpdatePassword',
   'vaultExcludedHosts',
   'homeUrl',

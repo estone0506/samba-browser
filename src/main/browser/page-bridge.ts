@@ -44,6 +44,15 @@ const loginFieldsSchema = z.object({
 
 export type LoginFieldsResult = z.infer<typeof loginFieldsSchema>
 
+// 로그인 상태 힌트 — matched 는 페이지에서 온 문자열이라 길이를 잘라 쓴다
+const signedInHintSchema = z.object({ signedIn: z.boolean(), matched: z.string() })
+
+// 캡차·2FA 징후. 푸는 것은 사용자 몫이고, 여기서는 "사람이 필요하다"만 판정한다
+const captchaHintSchema = z.object({ needsUser: z.boolean(), matched: z.string() })
+
+export type SignedInHintResult = z.infer<typeof signedInHintSchema>
+export type CaptchaHintResult = z.infer<typeof captchaHintSchema>
+
 // 탭 안 preload(격리 월드의 __samba)를 호출하고 결과를 스키마로 검증한다
 async function call<T>(wc: WebContents, expr: string, schema: z.ZodType<T>): Promise<T> {
   if (wc.isDestroyed()) throw new Error('page is gone')
@@ -97,6 +106,19 @@ export const pageBridge = {
   },
   findLoginFields: (tab: Tab): Promise<LoginFieldsResult> =>
     call(tab.view.webContents, '__samba.findLoginFields()', loginFieldsSchema),
+  // 이미 로그인된 상태인지 힌트(로그인 폼을 못 찾았을 때만 쓴다)
+  signedInHint: (tab: Tab): Promise<SignedInHintResult> =>
+    call(tab.view.webContents, '__samba.signedInHint()', signedInHintSchema),
+  // 캡차·2FA 징후 감지(사용자 넘김 판단용)
+  captchaHint: (tab: Tab): Promise<CaptchaHintResult> =>
+    call(tab.view.webContents, '__samba.captchaHint()', captchaHintSchema),
+  // 제출 직전 "로그인 상태 유지" 체크박스 켜기. 결과는 'checked: …' | 'already: …' | 'none'
+  checkKeepSignedIn: (tab: Tab, anchorId?: number): Promise<string> =>
+    call(
+      tab.view.webContents,
+      `__samba.checkKeepSignedIn(${anchorId === undefined ? '' : anchorId})`,
+      resultSchema
+    ),
   submitForm: (tab: Tab, id: number): Promise<string> =>
     call(tab.view.webContents, `__samba.submitForm(${id})`, resultSchema),
   // 최신 스냅샷 기준 요소가 비밀 입력칸(type=password)인지 확인(fill_secret 대상 검증용)

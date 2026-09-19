@@ -6,7 +6,8 @@ import type { AgentEvent, AgentRunAck, IpcResult } from '../src/shared/ipc'
 const ack: IpcResult<AgentRunAck> = { ok: true, data: { started: true } }
 const run = vi.fn(async (_prompt: string): Promise<IpcResult<AgentRunAck>> => ack)
 const stop = vi.fn(async (): Promise<IpcResult<void>> => ({ ok: true, data: undefined }))
-const win = { samba: { agent: { run, stop, confirmReply: vi.fn(), onEvent: vi.fn() } } }
+const confirmReply = vi.fn()
+const win = { samba: { agent: { run, stop, confirmReply, onEvent: vi.fn() } } }
 Object.assign(globalThis, { window: win })
 
 const { useChatStore } = await import('../src/renderer/src/stores/chatStore')
@@ -111,5 +112,69 @@ describe('chatStore 상태 가드', () => {
     expect(useChatStore.getState().retry).toEqual({ attempt: 3, reason: 'rate_limit' })
     fire({ type: 'step', label: '클릭', ok: true })
     expect(useChatStore.getState().retry).toBeNull()
+  })
+})
+
+describe('chatStore 캡차 넘김 카드', () => {
+  beforeEach(() => {
+    confirmReply.mockReset()
+    stop.mockClear()
+    useChatStore.setState({
+      status: 'running',
+      handoff: null,
+      messages: [{ id: '1', role: 'ai', text: '', steps: [] }]
+    })
+  })
+
+  it('handoff 이벤트로 카드가 뜨고 대기 단계가 기록된다', () => {
+    fire({
+      type: 'handoff',
+      requestId: 'r1',
+      kind: 'captcha',
+      matched: '캡차',
+      url: 'https://a.example/login'
+    })
+    expect(useChatStore.getState().handoff).toEqual({
+      requestId: 'r1',
+      matched: '캡차',
+      url: 'https://a.example/login'
+    })
+    expect(useChatStore.getState().messages[0].steps?.at(-1)?.key).toBe('handoff.waiting')
+  })
+
+  it('자동 재개(handoffDone)로 카드가 닫히고 재개 단계가 남는다', () => {
+    fire({
+      type: 'handoff',
+      requestId: 'r1',
+      kind: 'captcha',
+      matched: '캡차',
+      url: 'https://a.example/login'
+    })
+    fire({ type: 'handoffDone', requestId: 'r1', outcome: 'resumed' })
+    expect(useChatStore.getState().handoff).toBeNull()
+    expect(useChatStore.getState().messages[0].steps?.at(-1)).toEqual({
+      label: '',
+      ok: true,
+      key: 'handoff.step.resumed'
+    })
+  })
+
+  it("'건너뛰고 계속'은 승인 응답만 보내고 실행을 멈추지 않는다", () => {
+    useChatStore.getState().replyHandoff('r1', true)
+    expect(confirmReply).toHaveBeenCalledWith('r1', true)
+    expect(stop).not.toHaveBeenCalled()
+    expect(useChatStore.getState().handoff).toBeNull()
+  })
+
+  it("'작업 중단'은 거부 응답과 함께 실행도 멈춘다", () => {
+    useChatStore.getState().replyHandoff('r1', false)
+    expect(confirmReply).toHaveBeenCalledWith('r1', false)
+    expect(stop).toHaveBeenCalled()
+  })
+
+  it('작업이 끝나면 남은 넘김 카드를 정리한다', () => {
+    fire({ type: 'handoff', requestId: 'r1', kind: 'captcha', matched: 'x', url: 'u' })
+    fire({ type: 'status', state: 'stopped' })
+    expect(useChatStore.getState().handoff).toBeNull()
   })
 })
