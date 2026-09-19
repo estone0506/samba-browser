@@ -84,4 +84,39 @@ describe('tombstone 가 화면에 남지 않는다', () => {
 
     expect(repo.tree().links).toHaveLength(0)
   })
+
+  it('지워진 계정을 다시 저장하면 되살아난다', () => {
+    // New-I4 — tombstone 행을 재활용하면서 deleted_at 을 비우지 않아, 저장은 성공했는데
+    // 목록 어디에도 30일 동안 나타나지 않았다
+    const account = vault.upsertAccount({ host: 'example.com', username: 'me', label: '내 계정' })
+    markAccountDeleted(account.id)
+    expect(vault.listAccounts('example.com')).toHaveLength(0)
+
+    const again = vault.upsertAccount({ host: 'example.com', username: 'me' })
+
+    expect(again.id).toBe(account.id)
+    expect(vault.listAccounts('example.com')).toHaveLength(1)
+    const row = db.drizzle.select().from(accounts).where(eq(accounts.id, account.id)).get()
+    expect(row?.deletedAt).toBeNull()
+  })
+
+  it('계정 목록의 itemTypes 는 다른 작업공간의 항목을 세지 않는다', () => {
+    // New-M3 — itemTypesByAccount 에 작업공간 조건이 빠져 있었다
+    const account = vault.upsertAccount({ host: 'example.com', username: 'me' })
+    const item = vault.putItem({
+      accountId: account.id,
+      type: 'login',
+      label: '로그인',
+      value: 'p@ss'
+    })
+    // 이 항목은 2번 작업공간의 것이다
+    db.drizzle.update(vaultItems).set({ workspaceId: 2 }).where(eq(vaultItems.id, item.id)).run()
+
+    vault.setWorkspaceScope({ id: 1, isDefault: true })
+    expect(vault.listAccounts('example.com')[0].itemTypes).toEqual([])
+
+    vault.setWorkspaceScope({ id: 2, isDefault: false })
+    db.drizzle.update(accounts).set({ workspaceId: 2 }).where(eq(accounts.id, account.id)).run()
+    expect(vault.listAccounts('example.com')[0].itemTypes).toEqual(['login'])
+  })
 })
