@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { PHONE_LIMIT_PRO } from '@shared/phone'
 import { PhoneCard } from '@renderer/components/phone/PhoneCard'
+import { ToolsInstallCard } from '@renderer/components/phone/ToolsInstallCard'
 import { PHONE_GRID_MAX } from '@renderer/components/phone/phone-view'
 import { PrimaryButton, SecondaryButton, TextInput } from '@renderer/components/settings/shared'
 import { useAuthStore } from '@renderer/stores/authStore'
@@ -34,6 +35,12 @@ export function PhonesPage(): React.JSX.Element {
   } = usePhoneStore()
   const [address, setAddress] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
+  // 도구 설치 여부(카드가 알려 준다). null 은 아직 확인 전이다
+  const [toolsInstalled, setToolsInstalled] = useState<boolean | null>(null)
+  const onToolsStatus = useCallback(
+    (s: { installed: boolean }) => setToolsInstalled(s.installed),
+    []
+  )
 
   useEffect(() => {
     void loadAuth()
@@ -47,6 +54,9 @@ export function PhonesPage(): React.JSX.Element {
   // 로그인하지 않았거나 Free 면 폰 연동을 쓸 수 없다.
   // 로그인 자체가 안 된 상태(미설정 빌드 포함)에서는 막지 않고 그대로 보여 준다
   const isPro = !authState?.signedIn || authState.plan === 'pro'
+
+  // 폰이 하나도 안 잡히고 도구도 없을 때만 설치 카드를 맨 위로 올린다
+  const needsTools = list.length === 0 && toolsInstalled === false
 
   const onConnect = async (): Promise<void> => {
     const value = address.trim()
@@ -82,6 +92,9 @@ export function PhonesPage(): React.JSX.Element {
           </section>
         ) : (
           <>
+            {/* 폰도 안 잡히고 도구도 없으면 이 카드가 첫 화면이다 */}
+            {needsTools && <ToolsInstallCard onStatus={onToolsStatus} />}
+
             {/* 상단 도구줄 */}
             <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--line)] bg-white p-3">
               <SecondaryButton
@@ -144,6 +157,8 @@ export function PhonesPage(): React.JSX.Element {
                 ))}
               </div>
             )}
+
+            {!needsTools && <ToolsInstallCard onStatus={onToolsStatus} />}
           </>
         )}
       </div>

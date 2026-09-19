@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs'
 import type { Settings } from '../../shared/settings'
 import type { AuthEventDto, PhoneAuthWaitingDto, PhoneCountry, PhoneDto } from '../../shared/phone'
 import { isPhoneCountry } from '../../shared/phone'
-import { ADB_CANDIDATES, SCRCPY_CANDIDATES, detectAdbPath, shellArgs } from './adb'
+import { detectAdbPath, shellArgs, toolCandidates } from './adb'
 import type { AdbRunner } from './adb'
 import { DeviceManager, type DeviceRepo, type PhoneRowLike } from './devices'
 import { ARS_NOTICE, watchIncomingCall } from './auth-flow'
@@ -39,6 +39,10 @@ export interface PhoneServiceDeps {
   now?: () => number
   // 경로 후보가 실제로 있는지 보는 함수(테스트에서 갈아 끼운다)
   exists?: (path: string) => boolean
+  /** 앱 데이터의 phone-tools 폴더(원클릭 설치본이 여기 들어간다) */
+  toolsRoot?: string
+  /** PATH 환경변수(테스트에서 갈아 끼운다) */
+  pathEnv?: string
 }
 
 // 문자 DB 시험 조회. 권한이 없으면 adb 가 이 문구를 돌려준다
@@ -65,6 +69,8 @@ export class PhoneService {
 
   /** Pro 요금제일 때만 실제로 폴링이 돈다(게이트는 DeviceManager 안에도 한 번 더 있다) */
   start(): void {
+    // 승계 1회 — 이미 도구가 깔린 PC 라면 설정이 비어 있어도 첫 실행에서 한 번 찾아 저장한다
+    this.detectPaths()
     this.devices.start()
   }
 
@@ -92,12 +98,30 @@ export class PhoneService {
     return this.devices.recover(serial)
   }
 
-  /** adb·scrcpy 실행 파일을 후보 목록에서 찾아 설정이 비어 있으면 채운다 */
+  /**
+   * adb·scrcpy 실행 파일을 찾아 설정이 비어 있으면 채운다.
+   * 순서는 설정 경로 → 앱 데이터 설치본 → PATH → 기존 후보다
+   */
   detectPaths(): { adb: string; scrcpy: string } {
     const exists = this.deps.exists ?? existsSync
-    const adb = detectAdbPath(ADB_CANDIDATES, exists)
-    const scrcpy = detectAdbPath(SCRCPY_CANDIDATES, exists)
     const current = this.deps.settings.get()
+    const pathEnv = this.deps.pathEnv ?? process.env.PATH ?? ''
+    const adb = detectAdbPath(
+      toolCandidates('adb.exe', {
+        settingsPath: current.adbPath,
+        toolsRoot: this.deps.toolsRoot,
+        pathEnv
+      }),
+      exists
+    )
+    const scrcpy = detectAdbPath(
+      toolCandidates('scrcpy.exe', {
+        settingsPath: current.scrcpyPath,
+        toolsRoot: this.deps.toolsRoot,
+        pathEnv
+      }),
+      exists
+    )
     const patch: Partial<Settings> = {}
     if (adb && !current.adbPath) patch.adbPath = adb
     if (scrcpy && !current.scrcpyPath) patch.scrcpyPath = scrcpy

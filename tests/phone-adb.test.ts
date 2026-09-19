@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   ADB_CANDIDATES,
   SCRCPY_CANDIDATES,
@@ -66,11 +68,13 @@ describe('detectAdbPath', () => {
     expect(detectAdbPath([], () => true)).toBe('')
   })
 
-  it('사용자의 실제 설치 위치가 후보 1순위에 있다', () => {
-    expect(ADB_CANDIDATES[0]).toBe('C:\\Users\\canno\\Downloads\\pt\\platform-tools\\adb.exe')
-    expect(SCRCPY_CANDIDATES[0]).toBe(
-      'C:\\Users\\canno\\Downloads\\pt\\scrcpy-win64-v4.1\\scrcpy.exe'
-    )
+  it('후보 목록에 특정 PC 의 절대경로를 박아 두지 않는다', () => {
+    // 값이 아니라 원본 코드를 본다 — 환경변수로 만든 경로는 실행하는 PC 에 따라 달라진다
+    const source = readFileSync(join(__dirname, '../src/main/phone/adb.ts'), 'utf8')
+    expect(source).not.toMatch(/'C:\\\\Users\\\\[^']+'/)
+    for (const c of [...ADB_CANDIDATES, ...SCRCPY_CANDIDATES]) {
+      expect(c.endsWith('adb.exe') || c.endsWith('scrcpy.exe')).toBe(true)
+    }
   })
 })
 

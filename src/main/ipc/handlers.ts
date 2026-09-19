@@ -57,6 +57,7 @@ import { createAdbRunner } from '../phone/process'
 import { PhoneRepo } from '../phone/repo'
 import { PhoneService } from '../phone/service'
 import { registerPhoneScreenIpc } from '../phone/screen-ipc'
+import { installPhoneTools, phoneToolsStatus } from '../phone/tools-install'
 import { createPhoneOps } from '../agent/tools-phone'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
@@ -694,10 +695,13 @@ export function registerIpc(
   // === 폰 연동(3단계) — 이 블록만 따로 추가한다 ========================================
   // 기기 감시는 Pro 요금제에서만 돈다. 결제 비밀번호·문자 본문은 이 채널들로 흐르지 않는다
   const phoneAdb = createAdbRunner(() => settings.get().adbPath)
+  // 원클릭 설치본이 들어가는 자리(%APPDATA%/SAMBA Browser/phone-tools)
+  const phoneToolsRoot = join(app.getPath('userData'), 'phone-tools')
   const phones = new PhoneService({
     adb: phoneAdb,
     repo: new PhoneRepo(db),
     settings,
+    toolsRoot: phoneToolsRoot,
     isPro: () => auth.state().plan === 'pro',
     emit: (list, warning) => send(IPC.phoneUpdated, { list, warning }),
     emitAuthWaiting: (dto) => send(IPC.phoneAuthWaiting, dto)
@@ -718,6 +722,18 @@ export function registerIpc(
     phones.assign(accountId, phoneId)
   )
   handleFromRenderer(IPC.phoneAuthEvents, (limit?: number) => phones.authEvents(limit))
+  // 폰 연동 프로그램 원클릭 설치 — 내려받기·해제·설정 저장까지 메인에서만 한다
+  handleFromRenderer(IPC.phoneToolsStatus, () =>
+    phoneToolsStatus({ root: phoneToolsRoot, settings })
+  )
+  handleFromRenderer(IPC.phoneInstallTools, () =>
+    installPhoneTools({
+      root: phoneToolsRoot,
+      fetchImpl: (url, init) => net.fetch(url, init),
+      settings,
+      onProgress: (p) => send(IPC.phoneInstallProgress, p)
+    })
+  )
   // AI 폰 도구 배선. 금고는 넘기지 않는다 — 폰 도구는 비밀값을 볼 수 없다
   agent.setPhones({
     phones: createPhoneOps(phoneAdb, () => phones.list()),

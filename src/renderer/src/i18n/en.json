@@ -757,6 +757,27 @@
       "inputUnavailable": "Screen control is not ready yet",
       "openWindow": "Open in a larger window"
     },
+    "tools": {
+      "title": "Phone tools",
+      "desc": "Controlling a phone needs adb and scrcpy. One button downloads, installs and saves the paths for you",
+      "missing": "Not installed yet",
+      "installed": "Installed",
+      "installedWith": "Installed · {{versions}}",
+      "installing": "Installing. Please keep this window open",
+      "install": "Install",
+      "reinstall": "Reinstall",
+      "failed": "Install failed: {{reason}}",
+      "manualHint": "A corporate network may be blocking it. You can also type the adb and scrcpy paths in Settings",
+      "step": {
+        "platformTools": "Downloading adb (platform-tools)",
+        "scrcpy": "Downloading scrcpy"
+      },
+      "guideShow": "How to turn on USB debugging",
+      "guideHide": "Hide the guide",
+      "guide1": "Settings → About phone → Software information, then tap Build number seven times",
+      "guide2": "Settings → Developer options, then turn on USB debugging",
+      "guide3": "Connect by USB and tap Allow on the “Allow USB debugging?” prompt"
+    },
     "settings": {
       "pathsTitle": "adb · scrcpy paths",
       "pathsDesc": "They do not need to be on PATH. Enter the full executable path or detect them automatically.",

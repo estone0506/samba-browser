@@ -133,7 +133,10 @@ export const IPC = {
   phoneKey: 'phone:key',
   phoneUpdated: 'phone:updated', // main → renderer 이벤트(목록·상태)
   phoneAuthWaiting: 'phone:authWaiting', // main → renderer 이벤트(카드 자동 펼침)
-  phoneAuthEvents: 'phone:authEvents' // KPI 목록
+  phoneAuthEvents: 'phone:authEvents', // KPI 목록
+  phoneToolsStatus: 'phone:toolsStatus', // adb·scrcpy 설치 상태(경로·버전)
+  phoneInstallTools: 'phone:installTools', // 원클릭 설치(내려받기 → 해제 → 설정 저장)
+  phoneInstallProgress: 'phone:installProgress' // main → renderer 이벤트(설치 진행률)
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -248,7 +251,9 @@ export type {
   PhoneTransport,
   ScreenMode,
   PhoneScreenChunkDto,
-  PhoneScreenModeDto
+  PhoneScreenModeDto,
+  PhoneToolsStatusDto,
+  PhoneToolsProgressDto
 } from './phone'
 
 export type {
