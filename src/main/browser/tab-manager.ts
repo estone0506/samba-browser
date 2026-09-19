@@ -501,17 +501,21 @@ export class TabManager {
       // 팝업은 부모 탭과 같은 profile(세션)을 써야 로그인 세션·쿠키가 이어진다(결제창 필수)
       return {
         action: 'allow',
+        // 자식 webContents 는 부모 설정(세션·preload·샌드박스)을 물려받는다. 여기서 덮어써 확실히 한다
+        overrideBrowserWindowOptions: {
+          webPreferences: {
+            session: ses,
+            preload: join(__dirname, '../preload/page.js'),
+            sandbox: true,
+            contextIsolation: true,
+            nodeIntegration: false
+          }
+        },
         createWindow: (options) => {
-          const popup = new WebContentsView({
-            webPreferences: {
-              ...options.webPreferences,
-              session: ses,
-              preload: join(__dirname, '../preload/page.js'),
-              sandbox: true,
-              contextIsolation: true,
-              nodeIntegration: false
-            }
-          })
+          // Electron 이 미리 만들어 넘긴 webContents 로 뷰를 만들어야 한다(다른 것을 만들면 예외)
+          // 타입 선언에는 없지만 런타임 options 에는 항상 webContents 가 들어 있다
+          const guest = (options as { webContents?: WebContents }).webContents
+          const popup = new WebContentsView(guest ? { webContents: guest } : {})
           try {
             this.create({ url: target, profile, mobile: tab.mobile, openerId: tab.id, view: popup })
           } catch (e: unknown) {
