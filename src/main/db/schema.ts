@@ -111,7 +111,10 @@ export const syncOutbox = sqliteTable('sync_outbox', {
   payload: text('payload'),
   createdAt: integer('created_at').notNull(),
   triedAt: integer('tried_at'),
-  error: text('error')
+  error: text('error'),
+  // 이 변경이 일어난 작업공간(로컬 id). 푸시가 행마다 원격 uuid 를 고르는 데 쓴다.
+  // 0007 이전에 쌓인 행은 NULL — 그때는 푸시 시점의 활성 작업공간으로 본다
+  workspaceId: integer('workspace_id')
 })
 
 // 동기화 부가 상태. 'lastPulledAt' | 'deviceId' | 'userId' | 'settings:<key>:updatedAt'

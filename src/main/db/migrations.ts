@@ -5,6 +5,21 @@ export interface Migration {
   // 이 태그들 중 하나가 __migrations 에 이미 있으면, 태그 이름만 바뀐 것으로 보고
   // SQL 을 다시 실행하지 않는다(drizzle-kit generate 재실행으로 태그가 바뀌는 경우 대비)
   aliases?: string[]
+  // 실패해도 앱 기동을 막지 않는다(사유만 남기고 다음 기동에 다시 시도한다).
+  // 데이터 정합성을 조이는 인덱스처럼 "있으면 좋지만 없어도 도는" 마이그레이션에만 쓴다
+  optional?: boolean
+}
+
+/**
+ * remote_id 중복을 정리하는 SQL. UNIQUE 인덱스를 걸기 전에 먼저 돌린다.
+ * 같은 remote_id 가 여러 행에 있으면 가장 먼저 만들어진 행(min(id))만 남기고 나머지는
+ * remote_id 를 비운다 — 다음 푸시에서 새 원격 id 를 받아 다시 짝이 맞춰진다
+ */
+function dedupeRemoteId(table: string): string {
+  return (
+    `UPDATE \`${table}\` SET \`remote_id\` = NULL WHERE \`remote_id\` IS NOT NULL ` +
+    `AND \`id\` NOT IN (SELECT MIN(\`id\`) FROM \`${table}\` WHERE \`remote_id\` IS NOT NULL GROUP BY \`remote_id\`);`
+  )
 }
 
 export const migrations: Migration[] = [
@@ -73,12 +88,27 @@ export const migrations: Migration[] = [
   {
     // remote_id 는 원격 행과 1:1 이라 schema.ts 에서 unique 로 선언돼 있는데,
     // 0005 에는 인덱스가 빠져 있었다. SQLite 의 UNIQUE 는 NULL 을 여러 개 허용하므로
-    // 아직 올리지 않은 행(remote_id IS NULL)은 그대로 공존한다
+    // 아직 올리지 않은 행(remote_id IS NULL)은 그대로 공존한다.
+    //
+    // 인덱스가 없던 동안 중복이 이미 생긴 DB 가 있을 수 있다 — 그대로 인덱스를 걸면
+    // 마이그레이션이 던져 앱이 아예 뜨지 못한다. 그래서 (1) 중복을 먼저 정리하고,
+    // (2) IF NOT EXISTS 로 걸고, (3) 그래도 실패하면 기동은 막지 않는다(optional)
     tag: '0006_remote_id_unique',
+    optional: true,
     sql: [
-      'CREATE UNIQUE INDEX `accounts_remote_id_unique` ON `accounts` (`remote_id`);',
-      'CREATE UNIQUE INDEX `vault_items_remote_id_unique` ON `vault_items` (`remote_id`);',
-      'CREATE UNIQUE INDEX `bookmarks_remote_id_unique` ON `bookmarks` (`remote_id`);'
+      dedupeRemoteId('accounts'),
+      dedupeRemoteId('vault_items'),
+      dedupeRemoteId('bookmarks'),
+      'CREATE UNIQUE INDEX IF NOT EXISTS `accounts_remote_id_unique` ON `accounts` (`remote_id`);',
+      'CREATE UNIQUE INDEX IF NOT EXISTS `vault_items_remote_id_unique` ON `vault_items` (`remote_id`);',
+      'CREATE UNIQUE INDEX IF NOT EXISTS `bookmarks_remote_id_unique` ON `bookmarks` (`remote_id`);'
     ]
+  },
+  {
+    // 변경 로그에 작업공간(로컬 id)을 남긴다. 예전에는 푸시 시점의 활성 작업공간 uuid 를
+    // 모든 대기 행에 찍어, 작업공간을 바꾸기 전에 쌓인 변경이 새 작업공간으로 올라갔다.
+    // 옛 행(NULL)은 푸시 때 활성 작업공간으로 본다
+    tag: '0007_outbox_workspace',
+    sql: ['ALTER TABLE `sync_outbox` ADD `workspace_id` integer;']
   }
 ]
