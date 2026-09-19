@@ -5,6 +5,7 @@ import { useChatStore } from '@renderer/stores/chatStore'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
 import { ConfirmCard } from './ConfirmCard'
+import { HandoffCard } from './HandoffCard'
 import { AuthBanner } from './AuthBanner'
 import { CapturePrompt } from '@renderer/components/vault/CapturePrompt'
 import { PasswordUpdatedToast } from '@renderer/components/vault/PasswordUpdatedToast'
@@ -27,6 +28,7 @@ export function ChatPanel(): React.JSX.Element {
       <CapturePrompt />
       <PasswordUpdatedToast />
       <MessageList />
+      <HandoffCard />
       <ConfirmCard />
       <ChatInput />
     </div>

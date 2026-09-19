@@ -60,6 +60,19 @@
     "continue": "Keep going",
     "finishOk": "Finish"
   },
+  "handoff": {
+    "title": "The site needs your check",
+    "body": "The site is asking for an extra check. Enter it on screen and the task continues",
+    "skip": "Skip and continue",
+    "abort": "Stop the task",
+    "waiting": "Waiting for you to finish the check…",
+    "step": {
+      "resumed": "Check done -> resumed",
+      "skipped": "Check skipped, continuing",
+      "aborted": "Stopped by you",
+      "timeout": "Timed out waiting for the check"
+    }
+  },
   "permission": {
     "title": "Permission",
     "readOnly": "Read-only",
@@ -232,7 +245,9 @@
       "rememberDesc": "Turning this off deletes the stored device key immediately",
       "excludedHosts": "Excluded domains",
       "excludedHostsDesc": "Comma-separated list (e.g. bank.example.com, gov.example.com)",
-      "excludedHostsPlaceholder": "example.com, another.com"
+      "excludedHostsPlaceholder": "example.com, another.com",
+      "keepSignedIn": "Tick “keep me signed in”",
+      "keepSignedInDesc": "Turns on the “keep me signed in” checkbox when signing in, so the session lasts longer and fewer captchas appear"
     },
     "detail": {
       "openInBrowser": "Open in browser",

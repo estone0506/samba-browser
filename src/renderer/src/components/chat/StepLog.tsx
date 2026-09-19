@@ -1,4 +1,5 @@
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Check, X } from 'lucide-react'
 import type { Step } from '@renderer/stores/chatStore'
 
@@ -9,6 +10,7 @@ export function StepLog({
   steps: Step[]
   running: boolean
 }): React.JSX.Element | null {
+  const { t } = useTranslation()
   if (!steps.length) return null
   return (
     <div className="mt-2 flex flex-col gap-1.5 text-[12.5px] text-[var(--text2)]">
@@ -27,7 +29,8 @@ export function StepLog({
                 <X className="h-2.5 w-2.5 stroke-[3] text-white" />
               </span>
             )}
-            <span>{s.label}</span>
+            {/* 번역 키가 붙은 단계(사용자 확인 대기 → 재개)는 화면 언어로 보여 준다 */}
+            <span>{s.key ? t(s.key) : s.label}</span>
           </div>
         )
       })}

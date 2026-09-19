@@ -10,6 +10,15 @@ export interface ChatMessage {
 export interface Step {
   label: string
   ok: boolean
+  // 번역 키. 있으면 화면에서 i18n 문구로 바꿔 보여 준다(메인이 보내는 label 은 그대로 표시)
+  key?: string
+}
+
+// 캡차·2FA 사용자 넘김 카드 상태
+export interface Handoff {
+  requestId: string
+  matched: string
+  url: string
 }
 
 // SDK 재시도 대기 표시용 (진행 띠 라벨은 i18n 으로 화면에서 조립)
@@ -27,10 +36,14 @@ interface ChatState {
   currentLabel: string
   retry: Retry | null
   confirm: { requestId: string; action: string; kind: 'danger' | 'finish' } | null
+  // 사이트가 사람의 추가 확인을 요구해 작업이 멈춰 있는 상태
+  handoff: Handoff | null
   authError: 'missing' | 'limit' | null
   send: (text: string) => Promise<void>
   stop: () => Promise<void>
   reply: (requestId: string, approved: boolean) => void
+  // 넘김 카드 응답 — skip=true 는 건너뛰고 계속, false 는 작업 중단
+  replyHandoff: (requestId: string, skip: boolean) => void
   handleEvent: (e: AgentEvent) => void
 }
 
@@ -46,6 +59,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   currentLabel: '',
   retry: null,
   confirm: null,
+  handoff: null,
   authError: null,
   send: async (text) => {
     if (get().status === 'running') return
@@ -62,6 +76,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       currentLabel: '',
       retry: null,
       confirm: null,
+      handoff: null,
       authError: null
     }))
     // 메인은 "시작 접수" ack 만 즉시 돌려준다. 완료·실패는 status 이벤트로 온다.
@@ -75,6 +90,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   reply: (requestId, approved) => {
     window.samba.agent.confirmReply(requestId, approved)
     set({ confirm: null })
+  },
+  // 넘김 카드도 확인 카드와 같은 응답 채널을 쓴다(승인=건너뛰고 계속, 거부=작업 중단)
+  replyHandoff: (requestId, skip) => {
+    window.samba.agent.confirmReply(requestId, skip)
+    set({ handoff: null })
+    // '작업 중단'은 응답만으로 끝나지 않는다 — 실행 자체를 멈춘다
+    if (!skip) void window.samba.agent.stop()
   },
   handleEvent: (e) => {
     const msgs = get().messages
@@ -90,6 +112,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (e.type === 'progress') set({ retry: { attempt: e.attempt, reason: e.reason } })
     if (e.type === 'confirm')
       set({ confirm: { requestId: e.requestId, action: e.action, kind: e.kind ?? 'danger' } })
+    if (e.type === 'handoff') {
+      set({ handoff: { requestId: e.requestId, matched: e.matched, url: e.url } })
+      if (last?.role === 'ai') {
+        patchLast({
+          steps: [...(last.steps ?? []), { label: '', ok: true, key: 'handoff.waiting' }]
+        })
+      }
+    }
+    if (e.type === 'handoffDone') {
+      // 자동 재개·시간 초과로 끝났을 수도 있으므로 카드를 항상 닫는다
+      set({ handoff: null })
+      if (last?.role === 'ai') {
+        patchLast({
+          steps: [
+            ...(last.steps ?? []),
+            {
+              label: '',
+              ok: e.outcome !== 'aborted' && e.outcome !== 'timeout',
+              key: `handoff.step.${e.outcome}`
+            }
+          ]
+        })
+      }
+    }
     if (e.type === 'status') {
       // 중단·실패·완료 뒤에 뒤늦게 도착한 running 은 무시한다.
       // send() 가 실행을 시작할 때 status 를 먼저 running 으로 바꾸므로 정상 시작은 통과한다
@@ -103,8 +149,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         authError: auth,
         toolCalls: e.toolCalls ?? get().toolCalls,
         retry: e.state === 'running' ? get().retry : null,
-        // 중단 후 응답 불가능한 확인 카드가 남지 않도록 정리
-        confirm: done ? null : get().confirm
+        // 중단 후 응답 불가능한 확인·넘김 카드가 남지 않도록 정리
+        confirm: done ? null : get().confirm,
+        handoff: done ? null : get().handoff
       })
     }
   }
