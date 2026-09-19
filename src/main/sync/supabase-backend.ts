@@ -5,6 +5,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import {
   AuthExpiredError,
   DEFAULT_SELECT_LIMIT,
+  isAfterCursor,
   toPullCursor,
   type PullCursor,
   type RemoteKeyedRow,
@@ -24,20 +25,43 @@ function quote(value: string): string {
 
 /**
  * 키셋 조건. updated_at 만 보면 같은 시각을 가진 행이 페이지 경계를 넘을 때 나머지를 잃는다.
- * id 가 null 인 커서(옛 숫자 커서)는 동률 판정 없이 예전 그대로 gt 만 건다.
+ * id 가 null 인 커서(옛 숫자 커서)는 동률 판정 없이 시각만 본다.
+ *
+ * 서버에는 일부러 **넓게** 건다(`>=`) — 로컬 커서는 ms, 서버 timestamptz 는 µs 라
+ * 좁은 조건은 같은 ms 안의 µs 행을 놓칠 수 있다. 정확한 통과 판정은 받은 뒤
+ * isAfterCursor (ts, id) 로 한다.
+ * 타임스탬프·id 는 모두 quote() 로 감싼다 — 인용하지 않으면 PostgREST 가 `:`·`+` 를
+ * 필터 문법으로 읽어 조건이 통째로 깨진다.
  *
  * 필터 빌더 타입을 직접 들고 오지 않으려고 필요한 메서드만 구조로 요구한다
  */
-function whereAfterCursor<Q extends { gt(c: string, v: string): Q; or(filter: string): Q }>(
+export function cursorFilter(cursor: PullCursor, idColumn: string): string {
+  const iso = new Date(cursor.ts).toISOString()
+  if (cursor.id === null) return `updated_at.gte.${quote(iso)}`
+  return `updated_at.gt.${quote(iso)},and(updated_at.gte.${quote(iso)},${idColumn}.gt.${quote(cursor.id)})`
+}
+
+function whereAfterCursor<Q extends { or(filter: string): Q }>(
   query: Q,
   cursor: PullCursor,
   idColumn: string
 ): Q {
-  const iso = new Date(cursor.ts).toISOString()
-  if (cursor.id === null) return query.gt('updated_at', iso)
-  return query.or(
-    `updated_at.gt.${iso},and(updated_at.eq.${iso},${idColumn}.gt.${quote(cursor.id)})`
-  )
+  return query.or(cursorFilter(cursor, idColumn))
+}
+
+/** 서버가 넓게 준 행에서 커서를 실제로 넘어선 것만 남긴다(µs 안전) */
+function afterCursorOnly<T extends Record<string, unknown>>(
+  rows: T[],
+  cursor: PullCursor,
+  idOf: (row: T) => string
+): T[] {
+  return rows.filter((row) => {
+    const at = row.updated_at
+    const ts = typeof at === 'string' ? Date.parse(at) : typeof at === 'number' ? at : NaN
+    // 시각을 읽지 못한 행은 버리지 않는다 — 버리면 영영 내려오지 않는다
+    if (Number.isNaN(ts)) return true
+    return isAfterCursor(ts, idOf(row), cursor)
+  })
 }
 
 function raise(message: string): never {
@@ -103,7 +127,8 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
       return data.user ? { userId: data.user.id, email: data.user.email ?? '' } : null
     },
     async select(table, cursor, workspaceId, limit) {
-      let query = whereAfterCursor(client.from(table).select('*'), toPullCursor(cursor), 'id')
+      const c = toPullCursor(cursor)
+      let query = whereAfterCursor(client.from(table).select('*'), c, 'id')
       // 활성 작업공간의 행만 받는다(다른 작업공간 행은 로컬에서 보이지도 않는다)
       if (workspaceId !== undefined) query = query.eq('workspace_id', workspaceId)
       const { data, error } = await query
@@ -111,7 +136,7 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
         .order('id', { ascending: true })
         .limit(limit ?? DEFAULT_SELECT_LIMIT)
       if (error) raise(error.message)
-      return (data ?? []) as RemoteRow[]
+      return afterCursorOnly((data ?? []) as RemoteRow[], c, (r) => String(r.id))
     },
     async selectAll(table) {
       const { data, error } = await client.from(table).select('*')
@@ -125,14 +150,15 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
     },
     async selectKeyed(table, cursor, workspaceId, limit) {
       // 복합 PK 라 id 컬럼이 없다 — 동률 판정·정렬을 key 로 한다
-      let query = whereAfterCursor(client.from(table).select('*'), toPullCursor(cursor), 'key')
+      const c = toPullCursor(cursor)
+      let query = whereAfterCursor(client.from(table).select('*'), c, 'key')
       if (workspaceId !== undefined) query = query.eq('workspace_id', workspaceId)
       const { data, error } = await query
         .order('updated_at', { ascending: true })
         .order('key', { ascending: true })
         .limit(limit ?? DEFAULT_SELECT_LIMIT)
       if (error) raise(error.message)
-      return (data ?? []) as RemoteKeyedRow[]
+      return afterCursorOnly((data ?? []) as RemoteKeyedRow[], c, (r) => String(r.key))
     },
     async upsertKeyed(table, rows) {
       if (rows.length === 0) return
