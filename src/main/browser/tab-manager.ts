@@ -538,16 +538,10 @@ export class TabManager {
       return {
         action: 'allow',
         // 자식 webContents 는 부모 설정(세션·샌드박스)을 물려받는다. preload 는 세션에 등록돼 있다
-        overrideBrowserWindowOptions: {
-          parent: this.win,
-          autoHideMenuBar: true,
-          webPreferences: {
-            session: ses,
-            sandbox: true,
-            contextIsolation: true,
-            nodeIntegration: false
-          }
-        },
+        // 자식 webContents 는 부모 설정(세션·샌드박스·contextIsolation)을 그대로 물려받는다.
+        // 미리 만들어진 webContents 에 webPreferences 를 다시 덮어쓰면(세션 재지정 등) 창이 닫힐 때
+        // 브라우저 프로세스가 죽는다 — 옵션은 Electron 이 준 그대로 쓴다. preload 는 세션에 등록돼 있다
+        overrideBrowserWindowOptions: { autoHideMenuBar: true },
         createWindow: (options) => {
           // Electron 이 미리 만들어 넘긴 webContents(options.webContents)로 창을 만들어야 한다
           const popupWin = new BrowserWindow(options)
@@ -589,7 +583,7 @@ export class TabManager {
       if (!isAllowedUrl(target)) return { action: 'deny' }
       return {
         action: 'allow',
-        overrideBrowserWindowOptions: { parent: this.win, autoHideMenuBar: true },
+        overrideBrowserWindowOptions: { autoHideMenuBar: true },
         createWindow: (options) => {
           const child = new BrowserWindow(options)
           this.registerPopup(child, openerId, profile)
