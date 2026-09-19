@@ -316,7 +316,10 @@ export const scheduleRunsFileSchema = z.object({
 export function summarize(text: string): string {
   const line = text
     .split('\n')
-    .map((l) => l.replace(/^[#>\-*\s]+/, '').trim())
+    .map((l) => l.trim())
+    // 제목 줄은 건너뛴다(플레이북 절차 미리보기와 같은 규칙이다)
+    .filter((l) => l !== '' && !l.startsWith('#'))
+    .map((l) => l.replace(/^[>\-*\s]+/, '').trim())
     .find((l) => l !== '')
   if (line === undefined) return ''
   return line.length > SCHEDULE_SUMMARY_MAX ? `${line.slice(0, SCHEDULE_SUMMARY_MAX)}…` : line

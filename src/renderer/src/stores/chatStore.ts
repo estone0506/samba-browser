@@ -193,10 +193,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     // 메인은 "시작 접수" ack 만 즉시 돌려준다. 완료·실패는 status 이벤트로 온다.
     // 늦게 도착한 이전 세대의 응답은 버린다
-    const r =
-      chatId === null
-        ? await window.samba.agent.run(text, undefined, scheduleToken)
-        : await window.samba.agent.run(text, chatId, scheduleToken)
+    // 예약 실행이 아니면 인자를 덧붙이지 않는다(평소 경로의 호출 모양을 그대로 둔다)
+    const args: [string, number?, string?] =
+      scheduleToken === undefined
+        ? chatId === null
+          ? [text]
+          : [text, chatId]
+        : [text, chatId ?? undefined, scheduleToken]
+    const r = await window.samba.agent.run(...args)
     if (!r.ok && get().runSeq === seq) set({ status: 'failed', currentLabel: r.error, retry: null })
   },
   stop: async () => {

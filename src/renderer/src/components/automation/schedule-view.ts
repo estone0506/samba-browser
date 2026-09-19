@@ -48,8 +48,9 @@ export function relativeTime(target: number, now: number): Phrase {
   const diff = target - now
   const abs = Math.abs(diff)
   const future = diff > 0
+  // 1분이 채 안 되면 방향을 따지지 않는다(반올림으로 "1분 후"가 되지 않게 먼저 거른다)
+  if (abs < 60_000) return { key: 'schedule.rel.now' }
   const minutes = Math.round(abs / 60_000)
-  if (minutes < 1) return { key: 'schedule.rel.now' }
   if (minutes < 60) {
     return {
       key: future ? 'schedule.rel.inMinutes' : 'schedule.rel.minutesAgo',
