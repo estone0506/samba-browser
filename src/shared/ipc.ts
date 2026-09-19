@@ -76,6 +76,10 @@ export const IPC = {
   // 마우스 제스처 — 페이지 preload 가 인식한 방향 시퀀스와, 메인이 밀어 주는 설정
   pageGesture: 'page:gesture', // preload(격리 월드) → main (send)
   pageGestureConfig: 'page:gestureConfig', // main → preload 이벤트
+  // AI 가 iframe 안 요소를 다루기 위한 프레임 채널. 코드 문자열은 오가지 않고
+  // 미리 정해진 동작 이름(shared/agent-op 의 AgentOp)과 인자만 오간다
+  pageAgentCall: 'page:agentCall', // main → 해당 프레임 preload (frame.send)
+  pageAgentResult: 'page:agentResult', // 프레임 preload → main (send)
   // 파비콘 — 사이트 자체에서만 받아온 dataUrl 을 돌려준다(제3자 전송 없음)
   faviconGet: 'favicon:get',
   // --- 작업공간(브라우저 프로필) ---------------------------------------------

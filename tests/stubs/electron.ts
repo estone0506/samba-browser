@@ -9,3 +9,8 @@ export const app = { getPath: (_name: string): string => '' }
 export const Menu = { buildFromTemplate: () => ({ popup: (): void => undefined }) }
 export const clipboard = { writeText: (_text: string): void => undefined }
 export const nativeImage = {}
+// browser/frame-channel.ts 가 iframe 응답을 받기 위해 쓴다(테스트는 프레임 호출을 직접 주입한다)
+export const ipcMain = {
+  on: (_channel: string, _listener: (...args: unknown[]) => void): void => undefined,
+  removeListener: (_channel: string, _listener: (...args: unknown[]) => void): void => undefined
+}

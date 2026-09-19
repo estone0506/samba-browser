@@ -37,6 +37,7 @@ import {
   submitForm,
   isSecretField,
   keypadSignals,
+  runAgentOp,
   installCaptureListener
 } from './page-core'
 import {
@@ -51,8 +52,17 @@ import { installPageTranslate, type ImageOverlayDto } from './page-translate'
 
 // 이 preload 는 세션 단위(registerPreloadScript type:'frame')로 등록돼 모든 프레임에서 돈다.
 // 탭의 webPreferences.preload 로만 걸면 window.open 으로 열린 팝업(결제창 등)에는 붙지 않기 때문이다.
-// iframe 에서는 아무것도 설치하지 않는다 — AI 스냅샷·제스처·번역·계정 선택기는 최상위 문서만 다룬다
-if (window.self === window.top) {
+//
+// __samba(AI 실행기)는 **모든 프레임**에 만든다 — 주소 검색(카카오 우편번호), 무신사
+// 배송지 추가 페이지, 페이코 보안 키패드가 전부 iframe 안이라 최상위 문서만 봐서는
+// 검색창도 못 찾고 누르지도 못한다. 각 프레임은 자기 document 만 다루고, 메인 프로세스가
+// 프레임을 열거해(page-bridge) 프레임 번호를 얹은 id 로 결과를 합친다.
+// 확장 프로그램 프레임(chrome-extension:)에는 붙이지 않는다.
+//
+// 제스처·번역·계정 선택기·캡처·웹스토어·새 탭 브리지는 그대로 최상위 문서 전용이다
+const isTopFrame = window.self === window.top
+
+if (location.protocol !== 'chrome-extension:') {
   // AI 실행기. contextIsolation 이 켜져 있으면 preload 는 격리 월드(WorldId 999)에서 실행되므로
   // contextBridge 로 메인 월드에 노출하지 않고 격리 월드 전역에만 둔다.
   // 메인 프로세스는 executeJavaScriptInIsolatedWorld(999, '__samba.snapshot()') 로 호출한다.
@@ -85,6 +95,24 @@ if (window.self === window.top) {
   // globalThis 에 직접 대입(any 없이 타입 안전하게)
   Object.assign(globalThis, { __samba: api })
 
+  // 메인이 이 프레임 안에서 동작 하나를 시킬 때 쓰는 통로.
+  // 하위 프레임에는 executeJavaScriptInIsolatedWorld 가 없어서 코드 문자열 대신
+  // 동작 이름만 받는다(shared/agent-op 의 AgentOp). 답은 같은 격리 월드에서만 나간다
+  ipcRenderer.on(PAGE_IPC.agentCall, (_event, raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null) return
+    const reqId = (raw as { reqId?: unknown }).reqId
+    if (typeof reqId !== 'number') return
+    try {
+      ipcRenderer.send(PAGE_IPC.agentResult, { reqId, ok: true, value: runAgentOp(raw) })
+    } catch {
+      // 오류 내용(페이지 값이 섞일 수 있다)은 보내지 않는다 — 실패했다는 사실만 알린다
+      ipcRenderer.send(PAGE_IPC.agentResult, { reqId, ok: false })
+    }
+  })
+}
+
+// === 여기부터는 최상위 문서 전용 ============================================
+if (isTopFrame) {
   // 폼 제출 감지 → 메인의 vault:capture 로 전달(비밀번호는 이 채널로만, pendingCapture 에만 잠깐 머문다)
   // 격리 월드 preload 는 contextIsolation 하에서도 ipcRenderer 를 직접 사용할 수 있다
   // 옵션 없이 호출 → 합성(스크립트 생성) 이벤트는 무시하고 신뢰된(isTrusted) 사용자 이벤트만 처리한다
