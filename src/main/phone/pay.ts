@@ -150,7 +150,15 @@ export function nextPayState(
 }
 
 export type PayFailReason =
-  PayGate | 'declined' | 'password-failed' | 'layout-incomplete' | 'verify-failed' | 'stuck'
+  | PayGate
+  | 'declined'
+  | 'password-failed'
+  | 'layout-incomplete'
+  | 'verify-failed'
+  | 'stuck'
+  // 배선부가 실행기에 닿기도 전에 막는 두 가지(계정 특정 실패·연결된 폰 없음)
+  | 'no-account'
+  | 'no-phone'
 
 export interface PayResult {
   ok: boolean

@@ -20,6 +20,11 @@ export interface PhoneScreenIpcDeps {
   /** 테스트에서 갈아끼운다. 없으면 실제 adb 실행기를 만든다 */
   adb?: AdbRunner
   scrcpy?: ScrcpyWindows
+  /**
+   * 지금 이 폰이 비밀번호 화면인가(phone/wiring.ts 의 SecretScreenGate).
+   * 참이면 그 프레임은 전송도 저장도 하지 않는다
+   */
+  isSecretScreen?: (serial: string) => boolean
 }
 
 export interface PhoneScreenIpc {
@@ -44,6 +49,7 @@ export function registerPhoneScreenIpc(deps: PhoneScreenIpcDeps): PhoneScreenIpc
         data: c.data
       }),
     onModeChange: (serial, mode) => deps.send(IPC.phoneScreenMode, { serial, mode }),
+    ...(deps.isSecretScreen === undefined ? {} : { isSecretScreen: deps.isSecretScreen }),
     now: () => Date.now()
   })
 

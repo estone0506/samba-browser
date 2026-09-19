@@ -173,10 +173,31 @@ export class PhoneRepo {
         elapsedMs: input.elapsedMs,
         code: input.code,
         senderTail: input.senderTail,
+        payMethod: input.payMethod ?? null,
         at: input.at
       })
       .run()
     this.db.scheduleSave()
+  }
+
+  /**
+   * 이 (사이트 × 결제수단) 조합으로 성공한 결제 승인이 이미 있는가.
+   * 없으면 "첫 결제" 로 보고 소액 상한(FIRST_RUN_LIMIT_KRW)을 건다
+   */
+  hasPayApproval(siteHost: string, payMethod: string): boolean {
+    const row = this.d
+      .select({ id: authEvents.id })
+      .from(authEvents)
+      .where(
+        and(
+          eq(authEvents.kind, 'app_approve'),
+          eq(authEvents.ok, true),
+          eq(authEvents.siteHost, siteHost),
+          eq(authEvents.payMethod, payMethod)
+        )
+      )
+      .get()
+    return row !== undefined
   }
 
   listAuthEvents(limit: number = DEFAULT_LIST_LIMIT): AuthEventDto[] {
@@ -229,6 +250,7 @@ function toAuthEventDto(row: typeof authEvents.$inferSelect): AuthEventDto {
     elapsedMs: row.elapsedMs,
     code: row.code,
     senderTail: row.senderTail,
+    payMethod: row.payMethod,
     at: row.at
   }
 }

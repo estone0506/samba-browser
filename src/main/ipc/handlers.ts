@@ -38,7 +38,7 @@ import { isAiProviderId, isApiKeyVendor, isTaskModelKey } from '../../shared/ai'
 import type { AiProviderId, ApiKeyVendor, TaskModelKey } from '../../shared/ai'
 import { ApiKeyStore } from '../ai/keys'
 import { defaultProbes, detectProviders, testApiKey } from '../ai/providers'
-import { remapOnProviderChange, taskModelChoices } from '../ai/models'
+import { remapOnProviderChange, resolveModel, taskModelChoices } from '../ai/models'
 import { setApiKeyResolver } from '../agent/provider'
 // === AI 연결 끝 =======================================================================
 import { AuthService } from '../sync/auth'
@@ -59,6 +59,18 @@ import { PhoneService } from '../phone/service'
 import { registerPhoneScreenIpc } from '../phone/screen-ipc'
 import { installPhoneTools, phoneToolsStatus } from '../phone/tools-install'
 import { createPhoneOps } from '../agent/tools-phone'
+import { readCodeFromImage, readKeypadLayout } from '../ai/visual'
+import { OcrEngine } from '../ocr/engine'
+import { createTabPagePort } from '../phone/tab-port'
+import {
+  AgentProgressRelay,
+  createCodeReader,
+  createKeypadReader,
+  createPhoneAgentBridge,
+  phoneProEnabled,
+  PRO_OVERRIDE_ENV,
+  SecretScreenGate
+} from '../phone/wiring'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -700,14 +712,27 @@ export function registerIpc(
   const phoneAdb = createAdbRunner(() => settings.get().adbPath)
   // 원클릭 설치본이 들어가는 자리(%APPDATA%/SAMBA Browser/phone-tools)
   const phoneToolsRoot = join(app.getPath('userData'), 'phone-tools')
+  const phoneRepo = new PhoneRepo(db)
+  // 요금제 게이트. 개발·검증용 우회는 배포판에서 통째로 무시된다
+  const phoneIsPro = (): boolean =>
+    phoneProEnabled({
+      plan: auth.state().plan,
+      devOverride: settings.get().phoneDevOverridePro,
+      env: process.env[PRO_OVERRIDE_ENV],
+      packaged: app.isPackaged
+    })
+  // 비밀번호 화면 표식(결제 실행기가 갱신 → 화면 전송이 참조)과 ARS 진행 로그 중계
+  const phoneSecretGate = new SecretScreenGate()
+  const phoneProgress = new AgentProgressRelay()
   const phones = new PhoneService({
     adb: phoneAdb,
-    repo: new PhoneRepo(db),
+    repo: phoneRepo,
     settings,
     toolsRoot: phoneToolsRoot,
-    isPro: () => auth.state().plan === 'pro',
+    isPro: phoneIsPro,
     emit: (list, warning) => send(IPC.phoneUpdated, { list, warning }),
-    emitAuthWaiting: (dto) => send(IPC.phoneAuthWaiting, dto)
+    emitAuthWaiting: (dto) => send(IPC.phoneAuthWaiting, dto),
+    onProgress: (t) => phoneProgress.emit(t)
   })
   phones.start()
   win.once('closed', () => phones.dispose())
@@ -738,10 +763,48 @@ export function registerIpc(
     })
   )
   // AI 폰 도구 배선. 금고는 넘기지 않는다 — 폰 도구는 비밀값을 볼 수 없다
+  // AI 폰 도구 배선. 금고는 넘기지 않는다 — 폰 도구는 비밀값을 볼 수 없다.
+  // 문자 인증·결제 승인만 별도 실행기(phone/wiring.ts)를 거치고, 결제 비밀번호는
+  // 그 안의 pay-secret.ts 밖으로 나오지 않는다
+  const phoneOps = createPhoneOps(phoneAdb, () => phones.list())
+  const visualDeps = {
+    apiKey: () => apiKeys.get('anthropic'),
+    model: () => resolveModel(settings.get().taskModels, 'visual', settings.get().aiProvider)
+  }
+  const phoneOcr = new OcrEngine()
+  const phoneBridge = createPhoneAgentBridge({
+    adb: phoneAdb,
+    phones: {
+      list: () => phones.list(),
+      assignForJob: (accountId) => phones.assignForJob(accountId),
+      notifyAuthWaiting: (dto) => phones.notifyAuthWaiting(dto),
+      watchArs: (siteHost) => phones.watchArs(siteHost)
+    },
+    ops: phoneOps,
+    repo: phoneRepo,
+    vault,
+    page: createTabPagePort(tabs),
+    settings: () => settings.get(),
+    // 인증번호는 로컬 OCR 로 먼저 읽고, 못 읽었을 때만 Visual 을 부른다
+    readCode: createCodeReader({
+      ocrEnabled: () => settings.get().ocrEnabled,
+      ocr: phoneOcr,
+      visual: (png) => readCodeFromImage(visualDeps, png)
+    }),
+    readKeypad: createKeypadReader({
+      adb: phoneAdb,
+      screen: (serial) => phoneOps.screen(serial),
+      readLayout: (png, size) => readKeypadLayout(visualDeps, png, size)
+    }),
+    secretGate: phoneSecretGate,
+    progress: phoneProgress
+  })
   agent.setPhones({
-    phones: createPhoneOps(phoneAdb, () => phones.list()),
-    isPro: () => auth.state().plan === 'pro',
-    assigned: () => phones.list().find((p) => p.state === 'online')?.serial ?? null
+    phones: phoneOps,
+    isPro: phoneIsPro,
+    assigned: () => phones.list().find((p) => p.state === 'online')?.serial ?? null,
+    waitForSmsCode: phoneBridge.waitForSmsCode,
+    approvePayment: phoneBridge.approvePayment
   })
   // === 폰 연동 끝 ======================================================================
 
@@ -750,7 +813,9 @@ export function registerIpc(
   const phoneScreen = registerPhoneScreenIpc({
     handle: handleFromRenderer,
     send,
-    settings: () => settings.get()
+    settings: () => settings.get(),
+    // 결제 비밀번호 화면 프레임은 보내지도 저장하지도 않는다
+    isSecretScreen: (serial) => phoneSecretGate.isSecret(serial)
   })
   win.once('closed', () => phoneScreen.dispose())
   // === 폰 화면 끝 ======================================================================

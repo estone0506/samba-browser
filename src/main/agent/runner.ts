@@ -4,7 +4,9 @@ import type { SettingsStore } from '../settings/store'
 import type { AgentEvent } from '../../shared/ipc'
 import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
-import type { PhoneToolContext } from './tools-phone'
+import type { PayToolRequest, PhoneToolContext, SmsCodeOutcome } from './tools-phone'
+import type { PayResult } from '../phone/pay'
+import type { PhoneRunContext } from '../phone/wiring'
 import { buildSystemPrompt } from './prompt'
 import { runQuery, classifyAuthError, isFatalApiError } from './provider'
 import { resolveModel } from '../ai/models'
@@ -37,7 +39,15 @@ export type TranscriptSink = (chatId: number, entry: TranscriptEntry) => void
  * 폰 도구 배선. 권한 모드·호출 상한·확인 카드는 웹 도구 것을 그대로 쓰므로
  * 배선부는 폰 조작 능력과 요금제·배정 폰만 넘긴다(금고는 넘기지 않는다)
  */
-export type PhoneBridge = Pick<PhoneToolContext, 'phones' | 'isPro' | 'assigned'>
+export type PhoneBridge = Pick<PhoneToolContext, 'phones' | 'isPro' | 'assigned'> & {
+  /**
+   * 문자 인증 흐름(phone/wiring.ts). 붙어 있지 않으면 wait_for_sms_code 도구가
+   * "sms auth is not available" 만 돌려준다
+   */
+  waitForSmsCode?: (ctx: PhoneRunContext, host?: string) => Promise<SmsCodeOutcome>
+  /** 결제 승인 실행기. 붙어 있지 않으면 결제 도구 자체를 등록하지 않는다 */
+  approvePayment?: (ctx: PhoneRunContext, req: PayToolRequest) => Promise<PayResult>
+}
 
 // 대기 중인 확인 요청(응답 콜백 + 만료 타이머)
 interface PendingConfirm {
@@ -225,6 +235,23 @@ export class AgentRunner {
     let settled = false
     // 이번 실행의 감사 로그 식별자(금고 fill 기록에 남는다)
     const jobId = randomUUID()
+    // 폰 배선이 쓰는 작업 문맥. 확인 카드·진행 로그·넘김 카드는 웹 도구 것을 그대로 쓴다
+    const phones = this.phones
+    const phoneCtx = (): PhoneRunContext => ({
+      jobId,
+      confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit),
+      onStep: (label, ok) => emit({ type: 'step', label, ok }),
+      handoff: (req) => this.requestHandoff(req, emit),
+      cancelled: () => abort.signal.aborted
+    })
+    const waitSms = (host?: string): Promise<SmsCodeOutcome> =>
+      phones?.waitForSmsCode
+        ? phones.waitForSmsCode(phoneCtx(), host)
+        : Promise.resolve({ filled: false, digits: 0 })
+    const runPay = (req: PayToolRequest): Promise<PayResult> =>
+      phones?.approvePayment
+        ? phones.approvePayment(phoneCtx(), req)
+        : Promise.resolve({ ok: false, reason: 'declined' as const })
     const server = createSambaTools({
       tabs: this.tabs,
       vault: this.vault,
@@ -241,15 +268,32 @@ export class AgentRunner {
       confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit),
       handoff: (req) => this.requestHandoff(req, emit),
       // 폰 도구는 웹 도구와 같은 모드·상한·확인 카드를 공유한다
-      phone: this.phones
+      phone: phones
         ? {
-            ...this.phones,
+            // 배선부의 두 실행기(waitForSmsCode/approvePayment)는 문맥을 한 겹 덧씌워
+            // 아래에서 따로 넣는다 — 그대로 펼치면 도구가 보는 모양과 어긋난다
+            phones: phones.phones,
+            isPro: phones.isPro,
+            assigned: phones.assigned,
             mode: s.permissionMode,
             tick: counter.tick,
             onStep: (label, ok) => emit({ type: 'step', label, ok }),
-            confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit)
+            confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit),
+            ...(phones.waitForSmsCode === undefined
+              ? {}
+              : { waitForSmsCode: (host?: string) => waitSms(host) })
           }
-        : undefined
+        : undefined,
+      // 결제는 금고를 보는 별도 문맥이다. 실행기(확인 카드·상한·재시도 0)는 wiring 이 쥔다
+      pay:
+        phones && phones.approvePayment
+          ? {
+              isPro: phones.isPro,
+              tick: counter.tick,
+              onStep: (label, ok) => emit({ type: 'step', label, ok }),
+              run: (req) => runPay(req)
+            }
+          : undefined
     })
     emit({ type: 'status', state: 'running', toolCalls: 0 })
     try {
