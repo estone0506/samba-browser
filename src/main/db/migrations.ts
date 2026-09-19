@@ -140,5 +140,12 @@ export const migrations: Migration[] = [
       'CREATE INDEX IF NOT EXISTS `auth_events_at_idx` ON `auth_events` (`at`);',
       'CREATE TABLE IF NOT EXISTS `account_phones` (\n\t`account_id` integer PRIMARY KEY NOT NULL,\n\t`phone_id` integer NOT NULL,\n\t`updated_at` integer NOT NULL\n);'
     ]
+  },
+  {
+    // 결제 승인 기록에 결제수단 이름을 남긴다. "새 (사이트 x 결제수단) 조합의 첫 결제는
+    // 1만원까지" 를 판정하려면 사이트만으로는 부족하다. 옛 행(NULL)은 이력 없음으로 본다
+    tag: '0010_auth_events_pay_method',
+    optional: true,
+    sql: ['ALTER TABLE `auth_events` ADD `pay_method` text;']
   }
 ]

@@ -67,6 +67,9 @@ export interface AuthEventDto {
   code: string | null
   // 발신번호 뒷 4자리
   senderTail: string | null
+  // 결제 승인(app_approve)에서 쓴 결제수단 이름. 다른 종류에서는 null 이다 —
+  // "새 (사이트 × 결제수단) 조합의 첫 결제" 판정에 쓴다
+  payMethod?: string | null
   at: number
 }
 

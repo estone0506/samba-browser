@@ -179,6 +179,8 @@ export const authEvents = sqliteTable('auth_events', {
   code: text('code'),
   // 발신번호 뒷 4자리
   senderTail: text('sender_tail'),
+  // 결제 승인에서 쓴 결제수단 이름(다른 종류는 NULL)
+  payMethod: text('pay_method'),
   at: integer('at').notNull()
 })
 
