@@ -12,6 +12,7 @@ import {
   KeyRound
 } from 'lucide-react'
 import { ExtensionMenu } from '@renderer/components/extensions/ExtensionMenu'
+import { ExtensionToolbar } from '@renderer/components/extensions/ExtensionToolbar'
 import { useBrowserStore } from '@renderer/stores/browserStore'
 import { displayUrl } from '@renderer/lib/display-url'
 import { useUiStore } from '@renderer/stores/uiStore'
@@ -95,6 +96,7 @@ export function AddressBar(): React.JSX.Element {
       <AddressBarButton onClick={toggleVaultPanel} title={t('vault.popover.open')}>
         <KeyRound className={cn('h-4 w-4', vaultPanelOpen && 'text-[var(--text)]')} />
       </AddressBarButton>
+      <ExtensionToolbar />
       <ExtensionMenu />
       <div className="flex rounded-[9px] bg-black/5 p-0.5">
         {[

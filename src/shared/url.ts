@@ -51,3 +51,23 @@ export function isAllowedUrl(url: string): boolean {
 export function isAllowedExternalUrl(url: string): boolean {
   return isAllowedUrl(url) && !isInternalUrl(url)
 }
+
+// === 확장 페이지 ============================================================
+// 확장이 제공하는 문서(팝업·옵션 페이지)의 스킴. 크로미움이 확장별로 격리해 서빙한다
+const EXTENSION_PROTOCOL = 'chrome-extension:'
+
+/**
+ * 확장 문서 주소인가.
+ *
+ * 이 판정은 isAllowedUrl 에 넣지 않는다 — 넣으면 주소창 입력·웹페이지의 window.open·
+ * AI 도구까지 확장 내부 문서를 열 수 있게 된다. 앱이 스스로 여는 경로
+ * (툴바 액션 → 옵션 페이지)에서만 따로 통과시킨다
+ */
+export function isExtensionUrl(url: string): boolean {
+  try {
+    return new URL(url.trim()).protocol.toLowerCase() === EXTENSION_PROTOCOL
+  } catch {
+    return false
+  }
+}
+// === 확장 페이지 끝 =========================================================

@@ -910,7 +910,8 @@
     "installedTitle": "설치된 확장",
     "toolbarTitle": "확장 프로그램",
     "menuEmpty": "설치된 확장이 없어요",
-    "pinned": "주소창에 고정됨"
+    "pinned": "주소창에 고정됨",
+    "actionTitle": "{{name}} 열기"
   },
   "translate": {
     "title": "번역",

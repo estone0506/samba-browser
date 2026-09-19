@@ -28,6 +28,8 @@ import {
   type TaskModelKey,
   type TaskModels,
   type SyncStatus,
+  type ExtensionActionResult,
+  type ExtensionAnchorDto,
   type ExtensionDto,
   type ExtensionInstallResult,
   type ExtensionListDto,
@@ -353,6 +355,17 @@ const api = {
       const h = (): void => cb()
       ipcRenderer.on(IPC.extChanged, h)
       return () => ipcRenderer.off(IPC.extChanged, h)
+    },
+    // 툴바 아이콘·퍼즐 메뉴 항목을 눌렀을 때. anchor 는 버튼의 화면 좌표로,
+    // 메인이 그 아래에 팝업 문서를 붙인다(좌표 말고는 아무 값도 흐르지 않는다)
+    action: (id: string, anchor: ExtensionAnchorDto): Promise<IpcResult<ExtensionActionResult>> =>
+      invoke(IPC.extAction, id, anchor),
+    closePopup: (): Promise<IpcResult<void>> => invoke(IPC.extPopupClose),
+    // 팝업이 스스로 닫혔을 때(바깥 클릭·Esc·탭 전환) 버튼 표시를 되돌리도록 알려 준다
+    onPopupClosed: (cb: () => void): (() => void) => {
+      const h = (): void => cb()
+      ipcRenderer.on(IPC.extPopupClosed, h)
+      return () => ipcRenderer.off(IPC.extPopupClosed, h)
     }
   },
   // 화면 번역 · 이미지 번역 — 원문/번역문만 오간다(입력값·비밀번호는 실리지 않는다)

@@ -121,6 +121,11 @@ export const IPC = {
   extImportFrom: 'ext:importFrom', // 고른 확장을 앱 데이터로 복사해서 로드
   extInstallWebstore: 'ext:installWebstore', // 웹스토어 주소 또는 32자 id
   extChanged: 'ext:changed', // main → renderer 이벤트(목록이 바뀌었으니 다시 읽어라)
+  // 툴바 아이콘·퍼즐 메뉴 항목 클릭 → 팝업 문서를 띄우거나 옵션 페이지를 새 탭으로 연다.
+  // Electron 에 chrome.action 이 없어 크롬이 하던 이 일을 앱이 직접 한다
+  extAction: 'ext:action',
+  extPopupClose: 'ext:popupClose', // 렌더러가 팝업을 닫는다(탭 전환 등)
+  extPopupClosed: 'ext:popupClosed', // main → renderer 이벤트(버튼 눌림 표시를 되돌려라)
   // 웹스토어 탭에서 "Chrome에 추가" 를 누른 경우 — 크롬과 같은 설치 경험
   pageWebstoreInstall: 'page:webstoreInstall', // preload(격리 월드) → main (send)
   pageWebstoreInstallResult: 'page:webstoreInstallResult', // main → preload 이벤트
@@ -257,6 +262,9 @@ export type {
 } from './ai'
 
 export type {
+  ExtensionActionKind,
+  ExtensionActionResult,
+  ExtensionAnchorDto,
   ExtensionDto,
   ExtensionError,
   ExtensionInstallResult,

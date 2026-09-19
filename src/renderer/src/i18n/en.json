@@ -910,7 +910,8 @@
     "installedTitle": "Installed extensions",
     "toolbarTitle": "Extensions",
     "menuEmpty": "No extensions installed",
-    "pinned": "Pinned to the toolbar"
+    "pinned": "Pinned to the toolbar",
+    "actionTitle": "Open {{name}}"
   },
   "translate": {
     "title": "Translate",
