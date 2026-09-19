@@ -8,9 +8,9 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import type { Settings } from '../../shared/settings'
-import type { ExtensionDto, ExtensionError } from '../../shared/extensions'
+import type { ExtensionDto, ExtensionError, ExtensionSource } from '../../shared/extensions'
 
-export type { ExtensionDto, ExtensionError }
+export type { ExtensionDto, ExtensionError, ExtensionSource }
 
 /** 세션이 돌려주는 확장 정보(테스트에서 흉내내기 쉽도록 최소한만) */
 export interface LoadedExtension {
@@ -157,9 +157,19 @@ export class ExtensionManager {
     this.hosts.push(host)
   }
 
-  /** 설정에 저장된 경로를 현재 목록으로 덮어쓴다 */
+  /** 설정에 저장된 경로·출처를 현재 목록으로 덮어쓴다 */
   private persist(): void {
-    this.settings.set({ extensionPaths: this.entries.map((e) => e.path) })
+    const sources: Record<string, ExtensionSource> = {}
+    for (const e of this.entries) sources[e.path] = e.source
+    this.settings.set({
+      extensionPaths: this.entries.map((e) => e.path),
+      extensionSources: sources
+    })
+  }
+
+  /** 설정에 적힌 출처를 읽는다. 기록이 없으면(예전 버전에서 넣은 경로) 폴더로 본다 */
+  private sourceOf(path: string): ExtensionSource {
+    return this.settings.get().extensionSources[path] ?? 'folder'
   }
 
   /** 지금까지 쌓인 로드 실패 목록(설정 화면에 표시용) */
@@ -184,7 +194,7 @@ export class ExtensionManager {
       if (seen.has(path)) continue
       seen.add(path)
       try {
-        this.entries.push(await this.loadInto(this.hosts[0], path))
+        this.entries.push(await this.loadInto(this.hosts[0], path, this.sourceOf(path)))
       } catch (e: unknown) {
         this.failures.push({ path, error: messageOf(e) })
         console.error('확장 로드 실패', path, messageOf(e))
@@ -195,7 +205,11 @@ export class ExtensionManager {
   }
 
   /** 폴더를 검증한 뒤 한 세션에 로드한다. 세션이 돌려준 이름·버전을 우선 쓴다 */
-  private async loadInto(host: ExtensionHost, path: string): Promise<ExtensionDto> {
+  private async loadInto(
+    host: ExtensionHost,
+    path: string,
+    source: ExtensionSource
+  ): Promise<ExtensionDto> {
     // 검증을 통과한 실제 경로만 세션에 넘기고 설정에도 그 경로를 적는다
     const resolved = resolveExtensionFolder(path)
     const manifest = readExtensionFolder(resolved)
@@ -204,7 +218,8 @@ export class ExtensionManager {
       id: loaded.id,
       name: loaded.name?.trim() || manifest.name,
       version: loaded.version?.trim() || manifest.version,
-      path: resolved
+      path: resolved,
+      source
     }
   }
 
@@ -212,12 +227,12 @@ export class ExtensionManager {
    * 사용자가 고른 폴더를 로드한다. 이미 있는 경로면 다시 로드하지 않고 기존 항목을 돌려준다.
    * 검증·로드 어느 쪽이든 실패하면 throw 하고 설정은 건드리지 않는다
    */
-  async add(path: string): Promise<ExtensionDto> {
+  async add(path: string, source: ExtensionSource = 'folder'): Promise<ExtensionDto> {
     // 검증·링크 해석을 먼저 한다 — 통과하지 못하면 목록도 설정도 건드리지 않는다
     const resolved = resolveExtensionFolder(path)
     const existing = this.entries.find((e) => e.path === resolved)
     if (existing) return existing
-    const dto = await this.loadInto(this.hosts[0], resolved)
+    const dto = await this.loadInto(this.hosts[0], resolved, source)
     this.entries.push(dto)
     this.persist()
     // 다른 파티션 세션에도 같은 확장을 걸어 준다(실패해도 전체를 되돌리지는 않는다)
@@ -229,6 +244,16 @@ export class ExtensionManager {
       }
     }
     return dto
+  }
+
+  /**
+   * 같은 폴더에 새 버전을 덮어쓰기 전에 쓴다(웹스토어 재설치·가져오기 갱신).
+   * 목록에 없으면 아무 일도 하지 않는다
+   */
+  removeByPath(path: string): void {
+    const target = existsSync(path) ? realpathSync(path) : path
+    const entry = this.entries.find((e) => e.path === target)
+    if (entry) this.remove(entry.id)
   }
 
   /** 목록·설정·모든 세션에서 확장을 걷어낸다 */

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { AI_PROVIDERS, type AiProviderId, type TaskModels } from './ai'
 import { DEFAULT_DANGER_WORDS, mergeDangerWords } from './danger'
+import { EXTENSION_SOURCES, type ExtensionSource } from './extensions'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 
 // 도구 호출 상한 허용 범위
@@ -89,6 +90,8 @@ export const DEFAULT_SETTINGS = {
   activeWorkspaceId: 0,
   // 확장 폴더 경로(로컬 전용)
   extensionPaths: [] as string[],
+  // 확장 경로별 출처(스토어/가져옴/폴더). 기록이 없으면 'folder' 로 본다
+  extensionSources: {} as Record<string, ExtensionSource>,
   // 모양(기기 로컬 — 동기화하지 않는다)
   theme: 'system' as ThemeMode,
   uiZoom: 100,
@@ -159,6 +162,9 @@ export const settingsSchema = z.object({
   agentTabCleanupMinutes: z.number().int().min(0).catch(DEFAULT_SETTINGS.agentTabCleanupMinutes),
   activeWorkspaceId: z.number().int().min(0).catch(DEFAULT_SETTINGS.activeWorkspaceId),
   extensionPaths: z.array(z.string()).catch(DEFAULT_SETTINGS.extensionPaths),
+  extensionSources: z
+    .record(z.string(), z.enum(EXTENSION_SOURCES))
+    .catch(DEFAULT_SETTINGS.extensionSources),
   // 모양 — 범위를 벗어나거나 타입이 틀리면 기본값으로 되돌린다
   theme: z.enum(THEME_MODES).catch(DEFAULT_SETTINGS.theme),
   uiZoom: z.number().int().min(MIN_UI_ZOOM).max(MAX_UI_ZOOM).catch(DEFAULT_SETTINGS.uiZoom),
