@@ -82,7 +82,7 @@ SAMBA WAVE(https://samba-wave.vercel.app)의 미배송 주문을 위에서부터
    - MUSINSA → https://www.musinsa.com
    - 그 밖의 배지는 배지 이름으로 검색해 공식 사이트를 찾는다.
 2. \`list_accounts\` 로 그 사이트의 계정을 확인하고, SAMBA WAVE 행의 **소싱 계정 드롭다운 라벨**
-   (예: \`MUSINSA · 사무(buyer01)\`)과 가장 잘 맞는 계정 라벨로 \`login\` 한다.
+   (예: \`MUSINSA · 홍길동(gildong01)\`)과 가장 잘 맞는 계정 라벨로 \`login\` 한다.
 3. 옵션 칸에 있는 **상품 코드**(예: 356742WC25)로 검색해 상품 페이지로 들어간다.
    코드로 안 나오면 상품명으로 검색하고, 코드가 일치하는지 상품 페이지에서 확인한다.
 4. 옵션(색상·사이즈)을 SAMBA WAVE 행과 똑같이 고르고 수량을 맞춘다.
