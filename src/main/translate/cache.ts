@@ -1,7 +1,10 @@
 // 번역 결과 캐시 — 세션 메모리 + 디스크 LRU(기본 1만 건).
 //
 // 안전 규칙
-//  - 저장하는 것은 "원문 해시 → 번역문" 뿐이다. 원문 자체는 디스크에 남기지 않는다.
+//  - 열쇠는 "대상 언어 + 원문 sha256" 이라 원문 자체는 디스크에 남지 않는다.
+//    다만 값(번역문)은 평문이다 — 즉 이 파일을 읽으면 사용자가 본 문장을 알 수 있다.
+//    그래서 캐시는 작업공간(프로필)마다 따로 두고(setFile), 캐시 파일을 다른
+//    작업공간과 공유하지 않는다. 값 자체를 암호화하지는 않는다(금고 밖 기능이다).
 //  - 기기 로컬 파일이라 동기화 대상이 아니다(설정 화면의 "캐시 지우기" 로 비운다).
 
 import { createHash } from 'node:crypto'
@@ -25,9 +28,23 @@ export class TranslateCache {
   private dirty = false
 
   constructor(
-    private readonly filePath: string | null = null,
+    private filePath: string | null = null,
     private readonly limit: number = TRANSLATE_CACHE_LIMIT
   ) {
+    this.load()
+  }
+
+  /**
+   * 작업공간(프로필)이 바뀌면 캐시 파일을 갈아 끼운다.
+   * 번역문은 평문으로 들어 있으므로 작업공간 사이에 섞이지 않게 한다 —
+   * 지금까지 쌓은 것은 먼저 내려쓰고, 메모리는 비운 뒤 새 파일을 읽는다
+   */
+  setFile(filePath: string | null): void {
+    if (filePath === this.filePath) return
+    this.flush()
+    this.filePath = filePath
+    this.entries.clear()
+    this.dirty = false
     this.load()
   }
 

@@ -148,6 +148,35 @@ describe('번역 캐시 LRU', () => {
     expect(reopened.get('ko', 'hello')).toBe('안녕')
   })
 
+  it('setFile 은 쓰던 것을 먼저 내려쓰고 다른 프로필 캐시로 갈아 끼운다', () => {
+    const first = join(dir, 'cache-ws1.json')
+    const second = join(dir, 'cache-ws2.json')
+    const cache = new TranslateCache(first, 100)
+    cache.set('ko', 'hello', '안녕')
+
+    cache.setFile(second)
+    // 앞 작업공간의 번역문이 넘어오지 않는다
+    expect(cache.get('ko', 'hello')).toBeUndefined()
+    expect(cache.size()).toBe(0)
+    // 갈아 끼우기 전에 내려썼으므로 앞 파일에는 남아 있다
+    expect(existsSync(first)).toBe(true)
+
+    cache.set('ko', 'hello', 'annyeong')
+    cache.flush()
+    cache.setFile(first)
+    expect(cache.get('ko', 'hello')).toBe('안녕')
+    cache.setFile(second)
+    expect(cache.get('ko', 'hello')).toBe('annyeong')
+  })
+
+  it('같은 파일로 다시 setFile 하면 아무 일도 하지 않는다', () => {
+    const file = join(dir, 'cache-same.json')
+    const cache = new TranslateCache(file, 100)
+    cache.set('ko', 'hello', '안녕')
+    cache.setFile(file)
+    expect(cache.get('ko', 'hello')).toBe('안녕')
+  })
+
   it('불러올 때도 한도까지 줄인다', () => {
     const file = join(dir, 'cache.json')
     const big = new TranslateCache(file, 1000)

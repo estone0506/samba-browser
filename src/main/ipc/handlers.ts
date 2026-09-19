@@ -1080,9 +1080,13 @@ export function registerIpc(
     settings: () => settings.get(),
     apiKeys,
     userDataDir: app.getPath('userData'),
+    // 번역 캐시에는 번역문이 평문으로 들어가므로 작업공간마다 파일을 나눈다
+    profileId: () => `ws${workspace.active().id}`,
     // 진행률에는 개수와 고정된 사유 코드만 담긴다(원문·번역문은 오지 않는다)
     emit: (dto) => send(IPC.translateProgress, dto)
   })
+  // 작업공간을 바꾸면 그 프로필의 캐시 파일로 갈아 끼운다
+  workspace.onChanged(() => translate.setProfile())
   win.once('closed', () => translate.dispose())
   // === 번역 끝 ========================================================================
   // === 사진·영상 캡처 ==================================================================

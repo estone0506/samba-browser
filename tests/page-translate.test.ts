@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest'
 import {
   collectTextNodes,
   installPageTranslate,
+  isEditableElement,
   isTranslatableTextNode,
   mapImageBox,
   ORIG_ATTR,
@@ -76,6 +77,23 @@ describe('텍스트 노드 수집', () => {
 
   it('contenteditable 안은 번역하지 않는다(편집 중인 글이 바뀌면 안 된다)', () => {
     document.body.innerHTML = '<div contenteditable="true">작성 중인 글</div>'
+    expect(collectTextNodes(document.body)).toHaveLength(0)
+  })
+
+  it("contenteditable 은 '' · plaintext-only 도 편집 가능으로 본다", () => {
+    document.body.innerHTML =
+      '<div contenteditable>빈 값</div>' +
+      '<div contenteditable="plaintext-only">평문만</div>' +
+      '<div contenteditable="false">보통 글</div>'
+    expect(collectTextNodes(document.body).map((n) => n.nodeValue)).toEqual(['보통 글'])
+  })
+
+  it('isEditableElement 는 브라우저 판정(isContentEditable)을 먼저 믿는다', () => {
+    document.body.innerHTML = '<div><span>상속받은 편집 영역</span></div>'
+    const span = document.querySelector('span')!
+    // 실제 브라우저는 부모의 contenteditable 을 상속해 true 를 돌려준다
+    Object.defineProperty(span, 'isContentEditable', { value: true, configurable: true })
+    expect(isEditableElement(span)).toBe(true)
     expect(collectTextNodes(document.body)).toHaveLength(0)
   })
 
