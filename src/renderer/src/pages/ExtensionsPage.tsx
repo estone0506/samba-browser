@@ -13,8 +13,11 @@ import {
   sortExtensions,
   type ExtensionMenu
 } from '@renderer/components/extensions/extension-list'
+import { WEBSTORE_URL } from '@shared/extensions'
 import { cn } from '@renderer/lib/utils'
 import { useExtensionStore } from '@renderer/stores/extensionStore'
+import { useBrowserStore } from '@renderer/stores/browserStore'
+import { useUiStore } from '@renderer/stores/uiStore'
 
 const MENU_LABEL_KEYS: Record<ExtensionMenu, string> = {
   mine: 'extensions.menuMine',
@@ -33,10 +36,22 @@ export function ExtensionsPage(): React.JSX.Element {
   const [devMode, setDevMode] = useState(false)
   const [storeOpen, setStoreOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const createTab = useBrowserStore((s) => s.createTab)
+  const setView = useUiStore((s) => s.setView)
 
   useEffect(() => {
     void load()
   }, [load])
+
+  // 웹스토어 탭에서 설치가 끝나면 메인이 알려 준다 — 이 화면으로 돌아왔을 때 이미 목록에 있다
+  useEffect(() => window.samba.extensions.onChanged(() => void load()), [load])
+
+  // 크롬과 같은 흐름 — 웹스토어를 새 탭으로 열고 브라우저 화면으로 돌아간다.
+  // 상세 페이지의 "Chrome에 추가" 를 누르면 그대로 설치된다(가로채기는 페이지 preload 가 한다)
+  const openWebstore = async (): Promise<void> => {
+    await createTab(WEBSTORE_URL)
+    setView('browser')
+  }
 
   const shown = useMemo(() => sortExtensions(filterExtensions(items, query)), [items, query])
 
@@ -93,7 +108,7 @@ export function ExtensionsPage(): React.JSX.Element {
               <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setStoreOpen(true)}
+                  onClick={() => void openWebstore()}
                   className="flex h-9 shrink-0 items-center gap-1.5 rounded-[9px] bg-[var(--text)] px-3 text-[12.5px] font-medium text-white"
                 >
                   <Store className="h-3.5 w-3.5" />
@@ -118,7 +133,20 @@ export function ExtensionsPage(): React.JSX.Element {
                     {busy ? t('extensions.adding') : t('extensions.addButton')}
                   </button>
                 )}
+                {/* 보조 경로 — 주소나 id 를 직접 아는 경우에만 쓴다 */}
+                <button
+                  type="button"
+                  onClick={() => setStoreOpen(true)}
+                  className="h-9 shrink-0 px-1 text-[12px] text-[var(--text2)] underline underline-offset-2 hover:text-[var(--text)]"
+                >
+                  {t('extensions.storeByUrl')}
+                </button>
               </div>
+
+              {/* 크롬과 같은 설치 흐름 안내 */}
+              <p className="text-[11.5px] leading-snug text-[var(--text2)]">
+                {t('extensions.storeHint')}
+              </p>
 
               {message && (
                 <p className="flex items-start gap-3 rounded-[10px] border border-red-200 bg-red-50 px-3 py-2 text-[11.5px] text-red-600">
