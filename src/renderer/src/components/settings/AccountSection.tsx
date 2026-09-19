@@ -3,6 +3,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@renderer/stores/authStore'
 import { useSyncStore } from '@renderer/stores/syncStore'
+import { isSupabaseAnonKey, isSupabaseProjectUrl, maskSupabaseKey } from '@shared/sync'
 import { DeviceList } from './DeviceList'
 import {
   NotReadyNote,
@@ -55,10 +56,16 @@ export function AccountSection(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedIn])
 
-  // .env 미설정이면 로그인 폼 대신 안내 카드를 보여 준다
-  if (auth.state && !auth.state.configured) return <NotConfiguredCard />
+  // Supabase 접속 정보가 없으면 로그인 폼 대신 연결 폼을 보여 준다
+  if (auth.state && !auth.state.configured) return <SupabaseConnectCard />
   if (!auth.state) return <SettingsSection title={t('account.title')}>{null}</SettingsSection>
-  if (!signedIn) return <SignInCard />
+  if (!signedIn)
+    return (
+      <>
+        <SignInCard />
+        <SupabaseConnectCard />
+      </>
+    )
 
   return (
     <>
@@ -86,23 +93,102 @@ export function AccountSection(): React.JSX.Element {
       </SettingsSection>
 
       <SyncStatusCard />
+      <SupabaseConnectCard />
       <DangerZone />
     </>
   )
 }
 
-// .env 가 비어 있을 때 — 로그인 폼 대신 설정 안내
-function NotConfiguredCard(): React.JSX.Element {
+// 내 Supabase 프로젝트 연결 — 동기화를 쓰려는 사람만 채우면 된다.
+// 비워 두면 앱은 로컬 전용으로 그대로 돈다
+function SupabaseConnectCard(): React.JSX.Element {
   const { t } = useTranslation()
+  const [saved, setSaved] = useState<{ url: string; anonKey: string } | null>(null)
+  const [url, setUrl] = useState('')
+  const [anonKey, setAnonKey] = useState('')
+  // 이미 저장된 값이 있으면 키를 마스킹해 보여 주고, [변경] 을 눌러야 입력칸이 열린다
+  const [editing, setEditing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+
+  useEffect(() => {
+    void window.samba.settings.get().then((r) => {
+      if (!r.ok) return
+      setSaved({ url: r.data.syncSupabaseUrl, anonKey: r.data.syncSupabaseAnonKey })
+      setUrl(r.data.syncSupabaseUrl)
+      setEditing(r.data.syncSupabaseUrl.length === 0)
+    })
+  }, [])
+
+  const save = (): void => {
+    const nextUrl = url.trim()
+    const nextKey = anonKey.trim()
+    if (!isSupabaseProjectUrl(nextUrl)) {
+      setError(t('account.supabase.badUrl'))
+      return
+    }
+    if (!isSupabaseAnonKey(nextKey)) {
+      setError(t('account.supabase.badKey'))
+      return
+    }
+    setError(null)
+    void window.samba.settings
+      .set({ syncSupabaseUrl: nextUrl, syncSupabaseAnonKey: nextKey })
+      .then((r) => {
+        if (!r.ok) {
+          setError(t('account.errors.generic'))
+          return
+        }
+        setSaved({ url: r.data.syncSupabaseUrl, anonKey: r.data.syncSupabaseAnonKey })
+        setAnonKey('')
+        setEditing(false)
+        setDone(true)
+      })
+  }
+
+  const connected = (saved?.url.length ?? 0) > 0 && (saved?.anonKey.length ?? 0) > 0
+
   return (
-    <SettingsSection title={t('account.title')} description={t('account.notConfigured')}>
-      <p className="text-[12px] text-[var(--text2)]">{t('account.notConfiguredDetail')}</p>
-      {import.meta.env.DEV && (
-        // 개발 빌드에서만 문서 경로를 보여 준다 — 최종 사용자에게는 의미가 없다
-        <code className="w-fit rounded-[8px] bg-black/[.04] px-2 py-1 font-mono text-[11.5px] text-[var(--text)]">
-          docs/supabase-설정.md
-        </code>
+    <SettingsSection title={t('account.supabase.title')} description={t('account.supabase.desc')}>
+      {connected && !editing ? (
+        <>
+          <SettingsRow label={t('account.supabase.urlLabel')}>
+            <div className="truncate text-[12.5px] text-[var(--text)]">{saved?.url}</div>
+          </SettingsRow>
+          <SettingsRow label={t('account.supabase.keyLabel')}>
+            <div className="truncate font-mono text-[12px] text-[var(--text2)]">
+              {maskSupabaseKey(saved?.anonKey ?? '')}
+            </div>
+          </SettingsRow>
+          <SecondaryButton onClick={() => setEditing(true)}>
+            {t('account.supabase.change')}
+          </SecondaryButton>
+        </>
+      ) : (
+        <>
+          <SettingsRow label={t('account.supabase.urlLabel')}>
+            <TextInput
+              value={url}
+              onChange={setUrl}
+              placeholder="https://xxxxxxxxxxxx.supabase.co"
+              autoComplete="off"
+            />
+          </SettingsRow>
+          <SettingsRow label={t('account.supabase.keyLabel')}>
+            <TextInput
+              value={anonKey}
+              onChange={setAnonKey}
+              type="password"
+              placeholder="sb_publishable_…"
+              autoComplete="off"
+            />
+          </SettingsRow>
+          <PrimaryButton onClick={save}>{t('account.supabase.save')}</PrimaryButton>
+        </>
       )}
+      {error && <p className="text-[12px] text-red-600">{error}</p>}
+      {done && <NotReadyNote text={t('account.supabase.restartNeeded')} />}
+      <p className="text-[11.5px] text-[var(--text2)]">{t('account.supabase.optional')}</p>
     </SettingsSection>
   )
 }

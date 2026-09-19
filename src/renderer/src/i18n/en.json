@@ -105,7 +105,9 @@
       "high": "Thinks carefully before acting"
     },
     "collapsePanel": "Collapse AI panel",
-    "expandPanel": "Expand AI panel"
+    "expandPanel": "Expand AI panel",
+    "setupHint": "No AI provider is connected yet.",
+    "setupLink": "Settings → AI connection"
   },
   "confirm": {
     "title": "Confirmation required",
@@ -690,8 +692,6 @@
     "googleWaiting": "Finish the Google sign-in in your browser",
     "googleWaitingDetail": "We wait up to 5 minutes. If you closed the window, cancel and try again",
     "googleCancel": "Cancel",
-    "notConfigured": "Can't reach the sync server",
-    "notConfiguredDetail": "This build has no sync server settings. Reinstall the official build or contact the developer. (Developers: put SAMBA_SUPABASE_URL and SAMBA_SUPABASE_ANON_KEY in .env and rebuild)",
     "devicesTitle": "Devices",
     "devicesDesc": "Devices signed in with this account",
     "devicesLoading": "Loading",
@@ -714,6 +714,18 @@
       "rateLimited": "Too many attempts. Please try again shortly",
       "network": "Cannot reach the server. Check your internet connection",
       "generic": "Sign-in failed. Please try again shortly"
+    },
+    "supabase": {
+      "title": "Supabase connection",
+      "desc": "Connect your own Supabase project to sync across PCs",
+      "urlLabel": "Project URL",
+      "keyLabel": "anon (publishable) key",
+      "save": "Save",
+      "change": "Change",
+      "badUrl": "Enter a project URL that starts with https://",
+      "badKey": "Enter an anon key starting with sb_publishable_ or eyJ. Never use a service_role key",
+      "restartNeeded": "Saved. Restart the app to apply.",
+      "optional": "Leave it empty to use this PC only, without sync. See the README to create a project"
     }
   },
   "sync": {
