@@ -41,6 +41,10 @@ import {
   type AppendMessageInput,
   type PlaybookDto,
   type PlaybookInput,
+  type ScheduleDispatchDto,
+  type ScheduleStatusDto,
+  type RecommendApplyDto,
+  type RecommendDto,
   type PhoneDto,
   type PhoneUpdatedDto,
   type PhoneAuthWaitingDto,
@@ -56,7 +60,9 @@ import {
   type CaptureBeginVideoDto,
   type CaptureResultDto,
   type CaptureStillDto,
-  type CaptureVideoSourceDto
+  type CaptureVideoSourceDto,
+  type NotifyChannel,
+  type NotifySendResult
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
@@ -145,8 +151,12 @@ const api = {
   agent: {
     // 반환은 "시작 접수" ack 뿐. 완료·실패는 onEvent 의 status 이벤트로 온다
     // chatId 를 주면 메인이 완료 시점에 그 대화에 기록을 남긴다
-    run: (prompt: string, chatId?: number): Promise<IpcResult<AgentRunAck>> =>
-      invoke(IPC.agentRun, prompt, chatId),
+    // scheduleToken 은 예약이 보낸 실행을 잇는 표식이다(사용자가 직접 칠 때는 없다)
+    run: (
+      prompt: string,
+      chatId?: number,
+      scheduleToken?: string
+    ): Promise<IpcResult<AgentRunAck>> => invoke(IPC.agentRun, prompt, chatId, scheduleToken),
     stop: (): Promise<IpcResult<void>> => invoke(IPC.agentStop),
     confirmReply: (requestId: string, approved: boolean): void => {
       ipcRenderer.send(IPC.agentConfirmReply, requestId, approved)
@@ -168,6 +178,11 @@ const api = {
       invoke(IPC.chatRename, chatId, title),
     remove: (chatId: number): Promise<IpcResult<boolean>> => invoke(IPC.chatDelete, chatId)
   },
+  // 알림 연동 — 설정 화면의 [테스트 보내기]. 웹훅 주소·봇 토큰은 메인이 쥔 값을 쓴다
+  notify: {
+    test: (channel: NotifyChannel): Promise<IpcResult<NotifySendResult>> =>
+      invoke(IPC.notifyTest, channel)
+  },
   // 자동화 플레이북 — 이름·트리거·절차 마크다운뿐이다(비밀값은 담기지 않는다)
   playbooks: {
     list: (): Promise<IpcResult<PlaybookDto[]>> => invoke(IPC.playbookList),
@@ -177,6 +192,34 @@ const api = {
     // 내장 플레이북은 지워지지 않는다(false) — 대신 restore 로 되돌린다
     remove: (id: string): Promise<IpcResult<boolean>> => invoke(IPC.playbookDelete, id),
     restore: (id: string): Promise<IpcResult<PlaybookDto | null>> => invoke(IPC.playbookRestore, id)
+  },
+  // 예약 실행 — 설정은 플레이북에 실려 동기화되고, 실행 기록은 이 PC 에만 남는다
+  schedule: {
+    status: (): Promise<IpcResult<ScheduleStatusDto[]>> => invoke(IPC.scheduleStatus),
+    // 다른 작업이 돌고 있으면 false 가 온다(카드가 버튼을 잠근다)
+    runNow: (playbookId: string): Promise<IpcResult<boolean>> =>
+      invoke(IPC.scheduleRunNow, playbookId),
+    setPaused: (playbookId: string, paused: boolean): Promise<IpcResult<boolean>> =>
+      invoke(IPC.scheduleSetPaused, playbookId, paused),
+    onChanged: (cb: () => void): (() => void) => {
+      const h = (): void => cb()
+      ipcRenderer.on(IPC.scheduleChanged, h)
+      return () => ipcRenderer.off(IPC.scheduleChanged, h)
+    },
+    // 예약이 때가 됐다고 알려 온다. 렌더러는 이 문구를 평소 채팅과 똑같이 보낸다
+    onDispatch: (cb: (req: ScheduleDispatchDto) => void): (() => void) => {
+      const h = (_: unknown, req: ScheduleDispatchDto): void => cb(req)
+      ipcRenderer.on(IPC.scheduleDispatch, h)
+      return () => ipcRenderer.off(IPC.scheduleDispatch, h)
+    }
+  },
+  // 활동 기록·추천 — 기록 자체는 오가지 않는다. 화면이 받는 것은 후보 목록뿐이다
+  activity: {
+    recommend: (): Promise<IpcResult<RecommendDto[]>> => invoke(IPC.activityRecommend),
+    dismiss: (key: string): Promise<IpcResult<boolean>> => invoke(IPC.activityDismiss, key),
+    apply: (key: string): Promise<IpcResult<RecommendApplyDto | null>> =>
+      invoke(IPC.activityApply, key),
+    clear: (): Promise<IpcResult<boolean>> => invoke(IPC.activityClear)
   },
   settings: {
     get: (): Promise<IpcResult<Settings>> => invoke(IPC.settingsGet),

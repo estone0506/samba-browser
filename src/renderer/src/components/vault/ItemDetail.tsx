@@ -5,7 +5,7 @@ import { useUiStore } from '@renderer/stores/uiStore'
 import { useVaultStore } from '@renderer/stores/vaultStore'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
-import { AGENT_ACCESS_VALUES } from '@shared/vault'
+import { AGENT_ACCESS_VALUES, paymentProviderOfSections } from '@shared/vault'
 import {
   PhoneAssignDialog,
   PhoneAssignSuggestion
@@ -327,9 +327,102 @@ interface Props {
   onEdit: () => void
   // 전역(계정 없는) 항목 편집. 계정용 onEdit 과 분리해 항상 대상 항목을 명시적으로 넘긴다
   onEditGlobal: (item: VaultItemMeta) => void
+  // 선택된 계정에 결제 비밀번호를 새로 추가한다
+  onAddPayment: () => void
+  // 계정에 딸린 항목 하나를 편집한다(결제 비밀번호처럼 계정당 여러 개인 항목)
+  onEditItem: (item: VaultItemMeta) => void
 }
 
-export function ItemDetail({ onEdit, onEditGlobal }: Props): React.JSX.Element {
+// 계정의 결제 비밀번호 목록. 무신사머니·토스페이처럼 결제창마다 비밀번호가 달라
+// 계정 하나에 여러 개가 붙는다 — 제공자 라벨과 함께 나열하고 각각 편집·삭제한다
+function PaymentSection({
+  accountId,
+  items,
+  onAdd,
+  onEdit
+}: {
+  accountId: number
+  items: VaultItemMeta[]
+  onAdd: () => void
+  onEdit: (item: VaultItemMeta) => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const deleteItem = useVaultStore((s) => s.deleteItem)
+
+  return (
+    <section className="mb-5">
+      <div className="mb-2 flex items-center gap-2">
+        <h4 className="text-[12px] font-semibold text-[var(--text2)]">
+          {t('vault.detail.paymentSection')}
+        </h4>
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto h-[26px] rounded-[9px]"
+          onClick={onAdd}
+        >
+          {t('vault.detail.addPayment')}
+        </Button>
+      </div>
+      {items.length === 0 ? (
+        <div className="rounded-xl border border-[var(--line)] bg-white px-3.5 py-4 text-center text-[12.5px] text-[var(--text3)]">
+          {t('vault.detail.noPayment')}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {items.map((item) => (
+            <div
+              key={item.id}
+              className="overflow-hidden rounded-xl border border-[var(--line)] bg-white"
+            >
+              <div className="flex items-center gap-2 border-b border-black/[.05] px-3.5 py-2">
+                <span className="truncate text-[12.5px] font-medium">{item.label}</span>
+                <span className="shrink-0 rounded-full bg-[var(--bg)] px-1.5 py-0.5 text-[10.5px] text-[var(--text2)]">
+                  {t(`vault.paymentProvider.${paymentProviderOfSections(item.sections)}`)}
+                </span>
+                <div className="ml-auto flex shrink-0 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onEdit(item)}
+                    className="h-6 rounded-[7px] border border-[var(--line)] px-2 text-[11.5px] text-[var(--text2)]"
+                  >
+                    {t('vault.detail.edit')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void deleteItem(item.id, accountId)}
+                    className="h-6 rounded-[7px] border border-[var(--line)] px-2 text-[11.5px] text-[var(--text2)]"
+                  >
+                    {t('vault.detail.deleteItem')}
+                  </button>
+                </div>
+              </div>
+              {item.sections.flatMap((section) =>
+                section.fields
+                  .filter((field) => field.kind === 'secret')
+                  .map((field) => (
+                    <RevealRow
+                      key={`${section.key}.${field.key}`}
+                      label={field.label}
+                      itemId={item.id}
+                      fieldKey={field.key}
+                    />
+                  ))
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+export function ItemDetail({
+  onEdit,
+  onEditGlobal,
+  onAddPayment,
+  onEditItem
+}: Props): React.JSX.Element {
   const { t } = useTranslation()
   const setView = useUiStore((s) => s.setView)
   const accounts = useVaultStore((s) => s.accounts)
@@ -475,9 +568,18 @@ export function ItemDetail({ onEdit, onEditGlobal }: Props): React.JSX.Element {
         </div>
       </section>
 
-      {items.map((item) => (
-        <ItemSections key={item.id} item={item} />
-      ))}
+      {items
+        .filter((item) => item.type !== 'password')
+        .map((item) => (
+          <ItemSections key={item.id} item={item} />
+        ))}
+
+      <PaymentSection
+        accountId={account.id}
+        items={items.filter((item) => item.type === 'password')}
+        onAdd={onAddPayment}
+        onEdit={onEditItem}
+      />
 
       <PhoneAssignSuggestion accountId={account.id} />
 

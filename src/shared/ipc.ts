@@ -179,11 +179,27 @@ export const IPC = {
   captureDone: 'capture:done', // main → renderer 이벤트(캡처 완료 → 토스트)
   captureRegionMode: 'capture:regionMode', // main → page preload(격리 월드) 요소 선택 모드
   captureElementRect: 'capture:elementRect', // page preload(격리 월드) → main, 전용 게이트
+  // --- 알림 연동 — 설정 화면의 [테스트 보내기] 하나뿐이다 ---------------------
+  // (알림 본문은 메인이 만들어 곧바로 메신저로 보낸다. 렌더러를 거치지 않는다)
+  notifyTest: 'notify:test',
   // --- 자동화 플레이북 — 절차 문서뿐이라 비밀값은 오가지 않는다 ---------------
   playbookList: 'playbook:list',
   playbookPut: 'playbook:put', // 새로 만들기 + 수정(id 없으면 새로 만든다)
   playbookDelete: 'playbook:delete',
-  playbookRestore: 'playbook:restore' // 내장 플레이북 기본값 복원
+  playbookRestore: 'playbook:restore', // 내장 플레이북 기본값 복원
+  // --- 플레이북 예약 실행 — 실행 기록은 기기 로컬 파일이라 동기화되지 않는다 -----
+  scheduleStatus: 'schedule:status', // 예약 상태 목록(설정 + 기기 로컬 기록)
+  scheduleRunNow: 'schedule:runNow', // 카드의 [지금 실행]
+  scheduleSetPaused: 'schedule:setPaused', // 카드의 [일시정지]/[재개]
+  scheduleChanged: 'schedule:changed', // main → renderer 이벤트(목록 다시 읽기)
+  // main → renderer 이벤트. "이 문구를 채팅에 넣어라" — 실행은 사용자가 직접 칠 때와
+  // 같은 경로(chat → agent:run)를 그대로 탄다
+  scheduleDispatch: 'schedule:dispatch',
+  // --- 활동 기록·추천 — 기록 파일은 이 PC 안에만 있고 화면으로는 후보만 나간다 ---
+  activityRecommend: 'activity:recommend', // 설정 → 자동화 상단의 추천 목록
+  activityDismiss: 'activity:dismiss', // [숨기기](30일 뒤 다시 나타난다)
+  activityApply: 'activity:apply', // [예약 만들기]
+  activityClear: 'activity:clear' // "지금까지 기록 지우기"
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -252,6 +268,7 @@ export type {
   VaultField,
   VaultSection,
   FieldKind,
+  PaymentProvider,
   AgentAccess,
   SiteDto,
   AccountDto,
@@ -338,6 +355,30 @@ export type {
 export type { PlaybookDto, PlaybookInput } from './playbook'
 
 export type {
+  PlaybookSchedule,
+  ScheduleKind,
+  ScheduleHistoryEntry,
+  SchedulePauseReason,
+  ScheduleResult,
+  ScheduleStatusDto,
+  ScheduleUiState
+} from './schedule'
+
+export type {
+  RecommendApplyDto,
+  RecommendCandidate,
+  RecommendDto,
+  RecommendKind
+} from './activity-patterns'
+
+/** schedule:dispatch 로 가는 실행 요청. 토큰은 이 실행이 그 예약의 것임을 잇는 표식이다 */
+export interface ScheduleDispatchDto {
+  token: string
+  playbookId: string
+  phrase: string
+}
+
+export type {
   ChatRole,
   ChatStepDto,
   ChatDto,
@@ -345,3 +386,5 @@ export type {
   ChatDetailDto,
   AppendMessageInput
 } from './chat'
+
+export type { NotifyChannel, NotifyEvent, NotifySendResult } from './notify'

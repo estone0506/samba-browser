@@ -18,6 +18,8 @@ import { ClosedTabStack, newProfileName, runGesture, type GestureDeps } from '..
 import { SettingsStore } from '../settings/store'
 import { setOcrEnabled } from '../agent/tools-ocr'
 import { AgentRunner } from '../agent/runner'
+import { createAgentNotifier } from '../notify'
+import type { NotifyChannel } from '../../shared/notify'
 import type { Db } from '../db/client'
 import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vault/service'
 import { exportVault, writeOwnerOnlyFile, type ExportRequest } from '../vault/export'
@@ -25,6 +27,11 @@ import { ImportService, type ImportDialogs } from '../import/service'
 import { ChatRepo } from '../chat/repo'
 import { PlaybookStore } from '../playbooks/store'
 import type { PlaybookInput } from '../../shared/playbook'
+import { ScheduleRunStore } from '../schedule/runs'
+import { PlaybookScheduler } from '../schedule/scheduler'
+import { ActivityStore } from '../activity/store'
+import { ActivityRecorder } from '../activity/recorder'
+import { RecommendService } from '../activity/recommend'
 import { RECENT_CHAT_LIMIT, type AppendMessageInput } from '../../shared/chat'
 import { VaultCaptureGate } from './vault-capture'
 import { watchLoginSuccess } from './login-watch'
@@ -62,7 +69,7 @@ import {
 } from '../ai/connections'
 import { resolveAgentAuth } from '../ai/auth-route'
 import { remapOnProviderChange, resolveModel, taskModelChoices } from '../ai/models'
-import { setApiKeyResolver, setAuthResolver } from '../agent/provider'
+import { agentBackend, setApiKeyResolver, setAuthResolver } from '../agent/provider'
 // === AI 연결 끝 =======================================================================
 import { AuthService } from '../sync/auth'
 import { hasSupabaseEnv, setSupabaseEnvFromSettings } from '../sync/env'
@@ -168,8 +175,34 @@ export function registerIpc(
   }
   // 금고. 마스터 키는 이 인스턴스 안에만 있고 IPC 로는 절대 나가지 않는다
   const vault = new VaultService(db, settings, { safeStorage })
-  // AI 도구(list_accounts/fill_secret/login)가 쓸 수 있도록 금고를 넘긴다
-  const agent = new AgentRunner(tabs, settings, (ev) => send(IPC.agentEvent, ev), vault)
+  // AI 도구(list_accounts/fill_secret/login)가 쓸 수 있도록 금고를 넘긴다.
+  // 메신저 알림·예약 실행 결과 판정은 에이전트 이벤트를 화면으로 보내는 같은 길목에서 엿본다
+  // (작업 완료·실패, 확인 카드, 사람에게 넘김 — 폰 결제 비밀번호 키패드 포함)
+  const notifier = createAgentNotifier({
+    settings: () => settings.get(),
+    fetchImpl: (url, init) => net.fetch(url, init)
+  })
+  // 활동 기록. 파일은 이 PC 의 userData 안에만 있고 동기화 대상이 아니다.
+  // 기록 여부는 설정 한 칸(activityRecording)으로 매번 다시 읽는다 — 끄면 곧바로 멈춘다
+  const activityStore = new ActivityStore(join(app.getPath('userData'), 'activity'))
+  activityStore.prune()
+  const activity = new ActivityRecorder({
+    store: activityStore,
+    enabled: () => settings.get().activityRecording
+  })
+  const agent = new AgentRunner(
+    tabs,
+    settings,
+    (ev) => {
+      scheduler.noteAgentEvent(ev)
+      activity.observeAgent(ev)
+      send(IPC.agentEvent, ev)
+      notifier.observe(ev)
+    },
+    vault
+  )
+  // 탭이 옮겨 가면 **호스트 한 조각**만 기록기로 넘어간다(전체 URL·검색어는 넘기지 않는다)
+  tabs.onVisit((host) => activity.noteVisit(host))
   // AI 채팅 기록. 러너가 작업 완료 시점에 이 저장소로 대화를 남긴다
   const chats = new ChatRepo(db)
   agent.setTranscript((chatId, entry) => {
@@ -179,6 +212,24 @@ export function registerIpc(
   // 자동화 플레이북. 사용자 문장에 트리거가 들어 있으면 러너가 절차를 시스템 프롬프트에 덧붙인다
   const playbooks = new PlaybookStore(settings)
   agent.setPlaybooks(() => playbooks.list())
+  // 예약 실행. 실행 기록은 이 PC 의 파일에만 남는다(동기화 대상이 아니다)
+  const scheduleRuns = new ScheduleRunStore(join(app.getPath('userData'), 'schedule-runs.json'))
+  const scheduler = new PlaybookScheduler({
+    playbooks,
+    runs: scheduleRuns,
+    isRunning: () => agent.isRunning(),
+    aiConnected: () => agentBackend() !== 'none',
+    // 렌더러가 이 문구를 평소 채팅과 똑같이 보낸다 — 진행 상황이 AI 패널에 그대로 보인다
+    dispatch: (req) => send(IPC.scheduleDispatch, req),
+    onChanged: () => send(IPC.scheduleChanged, null)
+  })
+  scheduler.start()
+  // 추천 — 기록 파일 + 숨김 설정 + 플레이북 목록을 잇기만 한다(판정은 순수 함수)
+  const recommend = new RecommendService({
+    runs: activityStore,
+    settings,
+    playbooks
+  })
   // 페이지 JS 대화상자는 AI 작업이 도는 동안에만 자동 처리한다
   tabs.setAgentRunningProvider(() => agent.isRunning())
   // guard 모드에서 confirm/beforeunload 는 사용자 확인 카드를 거쳐야 '예' 가 된다
@@ -244,6 +295,9 @@ export function registerIpc(
     ipcMain.removeAllListeners(IPC.vaultUndoPasswordUpdate)
     ipcMain.removeAllListeners(IPC.pageGesture)
     ipcMain.removeAllListeners(IPC.pageWebstoreInstall)
+    scheduler.stop()
+    // 열려 있던 방문 한 건을 마무리해 머문 시간이 통째로 사라지지 않게 한다
+    activity.flush()
     sync.current()?.stop()
     sync.release()
     vault.dispose()
@@ -264,10 +318,21 @@ export function registerIpc(
 
   // 실행 시작만 즉시 확인해 주고, 완료·실패는 status 이벤트로만 알린다.
   // (예전처럼 완료까지 기다리면 늦게 끝난 이전 작업의 응답이 새 작업 UI 를 덮어썼다)
-  handleFromRenderer(IPC.agentRun, (prompt: string, chatId?: number) => {
-    void agent.run(prompt, chatId).catch((e: unknown) => console.error('작업 실행 실패', e))
+  // scheduleToken 은 예약이 보낸 실행임을 잇는 표식이다. 모르는 토큰이면 평소대로 돈다
+  handleFromRenderer(IPC.agentRun, (prompt: string, chatId?: number, scheduleToken?: string) => {
+    // 알림 요약의 "작업:" 줄에 쓸 사용자 지시(비밀값 마스킹은 메시지 조립 때 한다)
+    notifier.setPrompt(prompt)
+    // 활동 기록도 같은 자리에서 지시를 받아 둔다(마스킹은 저장 직전에 한다)
+    activity.notePrompt(prompt)
+    const overrides = scheduler.claimOverrides(scheduleToken)
+    void agent
+      .run(prompt, chatId, overrides)
+      .catch((e: unknown) => console.error('작업 실행 실패', e))
     return { started: true }
   })
+
+  // 설정 화면의 [테스트 보내기] — 지금 입력된 값으로 한 줄 보내 본다
+  handleFromRenderer(IPC.notifyTest, (channel: NotifyChannel) => notifier.test(channel))
 
   // --- AI 채팅 기록 -------------------------------------------------------
   handleFromRenderer(IPC.chatList, (limit?: number) => chats.list(limit ?? RECENT_CHAT_LIMIT))
@@ -283,6 +348,24 @@ export function registerIpc(
   handleFromRenderer(IPC.playbookPut, (input: PlaybookInput) => playbooks.put(input))
   handleFromRenderer(IPC.playbookDelete, (id: string) => playbooks.remove(id))
   handleFromRenderer(IPC.playbookRestore, (id: string) => playbooks.restore(id))
+
+  // --- 예약 실행 — 상태 조회·지금 실행·일시정지/재개 ------------------------
+  handleFromRenderer(IPC.scheduleStatus, () => scheduler.statusList())
+  handleFromRenderer(IPC.scheduleRunNow, (playbookId: string) => scheduler.runNow(playbookId))
+  handleFromRenderer(IPC.scheduleSetPaused, (playbookId: string, paused: boolean) =>
+    scheduler.setPaused(playbookId, paused)
+  )
+  // --- 활동 기록·추천 — 기록은 이 PC 안에만 있고 화면으로는 후보만 나간다 ----
+  handleFromRenderer(IPC.activityRecommend, () => recommend.list())
+  handleFromRenderer(IPC.activityDismiss, (key: string) => recommend.dismiss(key))
+  handleFromRenderer(IPC.activityApply, (key: string) => recommend.apply(key))
+  handleFromRenderer(IPC.activityClear, () => {
+    // 열려 있던 방문을 먼저 닫아 둔다. 그러지 않으면 지운 뒤에 그 방문이
+    // 옛 시각 그대로 다시 쓰여 "지웠는데 남아 있다" 가 된다
+    activity.flush()
+    return activityStore.clear()
+  })
+
   onFromRenderer(IPC.agentConfirmReply, (requestId: string, approved: boolean) =>
     agent.resolveConfirm(requestId, approved)
   )

@@ -3,12 +3,16 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus } from 'lucide-react'
 import { runPhraseOf, type PlaybookInput } from '@shared/playbook'
+import type { PlaybookSchedule } from '@shared/schedule'
 import { usePlaybookStore } from '@renderer/stores/playbookStore'
+import { useScheduleStore } from '@renderer/stores/scheduleStore'
+import { useRecommendStore } from '@renderer/stores/recommendStore'
 import { useChatStore } from '@renderer/stores/chatStore'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { PrimaryButton } from '@renderer/components/settings/shared'
 import { PlaybookCard } from '@renderer/components/automation/PlaybookCard'
 import { PlaybookEditor } from '@renderer/components/automation/PlaybookEditor'
+import { RecommendCard } from '@renderer/components/automation/RecommendCard'
 
 // 편집 중인 대상. 'new' 는 새로 만들기 폼, 문자열 id 는 그 카드의 편집 폼
 type EditTarget = 'new' | string | null
@@ -26,11 +30,29 @@ export function AutomationPage(): React.JSX.Element {
   const save = usePlaybookStore((s) => s.save)
   const remove = usePlaybookStore((s) => s.remove)
   const restore = usePlaybookStore((s) => s.restore)
+  const scheduleById = useScheduleStore((s) => s.byId)
+  const loadSchedules = useScheduleStore((s) => s.load)
+  const scheduleRunNow = useScheduleStore((s) => s.runNow)
+  const setSchedulePaused = useScheduleStore((s) => s.setPaused)
+  const modelChoices = useChatStore((s) => s.modelChoices)
+  const loadModelMenu = useChatStore((s) => s.loadModelMenu)
+  const recommendations = useRecommendStore((s) => s.items)
+  const recommendError = useRecommendStore((s) => s.error)
+  const loadRecommendations = useRecommendStore((s) => s.load)
+  const dismissRecommendation = useRecommendStore((s) => s.dismiss)
+  const applyRecommendation = useRecommendStore((s) => s.apply)
   const [editing, setEditing] = useState<EditTarget>(null)
 
   useEffect(() => {
     void load()
-  }, [load])
+    void loadSchedules()
+    // 예약의 모델 칸은 설정의 작업별 모델 목록을 그대로 쓴다
+    void loadModelMenu()
+    // 추천은 기기 로컬 기록만 보고 규칙으로 뽑는다(AI 호출 없음)
+    void loadRecommendations()
+  }, [load, loadSchedules, loadModelMenu, loadRecommendations])
+  // 메인이 예약 상태를 바꾸면(실행 시작·완료·자동 일시정지) 목록을 다시 읽는다
+  useEffect(() => useScheduleStore.getState().subscribe(), [])
 
   const commit = (input: PlaybookInput): void => {
     void save(input).then((ok) => {
@@ -44,6 +66,16 @@ export function AutomationPage(): React.JSX.Element {
     ui.setView('browser')
     if (ui.panelCollapsed) ui.setPanelCollapsed(false)
     void useChatStore.getState().send(phrase)
+  }
+
+  // 추천 적용 — 플레이북이 이미 있으면 예약만 채워 켜고, 새로 만들었으면 편집기를 연다
+  const applyRecommend = (key: string): void => {
+    void applyRecommendation(key).then(async (result) => {
+      if (!result) return
+      await load()
+      await loadSchedules()
+      if (result.created) setEditing(result.playbookId)
+    })
   }
 
   return (
@@ -72,6 +104,16 @@ export function AutomationPage(): React.JSX.Element {
           <p className="rounded-[9px] border border-[#b91c1c] px-2.5 py-2 text-[11.5px] text-[#b91c1c]">
             {t('automation.saveFailed')}
           </p>
+        )}
+
+        {/* 후보가 없으면 카드 자체를 그리지 않는다(조용히, 설정 안에서만 권한다) */}
+        {recommendations.length > 0 && (
+          <RecommendCard
+            items={recommendations}
+            failed={recommendError !== ''}
+            onApply={applyRecommend}
+            onDismiss={(key) => void dismissRecommendation(key)}
+          />
         )}
 
         {editing === 'new' && (
@@ -105,6 +147,21 @@ export function AutomationPage(): React.JSX.Element {
             onRun={() => run(runPhraseOf(playbook))}
             onRemove={() => void remove(playbook.id)}
             onRestore={() => void restore(playbook.id)}
+            scheduleStatus={scheduleById[playbook.id]}
+            modelChoices={modelChoices}
+            onSchedule={(schedule: PlaybookSchedule) =>
+              void save({
+                id: playbook.id,
+                name: playbook.name,
+                triggers: playbook.triggers,
+                instructions: playbook.instructions,
+                enabled: playbook.enabled,
+                schedule
+              }).then(() => loadSchedules())
+            }
+            // 예약 경로로 실행한다 — 결과가 예약 기록(마지막 실행·이력)에 남는다
+            onRunNow={() => void scheduleRunNow(playbook.id)}
+            onSetPaused={(paused) => void setSchedulePaused(playbook.id, paused)}
           />
         ))}
 

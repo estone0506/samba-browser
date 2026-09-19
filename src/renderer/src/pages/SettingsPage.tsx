@@ -8,11 +8,14 @@ import { AccountSection } from '@renderer/components/settings/AccountSection'
 import { SecuritySection } from '@renderer/components/settings/SecuritySection'
 import { AgentSection } from '@renderer/components/settings/AgentSection'
 import { AiSection } from '@renderer/components/settings/AiSection'
+import { NotifySection } from '@renderer/components/settings/NotifySection'
 import { PlaceholderSection } from '@renderer/components/settings/PlaceholderSection'
+import { PersonalInfoPage } from '@renderer/pages/PersonalInfoPage'
+import { AutomationPage } from '@renderer/pages/AutomationPage'
 import {
   SECTIONS,
   SETTINGS_GROUPS,
-  groupLabelKey,
+  isFullWidthSection,
   sectionsOfGroup,
   type SettingsSectionDef
 } from '@renderer/components/settings/sections'
@@ -68,11 +71,9 @@ export function SettingsPage(): React.JSX.Element {
       {/* 데스크톱 폭 — 좌측 240px 섹션 목록 */}
       <aside className="hidden w-[240px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-[var(--line)] p-4 min-[769px]:flex">
         <h1 className="text-[15px] font-semibold text-[var(--text)]">{t('settingsPage.title')}</h1>
+        {/* 그룹 제목(개인·AI)은 그리지 않는다 — 섹션이 6개뿐이라 제목이 오히려 눈에 걸린다 */}
         {SETTINGS_GROUPS.map((group) => (
           <div key={group} className="flex flex-col gap-0.5">
-            <div className="px-2 pb-1 text-[11px] font-medium text-[var(--text2)]">
-              {t(groupLabelKey(group))}
-            </div>
             {sectionsOfGroup(group).map((s: SettingsSectionDef) => (
               <button
                 key={s.key}
@@ -92,12 +93,18 @@ export function SettingsPage(): React.JSX.Element {
         ))}
       </aside>
 
-      {/* 우측 패널 */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-[560px] flex-col gap-4 p-6">
+      {/* 우측 패널 — 키마스터·자동화는 자체 레이아웃이라 폭 틀 없이 그대로 채운다 */}
+      {isFullWidthSection(active) ? (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {settings && <SectionBody active={active} settings={settings} update={update} />}
         </div>
-      </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-[560px] flex-col gap-4 p-6">
+            {settings && <SectionBody active={active} settings={settings} update={update} />}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -128,6 +135,12 @@ function SectionBody({
       return <AgentSection settings={settings} update={update} />
     case 'ai':
       return <AiSection />
+    case 'keymaster':
+      return <PersonalInfoPage />
+    case 'automation':
+      return <AutomationPage />
+    case 'notify':
+      return <NotifySection settings={settings} update={update} />
     default:
       return <PlaceholderSection titleKey={labelKey} />
   }

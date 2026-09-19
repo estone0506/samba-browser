@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Lock } from 'lucide-react'
-import { Input } from '@renderer/components/ui/input'
+import { PasswordInput } from './PasswordInput'
 import { Button } from '@renderer/components/ui/button'
 import { useVaultStore } from '@renderer/stores/vaultStore'
 
@@ -63,8 +63,7 @@ export function UnlockScreen(): React.JSX.Element {
             {t(fromSync ? 'vault.unlock.fromSync' : 'vault.unlock.desc')}
           </p>
         </div>
-        <Input
-          type="password"
+        <PasswordInput
           autoFocus
           autoComplete="off"
           data-lpignore="true"

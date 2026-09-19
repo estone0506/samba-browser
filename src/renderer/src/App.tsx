@@ -13,6 +13,8 @@ import { PhonesPage } from '@renderer/pages/PhonesPage'
 import { ExtensionsPage } from '@renderer/pages/ExtensionsPage'
 import { AutomationPage } from '@renderer/pages/AutomationPage'
 import { SettingsPage } from '@renderer/pages/SettingsPage'
+import { LogsPage } from '@renderer/pages/LogsPage'
+import { TasksPage } from '@renderer/pages/TasksPage'
 import { useBrowserStore } from '@renderer/stores/browserStore'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { useChatStore } from '@renderer/stores/chatStore'
@@ -59,6 +61,16 @@ export default function App(): React.JSX.Element {
       setSidebarSections(r.data.sidebarSections)
     })
   }, [setSidebarWidth, setPanelWidth, setSidebarCollapsed, setSidebarSections])
+  // 예약이 때가 됐다고 알려 오면, 사용자가 직접 친 것과 똑같이 채팅으로 보낸다 —
+  // 그래야 진행 상황이 AI 패널에 그대로 보이고 기록도 평소처럼 대화에 남는다.
+  // 채팅이 이미 돌고 있으면 send 가 스스로 무시하고, 메인이 다음 틱에 다시 알려 온다
+  useEffect(
+    () =>
+      window.samba.schedule?.onDispatch((req) => {
+        void useChatStore.getState().send(req.phrase, req.token)
+      }),
+    []
+  )
   // 자동 저장 제안 카드(vault:capturePrompt) · 자동 갱신 토스트(vault:passwordUpdated) 구독은
   // 앱 전체에서 한 번만 한다
   useEffect(() => {
@@ -116,6 +128,8 @@ export default function App(): React.JSX.Element {
               />
               <WebArea />
             </>
+          ) : view === 'tasks' ? (
+            <TasksPage />
           ) : view === 'bookmarks' ? (
             <BookmarksPage />
           ) : view === 'phones' ? (
@@ -126,6 +140,8 @@ export default function App(): React.JSX.Element {
             <AutomationPage />
           ) : view === 'settings' ? (
             <SettingsPage />
+          ) : view === 'logs' ? (
+            <LogsPage />
           ) : (
             <PersonalInfoPage />
           )}

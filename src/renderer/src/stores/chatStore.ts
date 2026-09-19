@@ -72,7 +72,8 @@ interface ChatState {
   newChat: () => void
   // 대화를 지운다(삭제 표식). 화면에 열려 있었으면 새 대화로 돌아간다
   removeChat: (chatId: number) => Promise<void>
-  send: (text: string) => Promise<void>
+  /** scheduleToken 은 예약이 보낸 실행임을 메인에 알리는 표식이다(사용자 입력에는 없다) */
+  send: (text: string, scheduleToken?: string) => Promise<void>
   stop: () => Promise<void>
   reply: (requestId: string, approved: boolean) => void
   // 넘김 카드 응답 — skip=true 는 건너뛰고 계속, false 는 작업 중단
@@ -160,7 +161,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((s) => ({ chats: s.chats.filter((c) => c.id !== chatId) }))
     if (get().activeChatId === chatId) get().newChat()
   },
-  send: async (text) => {
+  send: async (text, scheduleToken) => {
     if (get().status === 'running') return
     const seq = get().runSeq + 1
     set((s) => ({
@@ -192,10 +193,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     // 메인은 "시작 접수" ack 만 즉시 돌려준다. 완료·실패는 status 이벤트로 온다.
     // 늦게 도착한 이전 세대의 응답은 버린다
-    const r =
-      chatId === null
-        ? await window.samba.agent.run(text)
-        : await window.samba.agent.run(text, chatId)
+    // 예약 실행이 아니면 인자를 덧붙이지 않는다(평소 경로의 호출 모양을 그대로 둔다)
+    const args: [string, number?, string?] =
+      scheduleToken === undefined
+        ? chatId === null
+          ? [text]
+          : [text, chatId]
+        : [text, chatId ?? undefined, scheduleToken]
+    const r = await window.samba.agent.run(...args)
     if (!r.ok && get().runSeq === seq) set({ status: 'failed', currentLabel: r.error, retry: null })
   },
   stop: async () => {

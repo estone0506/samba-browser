@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   SIDEBAR_COLLAPSED_WIDTH,
+  SIDEBAR_ITEMS,
   SIDEBAR_SECTION_KEYS,
   canResizeSidebar,
   isSectionOpen,
@@ -69,6 +70,24 @@ describe('사이드바 섹션 접기', () => {
 
   it('펼친 사이드바에서도 접은 섹션은 본문을 그리지 않는다', () => {
     expect(showSectionBody(false, { tabs: false, chat: true, bookmarks: true }, 'tabs')).toBe(false)
+  })
+})
+
+describe('사이드바 이동 항목', () => {
+  it('모든 항목에 갈 뷰가 있다(자리표시자 없음)', () => {
+    for (const item of SIDEBAR_ITEMS) {
+      expect(typeof item.view).toBe('string')
+      expect(item.view).not.toBe('')
+    }
+  })
+
+  it('작업 항목은 작업 페이지로 간다', () => {
+    expect(SIDEBAR_ITEMS.find((i) => i.key === 'tasks')?.view).toBe('tasks')
+  })
+
+  it('항목 키가 겹치지 않는다', () => {
+    const keys = SIDEBAR_ITEMS.map((i) => i.key)
+    expect(new Set(keys).size).toBe(keys.length)
   })
 })
 

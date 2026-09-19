@@ -14,6 +14,7 @@ import {
   type AuthEventDto
 } from '../../shared/phone'
 import { findElement, type PhoneScreen } from '../../shared/phone-snapshot'
+import type { PaymentProvider } from '../../shared/vault'
 import type { KeypadLayout } from '../ai/visual'
 import type { HandoffResult } from '../agent/handoff'
 import {
@@ -71,6 +72,17 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     passwordHint: /결제 ?비밀번호|네이버페이 비밀번호|비밀번호/,
     successHint: /결제 ?완료|완료되었습니다/
   }
+}
+
+/**
+ * 결제앱(PayProvider) → 금고 결제 수단(PaymentProvider) 매핑.
+ * 사이트 자체 결제(무신사머니·SSG머니 등)는 웹에서 끝나므로 여기 없고 'site' 를 쓴다
+ */
+export const PAY_APP_TO_PAYMENT_PROVIDER: Record<PayProvider, PaymentProvider> = {
+  toss: 'toss',
+  payco: 'payco',
+  kakaopay: 'kakao',
+  naverpay: 'naver'
 }
 
 /** 앱 화면을 더듬는 최대 스텝(무한 루프 방지) */
@@ -153,6 +165,8 @@ export type PayFailReason =
   | PayGate
   | 'declined'
   | 'password-failed'
+  // 계정에 결제 비밀번호가 둘 이상인데 어느 것인지 좁히지 못했다(누르지 않고 멈춘다)
+  | 'password-ambiguous'
   | 'layout-incomplete'
   | 'verify-failed'
   | 'stuck'
@@ -243,6 +257,7 @@ const GATE_LABEL: Record<Exclude<PayGate, 'ok'>, string> = {
 const SECRET_FAIL: Record<Exclude<PaySecretResult, 'ok'>, PayFailReason> = {
   locked: 'vault-locked',
   'not-found': 'password-failed',
+  ambiguous: 'password-ambiguous',
   'layout-incomplete': 'layout-incomplete'
 }
 
@@ -347,6 +362,7 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
       const r = await tapPassword({
         vault: deps.vault,
         accountId: req.accountId,
+        provider: PAY_APP_TO_PAYMENT_PROVIDER[req.provider],
         ...(req.jobId === undefined ? {} : { jobId: req.jobId }),
         serial: req.serial,
         layout,

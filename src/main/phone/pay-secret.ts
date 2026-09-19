@@ -9,18 +9,19 @@
 
 import type { KeypadLayout } from '../ai/visual'
 import type { PhoneScreen } from '../../shared/phone-snapshot'
-import type { VaultItemType, VaultState } from '../../shared/vault'
+import type { PaymentProvider, VaultState } from '../../shared/vault'
+import type { PaymentSecretResult } from '../vault/service'
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
 
 /** 이 모듈이 금고에서 쓰는 최소 능력(VaultService 가 그대로 만족한다) */
 export interface PaySecretVault {
   state: () => VaultState
-  getSecretForFill: (
-    accountId: number,
-    type: VaultItemType,
-    fieldKey?: string,
+  getPaymentSecretForFill: (args: {
+    accountId: number
+    provider?: PaymentProvider
+    fieldKey?: string
     jobId?: string
-  ) => string | null
+  }) => PaymentSecretResult
 }
 
 /** 키패드 배치를 구하는 두 경로. UI 트리를 먼저 보고, 실패하면 Visual 에게 묻는다 */
@@ -29,7 +30,7 @@ export interface KeypadSource {
   fromVisual: (serial: string) => Promise<KeypadLayout | null>
 }
 
-export type PaySecretResult = 'ok' | 'locked' | 'not-found' | 'layout-incomplete'
+export type PaySecretResult = 'ok' | 'locked' | 'not-found' | 'ambiguous' | 'layout-incomplete'
 
 const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'] as const
 const SINGLE_DIGIT_RE = /^[0-9]$/
@@ -41,6 +42,8 @@ const SINGLE_DIGIT_RE = /^[0-9]$/
 export async function tapPaymentPassword(deps: {
   vault: PaySecretVault
   accountId: number
+  /** 어느 결제 수단의 비밀번호인가(결제앱 → 금고 제공자 매핑값) */
+  provider: PaymentProvider
   jobId?: string
   serial: string
   layout: KeypadLayout
@@ -48,15 +51,17 @@ export async function tapPaymentPassword(deps: {
   onStep: (label: string, ok: boolean) => void
 }): Promise<PaySecretResult> {
   if (deps.vault.state() !== 'unlocked') return 'locked'
-  // 금고 항목 종류 'password' = 결제 비밀번호(2단계 LEGACY_TYPE_MAP: payment_password → password)
-  const secret = deps.vault.getSecretForFill(
-    deps.accountId,
-    'password',
-    DEFAULT_FIELD_KEY,
-    deps.jobId
-  )
-  if (secret === null || secret === '') return 'not-found'
-  const digits = secret.split('')
+  // 금고 항목 종류 'password' = 결제 비밀번호(2단계 LEGACY_TYPE_MAP: payment_password → password).
+  // 계정에 결제 수단이 여럿이므로 provider 로 어느 것인지 좁힌다
+  const found = deps.vault.getPaymentSecretForFill({
+    accountId: deps.accountId,
+    provider: deps.provider,
+    fieldKey: DEFAULT_FIELD_KEY,
+    ...(deps.jobId === undefined ? {} : { jobId: deps.jobId })
+  })
+  if (found.value === null) return found.reason === 'locked' ? 'locked' : found.reason
+  if (found.value === '') return 'not-found'
+  const digits = found.value.split('')
   // 배치가 불완전하면 누르지 않는다 — 잘못 누르면 계정이 잠긴다
   if (digits.some((d) => deps.layout.digits[d] === undefined)) return 'layout-incomplete'
   for (const d of digits) {

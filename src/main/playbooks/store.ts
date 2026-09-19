@@ -17,6 +17,7 @@ import {
   type PlaybookDto,
   type PlaybookInput
 } from '../../shared/playbook'
+import { normalizeSchedule, type PlaybookSchedule } from '../../shared/schedule'
 
 /** 설정 저장소 중 이 저장소가 쓰는 부분만 (테스트에서 갈아 끼우기 쉽게 좁혀 둔다) */
 export interface PlaybookSettingsAccess {
@@ -87,6 +88,7 @@ export class PlaybookStore {
         triggers,
         instructions,
         enabled: input.enabled,
+        ...(input.schedule === undefined ? {} : { schedule: normalizeSchedule(input.schedule) }),
         updatedAt: now
       }
       this.save([...rows, created])
@@ -94,13 +96,15 @@ export class PlaybookStore {
     }
     const index = rows.findIndex((row) => row.id === input.id)
     if (index < 0) return null
-    // builtin 표식은 사용자 입력으로 바뀌지 않는다(복원 대상 여부가 뒤집히면 안 된다)
+    // builtin 표식은 사용자 입력으로 바뀌지 않는다(복원 대상 여부가 뒤집히면 안 된다).
+    // 예약은 주지 않으면 그대로 둔다 — 편집 폼이 예약 칸을 모르고 저장해도 예약이 날아가지 않는다
     const updated: PlaybookDto = {
       ...rows[index],
       name,
       triggers,
       instructions,
       enabled: input.enabled,
+      ...(input.schedule === undefined ? {} : { schedule: normalizeSchedule(input.schedule) }),
       updatedAt: now
     }
     const next = [...rows]
@@ -129,6 +133,25 @@ export class PlaybookStore {
     else next[index] = fresh
     this.save(next)
     return fresh
+  }
+
+  /**
+   * 예약 설정 한 건만 바꾼다(스케줄러의 자동 일시정지·화면의 일시정지/재개가 쓴다).
+   * 이름·절차는 건드리지 않으므로 편집 중이던 값과 부딪히지 않는다
+   */
+  setSchedule(id: string, schedule: PlaybookSchedule): PlaybookDto | null {
+    const rows = this.list()
+    const index = rows.findIndex((row) => row.id === id)
+    if (index < 0) return null
+    const updated: PlaybookDto = {
+      ...rows[index],
+      schedule: normalizeSchedule(schedule),
+      updatedAt: this.now()
+    }
+    const next = [...rows]
+    next[index] = updated
+    this.save(next)
+    return updated
   }
 
   private save(rows: PlaybookDto[]): PlaybookDto[] {

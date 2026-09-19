@@ -13,9 +13,11 @@ import {
   type CaptureFormat,
   type CaptureShortcuts
 } from './capture'
+import { isDiscordWebhook, isSlackWebhook, isTelegramChatId, isTelegramToken } from './notify'
 import { isSupabaseAnonKey, isSupabaseProjectUrl } from './sync'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 import { playbookListSchema, type PlaybookDto } from './playbook'
+import { RECOMMEND_MAX, type DismissedRecommendation } from './activity-patterns'
 
 // 도구 호출 상한 허용 범위
 export const MIN_TOOL_CALLS = 1
@@ -191,13 +193,36 @@ export const DEFAULT_SETTINGS = {
   // 표를 따로 만들지 않고 설정 한 칸에 담아 기존 설정 동기화 경로를 그대로 탄다
   playbooks: [] as PlaybookDto[],
   // === 자동화 플레이북 끝 ===================================================
+  // === 활동 기록·추천(기기 로컬) ============================================
+  // 활동 기록은 이 PC 에서 일어난 일이고 파일도 userData 안에만 있다 —
+  // SYNCED_SETTING_KEYS 에 넣지 않는다(다른 PC 의 기록과 섞이면 판정이 뒤틀린다)
+  activityRecording: true,
+  // 사용자가 [숨기기] 를 누른 추천 후보. 30일이 지나면 다시 나타난다
+  dismissedRecommendations: [] as DismissedRecommendation[],
+  // === 활동 기록·추천 끝 ====================================================
   // === Supabase 연결(기기 로컬) =============================================
   // 설정 → 계정에서 사용자가 자기 Supabase 프로젝트를 붙여넣는 자리.
   // 기기마다 다를 수 있고 서버에 올릴 이유도 없어 SYNCED_SETTING_KEYS 에 넣지 않는다.
   // anonKey 는 공개용 publishable 키다 — service_role 키는 저장 단계에서 거른다
   syncSupabaseUrl: '',
-  syncSupabaseAnonKey: ''
+  syncSupabaseAnonKey: '',
   // === Supabase 연결 끝 =====================================================
+  // === 알림 연동(기기 로컬) =================================================
+  // 작업이 끝나거나 사람 확인이 필요할 때 메신저로 알린다.
+  // 웹훅 주소·봇 토큰은 이 PC 의 비밀이라 SYNCED_SETTING_KEYS 에 넣지 않는다 —
+  // 다른 PC 로 올려 보낼 이유가 없고, 새는 경로를 하나라도 줄이는 쪽이 낫다
+  notifySlackEnabled: false,
+  notifySlackWebhook: '',
+  notifyDiscordEnabled: false,
+  notifyDiscordWebhook: '',
+  notifyTelegramEnabled: false,
+  notifyTelegramToken: '',
+  notifyTelegramChatId: '',
+  // 사건별 켬/끔(완료·실패·확인 필요). 기본은 셋 다 켬
+  notifyOnDone: true,
+  notifyOnFailed: true,
+  notifyOnAttention: true
+  // === 알림 연동 끝 =========================================================
 }
 
 // 구독 연결 기록 한 칸. account 는 화면 표시용 문자열뿐이고 토큰은 담지 않는다
@@ -339,6 +364,13 @@ export const settingsSchema = z.object({
   // === 캡처 끝 ================================================================
   // === 자동화 플레이북 — 한 칸이라도 깨지면 목록 전체를 비운다(저장소가 내장을 다시 채운다) ===
   playbooks: playbookListSchema.catch(() => []),
+  // === 활동 기록·추천 — 깨진 값은 통째로 비운다(기록은 복구할 가치가 낮다) ====
+  activityRecording: z.boolean().catch(DEFAULT_SETTINGS.activityRecording),
+  dismissedRecommendations: z
+    .array(z.object({ key: z.string().min(1).max(400), at: z.number() }))
+    // 후보 자체가 한 번에 몇 개뿐이라 숨김도 이만큼이면 넉넉하다
+    .max(RECOMMEND_MAX * 20)
+    .catch(() => []),
   // === Supabase 연결 — 형식이 어긋난 값은 빈 문자열로 되돌린다 ================
   syncSupabaseUrl: z
     .string()
@@ -347,8 +379,32 @@ export const settingsSchema = z.object({
   syncSupabaseAnonKey: z
     .string()
     .catch(DEFAULT_SETTINGS.syncSupabaseAnonKey)
-    .transform((v) => (isSupabaseAnonKey(v) ? v.trim() : ''))
+    .transform((v) => (isSupabaseAnonKey(v) ? v.trim() : '')),
   // === Supabase 연결 끝 =======================================================
+  // === 알림 연동 — 형식이 어긋난 주소·토큰은 빈 문자열로 되돌린다 =============
+  notifySlackEnabled: z.boolean().catch(DEFAULT_SETTINGS.notifySlackEnabled),
+  notifySlackWebhook: z
+    .string()
+    .catch(DEFAULT_SETTINGS.notifySlackWebhook)
+    .transform((v) => (isSlackWebhook(v) ? v.trim() : '')),
+  notifyDiscordEnabled: z.boolean().catch(DEFAULT_SETTINGS.notifyDiscordEnabled),
+  notifyDiscordWebhook: z
+    .string()
+    .catch(DEFAULT_SETTINGS.notifyDiscordWebhook)
+    .transform((v) => (isDiscordWebhook(v) ? v.trim() : '')),
+  notifyTelegramEnabled: z.boolean().catch(DEFAULT_SETTINGS.notifyTelegramEnabled),
+  notifyTelegramToken: z
+    .string()
+    .catch(DEFAULT_SETTINGS.notifyTelegramToken)
+    .transform((v) => (isTelegramToken(v) ? v.trim() : '')),
+  notifyTelegramChatId: z
+    .string()
+    .catch(DEFAULT_SETTINGS.notifyTelegramChatId)
+    .transform((v) => (isTelegramChatId(v) ? v.trim() : '')),
+  notifyOnDone: z.boolean().catch(DEFAULT_SETTINGS.notifyOnDone),
+  notifyOnFailed: z.boolean().catch(DEFAULT_SETTINGS.notifyOnFailed),
+  notifyOnAttention: z.boolean().catch(DEFAULT_SETTINGS.notifyOnAttention)
+  // === 알림 연동 끝 ===========================================================
 })
 
 export type Settings = z.infer<typeof settingsSchema>

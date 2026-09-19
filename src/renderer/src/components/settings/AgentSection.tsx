@@ -3,7 +3,9 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Switch } from '@renderer/components/ui/switch'
 import type { PermissionMode } from '@shared/settings'
+import { useRecommendStore } from '@renderer/stores/recommendStore'
 import {
+  SecondaryButton,
   SegmentedGroup,
   SettingsRow,
   SettingsSection,
@@ -19,6 +21,12 @@ export function AgentSection({ settings, update }: SectionProps): React.JSX.Elem
   const { t } = useTranslation()
   // 후속 지시 큐는 아직 저장할 설정 키가 없어 화면 상태로만 둔다(기본 켬)
   const [queueFollowUps, setQueueFollowUps] = useState(true)
+  // 활동 기록 지우기 — 한 번 누르면 버튼 문구를 "지웠습니다" 로 바꿔 두 번 누르지 않게 한다
+  const [cleared, setCleared] = useState(false)
+  const clearHistory = useRecommendStore((s) => s.clearHistory)
+  const clearActivity = (): void => {
+    void clearHistory().then((ok) => setCleared(ok))
+  }
 
   return (
     <>
@@ -73,6 +81,26 @@ export function AgentSection({ settings, update }: SectionProps): React.JSX.Elem
             onCheckedChange={(v) => update({ ocrEnabled: v })}
           />
         </SettingsToggleRow>
+      </SettingsSection>
+
+      <SettingsSection title={t('settingsPage.agent.activityTitle')}>
+        <SettingsToggleRow
+          label={t('settingsPage.agent.activity')}
+          description={t('settingsPage.agent.activityDesc')}
+        >
+          <Switch
+            checked={settings.activityRecording}
+            onCheckedChange={(v) => update({ activityRecording: v })}
+          />
+        </SettingsToggleRow>
+        <SettingsRow
+          label={t('settingsPage.agent.activityClear')}
+          description={t('settingsPage.agent.activityClearDesc')}
+        >
+          <SecondaryButton onClick={clearActivity} disabled={cleared}>
+            {t(cleared ? 'settingsPage.agent.activityCleared' : 'settingsPage.agent.activityClear')}
+          </SecondaryButton>
+        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection title={t('settingsPage.agent.cleanupTitle')}>

@@ -14,6 +14,33 @@
     "collapse": "Collapse sidebar",
     "expand": "Expand sidebar"
   },
+  "tasks": {
+    "title": "Tasks",
+    "desc": "What is running now, what is scheduled, and what has already run — all in one place.",
+    "running": {
+      "title": "Running now",
+      "empty": "Nothing is running right now",
+      "stop": "Stop",
+      "scheduled": "Scheduled run",
+      "steps": "{{n}} tool calls"
+    },
+    "scheduled": {
+      "title": "Scheduled",
+      "empty": "No scheduled tasks yet",
+      "open": "Open in Settings → Automation"
+    },
+    "history": {
+      "title": "History",
+      "empty": "No tasks have run yet",
+      "more": "Show more",
+      "loading": "Loading…"
+    },
+    "source": {
+      "schedule": "Scheduled",
+      "chat": "Manual"
+    },
+    "untitled": "Untitled"
+  },
   "automation": {
     "title": "Automation",
     "desc": "Write down the work you repeat as a playbook, then type its trigger phrase in chat and the AI follows those steps.",
@@ -43,6 +70,79 @@
       "instructions": "Steps",
       "instructionsDesc": "Write the steps the AI should follow, in Markdown.",
       "length": "{{n}} / {{max}} chars"
+    }
+  },
+  "schedule": {
+    "title": "Schedule",
+    "next": "next run {{when}}",
+    "last": "last {{result}} {{when}}",
+    "inherit": "Follow global setting",
+    "inheritDesc": "Leave this empty to use whatever you picked in Settings.",
+    "action": {
+      "runNow": "Run now",
+      "pause": "Pause",
+      "resume": "Resume",
+      "toggle": "Use schedule"
+    },
+    "state": {
+      "off": "No schedule",
+      "paused": "Paused",
+      "waiting": "Waiting",
+      "running": "Running"
+    },
+    "pauseReason": {
+      "manual": "paused by you",
+      "failed": "repeated failures",
+      "ai-disconnected": "AI not connected"
+    },
+    "result": {
+      "ok": "success",
+      "failed": "failure",
+      "skipped": "stopped"
+    },
+    "kind": {
+      "manual": "Manual",
+      "interval": "Interval",
+      "daily": "Daily",
+      "weekly": "Weekly"
+    },
+    "weekday": {
+      "0": "Sun",
+      "1": "Mon",
+      "2": "Tue",
+      "3": "Wed",
+      "4": "Thu",
+      "5": "Fri",
+      "6": "Sat"
+    },
+    "rel": {
+      "now": "any moment",
+      "inMinutes": "in {{minutes}} min",
+      "minutesAgo": "{{minutes}} min ago",
+      "inHours": "in {{hours}} h",
+      "hoursAgo": "{{hours}} h ago",
+      "inDays": "in {{days}} d",
+      "daysAgo": "{{days}} d ago"
+    },
+    "rule": {
+      "manual": "No schedule",
+      "everyHours": "every {{hours}} h",
+      "everyMinutes": "every {{minutes}} min",
+      "daily": "daily at {{at}}",
+      "weekly": "{{days}} at {{at}}"
+    },
+    "field": {
+      "kind": "Kind",
+      "interval": "Interval",
+      "at": "Time",
+      "weekdays": "Days",
+      "model": "Model",
+      "permission": "Permission mode"
+    },
+    "permission": {
+      "read_only": "Read only",
+      "guard": "Confirm",
+      "full": "Automatic"
     }
   },
   "workspace": {
@@ -293,7 +393,9 @@
       "desc": "Enter your master password",
       "placeholder": "Master password",
       "submit": "Unlock",
-      "failed": "Incorrect password"
+      "failed": "Incorrect password",
+      "showPassword": "Show password",
+      "hidePassword": "Hide password"
     },
     "list": {
       "searchPlaceholder": "Search accounts or sites",
@@ -370,6 +472,10 @@
       "copyClearHint": "Cleared from clipboard after 30 seconds",
       "open": "Open",
       "dangerBadge": "Sensitive",
+      "paymentSection": "Payment passwords",
+      "addPayment": "+ Add payment password",
+      "noPayment": "No payment password saved yet",
+      "deleteItem": "Delete",
       "value": "Value",
       "empty": "Select an account or item on the left",
       "auditAction": {
@@ -377,7 +483,9 @@
         "reveal": "Value shown",
         "save": "Saved",
         "import": "Imported",
-        "delete": "Deleted"
+        "delete": "Deleted",
+        "allow": "AI access allowed",
+        "deny": "AI access denied"
       },
       "auditSource": {
         "ai": "AI",
@@ -548,7 +656,18 @@
       "phone": "Phone",
       "passport": "Passport number",
       "idCard": "ID card number",
-      "note": "Note"
+      "note": "Note",
+      "paymentProvider": "Payment method"
+    },
+    "paymentProvider": {
+      "site": "Site's own pay",
+      "toss": "Toss Pay",
+      "kakao": "KakaoPay",
+      "naver": "Naver Pay",
+      "payco": "PAYCO",
+      "samsung": "Samsung Pay",
+      "apple": "Apple Pay",
+      "other": "Other"
     }
   },
   "settingsPage": {
@@ -590,7 +709,9 @@
       "security": "Security",
       "behavior": "Behavior",
       "ai": "AI connection",
-      "automation": "Automation"
+      "automation": "Automation",
+      "keymaster": "Key Master",
+      "notify": "Notifications"
     },
     "general": {
       "searchTitle": "Search",
@@ -627,7 +748,13 @@
       "cleanup": "Auto-close tabs opened by the agent",
       "cleanupDesc": "Close agent-opened tabs after the chosen time",
       "cleanupOff": "Off",
-      "cleanupMinutes": "{{n}} min"
+      "cleanupMinutes": "{{n}} min",
+      "activityTitle": "Activity history",
+      "activity": "Record activity on this PC",
+      "activityDesc": "Spots things you repeat and suggests a schedule. The history stays on this PC and is never synced. Sites are kept as a domain only, instructions only after secrets are stripped.",
+      "activityClear": "Clear history",
+      "activityClearDesc": "Delete every activity history file stored on this PC",
+      "activityCleared": "Cleared"
     },
     "security": {
       "autofillTitle": "Autofill"
@@ -673,6 +800,37 @@
       "cacheDesc": "Keeps up to 10,000 entries on this PC so the same text is not translated twice.",
       "clearCache": "Clear cache",
       "cacheCleared": "Cache cleared"
+    },
+    "notify": {
+      "title": "Notifications",
+      "desc": "Get a ping on Slack, Telegram or Discord when a task finishes",
+      "slack": "Slack",
+      "slackDesc": "Paste a Slack Incoming Webhook URL and we post to that channel",
+      "slackInvalid": "Only URLs starting with https://hooks.slack.com/ are allowed",
+      "discord": "Discord",
+      "discordDesc": "Create a webhook under Channel Settings, Integrations, Webhooks",
+      "discordInvalid": "Only URLs starting with https://discord.com/api/webhooks/ are allowed",
+      "telegram": "Telegram",
+      "telegramDesc": "Create a bot with BotFather, then paste the chat id of your chat with it",
+      "telegramTokenInvalid": "That is not a bot token (digits:letters)",
+      "chatIdInvalid": "Only a number or @channelname is allowed",
+      "use": "Send notifications",
+      "webhookUrl": "Webhook URL",
+      "botToken": "Bot token",
+      "chatId": "Chat id",
+      "change": "Change",
+      "save": "Save",
+      "cancel": "Cancel",
+      "test": "Send a test",
+      "testSending": "Sending…",
+      "testSent": "Sent",
+      "testFailed": "Failed: {{reason}}",
+      "eventsTitle": "What to notify",
+      "eventsDesc": "Passwords and verification codes are never put in a message",
+      "onDone": "Task done",
+      "onFailed": "Task failed",
+      "onAttention": "Needs you",
+      "onAttentionDesc": "CAPTCHA, two-factor, payment password - the moments only you can handle"
     }
   },
   "account": {
@@ -980,6 +1138,28 @@
       "en": "English",
       "ja": "Japanese",
       "zh": "Chinese"
+    }
+  },
+  "logs": {
+    "title": "Logs",
+    "desc": "Key Master activity — which account was filled when, and when AI access was allowed or denied",
+    "empty": "No activity yet",
+    "lockedNote": "Unlock Key Master to see account names",
+    "unknownAccount": "Deleted account",
+    "global": "Global item"
+  },
+  "recommend": {
+    "title": "Suggestions",
+    "desc": "Turn what you repeat into a schedule. Picked by simple rules from this PC history only — no AI call.",
+    "daily": "You ran \"{{label}}\" {{count}} times in the last {{days}} days, usually around {{time}}. Schedule it daily at {{time}}?",
+    "weekly": "You ran \"{{label}}\" {{count}} times in the last {{days}} days, on {{weekday}} around {{time}}. Schedule it every {{weekday}} at {{time}}?",
+    "frequent": "You ran \"{{label}}\" {{count}} times in the last {{days}} days. The times are too scattered to suggest a schedule.",
+    "evidence": "{{count}} times in {{days}} days · last run {{last}}",
+    "failed": "Could not apply it. Check whether the playbook limit has been reached.",
+    "action": {
+      "create": "Create schedule",
+      "savePlaybook": "Save as playbook",
+      "dismiss": "Hide"
     }
   }
 }

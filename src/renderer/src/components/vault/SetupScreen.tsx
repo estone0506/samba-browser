@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { ShieldCheck } from 'lucide-react'
-import { Input } from '@renderer/components/ui/input'
+import { PasswordInput } from './PasswordInput'
 import { Button } from '@renderer/components/ui/button'
 import { useVaultStore } from '@renderer/stores/vaultStore'
 
@@ -44,8 +44,7 @@ export function SetupScreen(): React.JSX.Element {
           <p className="mt-1.5 text-[12.5px] text-[var(--text2)]">{t('vault.setup.desc')}</p>
         </div>
         <div className="flex flex-col gap-2">
-          <Input
-            type="password"
+          <PasswordInput
             autoFocus
             autoComplete="off"
             data-lpignore="true"
@@ -54,8 +53,7 @@ export function SetupScreen(): React.JSX.Element {
             value={pw1}
             onChange={(e) => setPw1(e.target.value)}
           />
-          <Input
-            type="password"
+          <PasswordInput
             autoComplete="off"
             data-lpignore="true"
             spellCheck={false}
