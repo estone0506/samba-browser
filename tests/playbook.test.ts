@@ -110,7 +110,7 @@ describe('러너가 쓰는 조립 순서', () => {
 describe('내장 플레이북', () => {
   it('삼바 미이행 주문 처리 기본값을 만들어 준다', () => {
     const p = builtinPlaybook(BUILTIN_UNFULFILLED_ID, 1234)
-    expect(p?.name).toBe('삼바 미이행 주문 처리')
+    expect(p?.name).toBe('SAMBA 미이행 주문 처리')
     expect(p?.builtin).toBe(true)
     expect(p?.updatedAt).toBe(1234)
   })
@@ -137,7 +137,7 @@ describe('내장 플레이북', () => {
     const text = BUILTIN_PLAYBOOKS[0].instructions
     expect(text).toContain('**배송지는 언제나 새로 입력한다.**')
     expect(text).toContain('**결제하기 직전에는 반드시 사람 확인을 받는다.**')
-    expect(text).toContain('삼바웨이브에 되돌려 적는다.**')
+    expect(text).toContain('SAMBA WAVE에 되돌려 적는다.**')
   })
 
   it('돌려준 트리거 배열은 원본과 공유되지 않는다', () => {

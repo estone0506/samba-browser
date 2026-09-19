@@ -36,10 +36,10 @@
     },
     "field": {
       "name": "이름",
-      "namePlaceholder": "예: 삼바 미이행 주문 처리",
+      "namePlaceholder": "예: SAMBA 미이행 주문 처리",
       "triggers": "트리거 문구",
       "triggersDesc": "채팅에 이 문구가 들어 있으면 플레이북이 발동합니다. 쉼표로 여러 개를 적을 수 있어요.",
-      "triggersPlaceholder": "삼바 미이행, 미이행 주문",
+      "triggersPlaceholder": "SAMBA 미이행, 미이행 주문",
       "instructions": "절차",
       "instructionsDesc": "AI 가 그대로 따를 절차를 마크다운으로 적어 주세요.",
       "length": "{{n}} / {{max}}자"

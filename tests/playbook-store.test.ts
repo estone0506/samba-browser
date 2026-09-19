@@ -146,7 +146,7 @@ describe('기본값 복원', () => {
       enabled: false
     })
     const restored = store.restore(BUILTIN_UNFULFILLED_ID)
-    expect(restored?.name).toBe('삼바 미이행 주문 처리')
+    expect(restored?.name).toBe('SAMBA 미이행 주문 처리')
     expect(restored?.enabled).toBe(true)
     expect(restored?.triggers).toContain('삼바 미이행')
     expect(store.list().filter((p) => p.id === BUILTIN_UNFULFILLED_ID)).toHaveLength(1)
