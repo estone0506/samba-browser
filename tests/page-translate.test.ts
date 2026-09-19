@@ -4,13 +4,17 @@
 import { describe, it, expect } from 'vitest'
 import {
   collectTextNodes,
+  installPageTranslate,
   isTranslatableTextNode,
   mapImageBox,
   ORIG_ATTR,
   overlayFontSize,
   restoreOriginals,
+  runWithLimit,
+  sortByViewportOrder,
   splitBatches,
-  wrapTextNodes
+  wrapTextNodes,
+  type TranslateProgress
 } from '../src/preload/page-translate'
 import {
   TRANSLATE_CONCURRENCY,
@@ -177,5 +181,129 @@ describe('이미지 오버레이 좌표 환산', () => {
     expect(overlayFontSize(4)).toBe(10)
     expect(overlayFontSize(20)).toBe(14)
     expect(overlayFontSize(200)).toBe(28)
+  })
+})
+
+describe('동시 실행 제한', () => {
+  it('동시에 도는 할 일 수가 한도를 넘지 않는다', async () => {
+    let now = 0
+    let peak = 0
+    const order: number[] = []
+    const tasks = Array.from({ length: 9 }, (_, i) => async () => {
+      now += 1
+      peak = Math.max(peak, now)
+      await new Promise((r) => setTimeout(r, 5))
+      order.push(i)
+      now -= 1
+    })
+    await runWithLimit(tasks, 3)
+    expect(peak).toBe(3)
+    expect(order).toHaveLength(9)
+  })
+
+  it('한 할 일이 실패해도 나머지를 끝까지 돌린다', async () => {
+    const done: number[] = []
+    const tasks = [
+      async () => {
+        done.push(0)
+      },
+      async () => {
+        throw new Error('배치 실패')
+      },
+      async () => {
+        done.push(2)
+      }
+    ]
+    await runWithLimit(tasks, 2)
+    expect(done).toEqual([0, 2])
+  })
+
+  it('할 일이 없으면 곧바로 끝난다', async () => {
+    await expect(runWithLimit([], 3)).resolves.toBeUndefined()
+  })
+})
+
+describe('화면 위→아래 정렬', () => {
+  it('위쪽 요소가 먼저 번역되도록 세운다', () => {
+    const items = [
+      { id: 'c', top: 300, left: 0 },
+      { id: 'a', top: 10, left: 0 },
+      { id: 'b', top: 120, left: 0 }
+    ]
+    const sorted = sortByViewportOrder(items, (v) => ({ top: v.top, left: v.left }))
+    expect(sorted.map((v) => v.id)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('같은 높이면 왼쪽부터, 그래도 같으면 원래 순서를 지킨다', () => {
+    const items = [
+      { id: 'right', top: 10, left: 500 },
+      { id: 'left', top: 10, left: 20 },
+      { id: 'same', top: 10, left: 20 }
+    ]
+    const sorted = sortByViewportOrder(items, (v) => ({ top: v.top, left: v.left }))
+    expect(sorted.map((v) => v.id)).toEqual(['left', 'same', 'right'])
+  })
+})
+
+describe('번역 실행 · 진행률 보고', () => {
+  // jsdom 에는 IntersectionObserver 가 없어 설치 코드가 "한 번에 전부" 경로로 간다
+  it('배치를 동시에 띄우고 도착하는 대로 화면에 꽂는다', async () => {
+    document.body.innerHTML = Array.from({ length: 70 }, (_, i) => `<p>source ${i} text</p>`).join(
+      ''
+    )
+    let now = 0
+    let peak = 0
+    const progress: TranslateProgress[] = []
+    const api = installPageTranslate({
+      translate: async (texts) => {
+        now += 1
+        peak = Math.max(peak, now)
+        await new Promise((r) => setTimeout(r, 3))
+        now -= 1
+        return { ok: true, texts: texts.map((t) => `[번역]${t}`) }
+      },
+      progress: (p) => progress.push({ ...p })
+    })
+    await api.run('ko')
+    await new Promise((r) => setTimeout(r, 80))
+    expect(peak).toBeGreaterThan(1)
+    expect(peak).toBeLessThanOrEqual(TRANSLATE_CONCURRENCY)
+    expect(document.body.textContent).toContain('[번역]source 0 text')
+    const last = progress[progress.length - 1]
+    expect(last.total).toBe(70)
+    expect(last.done).toBe(70)
+    expect(last.running).toBe(false)
+    // 다 끝나기 전에도 중간 진행률이 보고된다("번역 중 12/70")
+    expect(progress.some((p) => p.running && p.done > 0 && p.done < p.total)).toBe(true)
+    api.restore()
+  })
+
+  it('실패하면 사유 코드를 진행률에 실어 보낸다', async () => {
+    document.body.innerHTML = '<p>hello</p>'
+    const progress: TranslateProgress[] = []
+    const api = installPageTranslate({
+      translate: async () => ({ ok: false, error: 'translate:needs-ai' }),
+      progress: (p) => progress.push({ ...p })
+    })
+    await api.run('ko')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(progress.some((p) => p.error === 'translate:needs-ai')).toBe(true)
+    expect(document.body.textContent).toContain('hello')
+    api.restore()
+  })
+
+  it('원문 보기는 진행률을 0 으로 되돌린다', async () => {
+    document.body.innerHTML = '<p>hello</p>'
+    const progress: TranslateProgress[] = []
+    const api = installPageTranslate({
+      translate: async (texts) => ({ ok: true, texts: texts.map(() => '안녕') }),
+      progress: (p) => progress.push({ ...p })
+    })
+    await api.run('ko')
+    await new Promise((r) => setTimeout(r, 20))
+    api.restore()
+    const last = progress[progress.length - 1]
+    expect(last).toEqual({ running: false, done: 0, total: 0 })
+    expect(document.body.textContent).toContain('hello')
   })
 })

@@ -8,7 +8,7 @@
 //   - PAGE_IPC.newTabInit/newTabSearch/newTabOpen ← 같은 파일의 IPC 동명 채널
 //   - PAGE_IPC.gesture/gestureConfig ← 같은 파일의 IPC.pageGesture/pageGestureConfig
 //   - GESTURE_ACTION_LABELS 의 키 집합 ← src/shared/gestures.ts 의 GESTURE_ACTIONS
-//   - PAGE_IPC.pageTranslate ← 같은 파일의 IPC.pageTranslate
+//   - PAGE_IPC.pageTranslate/pageTranslateProgress ← 같은 파일의 IPC 동명 채널
 //   - TRANSLATE_MAX_NODES/TRANSLATE_MAX_CHARS/TRANSLATE_CONCURRENCY ← src/shared/translate.ts 의 동명 상수
 //   - PAGE_IPC.captureRegionMode/captureElementRect ← 같은 파일의 IPC 동명 채널
 //   - INTERNAL_PROTOCOL ← src/shared/url.ts 의 INTERNAL_SCHEME + ':'
@@ -39,6 +39,8 @@ export const PAGE_IPC = {
   // 메인이 켜짐 여부와 시퀀스→동작 매핑을 밀어 주는 채널(main → page)
   gestureConfig: 'page:gestureConfig',
   pageTranslate: 'page:translate',
+  // 번역 진행률(page → main). 개수와 오류 코드만 싣고 원문·번역문은 싣지 않는다
+  pageTranslateProgress: 'page:translateProgress',
   // 캡처 영역 선택(요소 단위). 메인이 모드를 켜고, 클릭한 요소 경계만 돌려보낸다
   captureRegionMode: 'capture:regionMode',
   captureElementRect: 'capture:elementRect'

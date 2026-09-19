@@ -130,9 +130,13 @@ installGestureRecognizer({
 const translateApi = installPageTranslate({
   translate: async (texts, lang) => {
     const reply = (await ipcRenderer.invoke(PAGE_IPC.pageTranslate, { lang, texts })) as
-      IpcResult<string[]> | undefined
-    return reply && reply.ok ? reply.data : null
-  }
+      | IpcResult<string[]>
+      | undefined
+    if (!reply) return { ok: false, error: 'translate:failed' }
+    return reply.ok ? { ok: true, texts: reply.data } : { ok: false, error: reply.error }
+  },
+  // 진행률에는 개수와 오류 코드만 담긴다(원문·번역문은 이 채널로 나가지 않는다)
+  progress: (p) => ipcRenderer.send(PAGE_IPC.pageTranslateProgress, p)
 })
 
 // 메인이 격리 월드에서 직접 호출한다(주소창 팝오버 · 이미지 우클릭 메뉴)
