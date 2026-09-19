@@ -133,7 +133,21 @@ export const IPC = {
   phoneKey: 'phone:key',
   phoneUpdated: 'phone:updated', // main → renderer 이벤트(목록·상태)
   phoneAuthWaiting: 'phone:authWaiting', // main → renderer 이벤트(카드 자동 펼침)
-  phoneAuthEvents: 'phone:authEvents' // KPI 목록
+  phoneAuthEvents: 'phone:authEvents', // KPI 목록
+  // --- 사진·영상 캡처 — 파일은 사용자가 고른 폴더에만 저장된다 ----------------
+  captureStill: 'capture:still', // 직접 지정용 정지 이미지(웹뷰 1장)
+  captureRun: 'capture:run', // 방식별 캡처 실행(영역/전체 페이지/전체 화면)
+  captureSaveImage: 'capture:saveImage', // 렌더러가 잘라낸 이미지를 저장
+  captureVideoSource: 'capture:videoSource', // 녹화용 desktopCapturer 소스 + 크롭
+  captureSaveVideo: 'capture:saveVideo', // 녹화 결과(webm) 저장
+  captureCopyImage: 'capture:copyImage', // 저장된 이미지를 클립보드로
+  captureOpenFile: 'capture:openFile',
+  captureOpenFolder: 'capture:openFolder',
+  capturePickDir: 'capture:pickDir', // 저장 폴더 선택 다이얼로그
+  captureShortcut: 'capture:shortcut', // main → renderer 이벤트(Alt+1~6)
+  captureDone: 'capture:done', // main → renderer 이벤트(캡처 완료 → 토스트)
+  captureRegionMode: 'capture:regionMode', // main → page preload(격리 월드) 요소 선택 모드
+  captureElementRect: 'capture:elementRect' // page preload(격리 월드) → main, 전용 게이트
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -250,6 +264,16 @@ export type {
   PhoneScreenChunkDto,
   PhoneScreenModeDto
 } from './phone'
+
+export type {
+  CaptureMode,
+  CaptureFormat,
+  CaptureRect,
+  CaptureShortcuts,
+  CaptureResultDto,
+  CaptureStillDto,
+  CaptureVideoSourceDto
+} from './capture'
 
 export type {
   ChatRole,

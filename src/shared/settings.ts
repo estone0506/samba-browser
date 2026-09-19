@@ -3,6 +3,14 @@ import { AI_PROVIDERS, type AiProviderId, type TaskModels } from './ai'
 import { DEFAULT_DANGER_WORDS, mergeDangerWords } from './danger'
 import { EXTENSION_SOURCES, type ExtensionSource } from './extensions'
 import { DEFAULT_PAYMENT_LIMIT_KRW, type ScreenFps, type ScreenSize } from './phone'
+import {
+  CAPTURE_FORMATS,
+  CAPTURE_MODES,
+  DEFAULT_CAPTURE_SHORTCUTS,
+  mergeCaptureShortcuts,
+  type CaptureFormat,
+  type CaptureShortcuts
+} from './capture'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 
 // 도구 호출 상한 허용 범위
@@ -111,8 +119,19 @@ export const DEFAULT_SETTINGS = {
   // 끊겼을 때 kill-server/start-server 로 1회 자동 복구할지
   phoneAutoReconnect: true,
   // 결제 상한(원). 초과하면 권한 모드와 무관하게 사람 확인을 받는다
-  paymentLimitKrw: DEFAULT_PAYMENT_LIMIT_KRW
+  paymentLimitKrw: DEFAULT_PAYMENT_LIMIT_KRW,
   // === 폰 연동 끝 ===========================================================
+  // === 사진·영상 캡처(3단계 추가분) =========================================
+  // 저장 폴더. 빈 문자열이면 메인이 `다운로드/SAMBA 캡처` 를 만들어 쓴다(기기별 값)
+  captureDir: '',
+  captureFormat: 'png' as CaptureFormat,
+  // 영상 녹화에 마이크 소리를 함께 담을지
+  captureMicrophone: false,
+  // 이미지 저장 직후 클립보드에도 복사할지
+  captureCopyToClipboard: false,
+  // 캡처 단축키 표(설정에서 바꿀 수 있다)
+  captureShortcuts: { ...DEFAULT_CAPTURE_SHORTCUTS } as CaptureShortcuts
+  // === 캡처 끝 ==============================================================
 }
 
 // 손상된 config.json 이어도 앱이 뜨도록 필드마다 catch 로 기본값으로 되돌린다
@@ -198,8 +217,19 @@ export const settingsSchema = z.object({
     .union([z.literal(10), z.literal(15), z.literal(30)])
     .catch(DEFAULT_SETTINGS.phoneScreenFps),
   phoneAutoReconnect: z.boolean().catch(DEFAULT_SETTINGS.phoneAutoReconnect),
-  paymentLimitKrw: z.number().int().min(0).catch(DEFAULT_SETTINGS.paymentLimitKrw)
+  paymentLimitKrw: z.number().int().min(0).catch(DEFAULT_SETTINGS.paymentLimitKrw),
   // === 폰 연동 끝 =============================================================
+  // === 사진·영상 캡처 — 기기별 값이라 동기화하지 않는다 ========================
+  captureDir: z.string().catch(DEFAULT_SETTINGS.captureDir),
+  captureFormat: z.enum(CAPTURE_FORMATS).catch(DEFAULT_SETTINGS.captureFormat),
+  captureMicrophone: z.boolean().catch(DEFAULT_SETTINGS.captureMicrophone),
+  captureCopyToClipboard: z.boolean().catch(DEFAULT_SETTINGS.captureCopyToClipboard),
+  // 표기가 깨진 항목만 기본 단축키로 되돌린다(전체를 버리지 않는다)
+  captureShortcuts: z
+    .record(z.enum(CAPTURE_MODES), z.string())
+    .catch({ ...DEFAULT_CAPTURE_SHORTCUTS })
+    .transform((v): CaptureShortcuts => mergeCaptureShortcuts(v))
+  // === 캡처 끝 ================================================================
 })
 
 export type Settings = z.infer<typeof settingsSchema>
