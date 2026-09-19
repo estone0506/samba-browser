@@ -474,20 +474,37 @@ ${handoffToolResult(result)}`
 
   const getPage = tool(
     'get_page',
-    'Read the current page: URL, title, numbered interactive elements, visible text.',
-    {},
-    () =>
-      guard('페이지 읽기', async () => {
+    'Read the current page: URL, title, numbered interactive elements, visible text. ' +
+      'At most 150 elements are listed; pass query to list only the ones matching that text.',
+    { query: z.string().optional() },
+    ({ query }) =>
+      guard(query ? `페이지 읽기: ${query}` : '페이지 읽기', async () => {
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
         await pageBridge.waitForLoad(tab)
-        const snapshot = serializeSnapshot(await pageBridge.snapshot(tab))
+        const snapshot = serializeSnapshot(await pageBridge.snapshot(tab, query))
         // 사람의 추가 확인이 필요하면 **알리기만** 한다 — 읽기 도구가 최장 10분 막히면
         // 모델이 다음 수를 두지 못한다. 실제 넘김·대기는 login 같은 행동 도구가 건다
         const notice = await captchaNotice(tab)
         if (!notice) return snapshot
         return `${notice}
 ${snapshot}`
+      })
+  )
+
+  // 나열 상한(150개) 때문에 필요한 버튼이 목록에서 빠졌을 때 되찾는 통로.
+  // registry 는 보이는 요소를 전부 들고 있으므로 150 이후 id 도 click/type 이 된다
+  const findElements = tool(
+    'find_elements',
+    "Search interactive elements by visible text/name/href when read_page's list is truncated; returns matching element ids to use with click/type",
+    { query: z.string() },
+    ({ query }) =>
+      guard(`요소 찾기: ${query}`, async () => {
+        const tab = activeOr(ctx)
+        if (!tab) return 'no active tab'
+        const snapshot = await pageBridge.snapshot(tab, query)
+        if (snapshot.elements.length === 0) return `no element matches "${query}"`
+        return serializeSnapshot({ ...snapshot, text: '' })
       })
   )
 
@@ -952,6 +969,7 @@ ${snapshot}`
     version: '0.1.0',
     tools: [
       getPage,
+      findElements,
       screenshot,
       createOcrTool(ctx),
       navigate,
@@ -975,6 +993,7 @@ ${snapshot}`
 
 export const SAMBA_TOOL_NAMES = [
   'get_page',
+  'find_elements',
   'screenshot',
   'ocr',
   'navigate',

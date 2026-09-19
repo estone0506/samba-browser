@@ -74,28 +74,86 @@ function labelOf(el: HTMLElement): string {
   return ''
 }
 
-export function buildSnapshot(): PageSnapshot {
+/** 요소 하나를 스냅샷 항목으로 만든다(id 는 registry 순서 그대로) */
+function describeElement(el: HTMLElement, id: number): PageElement {
+  const input = el as HTMLInputElement
+  const inputType = el.tagName === 'INPUT' ? input.type : undefined
+  return {
+    id,
+    tag: el.tagName.toLowerCase(),
+    role: roleOf(el),
+    text: labelOf(el),
+    name: input.name || undefined,
+    href: (el as HTMLAnchorElement).getAttribute?.('href') || undefined,
+    inputType,
+    isSecret: inputType === 'password'
+  }
+}
+
+/** 지금 화면(뷰포트) 안에 들어와 있는 요소인가. 좌표를 못 구하면 false(문서 순으로 밀린다) */
+function isInViewport(el: HTMLElement): boolean {
+  const rect = el.getBoundingClientRect?.()
+  if (!rect) return false
+  if (rect.width === 0 && rect.height === 0) return false
+  const height = window.innerHeight || document.documentElement.clientHeight || 0
+  const width = window.innerWidth || document.documentElement.clientWidth || 0
+  return rect.bottom > 0 && rect.right > 0 && rect.top < height && rect.left < width
+}
+
+/** 검색어가 요소의 라벨·name·href·placeholder 에 들어 있는가(대소문자 무시 부분일치) */
+function matchesQuery(el: HTMLElement, item: PageElement, query: string): boolean {
+  const haystack = [
+    item.text,
+    item.name ?? '',
+    item.href ?? '',
+    el.getAttribute('placeholder') ?? '',
+    el.getAttribute('aria-label') ?? '',
+    el.getAttribute('value') ?? ''
+  ]
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(query)
+}
+
+export interface SnapshotOptions {
+  /** 주면 라벨·name·href·placeholder 가 부분일치하는 요소만 나열한다(id 는 그대로) */
+  query?: string
+}
+
+/**
+ * 페이지 스냅샷.
+ *
+ * registry(= click/type 이 쓰는 id 표)에는 **보이는 요소를 전부** 담는다 —
+ * 150개로 잘라 버리면 뒤쪽 버튼(사이즈 선택·장바구니)을 영영 누를 수 없다.
+ * 나열(elements)만 MAX_ELEMENTS 개로 자르고, 기본 순서는 "뷰포트 안 먼저, 그다음 문서 순"이다.
+ * query 를 주면 일치하는 요소만 원래 id 그대로 돌려준다(find_elements).
+ */
+export function buildSnapshot(options: SnapshotOptions = {}): PageSnapshot {
   const all = Array.from(document.querySelectorAll<HTMLElement>(SELECTOR)).filter(isVisible)
-  registry = all.slice(0, MAX_ELEMENTS)
-  const elements: PageElement[] = registry.map((el, i) => {
-    const input = el as HTMLInputElement
-    const inputType = el.tagName === 'INPUT' ? input.type : undefined
-    return {
-      id: i + 1,
-      tag: el.tagName.toLowerCase(),
-      role: roleOf(el),
-      text: labelOf(el),
-      name: input.name || undefined,
-      href: (el as HTMLAnchorElement).getAttribute?.('href') || undefined,
-      inputType,
-      isSecret: inputType === 'password'
-    }
-  })
+  // id 는 문서 순서로 매기고 registry 에는 전부 남긴다(나열 순서가 바뀌어도 id 는 안정적이다)
+  registry = all
+  const described = all.map((el, i) => describeElement(el, i + 1))
+  const query = options.query?.trim().toLowerCase()
+  let picked: PageElement[]
+  let total: number
+  if (query) {
+    const hits = described.filter((item, i) => matchesQuery(all[i], item, query))
+    total = hits.length
+    picked = hits.slice(0, MAX_ELEMENTS)
+  } else {
+    // 지금 화면에 보이는 것부터 — 모델이 필요한 버튼을 먼저 만나게 한다
+    const inView: PageElement[] = []
+    const rest: PageElement[] = []
+    described.forEach((item, i) => (isInViewport(all[i]) ? inView : rest).push(item))
+    total = described.length
+    picked = inView.concat(rest).slice(0, MAX_ELEMENTS)
+  }
   return {
     url: location.href,
     title: document.title,
     text: (document.body.innerText || document.body.textContent || '').replace(/\s+/g, ' ').trim(),
-    elements
+    elements: picked,
+    total
   }
 }
 

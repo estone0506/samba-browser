@@ -15,6 +15,9 @@ export interface PageSnapshot {
   title: string
   text: string
   elements: PageElement[]
+  // 페이지에서 보이는 상호작용 요소 전체 개수(나열은 MAX_ELEMENTS 개로 자른다).
+  // 잘렸다는 사실을 모델이 알아야 find_elements 로 되찾을 수 있다
+  total?: number
 }
 
 /**
@@ -44,6 +47,17 @@ function formatElement(e: PageElement): string {
   return parts.join(' ')
 }
 
+// 나열이 잘렸을 때 모델에게 되찾는 방법을 알려 준다
+function truncationNote(s: PageSnapshot): string[] {
+  const shown = Math.min(s.elements.length, MAX_ELEMENTS)
+  const total = s.total ?? shown
+  if (total <= shown) return []
+  return [
+    `… ${total - shown} more elements not listed. ` +
+      'Call find_elements with the text you are looking for to get their ids.'
+  ]
+}
+
 export function serializeSnapshot(s: PageSnapshot): string {
   const lines = [
     `URL: ${s.url}`,
@@ -51,6 +65,7 @@ export function serializeSnapshot(s: PageSnapshot): string {
     '',
     'INTERACTIVE ELEMENTS:',
     ...s.elements.slice(0, MAX_ELEMENTS).map(formatElement),
+    ...truncationNote(s),
     '',
     'PAGE TEXT:',
     s.text.slice(0, MAX_TEXT_CHARS)

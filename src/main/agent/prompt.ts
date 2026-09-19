@@ -28,6 +28,7 @@ ${effortLine(effort)}
 
 RULES
 - Always call get_page first to see the current page. Elements are numbered [n]. Use those numbers for click/type/select.
+- If the element you need is not in the list (it shows at most 150), call find_elements with its text (e.g. '장바구니', '255').
 - After navigate/click/type, the page may change: call get_page again before the next action.
 - Never type into fields marked (SECRET). Tell the user to enter it themselves.
 - If you need information that get_page's text cannot give you (an image, a captcha, a chart, or layout), call screenshot to see the page directly. Password input fields appear only as dots in the screenshot.
