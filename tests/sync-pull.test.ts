@@ -10,7 +10,12 @@ import { VaultService } from '../src/main/vault/service'
 import { SyncOutbox, createOutboxRecorder, settingUpdatedAtKey } from '../src/main/sync/outbox'
 import { SyncLocal } from '../src/main/sync/local'
 import { pushAll, type PushDeps, type SettingsAccess } from '../src/main/sync/push'
-import { pullAll, pullCursorKey } from '../src/main/sync/pull'
+import {
+  pullAll,
+  pullCursorKey,
+  legacyTableCursorKey,
+  PULL_CURSOR_KEY
+} from '../src/main/sync/pull'
 import { TOMBSTONE_TTL_MS } from '../src/main/sync/merge'
 import { vaultSyncAad } from '../src/main/sync/mappers'
 import { encrypt } from '../src/main/vault/crypto'
@@ -197,7 +202,7 @@ describe('pullAll', () => {
 
     expect(result.applied).toBe(0)
     expect(local.vaultItemIdByRemote('item-2')).toBeNull()
-    expect(local.getStateNumber(pullCursorKey('vault_items'))).toBeNull()
+    expect(local.getStateNumber(pullCursorKey(1, 'vault_items'))).toBeNull()
   })
 
   it('잠금 중에 다른 표를 받아도, 해제 후 그 구간의 금고 행이 내려온다', async () => {
@@ -210,8 +215,8 @@ describe('pullAll', () => {
     expect(local.accountIdByRemote('acc-1')).not.toBeNull()
     expect(local.vaultItemIdByRemote('item-2')).toBeNull()
     // 계정 표의 커서만 전진하고, 금고 표의 커서는 그대로다
-    expect(local.getStateNumber(pullCursorKey('accounts'))).toBe(9_000_000)
-    expect(local.getStateNumber(pullCursorKey('vault_items'))).toBeNull()
+    expect(local.getStateNumber(pullCursorKey(1, 'accounts'))).toBe(9_000_000)
+    expect(local.getStateNumber(pullCursorKey(1, 'vault_items'))).toBeNull()
 
     await vault.unlock(MASTER)
     await pullAll(deps)
@@ -219,7 +224,67 @@ describe('pullAll', () => {
     const restored = local.vaultItemIdByRemote('item-2')
     expect(restored).not.toBeNull()
     expect(local.vaultItemForSync(restored!)?.label).toBe('메모')
-    expect(local.getStateNumber(pullCursorKey('vault_items'))).toBe(2_000_000)
+    expect(local.getStateNumber(pullCursorKey(1, 'vault_items'))).toBe(2_000_000)
+  })
+
+  it('옛 DB 의 단일 커서(비0)를 표별 커서가 그대로 이어받는다', async () => {
+    // C2 — 2b 초기에는 커서가 하나였다. 그 값이 0 이 아닐 때 새 커서가 0 부터 다시 읽으면
+    // 이미 본 구간을 통째로 다시 받는다(반대로 승계가 없으면 누락이 난다)
+    local.setStateNumber(PULL_CURSOR_KEY, 5_000_000)
+    // 옛 커서보다 오래된 행은 다시 내려오지 않는다
+    backend.seed('accounts_sync', [
+      accountRow({ id: 'acc-old', updated_at: new Date(4_000_000).toISOString() })
+    ])
+    backend.seed('bookmarks_sync', [
+      bookmarkRow({ id: 'bm-new', updated_at: new Date(6_000_000).toISOString() })
+    ])
+
+    const result = await pullAll(deps)
+
+    expect(local.accountIdByRemote('acc-old')).toBeNull()
+    expect(local.bookmarkIdByRemote('bm-new')).not.toBeNull()
+    expect(result.applied).toBe(1)
+    // 승계 이후에는 (작업공간, 표) 커서에만 적힌다
+    expect(local.getStateNumber(pullCursorKey(1, 'accounts'))).toBe(5_000_000)
+    expect(local.getStateNumber(pullCursorKey(1, 'bookmarks'))).toBe(6_000_000)
+  })
+
+  it('작업공간 축이 없던 표별 커서도 이어받는다', async () => {
+    local.setState(legacyTableCursorKey('bookmarks'), '5000000')
+    backend.seed('bookmarks_sync', [
+      bookmarkRow({ id: 'bm-old', updated_at: new Date(4_000_000).toISOString() })
+    ])
+
+    await pullAll(deps)
+
+    expect(local.bookmarkIdByRemote('bm-old')).toBeNull()
+    expect(local.getStateNumber(pullCursorKey(1, 'bookmarks'))).toBe(5_000_000)
+  })
+
+  it('커서는 작업공간마다 따로 센다', async () => {
+    // I2 — 커서에 작업공간 축이 없으면, 1번에서 커서가 T 까지 간 뒤 2번으로 옮겼을 때
+    // 2번의 updated_at ≤ T 인 행이 영영 내려오지 않는다
+    backend.seed('bookmarks_sync', [
+      bookmarkRow({ id: 'bm-ws1', updated_at: new Date(9_000_000).toISOString() })
+    ])
+    await pullAll(deps)
+    expect(local.getStateNumber(pullCursorKey(1, 'bookmarks'))).toBe(9_000_000)
+
+    // 2번 작업공간 — 더 오래된 행이지만 커서가 따로라 내려온다
+    const ws2: PushDeps = { ...deps, workspace: () => ({ localId: 2, remoteId: 'ws-2' }) }
+    backend.seed('bookmarks_sync', [
+      bookmarkRow({
+        id: 'bm-ws2',
+        workspace_id: 'ws-2',
+        url: 'https://ws2.example',
+        updated_at: new Date(3_000_000).toISOString()
+      })
+    ])
+
+    await pullAll(ws2)
+
+    expect(local.bookmarkIdByRemote('bm-ws2')).not.toBeNull()
+    expect(local.getStateNumber(pullCursorKey(2, 'bookmarks'))).toBe(3_000_000)
   })
 
   it('비기본 작업공간에서도 내려받은 행이 보인다', async () => {
