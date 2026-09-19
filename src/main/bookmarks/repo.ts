@@ -372,9 +372,12 @@ export class BookmarkRepo {
         .all()
         .map((r) => r.id)
     )
-    for (const linkId of linkIds) this.record(linkId, 'delete')
 
+    // 기록과 삭제를 같은 트랜잭션에 둔다 — 예전에는 기록이 트랜잭션 밖에 있어, 삭제가
+    // 실패하면 "지우지도 않았는데 삭제 표식만 올라가" 다른 PC 의 북마크가 사라졌다
     this.d.transaction(() => {
+      // 표식은 행이 살아 있을 때만 뜰 수 있다(원격 표의 url·title 이 NOT NULL)
+      for (const linkId of linkIds) this.record(linkId, 'delete')
       for (const folderId of idsToRemove) {
         this.d.delete(bookmarks).where(eq(bookmarks.folderId, folderId)).run()
       }

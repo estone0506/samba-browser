@@ -28,13 +28,22 @@ export interface PullResult {
 }
 
 /**
- * 2b 초기의 단일 커서. 지금은 표별 커서로 나뉘었고, 이 값은 표별 커서가 아직 없는
+ * 2b 초기의 단일 커서. 지금은 (작업공간, 표) 별 커서로 나뉘었고, 이 값은 새 커서가 아직 없는
  * 옛 DB 의 출발점으로만 읽는다(더 이상 쓰지 않는다)
  */
 export const PULL_CURSOR_KEY = 'pullCursor'
 
-/** 다음 풀에서 이 표를 어디부터 읽을지(원격 updated_at 의 최대값) */
-export function pullCursorKey(table: PullTable): string {
+/**
+ * 다음 풀에서 이 (작업공간, 표) 를 어디부터 읽을지(원격 updated_at 의 최대값).
+ * 커서에 작업공간 축이 없으면, A 에서 커서가 T 까지 전진한 뒤 B 로 옮겼을 때
+ * B 의 updated_at ≤ T 인 행이 영영 내려오지 않는다
+ */
+export function pullCursorKey(workspaceLocalId: number, table: PullTable): string {
+  return `pullCursor:${workspaceLocalId}:${table}`
+}
+
+/** 작업공간 축이 없던 시절의 표별 커서 키(옛 DB 승계용) */
+export function legacyTableCursorKey(table: PullTable): string {
   return `pullCursor:${table}`
 }
 
@@ -53,20 +62,24 @@ type Seen = { updatedAt: number }[] | null
 
 export async function pullAll(deps: PullDeps): Promise<PullResult> {
   // 내려받은 행에 지금 작업공간을 찍어 둔다 — 그러지 않으면 비기본 작업공간에서 보이지 않는다
-  const local = new SyncLocal(deps.db, deps.workspace().localId)
+  const workspaceLocalId = deps.workspace().localId
+  const local = new SyncLocal(deps.db, workspaceLocalId)
   const result: PullResult = { applied: 0, conflicts: 0, pruned: 0 }
-  // 표별 커서가 아직 없는 옛 DB 는 단일 커서 자리에서 이어 간다
+  // 단일 커서만 있던 옛 DB 는 그 자리에서 이어 간다
   const legacy = local.getStateNumber(PULL_CURSOR_KEY) ?? 0
 
   const step = async (table: PullTable, fn: (since: number) => Promise<Seen>): Promise<void> => {
-    const stored = local.getStateNumber(pullCursorKey(table))
-    const since = stored ?? legacy
+    const key = pullCursorKey(workspaceLocalId, table)
+    // 승계 순서: (작업공간, 표) → 표만 있던 커서 → 단일 커서
+    const own = local.getStateNumber(key)
+    const since = own ?? local.getStateNumber(legacyTableCursorKey(table)) ?? legacy
     const seen = await fn(since)
     // 건너뛴 표는 커서를 두고 간다 — 다음 주기에 같은 구간을 다시 본다
     if (seen === null) return
     let next = since
     for (const row of seen) if (row.updatedAt > next) next = row.updatedAt
-    if (next > since || stored === null) local.setStateNumber(pullCursorKey(table), next)
+    // 옛 키에서 물려받았으면 값이 그대로여도 새 키에 한 번 적어 둔다(승계 완료)
+    if (next > since || own === null) local.setStateNumber(key, next)
   }
 
   await step('accounts', (since) => pullAccounts(deps, local, since, result))

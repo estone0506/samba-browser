@@ -51,6 +51,15 @@ export function runMigrations(db: SqlJsDatabase): void {
       db.run('COMMIT')
     } catch (e: unknown) {
       db.run('ROLLBACK')
+      // 선택 마이그레이션은 실패해도 앱을 세우지 않는다. 적용됨으로 기록하지도 않아
+      // 다음 기동에서 다시 시도한다(그 사이에도 앱은 옛 스키마로 정상 동작한다)
+      if (migration.optional) {
+        console.error(
+          `마이그레이션 ${migration.tag} 적용 실패(건너뜀)`,
+          e instanceof Error ? e.message : String(e)
+        )
+        continue
+      }
       throw e
     }
   }

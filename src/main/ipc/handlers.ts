@@ -10,7 +10,6 @@ import {
   type WebContents
 } from 'electron'
 import { join } from 'node:path'
-import { writeFile } from 'node:fs/promises'
 import * as os from 'node:os'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import { defaultTabUrl } from '../../shared/settings'
@@ -20,7 +19,7 @@ import { setOcrEnabled } from '../agent/tools-ocr'
 import { AgentRunner } from '../agent/runner'
 import type { Db } from '../db/client'
 import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vault/service'
-import { exportVault, type ExportRequest } from '../vault/export'
+import { exportVault, writeOwnerOnlyFile, type ExportRequest } from '../vault/export'
 import { ImportService, type ImportDialogs } from '../import/service'
 import { VaultCaptureGate } from './vault-capture'
 import { watchLoginSuccess } from './login-watch'
@@ -44,7 +43,8 @@ import { AuthService } from '../sync/auth'
 import { hasSupabaseEnv } from '../sync/env'
 import { createSessionStore } from '../sync/session-store'
 import { createSupabaseBackend } from '../sync/supabase-backend'
-import { SyncConnection, workspaceRemoteId } from '../sync/connect'
+import { SyncConnection } from '../sync/connect'
+import { workspaceRemoteId } from '../sync/workspace-id'
 import type { DeviceService } from '../sync/devices'
 import { WorkspaceService } from '../workspace/service'
 import { workspaceShortcutIndex } from '../workspace/shortcut'
@@ -251,9 +251,8 @@ export function registerIpc(
           if (result.canceled || !result.filePath) return undefined
           return result.filePath
         },
-        // 평문이 담기는 파일이다 — 만들 때부터 소유자만 읽을 수 있게 한다(0o600)
-        writeFile: (filePath, content) =>
-          writeFile(filePath, content, { encoding: 'utf8', mode: 0o600 })
+        // 평문이 담기는 파일이다 — 소유자만 읽을 수 있게 한다(0o600)
+        writeFile: (filePath, content) => writeOwnerOnlyFile(filePath, content)
       },
       req
     )
@@ -597,10 +596,11 @@ export function registerIpc(
     vault,
     settings,
     bookmarks: importService,
-    // 주기마다 다시 불린다 — 작업공간을 바꿔도 다음 주기부터 새 uuid 로 올라간다
+    // 주기마다 다시 불린다 — 작업공간을 바꿔도 다음 주기부터 새 uuid 로 올라간다.
+    // 기본 작업공간만 기기 간 공유 대상이라 고정 uuid 를 쓴다(2b 범위)
     workspace: () => {
-      const localId = workspace.activeId()
-      return { localId, remoteId: workspaceRemoteId(db, localId) }
+      const scope = workspace.scope()
+      return { localId: scope.id, remoteId: workspaceRemoteId(db, scope.id, scope.isDefault) }
     },
     device: {
       hostname: () => os.hostname(),

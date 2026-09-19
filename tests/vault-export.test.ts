@@ -9,8 +9,10 @@ import {
   buildCsv,
   buildJson,
   exportVault,
+  writeOwnerOnlyFile,
   type ExportDeps,
-  type ExportRow
+  type ExportRow,
+  type OwnerOnlyFs
 } from '../src/main/vault/export'
 import { parsePasswordCsv } from '../src/main/import/passwords-csv'
 import { DEFAULT_SETTINGS, type Settings } from '../src/shared/settings'
@@ -257,5 +259,41 @@ describe('VaultService.verifyMaster', () => {
     expect(await vault.verifyMaster('nope')).toBe(false)
     vault.lock()
     expect(await vault.verifyMaster(MASTER)).toBe(false)
+  })
+})
+
+describe('writeOwnerOnlyFile', () => {
+  // New-M4 — writeFile 의 mode 는 파일을 새로 만들 때만 적용된다.
+  // 이미 있는 파일에 덮어쓰면 예전 권한이 남아, 평문 파일이 남에게 읽힐 수 있다
+  function makeFs(): OwnerOnlyFs & { calls: string[]; modes: number[] } {
+    const calls: string[] = []
+    const modes: number[] = []
+    return {
+      calls,
+      modes,
+      writeFile: async (_path, _content, options) => {
+        calls.push('write')
+        modes.push(options.mode)
+      },
+      chmod: async (_path, mode) => {
+        calls.push('chmod')
+        modes.push(mode)
+      }
+    }
+  }
+
+  it('쓰고 나서 권한을 0o600 으로 다시 조인다', async () => {
+    const fs = makeFs()
+    await writeOwnerOnlyFile('C:/tmp/export.csv', '내용', fs)
+    expect(fs.calls).toEqual(['write', 'chmod'])
+    expect(fs.modes).toEqual([0o600, 0o600])
+  })
+
+  it('권한 변경이 실패해도 내보내기를 실패시키지 않는다', async () => {
+    const fs = makeFs()
+    fs.chmod = async () => {
+      throw new Error('권한 변경 불가')
+    }
+    await expect(writeOwnerOnlyFile('C:/tmp/export.csv', '내용', fs)).resolves.toBeUndefined()
   })
 })

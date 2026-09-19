@@ -8,6 +8,7 @@
 //
 // Electron 의존성은 주입받는다(ExportDeps) — 테스트에서 파일 쓰기·다이얼로그를 대체한다.
 
+import { chmod, writeFile } from 'node:fs/promises'
 import { DEFAULT_FIELD_KEY } from './fields'
 import type {
   ExportFormat,
@@ -161,4 +162,41 @@ export async function exportVault(deps: ExportDeps, req: ExportRequest): Promise
 
   deps.vault.logAudit('export', 'user')
   return { itemCount, filePath }
+}
+
+/** writeOwnerOnlyFile 이 쓰는 파일 조작(테스트에서 대체한다) */
+export interface OwnerOnlyFs {
+  writeFile: (
+    filePath: string,
+    content: string,
+    options: { encoding: 'utf8'; mode: number }
+  ) => Promise<void>
+  chmod: (filePath: string, mode: number) => Promise<void>
+}
+
+/** 소유자만 읽고 쓸 수 있는 권한 */
+const OWNER_ONLY_MODE = 0o600
+
+/**
+ * 평문이 담기는 파일을 소유자 전용 권한으로 쓴다.
+ *
+ * writeFile 의 mode 는 **파일을 새로 만들 때만** 적용된다 — 이미 있는 파일에 덮어쓰면
+ * 예전 권한(예: 0o644)이 그대로 남는다. 그래서 쓴 뒤에 chmod 로 한 번 더 조인다.
+ * Windows 처럼 POSIX 권한이 없는 곳에서는 chmod 가 의미가 없거나 실패할 수 있는데,
+ * 그 때문에 내보내기 자체를 실패시키지는 않는다(파일은 이미 사용자가 고른 자리에 있다)
+ */
+export async function writeOwnerOnlyFile(
+  filePath: string,
+  content: string,
+  fs: OwnerOnlyFs = { writeFile, chmod }
+): Promise<void> {
+  await fs.writeFile(filePath, content, { encoding: 'utf8', mode: OWNER_ONLY_MODE })
+  try {
+    await fs.chmod(filePath, OWNER_ONLY_MODE)
+  } catch (e: unknown) {
+    console.warn(
+      '내보내기 파일 권한을 조이지 못했습니다',
+      e instanceof Error ? e.message : String(e)
+    )
+  }
 }

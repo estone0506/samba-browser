@@ -253,7 +253,10 @@ export class VaultRepo {
           urls: input.urls ? JSON.stringify(input.urls) : existing.urls,
           agentAccess: input.agentAccess ?? existing.agentAccess,
           tags: input.tags ? JSON.stringify(input.tags) : existing.tags,
-          updatedAt: now
+          updatedAt: now,
+          // 원격에서 지워졌던 계정(tombstone)을 다시 저장하면 되살린다 — 표식을 지우지 않으면
+          // 저장은 성공했는데 목록·피커 어디에도 30일 동안 나타나지 않는다
+          deletedAt: null
         })
         .where(eq(accounts.id, existing.id))
         .run()
@@ -292,7 +295,8 @@ export class VaultRepo {
     const rows = this.d
       .select({ accountId: vaultItems.accountId, type: vaultItems.type })
       .from(vaultItems)
-      .where(isNull(vaultItems.deletedAt))
+      // 다른 작업공간의 항목이 계정 목록의 타입 배지로 새어 나오지 않게 범위를 건다
+      .where(and(isNull(vaultItems.deletedAt), this.scopeWhere(vaultItems.workspaceId)))
       .all()
     const map = new Map<number, VaultItemType[]>()
     for (const row of rows) {

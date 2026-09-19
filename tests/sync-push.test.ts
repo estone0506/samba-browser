@@ -240,4 +240,33 @@ describe('pushAll', () => {
     await expect(pushAll(deps)).rejects.toBeInstanceOf(AuthExpiredError)
     expect(outbox.count()).toBe(1)
   })
+
+  it('전환 전에 쌓인 변경은 원래 작업공간의 uuid 로 올라간다', async () => {
+    // New-I3 — 예전에는 푸시 시점의 활성 작업공간 uuid 를 모든 대기 행에 찍어,
+    // 1번에서 만든 계정이 2번 작업공간의 행으로 올라갔다
+    const WS2 = '00000000-0000-4000-8000-00000000ws02'
+    new SyncLocal(db).setState('workspace:1:remoteId', WORKSPACE)
+    vault.setOutboxRecorder(createOutboxRecorder(db, outbox, () => 1))
+    vault.upsertAccount({ host: 'old.example', username: 'old' })
+    // 아직 보내지 못한 채 2번 작업공간으로 옮겼다
+    const switched: PushDeps = { ...deps, workspace: () => ({ localId: 2, remoteId: WS2 }) }
+    vault.setWorkspaceScope({ id: 2, isDefault: false })
+    vault.setOutboxRecorder(createOutboxRecorder(db, outbox, () => 2))
+    vault.upsertAccount({ host: 'new.example', username: 'new' })
+
+    await pushAll(switched)
+
+    const rows = backend.rows('accounts_sync')
+    expect(rows.find((r) => r.host === 'old.example')?.workspace_id).toBe(WORKSPACE)
+    expect(rows.find((r) => r.host === 'new.example')?.workspace_id).toBe(WS2)
+  })
+
+  it('작업공간을 모르는 옛 행은 활성 작업공간으로 올린다', async () => {
+    vault.upsertAccount({ host: 'legacy.example', username: 'me' })
+    expect(outbox.pending()[0].workspaceId).toBeNull()
+
+    await pushAll(deps)
+
+    expect(backend.rows('accounts_sync')[0].workspace_id).toBe(WORKSPACE)
+  })
 })

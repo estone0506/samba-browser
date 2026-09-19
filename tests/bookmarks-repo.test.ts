@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { openDatabase, type Db } from '../src/main/db/client'
+import { bookmarks } from '../src/main/db/schema'
 import { BookmarkRepo } from '../src/main/bookmarks/repo'
 import { SyncOutbox, createOutboxRecorder } from '../src/main/sync/outbox'
 
@@ -151,6 +152,30 @@ describe('BookmarkRepo', () => {
         expect(row.payload).toBeTruthy()
         expect(JSON.parse(row.payload!)).toMatchObject({ url: expect.any(String) })
       }
+    })
+
+    it('삭제가 실패하면 삭제 표식도 남지 않는다', () => {
+      // New-M2 — 기록이 트랜잭션 밖에 있으면 "지우지도 않았는데 표식만 올라가"
+      // 다른 PC 의 북마크가 사라진다
+      const outbox = new SyncOutbox(db)
+      repo.setOutboxRecorder(createOutboxRecorder(db, outbox))
+      const folder = repo.createFolder(null, '부모')
+      repo.createLink(folder, '링크', 'https://a.example.com')
+
+      const original = db.drizzle.delete.bind(db.drizzle)
+      const spy = vi
+        .spyOn(db.drizzle, 'delete')
+        .mockImplementation((table: Parameters<typeof original>[0]) => {
+          if (table === bookmarks) throw new Error('삭제 실패')
+          return original(table)
+        })
+      expect(() => repo.removeFolder(folder)).toThrow('삭제 실패')
+      spy.mockRestore()
+
+      expect(outbox.pendingFor('bookmarks').filter((r) => r.op === 'delete')).toHaveLength(0)
+      // 폴더·링크도 그대로 남아 있다(전부 되돌아갔다)
+      expect(repo.tree().folders).toHaveLength(1)
+      expect(repo.tree().folders[0].links).toHaveLength(1)
     })
   })
 

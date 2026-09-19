@@ -11,14 +11,12 @@
 // 변경 로그 훅은 **로그인 상태에서만** 붙는다. 로그아웃 상태에서 한 변경은 쌓이지 않는다
 // (이미 쌓인 sync_outbox 는 지우지 않는다 — 재로그인 시 그대로 전송된다)
 
-import { randomUUID } from 'node:crypto'
 import type { OutboxRecorder, AuthState } from '../../shared/sync'
 import type { Db } from '../db/client'
 import type { AuthService } from './auth'
 import { AuthExpiredError, type SyncBackend } from './backend'
 import { DeviceService } from './devices'
 import { SyncEngine, SyncEngineHolder } from './engine'
-import { SyncLocal } from './local'
 import { createOutboxRecorder, SyncOutbox } from './outbox'
 import type { SettingsAccess, VaultAccess, WorkspaceRef } from './push'
 
@@ -176,7 +174,13 @@ export class SyncConnection {
   }
 
   private attachRecorders(): void {
-    const recorder = createOutboxRecorder(this.deps.db, this.outbox)
+    // 기록 시점의 활성 작업공간을 행마다 남긴다 — 나중에 작업공간을 바꿔도
+    // 이미 쌓인 변경은 원래 작업공간의 uuid 로 올라간다
+    const recorder = createOutboxRecorder(
+      this.deps.db,
+      this.outbox,
+      () => this.deps.workspace().localId
+    )
     this.deps.vault.setOutboxRecorder(recorder)
     this.deps.settings.setOutboxRecorder(recorder)
     this.deps.bookmarks.setOutboxRecorder(recorder)
@@ -187,19 +191,4 @@ export class SyncConnection {
     this.deps.settings.setOutboxRecorder(null)
     this.deps.bookmarks.setOutboxRecorder(null)
   }
-}
-
-/**
- * 이 작업공간이 원격에서 쓸 uuid.
- * workspaces 표 자체의 동기화가 들어오기 전까지는 로컬 작업공간 id 마다 하나씩 만들어
- * sync_state 에 고정해 둔다 — 같은 PC 에서 다시 로그인해도 값이 바뀌지 않아야 한다
- */
-export function workspaceRemoteId(db: Db, localWorkspaceId: number): string {
-  const local = new SyncLocal(db)
-  const key = `workspace:${localWorkspaceId}:remoteId`
-  const existing = local.getState(key)
-  if (existing) return existing
-  const created = randomUUID()
-  local.setState(key, created)
-  return created
 }

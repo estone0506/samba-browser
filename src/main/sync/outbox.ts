@@ -18,6 +18,8 @@ export interface OutboxRow {
   createdAt: number
   triedAt: number | null
   error: string | null
+  /** 이 변경이 일어난 작업공간(로컬 id). 옛 행은 null — 푸시가 활성 작업공간으로 본다 */
+  workspaceId: number | null
 }
 
 const DEFAULT_PENDING_LIMIT = 500
@@ -42,7 +44,13 @@ export class SyncOutbox {
    * 같은 (table,rowId) 의 기존 행을 먼저 지우고 새로 넣는다 — 전송할 때 어차피 로컬 행을
    * 다시 읽으므로 중간 상태를 여러 줄 들고 있을 이유가 없다(삭제가 마지막이면 삭제만 남는다)
    */
-  record(table: SyncTable, rowId: string, op: SyncOp, payload?: string): void {
+  record(
+    table: SyncTable,
+    rowId: string,
+    op: SyncOp,
+    payload?: string,
+    workspaceId?: number | null
+  ): void {
     this.d
       .delete(syncOutbox)
       .where(and(eq(syncOutbox.table, table), eq(syncOutbox.rowId, rowId)))
@@ -54,7 +62,8 @@ export class SyncOutbox {
         rowId,
         op,
         payload: payload ?? null,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        workspaceId: workspaceId ?? null
       })
       .run()
     this.db.scheduleSave()
@@ -113,21 +122,27 @@ export class SyncOutbox {
  * payload 에 담아 두어야, 나중에 원격에 삭제 표식(tombstone)을 올릴 수 있다.
  * (원격 표의 host·label·url 은 NOT NULL 이라 원격 id 만으로는 표식을 만들 수 없다)
  */
-export function createOutboxRecorder(db: Db, outbox: SyncOutbox): OutboxRecorder {
+export function createOutboxRecorder(
+  db: Db,
+  outbox: SyncOutbox,
+  // 기록 시점의 활성 작업공간(로컬 id). 주지 않으면 작업공간을 남기지 않는다(테스트용 최소 호출)
+  workspaceId: () => number | null = () => null
+): OutboxRecorder {
   const local = new SyncLocal(db)
   return (table, rowId, op, payload) => {
+    const workspace = workspaceId()
     if (table === 'settings') {
       // 설정은 DB 밖(config.json)에 있어 수정 시각이 없다. 여기서 대신 찍어 둔다
       local.setStateNumber(settingUpdatedAtKey(rowId), Date.now())
-      outbox.record(table, rowId, op, payload)
+      outbox.record(table, rowId, op, payload, workspace)
       return
     }
     if (op !== 'delete' || payload !== undefined) {
-      outbox.record(table, rowId, op, payload)
+      outbox.record(table, rowId, op, payload, workspace)
       return
     }
     const snapshot = local.snapshotForDelete(table, Number(rowId))
-    outbox.record(table, rowId, op, snapshot ? JSON.stringify(snapshot) : undefined)
+    outbox.record(table, rowId, op, snapshot ? JSON.stringify(snapshot) : undefined, workspace)
   }
 }
 
@@ -148,7 +163,8 @@ function toOutboxRow(r: typeof syncOutbox.$inferSelect): OutboxRow[] {
       payload: r.payload,
       createdAt: r.createdAt,
       triedAt: r.triedAt,
-      error: r.error
+      error: r.error,
+      workspaceId: r.workspaceId
     }
   ]
 }
