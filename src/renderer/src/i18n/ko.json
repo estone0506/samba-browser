@@ -169,7 +169,8 @@
     "close": "탭 닫기",
     "openTabs": "열린 탭",
     "empty": "열린 탭이 없습니다",
-    "untitled": "제목 없음"
+    "untitled": "제목 없음",
+    "popup": "팝업"
   },
   "newtab": {
     "title": "새 탭",

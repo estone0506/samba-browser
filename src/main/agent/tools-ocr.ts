@@ -4,6 +4,7 @@ import { OcrEngine } from '../ocr/engine'
 import { clipText } from '../ocr/postprocess'
 // 순환 import 를 피하려고 타입만 가져온다(런타임 코드는 남지 않는다)
 import type { ToolContext } from './tools'
+import { agentTargetOf } from './target'
 
 // 응답 길이 상한 — 캡처 전체가 글자일 때 컨텍스트를 잡아먹지 않게 한다
 const MAX_RESULT_CHARS = 4000
@@ -60,7 +61,8 @@ export function createOcrTool(ctx: ToolContext): SdkMcpToolDefinition<typeof ocr
         return textResult(OCR_DISABLED)
       }
       try {
-        const tab = ctx.tabs.active()
+        // 팝업(결제창·주소 검색창) 안의 캡차·키패드도 읽어야 하므로 활성 탭이 아니라 작업 대상을 본다
+        const tab = agentTargetOf(ctx.tabs)
         const bounds = tab?.view.getBounds()
         // 웹뷰가 접힌 화면(설정·키마스터)에서는 bounds 가 0 이라 캡처 대상이 없다
         if (!tab || !bounds || bounds.width === 0 || bounds.height === 0) {

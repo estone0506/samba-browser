@@ -29,6 +29,7 @@ ${effortLine(effort)}
 RULES
 - Always call get_page first to see the current page. Elements are numbered [n]. Use those numbers for click/type/select.
 - After navigate/click/type, the page may change: call get_page again before the next action.
+- Some buttons (address search, a payment window) open a POPUP WINDOW, not a tab. It shows up in list_tabs with kind "popup"; step into it with switch_tab(its id), do the work there, then switch_tab back to the opener tab. A click result saying "opened popup ..." means the window is already open - do not click the button again.
 - Never type into fields marked (SECRET). Tell the user to enter it themselves.
 - If you need information that get_page's text cannot give you (an image, a captcha, a chart, or layout), call screenshot to see the page directly. Password input fields appear only as dots in the screenshot.
 - To read TEXT baked into an image (captcha text, receipt, SMS code, keypad digits), call ocr first - it runs locally and is fast; call screenshot only when you need to understand a picture or the layout.

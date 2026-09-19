@@ -31,6 +31,15 @@ import {
 import { handoffToolResult, type HandoffResult } from './handoff'
 import { knownLoginUrl, isLikelyLoginUrl } from '../../shared/site-rules'
 import { BLOCKED_URL_MESSAGE, isInternalUrl } from '../../shared/url'
+import {
+  agentTargetOf,
+  allTargetsOf,
+  closeTargetOf,
+  focusTargetOf,
+  popupNotice,
+  popupTargetsOf
+} from './target'
+import type { AgentTarget } from '../browser/targets'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -192,9 +201,10 @@ const text = (t: string): { content: [{ type: 'text'; text: string }] } => ({
   content: [{ type: 'text' as const, text: t }]
 })
 
-// 현재 탭이 없으면 null
-function activeOr(ctx: ToolContext): ReturnType<TabManager['active']> {
-  return ctx.tabs.active()
+// 지금 조작할 창. 팝업(결제창·주소 검색창)을 골라 둔 상태면 그 팝업, 아니면 활성 탭.
+// 대상이 없으면 null
+function activeOr(ctx: ToolContext): Tab | null {
+  return agentTargetOf(ctx.tabs)
 }
 
 // 로그인 진입점으로 보이는 요소의 텍스트·링크 주소 패턴(E2E 하네스의 clickLoginLink 와 같은 규칙).
@@ -293,6 +303,17 @@ ${raw}`
       ctx.onStep(resolveLabel(), false)
       return text(`error: ${e instanceof Error ? e.message : String(e)}`)
     }
+  }
+
+  // 도구 실행 전후로 살아 있는 팝업을 비교해, 새로 열린 창이 있으면 결과에 안내를 붙인다.
+  // 무신사 '배송지 변경'·29CM '주소 검색'처럼 버튼 하나가 새 창을 여는 흐름에서
+  // 모델이 창이 열린 줄 모르고 다시 누르는 것을 막는다
+  const withPopupNotice = async (fn: () => Promise<string>): Promise<string> => {
+    const before = new Set(popupTargetsOf(ctx.tabs).map((t) => t.id))
+    const result = await fn()
+    const opened = popupTargetsOf(ctx.tabs).filter((t) => !before.has(t.id))
+    if (opened.length === 0) return result
+    return [result, ...opened.map((t) => popupNotice(t, normalizeHost(t.url) || '?'))].join('\n')
   }
 
   // 대상 탭의 URL. 탭을 넘기면 그 탭(도구 진입 시 잡은 탭)을, 아니면 활성 탭을 본다.
@@ -520,21 +541,23 @@ ${snapshot}`
     'Click element [n] from get_page.',
     { id: z.number().int(), label: z.string().describe('element text, for logging') },
     ({ id, label }) =>
-      guard(`클릭: ${label} (#${id})`, async () => {
-        if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
-        const tab = activeOr(ctx)
-        if (!tab) return 'no active tab'
-        // 위험 판정 근거는 페이지의 실제 텍스트. AI 가 준 label 은 기록용일 뿐 신뢰하지 않는다
-        const pageText = await pageBridge.textOf(tab, id)
-        // full 모드는 위험 단어 확인을 생략한다(SECRET 거부·URL 허용목록·호출 상한은 그대로 유지)
-        if (ctx.mode !== 'full' && isDangerous(`${pageText} ${label}`, ctx.dangerWords)) {
-          const ok = await ctx.confirm(`클릭: ${pageText || label}`, 'danger')
-          if (!ok) return 'denied by user'
-        }
-        const r = await pageBridge.click(tab, id)
-        await pageBridge.waitForLoad(tab)
-        return r
-      })
+      guard(`클릭: ${label} (#${id})`, () =>
+        withPopupNotice(async () => {
+          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+          const tab = activeOr(ctx)
+          if (!tab) return 'no active tab'
+          // 위험 판정 근거는 페이지의 실제 텍스트. AI 가 준 label 은 기록용일 뿐 신뢰하지 않는다
+          const pageText = await pageBridge.textOf(tab, id)
+          // full 모드는 위험 단어 확인을 생략한다(SECRET 거부·URL 허용목록·호출 상한은 그대로 유지)
+          if (ctx.mode !== 'full' && isDangerous(`${pageText} ${label}`, ctx.dangerWords)) {
+            const ok = await ctx.confirm(`클릭: ${pageText || label}`, 'danger')
+            if (!ok) return 'denied by user'
+          }
+          const r = await pageBridge.click(tab, id)
+          await pageBridge.waitForLoad(tab)
+          return r
+        })
+      )
   )
 
   const typeTool = tool(
@@ -542,20 +565,22 @@ ${snapshot}`
     'Type text into input [n]. submit=true presses Enter.',
     { id: z.number().int(), text: z.string(), submit: z.boolean().default(false) },
     ({ id, text: t, submit }) =>
-      guard(`입력: "${t.slice(0, 30)}" (#${id})`, async () => {
-        if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
-        const tab = activeOr(ctx)
-        if (!tab) return 'no active tab'
-        // 입력값 자체와 대상 입력칸의 실제 텍스트를 함께 판정
-        const pageText = await pageBridge.textOf(tab, id)
-        if (ctx.mode !== 'full' && isDangerous(`${pageText} ${t}`, ctx.dangerWords)) {
-          const ok = await ctx.confirm(`입력: ${t}${pageText ? ` → ${pageText}` : ''}`, 'danger')
-          if (!ok) return 'denied by user'
-        }
-        const r = await pageBridge.type(tab, id, t, submit)
-        if (submit) await pageBridge.waitForLoad(tab)
-        return r
-      })
+      guard(`입력: "${t.slice(0, 30)}" (#${id})`, () =>
+        withPopupNotice(async () => {
+          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+          const tab = activeOr(ctx)
+          if (!tab) return 'no active tab'
+          // 입력값 자체와 대상 입력칸의 실제 텍스트를 함께 판정
+          const pageText = await pageBridge.textOf(tab, id)
+          if (ctx.mode !== 'full' && isDangerous(`${pageText} ${t}`, ctx.dangerWords)) {
+            const ok = await ctx.confirm(`입력: ${t}${pageText ? ` → ${pageText}` : ''}`, 'danger')
+            if (!ok) return 'denied by user'
+          }
+          const r = await pageBridge.type(tab, id, t, submit)
+          if (submit) await pageBridge.waitForLoad(tab)
+          return r
+        })
+      )
   )
 
   const select = tool(
@@ -563,11 +588,13 @@ ${snapshot}`
     'Choose an option in <select> [n] by value or visible text.',
     { id: z.number().int(), value: z.string() },
     ({ id, value }) =>
-      guard(`선택: ${value} (#${id})`, async () => {
-        if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
-        const tab = activeOr(ctx)
-        return tab ? pageBridge.select(tab, id, value) : 'no active tab'
-      })
+      guard(`선택: ${value} (#${id})`, () =>
+        withPopupNotice(async () => {
+          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+          const tab = activeOr(ctx)
+          return tab ? pageBridge.select(tab, id, value) : 'no active tab'
+        })
+      )
   )
 
   const scroll = tool(
@@ -607,16 +634,43 @@ ${snapshot}`
       })
   )
 
+  // list_tabs / switch_tab / close_tab 이 함께 쓰는 목록. 팝업은 kind 'popup' 으로 나온다
+  const targetList = (): AgentTarget[] => allTargetsOf(ctx.tabs)
+
+  const listTabs = tool(
+    'list_tabs',
+    'List open tabs AND popup windows. kind "popup" is a separate window a tab opened ' +
+      '(address search, payment); openerId says which tab opened it. ' +
+      'Call switch_tab with its id to work inside a popup.',
+    {},
+    () => guard('탭 목록', async () => JSON.stringify(targetList()))
+  )
+
   const switchTab = tool(
     'switch_tab',
-    'Activate a tab by id (see list in results).',
+    'Activate a tab, or step into a popup window, by id (see list_tabs). ' +
+      'When you are done inside a popup, call switch_tab again with the opener tab id.',
     { id: z.string() },
     ({ id }) =>
       guard('탭 전환', async () => {
-        ctx.tabs.activate(id)
-        return `ok. tabs: ${JSON.stringify(
-          ctx.tabs.list().map((t) => ({ id: t.id, title: t.title, profile: t.profile }))
-        )}`
+        const target = targetList().find((t) => t.id === id)
+        if (!target) return `not found: no tab or popup with id ${id}`
+        focusTargetOf(ctx.tabs, id)
+        return `ok: now working in ${target.kind} ${id}. targets: ${JSON.stringify(targetList())}`
+      })
+  )
+
+  const closeTab = tool(
+    'close_tab',
+    'Close a tab or a popup window by id (see list_tabs).',
+    { id: z.string() },
+    ({ id }) =>
+      guard('탭 닫기', async () => {
+        if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+        const target = targetList().find((t) => t.id === id)
+        if (!target) return `not found: no tab or popup with id ${id}`
+        closeTargetOf(ctx.tabs, id)
+        return `ok: closed ${target.kind} ${id}. targets: ${JSON.stringify(targetList())}`
       })
   )
 
@@ -900,7 +954,9 @@ ${snapshot}`
       scroll,
       wait,
       newTab,
+      listTabs,
       switchTab,
+      closeTab,
       listAccounts,
       fillSecret,
       login,
@@ -923,7 +979,9 @@ export const SAMBA_TOOL_NAMES = [
   'scroll',
   'wait',
   'new_tab',
+  'list_tabs',
   'switch_tab',
+  'close_tab',
   'list_accounts',
   'fill_secret',
   'login',
