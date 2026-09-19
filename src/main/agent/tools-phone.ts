@@ -230,7 +230,7 @@ export function createPhoneTools(ctx: PhoneToolContext): PhoneTool[] {
 
   const typeTool = tool(
     'phone_type',
-    'Type ASCII text into the focused phone field. Never use this for a payment password, PIN or any secret - the app fills those itself.',
+    'Type plain text into the focused phone field. Only letters, digits, space and _ . @ % + - = : , / are accepted; anything else is refused, so tap the on-screen keyboard instead. Never use this for a payment password, PIN or any secret - the app fills those itself.',
     { text: z.string() },
     ({ text: value }) =>
       // 라벨에 입력값을 넣지 않는다 — 진행 로그는 화면에 그대로 보인다

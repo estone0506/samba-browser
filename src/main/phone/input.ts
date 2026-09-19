@@ -1,5 +1,7 @@
 // 폰 입력 전달. 1순위는 `adb shell input` 이다(단순·안정).
-// input text 는 ASCII 만 안전하므로 그 외 문자는 거부하고 호출부가 요소 탭으로 우회한다
+// `adb shell` 은 받은 문자열을 폰의 sh 가 해석하므로, 보낼 수 있는 글자를
+// 화이트리스트로 못 박는다. 목록 밖 글자(한글·이모지·셸 메타문자)는 거부하고
+// 호출부가 요소 탭(가상 키보드)으로 우회한다
 
 import { shellArgs, type AdbRunner } from './adb'
 
@@ -13,8 +15,11 @@ export const PHONE_KEYS = {
 } as const
 export type PhoneKey = keyof typeof PHONE_KEYS
 
-// 눈에 보이는 ASCII 만 통과시킨다(한글·이모지는 input text 가 깨뜨린다)
-const ASCII_ONLY_RE = /^[\x20-\x7e]*$/
+/**
+ * `input text` 로 보낼 수 있는 글자. 셸 메타문자(`; & | $ \` ( ) > < ' " * ? ~ # !`)와
+ * 한글·이모지는 목록에 없다 — 인용부호로 막는 대신 애초에 통과시키지 않는다
+ */
+export const SAFE_TEXT_RE = /^[A-Za-z0-9 _.@%+\-=:,/]*$/
 
 export function isPhoneKey(v: unknown): v is PhoneKey {
   return typeof v === 'string' && Object.prototype.hasOwnProperty.call(PHONE_KEYS, v)
@@ -59,14 +64,19 @@ export async function swipe(
   )
 }
 
-/** ASCII 만 보낸다. 한글 등은 'unsupported-text' 를 돌려주고 호출부가 다른 길을 택한다 */
+/**
+ * 화이트리스트에 든 글자만 보낸다.
+ * 한글·이모지·셸 메타문자가 하나라도 있으면 'unsupported-text' 를 돌려주고
+ * 호출부가 다른 길(요소 탭)을 택한다
+ */
 export async function typeText(
   adb: AdbRunner,
   serial: string,
   text: string
 ): Promise<'ok' | 'unsupported-text'> {
-  if (!ASCII_ONLY_RE.test(text)) return 'unsupported-text'
-  const escaped = text.replace(/ /g, '%s').replace(/'/g, "\\'")
+  if (!SAFE_TEXT_RE.test(text)) return 'unsupported-text'
+  // 공백은 `input text` 의 규칙대로 %s 로 바꿔 보낸다
+  const escaped = text.replace(/ /g, '%s')
   await adb.run(shellArgs(serial, ['input', 'text', escaped]))
   return 'ok'
 }

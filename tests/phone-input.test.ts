@@ -3,6 +3,7 @@ import {
   PHONE_KEYS,
   isPhoneKey,
   pressKey,
+  SAFE_TEXT_RE,
   swipe,
   tap,
   toDeviceCoord,
@@ -55,10 +56,17 @@ describe('입력 전달', () => {
     ])
   })
 
-  it('typeText 는 공백을 %s 로 바꾸고 작은따옴표를 이스케이프한다', async () => {
+  it('typeText 는 공백을 %s 로 바꿔 보낸다', async () => {
     const adb = new FakeAdb()
-    expect(await typeText(adb, SERIAL, "it's a b")).toBe('ok')
-    expect(adb.calls[0]).toEqual(['-s', SERIAL, 'shell', 'input', 'text', "it\\'s%sa%sb"])
+    expect(await typeText(adb, SERIAL, 'user.name@example.com a b')).toBe('ok')
+    expect(adb.calls[0]).toEqual([
+      '-s',
+      SERIAL,
+      'shell',
+      'input',
+      'text',
+      'user.name@example.com%sa%sb'
+    ])
   })
 
   it('한글·이모지가 섞이면 보내지 않고 unsupported-text 를 돌려준다', async () => {
@@ -66,6 +74,34 @@ describe('입력 전달', () => {
     expect(await typeText(adb, SERIAL, '안녕하세요')).toBe('unsupported-text')
     expect(await typeText(adb, SERIAL, 'ok 🙂')).toBe('unsupported-text')
     expect(adb.calls).toHaveLength(0)
+  })
+
+  it('셸 메타문자는 하나도 통과시키지 않는다(명령 주입 차단)', async () => {
+    const adb = new FakeAdb()
+    const injections = [
+      'a; reboot',
+      'a && rm -rf /sdcard',
+      'a | sh',
+      'a $(id)',
+      'a `id`',
+      'a > /sdcard/x',
+      'a < /sdcard/x',
+      "it's",
+      'a"b',
+      'a*b',
+      'a?b',
+      'a~b',
+      'a#b',
+      'a!b',
+      'a\\b',
+      'a(b)',
+      'a\nb'
+    ]
+    for (const bad of injections) {
+      expect(await typeText(adb, SERIAL, bad)).toBe('unsupported-text')
+    }
+    expect(adb.calls).toHaveLength(0)
+    expect(SAFE_TEXT_RE.test('Abc 09 _.@%+-=:,/')).toBe(true)
   })
 
   it('pressKey 는 키 이름을 KEYCODE 로 바꾼다', async () => {

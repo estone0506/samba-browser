@@ -77,7 +77,7 @@ describe('parseUiXml', () => {
 describe('dumpScreen', () => {
   it('현재 앱을 읽고 덤프를 떠서 파싱한다', async () => {
     const adb = new FakeAdb()
-    adb.reply('mCurrentFocus', '  mCurrentFocus=Window{a b viva.republica.toss/com.toss.MainAct}')
+    adb.reply('dumpsys window displays', '  mCurrentFocus=Window{a b viva.republica.toss/com.toss.MainAct}')
     adb.reply('uiautomator dump', 'UI hierchary dumped to: /sdcard/samba-ui.xml')
     adb.reply('cat /sdcard/samba-ui.xml', XML)
     const screen = await dumpScreen(adb, 'R3CRA05HY3R')
@@ -88,7 +88,7 @@ describe('dumpScreen', () => {
 
   it('덤프가 실패하면 빈 화면을 돌려준다(보안 앱·게임)', async () => {
     const adb = new FakeAdb()
-    adb.reply('mCurrentFocus', '')
+    adb.reply('dumpsys window displays', '')
     adb.reply('uiautomator dump', 'ERROR: could not get idle state', 1)
     const screen = await dumpScreen(adb, 'S')
     expect(screen).toEqual({ serial: 'S', width: 0, height: 0, app: '', elements: [] })

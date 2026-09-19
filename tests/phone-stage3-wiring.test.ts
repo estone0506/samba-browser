@@ -67,7 +67,7 @@ class ScriptedAdb implements AdbRunner {
     const key = args.join(' ')
     const ok = (stdout: string): Promise<AdbResult> =>
       Promise.resolve({ code: 0, stdout, stderr: '' })
-    if (key.includes('mCurrentFocus')) {
+    if (key.includes('dumpsys window displays')) {
       return ok(`  mCurrentFocus=Window{a b ${this.current().app}/.MainActivity}`)
     }
     if (key.includes('uiautomator dump')) return ok('dumped')

@@ -84,12 +84,20 @@ export function parseUiXml(xml: string, serial: string, app: string): PhoneScree
   return { serial, width, height, app, elements }
 }
 
-/** 현재 최상위 패키지명. 결제 앱 판정(guard 확인 카드)에도 쓴다 */
+/** dumpsys 출력에서 최상위 패키지명을 뽑는다(순수 함수 — 셸을 거치지 않는다) */
+export function parseCurrentApp(stdout: string): string {
+  const line = stdout.split(/\r?\n/).find((l) => l.includes('mCurrentFocus')) ?? ''
+  return /\s([A-Za-z0-9_.]+)\/[A-Za-z0-9_.$]+/.exec(line)?.[1] ?? ''
+}
+
+/**
+ * 현재 최상위 패키지명. 결제 앱 판정(guard 확인 카드)에도 쓴다.
+ * 예전에는 `| grep` 으로 폰 셸에 걸렀지만, 셸 파이프를 쓰면 인자 하나만 흘러들어도
+ * 명령이 되므로 출력을 그대로 받아 JS 정규식으로 거른다
+ */
 export async function currentApp(adb: AdbRunner, serial: string): Promise<string> {
-  const res = await adb.run(
-    shellArgs(serial, ['dumpsys', 'window', 'displays', '|', 'grep', '-E', 'mCurrentFocus'])
-  )
-  return /\s([A-Za-z0-9_.]+)\/[A-Za-z0-9_.$]+/.exec(res.stdout)?.[1] ?? ''
+  const res = await adb.run(shellArgs(serial, ['dumpsys', 'window', 'displays']))
+  return parseCurrentApp(res.stdout)
 }
 
 /** 폰에서 덤프를 떠 와 파싱한다. 실패(보안 앱·게임)하면 elements 가 빈 화면을 돌려준다 */
