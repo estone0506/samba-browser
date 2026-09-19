@@ -71,6 +71,11 @@ export function parseManifest(raw: unknown): ExtensionManifest {
  * - manifest.json 이 심볼릭 링크로 폴더 밖을 가리키지 않는가(링크 이탈 방지)
  *
  * 돌려주는 값은 심볼릭 링크를 모두 푼 절대 경로다 — 세션에는 이 경로만 넘긴다
+ *
+ * 알려진 한계(2b 재리뷰 New-M1, 기록만): 경로 자체는 디스크 어디든 될 수 있다.
+ * 렌더러가 임의 절대 경로(예: 사용자 문서 폴더)를 주면 그 폴더가 확장으로 올라간다.
+ * 세션에는 allowFileAccess:false 로 넘기고 manifest 링크 이탈도 막지만, "앱이 관리하는
+ * 확장 디렉터리 안" 이라는 제한은 아직 없다 — 확장 설치 UX 를 다듬을 때 함께 좁힌다
  */
 export function resolveExtensionFolder(folder: string): string {
   if (!folder.trim()) throw new Error('확장 폴더 경로가 비어 있어요')
