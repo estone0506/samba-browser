@@ -305,6 +305,10 @@ ${raw}`
     }
   }
 
+  // 탭 + 살아 있는 팝업 목록(팝업은 kind 'popup').
+  // navigate·list_tabs·switch_tab·close_tab 이 함께 쓴다
+  const targetList = (): AgentTarget[] => allTargetsOf(ctx.tabs)
+
   // 도구 실행 전후로 살아 있는 팝업을 비교해, 새로 열린 창이 있으면 결과에 안내를 붙인다.
   // 무신사 '배송지 변경'·29CM '주소 검색'처럼 버튼 하나가 새 창을 여는 흐름에서
   // 모델이 창이 열린 줄 모르고 다시 누르는 것을 막는다
@@ -530,6 +534,11 @@ ${snapshot}`
         if (isInternalUrl(url)) return `${BLOCKED_URL_MESSAGE} (${url})`
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
+        // 팝업 창(결제창·주소 검색창)은 그 사이트가 띄운 흐름을 그대로 따라가야 한다.
+        // 주소를 갈아 끼우면 결제 세션이 끊기므로, 탭으로 돌아가라고 알려 준다
+        if (targetList().find((t) => t.id === tab.id)?.kind === 'popup') {
+          return 'refused: cannot navigate inside a popup; switch_tab to the opener tab first'
+        }
         await ctx.tabs.navigate(tab.id, url)
         await pageBridge.waitForLoad(tab)
         return `ok: ${tab.view.webContents.getURL()}`
@@ -633,9 +642,6 @@ ${snapshot}`
         return `ok: tab ${t.id}`
       })
   )
-
-  // list_tabs / switch_tab / close_tab 이 함께 쓰는 목록. 팝업은 kind 'popup' 으로 나온다
-  const targetList = (): AgentTarget[] => allTargetsOf(ctx.tabs)
 
   const listTabs = tool(
     'list_tabs',
