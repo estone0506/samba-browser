@@ -38,7 +38,9 @@ import {
   type PhoneDto,
   type PhoneUpdatedDto,
   type PhoneAuthWaitingDto,
-  type AuthEventDto
+  type AuthEventDto,
+  type PhoneScreenChunkDto,
+  type PhoneScreenModeDto
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
@@ -352,6 +354,20 @@ const api = {
       const h = (_: unknown, dto: PhoneAuthWaitingDto): void => cb(dto)
       ipcRenderer.on(IPC.phoneAuthWaiting, h)
       return () => ipcRenderer.off(IPC.phoneAuthWaiting, h)
+    },
+    screenStart: (serial: string): Promise<IpcResult<void>> => invoke(IPC.phoneScreenStart, serial),
+    screenStop: (serial: string): Promise<IpcResult<void>> => invoke(IPC.phoneScreenStop, serial),
+    // scrcpy 큰 창으로 열기(앱 안 임베드와 별개다)
+    openWindow: (serial: string): Promise<IpcResult<void>> => invoke(IPC.phoneOpenWindow, serial),
+    onScreenChunk: (cb: (chunk: PhoneScreenChunkDto) => void): (() => void) => {
+      const h = (_: unknown, chunk: PhoneScreenChunkDto): void => cb(chunk)
+      ipcRenderer.on(IPC.phoneScreenChunk, h)
+      return () => ipcRenderer.off(IPC.phoneScreenChunk, h)
+    },
+    onScreenMode: (cb: (dto: PhoneScreenModeDto) => void): (() => void) => {
+      const h = (_: unknown, dto: PhoneScreenModeDto): void => cb(dto)
+      ipcRenderer.on(IPC.phoneScreenMode, h)
+      return () => ipcRenderer.off(IPC.phoneScreenMode, h)
     }
   }
 }

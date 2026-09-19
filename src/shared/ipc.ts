@@ -126,6 +126,7 @@ export const IPC = {
   phoneScreenStart: 'phone:screenStart',
   phoneScreenStop: 'phone:screenStop',
   phoneScreenChunk: 'phone:screenChunk', // main → renderer 이벤트(영상 청크/스틸 이미지)
+  phoneScreenMode: 'phone:screenMode', // main → renderer 이벤트(video ↔ still 전환)
   phoneOpenWindow: 'phone:openWindow', // scrcpy 별도 창으로 크게 보기
   phoneTap: 'phone:tap', // 사용자가 화면을 직접 눌렀을 때
   phoneSwipe: 'phone:swipe',
@@ -245,7 +246,9 @@ export type {
   PhoneCountry,
   PhoneState,
   PhoneTransport,
-  ScreenMode
+  ScreenMode,
+  PhoneScreenChunkDto,
+  PhoneScreenModeDto
 } from './phone'
 
 export type {
