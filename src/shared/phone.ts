@@ -42,6 +42,10 @@ export interface AuthEventDto {
   ok: boolean
   method: AuthEventMethod
   elapsedMs: number
+  // 추출한 인증번호(숫자만) — 문자 본문은 남기지 않는다
+  code: string | null
+  // 발신번호 뒷 4자리
+  senderTail: string | null
   at: number
 }
 
