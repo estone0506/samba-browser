@@ -20,11 +20,11 @@ import { SectionHeader } from './SectionHeader'
 import { showSectionBody } from './sidebar-view'
 import { WorkspaceSwitcher } from '@renderer/components/workspace/WorkspaceSwitcher'
 
-// 사이드바 항목 중 아직 뷰가 없는 항목(작업·자동화·로그)은 클릭해도 아무 일도 하지 않는다
+// 사이드바 항목 중 아직 뷰가 없는 항목(작업·로그)은 클릭해도 아무 일도 하지 않는다
 const ITEMS = [
   { key: 'browser', icon: Globe, view: 'browser' },
   { key: 'tasks', icon: ListChecks, view: null },
-  { key: 'automation', icon: Repeat, view: null },
+  { key: 'automation', icon: Repeat, view: 'automation' },
   { key: 'accounts', icon: KeyRound, view: 'personal' },
   { key: 'phones', icon: Smartphone, view: 'phones' },
   { key: 'logs', icon: ScrollText, view: null }

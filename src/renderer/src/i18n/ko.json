@@ -14,6 +14,37 @@
     "collapse": "사이드바 접기",
     "expand": "사이드바 펼치기"
   },
+  "automation": {
+    "title": "자동화",
+    "desc": "자주 하는 일을 플레이북으로 적어 두면, 채팅에 트리거 문구만 쳐도 AI 가 그 절차대로 일합니다.",
+    "empty": "저장된 플레이북이 없습니다",
+    "builtin": "기본 제공",
+    "off": "꺼짐",
+    "saveFailed": "저장하지 못했습니다. 이름이 비어 있지 않은지 확인해 주세요.",
+    "appliedBadge": "플레이북",
+    "applied": "'{{names}}' 절차를 따릅니다",
+    "progress": "{{done}}/{{total}}",
+    "action": {
+      "new": "새 플레이북",
+      "run": "지금 실행",
+      "edit": "편집",
+      "delete": "삭제",
+      "restore": "기본값 복원",
+      "save": "저장",
+      "cancel": "취소",
+      "toggle": "사용 여부"
+    },
+    "field": {
+      "name": "이름",
+      "namePlaceholder": "예: 삼바 미이행 주문 처리",
+      "triggers": "트리거 문구",
+      "triggersDesc": "채팅에 이 문구가 들어 있으면 플레이북이 발동합니다. 쉼표로 여러 개를 적을 수 있어요.",
+      "triggersPlaceholder": "삼바 미이행, 미이행 주문",
+      "instructions": "절차",
+      "instructionsDesc": "AI 가 그대로 따를 절차를 마크다운으로 적어 주세요.",
+      "length": "{{n}} / {{max}}자"
+    }
+  },
   "workspace": {
     "title": "작업공간",
     "add": "새 작업공간",
