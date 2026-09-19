@@ -517,16 +517,24 @@ export class TabManager {
       ...(this.dialogConfirm ? { confirm: this.dialogConfirm } : {}),
       onMessage: (message) => this.lastDialogMessage.set(tab.id, message)
     })
-    wc.setWindowOpenHandler(({ url: target }) => {
+    wc.setWindowOpenHandler(({ url: target, disposition }) => {
       if (!isAllowedUrl(target)) {
         console.warn(`새 창 차단: ${target}`)
         return { action: 'deny' }
       }
-      // 새 창은 탭 목록에 등록해 스냅샷·조작 대상에 넣는다.
+      // 크롬과 같은 규칙: target=_blank 링크·일반 새 탭 요청은 탭으로 연다.
+      // (같은 profile 로 열어 로그인 세션·쿠키가 이어진다)
+      if (disposition === 'foreground-tab' || disposition === 'background-tab') {
+        try {
+          this.create({ url: target, profile, mobile: tab.mobile, openerId: tab.id })
+        } catch (e: unknown) {
+          console.warn('새 탭 등록 실패', e instanceof Error ? e.message : String(e))
+        }
+        return { action: 'deny' }
+      }
+      // 창 크기를 지정한 window.open(결제창·인증창) 은 별도 창으로 띄운다.
       // 'deny' 하고 URL 만 따로 열면 페이지가 받는 window 참조가 null 이 되어,
-      // 결제창처럼 about:blank 팝업을 먼저 열고 폼을 target 으로 보내는 흐름이 통째로 깨진다.
-      // 그래서 뷰를 우리가 만들어 돌려주고(createWindow) 그 뷰를 탭으로 등록한다.
-      // 팝업은 부모 탭과 같은 profile(세션)을 써야 로그인 세션·쿠키가 이어진다(결제창 필수)
+      // about:blank 팝업을 먼저 열고 폼을 target 으로 보내는 결제 흐름이 통째로 깨진다
       return {
         action: 'allow',
         // 자식 webContents 는 부모 설정(세션·샌드박스)을 물려받는다. preload 는 세션에 등록돼 있다
