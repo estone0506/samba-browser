@@ -11,6 +11,7 @@ import { useOverlayStore } from '@renderer/stores/overlayStore'
 import {
   DEFAULT_CAPTURE_SHORTCUTS,
   IMAGE_CAPTURE_MODES,
+  shortenCapturePath,
   VIDEO_CAPTURE_MODES,
   type CaptureMode,
   type CaptureShortcuts
@@ -25,6 +26,7 @@ export function CaptureMenu(): React.JSX.Element {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [shortcuts, setShortcuts] = useState<CaptureShortcuts>(DEFAULT_CAPTURE_SHORTCUTS)
+  const [dir, setDir] = useState('')
   const start = useCaptureStore((s) => s.start)
   const recordingMode = useCaptureStore((s) => s.recordingMode)
   const elapsed = useCaptureStore((s) => s.elapsed)
@@ -41,13 +43,23 @@ export function CaptureMenu(): React.JSX.Element {
     return () => setWebviewHidden(false)
   }, [open, setWebviewHidden])
 
-  // 단축키 표는 설정에서 바뀔 수 있으므로 메뉴를 열 때마다 최신 값을 읽는다
+  // 단축키 표·저장 폴더는 설정에서 바뀔 수 있으므로 메뉴를 열 때마다 최신 값을 읽는다
   useEffect(() => {
     if (!open) return
     void window.samba.settings.get().then((r) => {
       if (r.ok) setShortcuts(r.data.captureShortcuts)
     })
+    void window.samba.capture.dir().then((r) => {
+      if (r.ok) setDir(r.data)
+    })
   }, [open])
+
+  // 메뉴 안에서 바로 저장 폴더를 바꾼다(설정 화면까지 들어가지 않아도 되게)
+  const changeDir = (): void => {
+    void window.samba.capture.pickDir().then((r) => {
+      if (r.ok && r.data) setDir(r.data)
+    })
+  }
 
   // 단축키(Alt+1~6)는 메인이 창 안에서 듣고 방식만 알려 준다 — 메뉴를 누른 것과 같은 경로를 탄다
   useEffect(() => {
@@ -132,6 +144,28 @@ export function CaptureMenu(): React.JSX.Element {
               setView('settings')
             }}
           />
+          <div className="my-1 h-px bg-[var(--line)]" />
+          {/* 저장 폴더를 메뉴에서 바로 보여 주고 바꾸거나 열 수 있게 한다 */}
+          <div className="flex items-center gap-1 px-2 py-1 text-[11px] text-[var(--text2)]">
+            <span className="shrink-0">{t('screenCapture.folder')}</span>
+            <span className="min-w-0 flex-1 truncate text-[var(--text3)]" title={dir}>
+              {dir ? shortenCapturePath(dir) : '…'}
+            </span>
+            <button
+              type="button"
+              onClick={changeDir}
+              className="shrink-0 rounded-[6px] px-1.5 py-0.5 text-[var(--text)] hover:bg-black/5"
+            >
+              {t('screenCapture.folderChange')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void window.samba.capture.openFolder()}
+              className="shrink-0 rounded-[6px] px-1.5 py-0.5 text-[var(--text)] hover:bg-black/5"
+            >
+              {t('screenCapture.folderOpen')}
+            </button>
+          </div>
           {error && <p className="px-2 py-1.5 text-[11px] text-red-500">{error}</p>}
         </PopoverContent>
       </Popover>
