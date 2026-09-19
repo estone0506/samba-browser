@@ -149,7 +149,8 @@ export function CaptureMenu(): React.JSX.Element {
           <div className="flex items-center gap-1 px-2 py-1 text-[11px] text-[var(--text2)]">
             <span className="shrink-0">{t('screenCapture.folder')}</span>
             <span className="min-w-0 flex-1 truncate text-[var(--text3)]" title={dir}>
-              {dir ? shortenCapturePath(dir) : '…'}
+              {/* 좁은 메뉴라 앞을 접고 폴더 이름 쪽을 남긴다(전체 경로는 툴팁으로) */}
+              {dir ? shortenCapturePath(dir, 18) : '…'}
             </span>
             <button
               type="button"
