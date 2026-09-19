@@ -35,6 +35,18 @@ export interface Tab {
   openerId?: string
 }
 
+/**
+ * window.open 으로 열린 팝업 창(결제창 등). 크롬처럼 별도 창으로 띄운다.
+ * Electron 의 createWindow 는 BrowserWindow 를 기대하므로 WebContentsView 로 만들면 네이티브 크래시가 난다.
+ * 탭 목록에는 넣지 않고 따로 추적해, 부모 탭이 결제 결과를 확인할 때 찾는다
+ */
+interface Popup {
+  id: string
+  win: BrowserWindow
+  openerId: string
+  profile: string
+}
+
 // 설정을 아직 못 읽었을 때의 기본 주소. 설정이 들어오면 setDefaultUrl 로 덮인다
 const DEFAULT_URL = NEW_TAB_URL
 
@@ -131,6 +143,7 @@ function guardNavigation(wc: WebContents, allowExtension: boolean): void {
 // 탭 = WebContentsView 1개. 프로필은 persist: 파티션으로 쿠키 분리
 export class TabManager {
   private tabs: Tab[] = []
+  private popups: Popup[] = []
   private activeId: string | null = null
   private layout: Layout = {
     x: 0,
@@ -367,7 +380,21 @@ export class TabManager {
 
   // IPC 발신자에 해당하는 탭(새 탭 페이지가 자기 탭을 이동시킬 때 쓴다)
   findByWebContents(wc: WebContents): Tab | null {
-    return this.tabs.find((t) => t.view.webContents === wc) ?? null
+    const tab = this.tabs.find((t) => t.view.webContents === wc)
+    if (tab) return tab
+    const popup = this.popups.find((p) => !p.win.isDestroyed() && p.win.webContents === wc)
+    return popup ? this.asTab(popup) : null
+  }
+
+  /** 팝업 창을 탭 모양으로 감싼다 — 소비자는 .view.webContents 만 쓴다(페이지 브리지·결제 확인) */
+  private asTab(p: Popup): Tab {
+    return {
+      id: p.id,
+      view: { webContents: p.win.webContents } as unknown as WebContentsView,
+      profile: p.profile,
+      mobile: false,
+      openerId: p.openerId
+    }
   }
 
   /**
@@ -375,6 +402,10 @@ export class TabManager {
    * 간편결제처럼 결제창이 별도 WebContents 로 열리는 사이트에서 성공 리다이렉트를 확인할 때 쓴다
    */
   popupOf(openerId: string): Tab | null {
+    for (let i = this.popups.length - 1; i >= 0; i--) {
+      const p = this.popups[i]
+      if (p.openerId === openerId && !p.win.isDestroyed()) return this.asTab(p)
+    }
     for (let i = this.tabs.length - 1; i >= 0; i--) {
       const t = this.tabs[i]
       if (t.openerId === openerId && !t.view.webContents.isDestroyed()) return t
@@ -394,11 +425,6 @@ export class TabManager {
        * `chrome-extension://` 은 그쪽으로는 여전히 열리지 않는다
        */
       extension?: boolean
-      /**
-       * 페이지의 window.open 이 만든 뷰(setWindowOpenHandler 의 createWindow 경로).
-       * 이미 만들어진 뷰를 탭으로 등록만 하고, 로드는 Electron 이 하므로 loadURL 을 부르지 않는다
-       */
-      view?: WebContentsView
     } = {}
   ): TabInfo {
     if (this.disposed) throw new Error('window closed')
@@ -420,16 +446,14 @@ export class TabManager {
       this.partitionSessions.set(partition, ses)
       this.sessionHook?.(ses, partition)
     }
-    const view =
-      opts.view ??
-      new WebContentsView({
-        // preload 는 세션에 등록돼 있다(hardenSession) — 여기서 또 주면 두 번 실행된다
-        webPreferences: {
-          session: ses,
-          sandbox: true,
-          contextIsolation: true
-        }
-      })
+    const view = new WebContentsView({
+      // preload 는 세션에 등록돼 있다(hardenSession) — 여기서 또 주면 두 번 실행된다
+      webPreferences: {
+        session: ses,
+        sandbox: true,
+        contextIsolation: true
+      }
+    })
     // WebContentsView 는 네이티브 레이어라 CSS overflow-hidden 으로 잘리지 않는다.
     // setBorderRadius 는 4개 모서리를 한 번에 같은 값으로만 설정할 수 있어(상단만 둥글게 불가),
     // 카드가 상단만 둥글고(rounded-t-2xl) 하단은 창 바닥에 닿는 edge-to-edge 레이아웃에서는
@@ -505,8 +529,10 @@ export class TabManager {
       // 팝업은 부모 탭과 같은 profile(세션)을 써야 로그인 세션·쿠키가 이어진다(결제창 필수)
       return {
         action: 'allow',
-        // 자식 webContents 는 부모 설정(세션·preload·샌드박스)을 물려받는다. 여기서 덮어써 확실히 한다
+        // 자식 webContents 는 부모 설정(세션·샌드박스)을 물려받는다. preload 는 세션에 등록돼 있다
         overrideBrowserWindowOptions: {
+          parent: this.win,
+          autoHideMenuBar: true,
           webPreferences: {
             session: ses,
             sandbox: true,
@@ -515,23 +541,15 @@ export class TabManager {
           }
         },
         createWindow: (options) => {
-          // Electron 이 미리 만들어 넘긴 webContents 로 뷰를 만들어야 한다(다른 것을 만들면 예외)
-          // 타입 선언에는 없지만 런타임 options 에는 항상 webContents 가 들어 있다
-          const guest = (options as { webContents?: WebContents }).webContents
-          const popup = new WebContentsView(guest ? { webContents: guest } : {})
-          try {
-            this.create({ url: target, profile, mobile: tab.mobile, openerId: tab.id, view: popup })
-          } catch (e: unknown) {
-            // 등록에 실패해도 뷰는 돌려줘야 페이지의 window.open 이 깨지지 않는다
-            console.warn('새 창 등록 실패', e instanceof Error ? e.message : String(e))
-          }
-          return popup.webContents
+          // Electron 이 미리 만들어 넘긴 webContents(options.webContents)로 창을 만들어야 한다
+          const popupWin = new BrowserWindow(options)
+          this.registerPopup(popupWin, tab.id, profile)
+          return popupWin.webContents
         }
       }
     })
     if (tab.mobile) void applyMobileEmulation(wc)
-    // 팝업 뷰는 Electron 이 window.open 의 주소를 직접 로드한다
-    if (!opts.view) void wc.loadURL(url)
+    void wc.loadURL(url)
     this.activate(tab.id)
     return this.list().find((t) => t.id === tab.id)!
   }
@@ -549,6 +567,31 @@ export class TabManager {
     this.activeId = id
     this.applyBounds()
     this.emit()
+  }
+
+  /** 팝업 창을 추적 목록에 넣고, 닫히면 뺀다. 페이지 조작 훅은 탭과 같은 것을 붙인다 */
+  private registerPopup(win: BrowserWindow, openerId: string, profile: string): void {
+    const popup: Popup = { id: randomUUID(), win, openerId, profile }
+    this.popups.push(popup)
+    const wc = win.webContents
+    this.contextMenuHook?.(wc)
+    wc.on('dom-ready', () => this.sendGestureConfig(wc))
+    // 팝업이 또 창을 열면(결제 → 인증창) 같은 규칙으로 창을 만든다
+    wc.setWindowOpenHandler(({ url: target }) => {
+      if (!isAllowedUrl(target)) return { action: 'deny' }
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: { parent: this.win, autoHideMenuBar: true },
+        createWindow: (options) => {
+          const child = new BrowserWindow(options)
+          this.registerPopup(child, openerId, profile)
+          return child.webContents
+        }
+      }
+    })
+    win.once('closed', () => {
+      this.popups = this.popups.filter((p) => p !== popup)
+    })
   }
 
   close(id: string): void {
