@@ -119,7 +119,13 @@ export const BUILTIN_PLAYBOOKS: readonly Omit<PlaybookDto, 'updatedAt'>[] = [
   {
     id: BUILTIN_UNFULFILLED_ID,
     name: 'SAMBA 미이행 주문 처리',
-    triggers: ['SAMBA 미이행', '삼바 미이행', '미이행 주문', '미배송 주문 처리', 'samba unfulfilled'],
+    triggers: [
+      'SAMBA 미이행',
+      '삼바 미이행',
+      '미이행 주문',
+      '미배송 주문 처리',
+      'samba unfulfilled'
+    ],
     instructions: UNFULFILLED_INSTRUCTIONS,
     enabled: true,
     builtin: true
