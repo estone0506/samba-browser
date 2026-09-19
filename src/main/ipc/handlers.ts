@@ -21,6 +21,8 @@ import type { Db } from '../db/client'
 import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vault/service'
 import { exportVault, writeOwnerOnlyFile, type ExportRequest } from '../vault/export'
 import { ImportService, type ImportDialogs } from '../import/service'
+import { ChatRepo } from '../chat/repo'
+import { RECENT_CHAT_LIMIT, type AppendMessageInput } from '../../shared/chat'
 import { VaultCaptureGate } from './vault-capture'
 import { watchLoginSuccess } from './login-watch'
 import { VaultPickerGate } from './vault-picker'
@@ -96,6 +98,12 @@ export function registerIpc(
   const vault = new VaultService(db, settings, { safeStorage })
   // AI 도구(list_accounts/fill_secret/login)가 쓸 수 있도록 금고를 넘긴다
   const agent = new AgentRunner(tabs, settings, (ev) => send(IPC.agentEvent, ev), vault)
+  // AI 채팅 기록. 러너가 작업 완료 시점에 이 저장소로 대화를 남긴다
+  const chats = new ChatRepo(db)
+  agent.setTranscript((chatId, entry) => {
+    chats.append({ chatId, role: 'user', content: entry.prompt })
+    chats.append({ chatId, role: 'assistant', content: entry.text, steps: entry.steps })
+  })
   // 페이지 JS 대화상자는 AI 작업이 도는 동안에만 자동 처리한다
   tabs.setAgentRunningProvider(() => agent.isRunning())
   // guard 모드에서 confirm/beforeunload 는 사용자 확인 카드를 거쳐야 '예' 가 된다
@@ -179,10 +187,18 @@ export function registerIpc(
 
   // 실행 시작만 즉시 확인해 주고, 완료·실패는 status 이벤트로만 알린다.
   // (예전처럼 완료까지 기다리면 늦게 끝난 이전 작업의 응답이 새 작업 UI 를 덮어썼다)
-  handleFromRenderer(IPC.agentRun, (prompt: string) => {
-    void agent.run(prompt).catch((e: unknown) => console.error('작업 실행 실패', e))
+  handleFromRenderer(IPC.agentRun, (prompt: string, chatId?: number) => {
+    void agent.run(prompt, chatId).catch((e: unknown) => console.error('작업 실행 실패', e))
     return { started: true }
   })
+
+  // --- AI 채팅 기록 -------------------------------------------------------
+  handleFromRenderer(IPC.chatList, (limit?: number) => chats.list(limit ?? RECENT_CHAT_LIMIT))
+  handleFromRenderer(IPC.chatCreate, (title: string) => chats.create(title))
+  handleFromRenderer(IPC.chatGet, (chatId: number) => chats.get(chatId))
+  handleFromRenderer(IPC.chatAppend, (input: AppendMessageInput) => chats.append(input))
+  handleFromRenderer(IPC.chatRename, (chatId: number, title: string) => chats.rename(chatId, title))
+  handleFromRenderer(IPC.chatDelete, (chatId: number) => chats.remove(chatId))
   handleFromRenderer(IPC.agentStop, () => agent.stop())
   onFromRenderer(IPC.agentConfirmReply, (requestId: string, approved: boolean) =>
     agent.resolveConfirm(requestId, approved)
@@ -541,6 +557,7 @@ export function registerIpc(
     const scope = workspace.scope()
     vault.setWorkspaceScope(scope)
     importService.setWorkspaceScope(scope)
+    chats.setWorkspaceScope(scope)
     // 열려 있는 탭의 세션은 그대로 두고, 새로 여는 탭부터 새 파티션을 쓴다
     tabs.setPartitionPrefix(workspace.partitionPrefix())
     if (notify) send(IPC.workspaceChanged, current)
@@ -597,6 +614,7 @@ export function registerIpc(
     vault,
     settings,
     bookmarks: importService,
+    chats,
     // 주기마다 다시 불린다 — 작업공간을 바꿔도 다음 주기부터 새 uuid 로 올라간다.
     // 기본 작업공간만 기기 간 공유 대상이라 고정 uuid 를 쓴다(2b 범위)
     workspace: () => {

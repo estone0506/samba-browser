@@ -30,7 +30,11 @@ import {
   type ExtensionInstallResult,
   type ExtensionListDto,
   type ImportBrowserDto,
-  type DeviceDto
+  type DeviceDto,
+  type ChatDto,
+  type ChatDetailDto,
+  type ChatMessageDto,
+  type AppendMessageInput
 } from '../shared/ipc'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
@@ -118,7 +122,9 @@ const api = {
   },
   agent: {
     // 반환은 "시작 접수" ack 뿐. 완료·실패는 onEvent 의 status 이벤트로 온다
-    run: (prompt: string): Promise<IpcResult<AgentRunAck>> => invoke(IPC.agentRun, prompt),
+    // chatId 를 주면 메인이 완료 시점에 그 대화에 기록을 남긴다
+    run: (prompt: string, chatId?: number): Promise<IpcResult<AgentRunAck>> =>
+      invoke(IPC.agentRun, prompt, chatId),
     stop: (): Promise<IpcResult<void>> => invoke(IPC.agentStop),
     confirmReply: (requestId: string, approved: boolean): void => {
       ipcRenderer.send(IPC.agentConfirmReply, requestId, approved)
@@ -128,6 +134,17 @@ const api = {
       ipcRenderer.on(IPC.agentEvent, h)
       return () => ipcRenderer.off(IPC.agentEvent, h)
     }
+  },
+  // AI 채팅 기록 — 본문은 평문이지만 비밀값은 담기지 않는다(진행 로그는 라벨만)
+  chats: {
+    list: (limit?: number): Promise<IpcResult<ChatDto[]>> => invoke(IPC.chatList, limit),
+    create: (title: string): Promise<IpcResult<ChatDto>> => invoke(IPC.chatCreate, title),
+    get: (chatId: number): Promise<IpcResult<ChatDetailDto | null>> => invoke(IPC.chatGet, chatId),
+    append: (input: AppendMessageInput): Promise<IpcResult<ChatMessageDto | null>> =>
+      invoke(IPC.chatAppend, input),
+    rename: (chatId: number, title: string): Promise<IpcResult<ChatDto | null>> =>
+      invoke(IPC.chatRename, chatId, title),
+    remove: (chatId: number): Promise<IpcResult<boolean>> => invoke(IPC.chatDelete, chatId)
   },
   settings: {
     get: (): Promise<IpcResult<Settings>> => invoke(IPC.settingsGet),
