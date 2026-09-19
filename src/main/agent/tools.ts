@@ -20,6 +20,7 @@ import {
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
 import { formatDialogNote } from '../browser/dialogs'
 import { createOcrTool } from './tools-ocr'
+import { createPhoneTools, PHONE_TOOL_NAMES, type PhoneToolContext } from './tools-phone'
 import { handoffToolResult, type HandoffResult } from './handoff'
 import { knownLoginUrl, isLikelyLoginUrl } from '../../shared/site-rules'
 import { BLOCKED_URL_MESSAGE, isInternalUrl } from '../../shared/url'
@@ -137,6 +138,9 @@ export interface ToolContext {
   }) => Promise<HandoffResult>
   // 제외 도메인(정규화된 host 문자열). 미지정 시 빈 목록으로 동작한다
   vaultExcludedHosts?: string[]
+  // 폰 도구 문맥. 주입되지 않은 실행에서는 폰 도구가 아예 등록되지 않는다.
+  // 금고(vault)는 여기에 들어가지 않는다 — 폰 도구는 비밀값을 볼 수 없다
+  phone?: PhoneToolContext
 }
 
 const text = (t: string): { content: [{ type: 'text'; text: string }] } => ({
@@ -812,7 +816,8 @@ ${snapshot}`
       listAccounts,
       fillSecret,
       login,
-      done
+      done,
+      ...(ctx.phone ? createPhoneTools(ctx.phone) : [])
     ]
   })
 }
@@ -832,5 +837,7 @@ export const SAMBA_TOOL_NAMES = [
   'list_accounts',
   'fill_secret',
   'login',
-  'done'
+  'done',
+  // 폰 도구가 주입되지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
+  ...PHONE_TOOL_NAMES
 ].map((n) => `mcp__samba__${n}`)

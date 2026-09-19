@@ -56,6 +56,7 @@ import { createExtensionInstaller } from '../extensions/install-service'
 import { createAdbRunner } from '../phone/process'
 import { PhoneRepo } from '../phone/repo'
 import { PhoneService } from '../phone/service'
+import { createPhoneOps } from '../agent/tools-phone'
 
 // 모든 핸들러는 {ok,data}|{ok:false,error}로 응답
 function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
@@ -691,8 +692,9 @@ export function registerIpc(
 
   // === 폰 연동(3단계) — 이 블록만 따로 추가한다 ========================================
   // 기기 감시는 Pro 요금제에서만 돈다. 결제 비밀번호·문자 본문은 이 채널들로 흐르지 않는다
+  const phoneAdb = createAdbRunner(() => settings.get().adbPath)
   const phones = new PhoneService({
-    adb: createAdbRunner(() => settings.get().adbPath),
+    adb: phoneAdb,
     repo: new PhoneRepo(db),
     settings,
     isPro: () => auth.state().plan === 'pro',
@@ -715,6 +717,12 @@ export function registerIpc(
     phones.assign(accountId, phoneId)
   )
   handleFromRenderer(IPC.phoneAuthEvents, (limit?: number) => phones.authEvents(limit))
+  // AI 폰 도구 배선. 금고는 넘기지 않는다 — 폰 도구는 비밀값을 볼 수 없다
+  agent.setPhones({
+    phones: createPhoneOps(phoneAdb, () => phones.list()),
+    isPro: () => auth.state().plan === 'pro',
+    assigned: () => phones.list().find((p) => p.state === 'online')?.serial ?? null
+  })
   // === 폰 연동 끝 ======================================================================
 
   return { settings, agent, db, vault, auth, sync }
