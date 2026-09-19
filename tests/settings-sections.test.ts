@@ -23,7 +23,7 @@ describe('설정 섹션 상수', () => {
       'account',
       'security'
     ])
-    expect(sectionsOfGroup('agent').map((s) => s.key)).toEqual(['behavior', 'ai', 'automation'])
+    expect(sectionsOfGroup('agent').map((s) => s.key)).toEqual(['behavior', 'ai'])
   })
 
   it('다른 화면에 이미 있는 것은 설정에 두지 않는다', () => {
@@ -48,9 +48,9 @@ describe('설정 섹션 상수', () => {
     for (const s of SECTIONS) expect(SETTINGS_GROUPS).toContain(s.group)
   })
 
-  it('자리만 잡아 둔 섹션은 자동화 하나뿐이다', () => {
-    expect([...PLACEHOLDER_SECTION_KEYS]).toEqual(['automation'])
-    expect(isPlaceholderSection('automation')).toBe(true)
+  it('자리만 잡아 둔 섹션은 더 이상 없다(자동화는 별도 페이지)', () => {
+    expect([...PLACEHOLDER_SECTION_KEYS]).toEqual([])
+    expect(isPlaceholderSection('automation')).toBe(false)
     expect(isPlaceholderSection('general')).toBe(false)
   })
 })

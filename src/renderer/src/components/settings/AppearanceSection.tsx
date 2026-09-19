@@ -2,6 +2,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { MAX_UI_ZOOM, MIN_UI_ZOOM, type ThemeMode } from '@shared/settings'
 import { SegmentedGroup, SettingsRow, SettingsSection, type SectionProps } from './shared'
+import { MouseGestureCard } from './MouseGestureCard'
 
 // 화면에 보여 줄 단축키 표(읽기 전용). 값은 번역하지 않는 키 조합 문자열이다
 const SHORTCUTS: { keys: string; labelKey: string }[] = [
@@ -78,6 +79,8 @@ export function AppearanceSection({ settings, update }: SectionProps): React.JSX
           ))}
         </div>
       </SettingsSection>
+      {/* 마우스 제스처는 화면을 다루는 방식이라 '모양' 에 둔다 */}
+      <MouseGestureCard settings={settings} update={update} />
     </>
   )
 }

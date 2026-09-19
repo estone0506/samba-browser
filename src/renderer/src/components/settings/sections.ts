@@ -13,7 +13,7 @@ export interface SettingsSectionDef {
 /**
  * 설정에는 "다른 화면에 이미 있는 것"을 두지 않는다.
  *   개인     일반 · 모양 · 계정 · 보안
- *   에이전트 동작 · AI 연결 · 자동화(자리)
+ *   AI       동작 · AI 연결   (자동화는 사이드바의 자동화 페이지가 맡는다)
  *
  * 여기서 빠진 것들이 간 곳.
  * - 키마스터 정책 → 보안 섹션
@@ -30,12 +30,11 @@ export const SECTIONS: readonly SettingsSectionDef[] = [
   { group: 'personal', key: 'account', labelKey: 'settingsPage.sections.account' },
   { group: 'personal', key: 'security', labelKey: 'settingsPage.sections.security' },
   { group: 'agent', key: 'behavior', labelKey: 'settingsPage.sections.behavior' },
-  { group: 'agent', key: 'ai', labelKey: 'settingsPage.sections.ai' },
-  { group: 'agent', key: 'automation', labelKey: 'settingsPage.sections.automation' }
+  { group: 'agent', key: 'ai', labelKey: 'settingsPage.sections.ai' }
 ]
 
-/** 아직 화면이 없어 PlaceholderSection 으로 그리는 섹션 */
-export const PLACEHOLDER_SECTION_KEYS: readonly string[] = ['automation']
+/** 아직 화면이 없어 PlaceholderSection 으로 그리는 섹션(지금은 없다) */
+export const PLACEHOLDER_SECTION_KEYS: readonly string[] = []
 
 /** 처음 열릴 때 보여 줄 섹션 */
 export const DEFAULT_SECTION_KEY = 'general'
