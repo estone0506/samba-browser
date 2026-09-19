@@ -102,9 +102,12 @@ function NotConfiguredCard(): React.JSX.Element {
   return (
     <SettingsSection title={t('account.title')} description={t('account.notConfigured')}>
       <p className="text-[12px] text-[var(--text2)]">{t('account.notConfiguredDetail')}</p>
-      <code className="w-fit rounded-[8px] bg-black/[.04] px-2 py-1 font-mono text-[11.5px] text-[var(--text)]">
-        docs/supabase-설정.md
-      </code>
+      {import.meta.env.DEV && (
+        // 개발 빌드에서만 문서 경로를 보여 준다 — 최종 사용자에게는 의미가 없다
+        <code className="w-fit rounded-[8px] bg-black/[.04] px-2 py-1 font-mono text-[11.5px] text-[var(--text)]">
+          docs/supabase-설정.md
+        </code>
+      )}
     </SettingsSection>
   )
 }
