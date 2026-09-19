@@ -65,6 +65,7 @@ interface Built {
   confirm: ReturnType<typeof vi.fn>
   steps: Array<{ label: string; ok: boolean }>
   getSecretForFill: ReturnType<typeof vi.fn>
+  getPaymentSecretForFill: ReturnType<typeof vi.fn>
   listAccounts: ReturnType<typeof vi.fn>
   ensureUnlockedByDevice: ReturnType<typeof vi.fn>
   navigate: ReturnType<typeof vi.fn>
@@ -90,12 +91,15 @@ function build(
     vaultExcludedHosts?: ToolContext['vaultExcludedHosts']
     // ensureUnlockedByDevice 호출 시 상태가 바뀌는지(자동 해제 성공 시뮬레이션)
     deviceUnlockSucceeds?: boolean
+    // 결제 비밀번호 조회 결과(계정에 여러 개일 때 'ambiguous' 를 재현한다)
+    payment?: { value: string | null; reason?: 'not-found' | 'ambiguous' }
   } = {}
 ): Built {
   const confirm = vi.fn(async () => opts.confirmResult ?? true)
   const steps: Array<{ label: string; ok: boolean }> = []
   const listAccounts = vi.fn(() => opts.accounts ?? [account()])
   const getSecretForFill = vi.fn(() => (opts.secret === undefined ? PASSWORD : opts.secret))
+  const getPaymentSecretForFill = vi.fn(() => opts.payment ?? { value: PASSWORD })
   let currentState = opts.state ?? 'unlocked'
   const ensureUnlockedByDevice = vi.fn(async () => {
     if (opts.deviceUnlockSucceeds) currentState = 'unlocked'
@@ -105,6 +109,7 @@ function build(
     state: () => currentState,
     listAccounts,
     getSecretForFill,
+    getPaymentSecretForFill,
     ensureUnlockedByDevice
   } as unknown as VaultService
   // 탭 URL 은 이동·리다이렉트로 바뀔 수 있으므로 클로저로 읽는다
@@ -149,6 +154,7 @@ function build(
     confirm,
     steps,
     getSecretForFill,
+    getPaymentSecretForFill,
     listAccounts,
     ensureUnlockedByDevice,
     navigate,
@@ -231,6 +237,50 @@ describe('금고 AI 도구', () => {
     expect(denied.confirm).toHaveBeenCalledOnce()
     expect(pageBridge.fillValue).not.toHaveBeenCalled()
     expect(denied.getSecretForFill).not.toHaveBeenCalled()
+  })
+
+  it('결제 비밀번호는 고른 결제 수단(provider)으로 조회한다', async () => {
+    const b = build()
+    const result = await callTool(b, 'fill_secret', {
+      elementId: 4,
+      itemType: 'password',
+      provider: 'toss'
+    })
+
+    expect(result).toBe('ok')
+    expect(b.getPaymentSecretForFill).toHaveBeenCalledWith({
+      accountId: 1,
+      provider: 'toss',
+      fieldKey: 'value',
+      jobId: 'job-1'
+    })
+    expect(b.getSecretForFill).not.toHaveBeenCalled()
+    assertNoSecretLeak(b, result)
+  })
+
+  it('결제 수단을 안 줬는데 계정에 여러 개면 채우지 않고 지정을 요구한다', async () => {
+    const b = build({ payment: { value: null, reason: 'ambiguous' } })
+    pageBridge.fillValue.mockClear()
+    const result = await callTool(b, 'fill_secret', { elementId: 4, itemType: 'password' })
+
+    expect(result).toMatch(/^ambiguous: /)
+    // 결제 수단 목록을 안내해 모델이 되묻거나 골라 다시 부르게 한다
+    expect(result).toContain('toss')
+    expect(pageBridge.fillValue).not.toHaveBeenCalled()
+    assertNoSecretLeak(b, result)
+  })
+
+  it('그 결제 수단이 저장돼 있지 않으면 not found 를 돌려준다', async () => {
+    const b = build({ payment: { value: null, reason: 'not-found' } })
+    pageBridge.fillValue.mockClear()
+    const result = await callTool(b, 'fill_secret', {
+      elementId: 4,
+      itemType: 'password',
+      provider: 'kakao'
+    })
+
+    expect(result).toBe('not found: no payment password (kakao) saved for this account')
+    expect(pageBridge.fillValue).not.toHaveBeenCalled()
   })
 
   it('guard 모드라도 로그인 비밀번호는 확인 카드를 띄우지 않는다', async () => {

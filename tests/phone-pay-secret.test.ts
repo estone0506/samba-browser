@@ -9,7 +9,7 @@ import {
 } from '../src/main/phone/pay-secret'
 import type { KeypadLayout } from '../src/main/ai/visual'
 import type { PhoneScreen } from '../src/shared/phone-snapshot'
-import type { VaultState } from '../src/shared/vault'
+import type { PaymentProvider, VaultState } from '../src/shared/vault'
 
 const SERIAL = 'R3CRA05HY3R'
 // 테스트용 가짜 비밀번호. 이 문자열이 반환값·라벨 어디에도 나타나면 안 된다
@@ -25,10 +25,23 @@ function layoutOf(
   return { digits: map }
 }
 
-function fakeVault(opts: { state?: VaultState; secret?: string | null } = {}): PaySecretVault {
+// 조회에 넘어온 제공자를 기록해 둔다 — 결제앱에 맞는 항목을 골랐는지 단언하기 위해서다
+interface VaultCalls {
+  providers: (PaymentProvider | undefined)[]
+}
+
+function fakeVault(
+  opts: { state?: VaultState; secret?: string | null; ambiguous?: boolean } = {},
+  calls: VaultCalls = { providers: [] }
+): PaySecretVault {
   return {
     state: () => opts.state ?? 'unlocked',
-    getSecretForFill: () => (opts.secret === undefined ? SECRET : opts.secret)
+    getPaymentSecretForFill: (args) => {
+      calls.providers.push(args.provider)
+      if (opts.ambiguous) return { value: null, reason: 'ambiguous' }
+      const value = opts.secret === undefined ? SECRET : opts.secret
+      return value === null ? { value: null, reason: 'not-found' } : { value }
+    }
   }
 }
 
@@ -36,16 +49,25 @@ interface SecretHarness {
   deps: Parameters<typeof tapPaymentPassword>[0]
   tap: ReturnType<typeof vi.fn>
   steps: Array<{ label: string; ok: boolean }>
+  calls: VaultCalls
 }
 
 function build(
-  opts: { state?: VaultState; secret?: string | null; layout?: KeypadLayout } = {}
+  opts: {
+    state?: VaultState
+    secret?: string | null
+    ambiguous?: boolean
+    layout?: KeypadLayout
+    provider?: PaymentProvider
+  } = {}
 ): SecretHarness {
   const tap = vi.fn(async () => {})
   const steps: Array<{ label: string; ok: boolean }> = []
+  const calls: VaultCalls = { providers: [] }
   const deps = {
-    vault: fakeVault(opts),
+    vault: fakeVault(opts, calls),
     accountId: 7,
+    provider: opts.provider ?? ('toss' as PaymentProvider),
     jobId: 'job-1',
     serial: SERIAL,
     layout: opts.layout ?? layoutOf(),
@@ -54,7 +76,7 @@ function build(
       steps.push({ label, ok })
     }
   }
-  return { deps, tap, steps }
+  return { deps, tap, steps, calls }
 }
 
 describe('tapPaymentPassword', () => {
@@ -109,6 +131,23 @@ describe('tapPaymentPassword', () => {
 
     expect(r).toBe('layout-incomplete')
     expect(tap).not.toHaveBeenCalled()
+  })
+
+  it('고른 결제 수단(provider)을 그대로 금고 조회에 넘긴다', async () => {
+    const { deps, calls } = build({ provider: 'payco' })
+    const r = await tapPaymentPassword(deps)
+
+    expect(r).toBe('ok')
+    expect(calls.providers).toEqual(['payco'])
+  })
+
+  it('어느 결제 비밀번호인지 좁히지 못하면 한 번도 탭하지 않는다', async () => {
+    const { deps, tap, steps } = build({ ambiguous: true })
+    const r = await tapPaymentPassword(deps)
+
+    expect(r).toBe('ambiguous')
+    expect(tap).not.toHaveBeenCalled()
+    expect(steps).toEqual([])
   })
 
   it('비밀번호 문자열을 받는 매개변수가 없다', async () => {
