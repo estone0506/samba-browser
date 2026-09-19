@@ -1,5 +1,7 @@
-// Supabase 접속 정보 읽기. 개발(process.env)·빌드(import.meta.env) 양쪽을 지원한다.
-// 서비스 롤 키는 읽지 않는다 — 앱에는 anon 키만 들어간다
+// Supabase 접속 정보 읽기.
+// 우선순위: 앱 설정(설정 → 계정에서 사용자가 붙여넣은 값) → .env / 빌드 주입 값 → 없음.
+// 어느 쪽에도 값이 없으면 동기화를 끄고 로컬 전용으로 돈다.
+// 서비스 롤 키는 읽지 않는다 — 앱에는 publishable(anon) 키만 들어간다
 
 export interface SupabaseEnv {
   url: string
@@ -8,6 +10,14 @@ export interface SupabaseEnv {
 
 const URL_KEY = 'SAMBA_SUPABASE_URL'
 const ANON_KEY = 'SAMBA_SUPABASE_ANON_KEY'
+
+// 앱 설정에서 읽어 온 값. 메인 프로세스가 시작할 때 한 번 심는다
+let fromSettings: SupabaseEnv = { url: '', anonKey: '' }
+
+/** 설정 파일의 값을 env 읽기보다 앞에 놓는다(빈 문자열이면 없는 것으로 본다) */
+export function setSupabaseEnvFromSettings(url: string, anonKey: string): void {
+  fromSettings = { url: url.trim(), anonKey: anonKey.trim() }
+}
 
 function readEnv(key: string): string {
   const fromProcess = process.env[key]
@@ -20,7 +30,10 @@ function readEnv(key: string): string {
 }
 
 export function readSupabaseEnv(): SupabaseEnv {
-  return { url: readEnv(URL_KEY).trim(), anonKey: readEnv(ANON_KEY).trim() }
+  return {
+    url: fromSettings.url || readEnv(URL_KEY).trim(),
+    anonKey: fromSettings.anonKey || readEnv(ANON_KEY).trim()
+  }
 }
 
 /** 두 값이 모두 있어야 동기화 기능을 켤 수 있다 */

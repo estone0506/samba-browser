@@ -13,6 +13,7 @@ import {
   type CaptureFormat,
   type CaptureShortcuts
 } from './capture'
+import { isSupabaseAnonKey, isSupabaseProjectUrl } from './sync'
 import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
 import { playbookListSchema, type PlaybookDto } from './playbook'
 
@@ -188,8 +189,15 @@ export const DEFAULT_SETTINGS = {
   // === 자동화 플레이북 ======================================================
   // 저장된 플레이북 전체(JSON 배열). 비어 있으면 저장소가 내장 플레이북을 채워 준다.
   // 표를 따로 만들지 않고 설정 한 칸에 담아 기존 설정 동기화 경로를 그대로 탄다
-  playbooks: [] as PlaybookDto[]
+  playbooks: [] as PlaybookDto[],
   // === 자동화 플레이북 끝 ===================================================
+  // === Supabase 연결(기기 로컬) =============================================
+  // 설정 → 계정에서 사용자가 자기 Supabase 프로젝트를 붙여넣는 자리.
+  // 기기마다 다를 수 있고 서버에 올릴 이유도 없어 SYNCED_SETTING_KEYS 에 넣지 않는다.
+  // anonKey 는 공개용 publishable 키다 — service_role 키는 저장 단계에서 거른다
+  syncSupabaseUrl: '',
+  syncSupabaseAnonKey: ''
+  // === Supabase 연결 끝 =====================================================
 }
 
 // 구독 연결 기록 한 칸. account 는 화면 표시용 문자열뿐이고 토큰은 담지 않는다
@@ -330,7 +338,17 @@ export const settingsSchema = z.object({
     .transform((v): CaptureShortcuts => mergeCaptureShortcuts(v)),
   // === 캡처 끝 ================================================================
   // === 자동화 플레이북 — 한 칸이라도 깨지면 목록 전체를 비운다(저장소가 내장을 다시 채운다) ===
-  playbooks: playbookListSchema.catch(() => [])
+  playbooks: playbookListSchema.catch(() => []),
+  // === Supabase 연결 — 형식이 어긋난 값은 빈 문자열로 되돌린다 ================
+  syncSupabaseUrl: z
+    .string()
+    .catch(DEFAULT_SETTINGS.syncSupabaseUrl)
+    .transform((v) => (isSupabaseProjectUrl(v) ? v.trim() : '')),
+  syncSupabaseAnonKey: z
+    .string()
+    .catch(DEFAULT_SETTINGS.syncSupabaseAnonKey)
+    .transform((v) => (isSupabaseAnonKey(v) ? v.trim() : ''))
+  // === Supabase 연결 끝 =======================================================
 })
 
 export type Settings = z.infer<typeof settingsSchema>

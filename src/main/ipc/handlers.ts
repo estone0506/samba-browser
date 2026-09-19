@@ -65,7 +65,7 @@ import { remapOnProviderChange, resolveModel, taskModelChoices } from '../ai/mod
 import { setApiKeyResolver, setAuthResolver } from '../agent/provider'
 // === AI 연결 끝 =======================================================================
 import { AuthService } from '../sync/auth'
-import { hasSupabaseEnv } from '../sync/env'
+import { hasSupabaseEnv, setSupabaseEnvFromSettings } from '../sync/env'
 import { createSessionStore } from '../sync/session-store'
 import { createSupabaseBackend } from '../sync/supabase-backend'
 import { SyncConnection } from '../sync/connect'
@@ -720,8 +720,14 @@ export function registerIpc(
   // === AI 연결 끝 =======================================================================
 
   // === 계정 인증(2b) ===================================================================
-  // .env 가 비어 있으면 백엔드를 아예 만들지 않는다(설정 전에도 앱은 그대로 돈다).
+  // 접속 정보가 없으면 백엔드를 아예 만들지 않는다(설정 전에도 앱은 로컬 전용으로 그대로 돈다).
+  // 값의 출처는 설정 → 계정에서 붙여넣은 값이 먼저고, 없으면 .env 다.
+  // 설정을 바꾼 뒤에는 앱을 다시 시작해야 반영된다(백엔드를 시작 시 한 번만 만든다).
   // refresh token 은 safeStorage 로 감싼 파일에만 남고 렌더러로는 나가지 않는다
+  {
+    const s = settings.get()
+    setSupabaseEnvFromSettings(s.syncSupabaseUrl, s.syncSupabaseAnonKey)
+  }
   const syncConfigured = hasSupabaseEnv()
   const sessionStore = createSessionStore(
     join(app.getPath('userData'), 'sync-session.bin'),

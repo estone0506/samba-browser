@@ -28,6 +28,7 @@ export function ChatPanel(): React.JSX.Element {
   // 이번 실행에 적용된 플레이북 이름(없으면 줄 자체가 뜨지 않는다)
   const playbookNames = useChatStore((s) => s.playbookNames)
   const togglePanel = useUiStore((s) => s.togglePanel)
+  const openSettings = useUiStore((s) => s.openSettings)
   useEffect(() => window.samba.agent.onEvent(handleEvent), [handleEvent])
   // 상단 배지는 지금 고른 경로와 **실제 연결 상태**를 그대로 비춘다
   const provider = useAiStore((s) => s.provider)
@@ -39,6 +40,9 @@ export function ChatPanel(): React.JSX.Element {
   const status = providers.find((p) => p.id === provider)
   // 구독 카드는 connected 일 때만, 내 API 키는 키가 있을 때만 쓸 수 있다
   const usable = status?.state === 'connected'
+  // 첫 실행 안내 — 연결된 제공자가 하나도 없으면 설정으로 가는 링크를 한 줄 보여 준다.
+  // providers 가 아직 비어 있는 로딩 중에는 띄우지 않는다
+  const noneConnected = providers.length > 0 && !providers.some((p) => p.state === 'connected')
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-2xl border border-[var(--line)] bg-white shadow-[0_1px_2px_rgba(0,0,0,.04),0_8px_24px_rgba(0,0,0,.06)]">
       <div className="flex items-center justify-between border-b border-black/5 px-3.5 py-3 font-semibold">
@@ -64,6 +68,18 @@ export function ChatPanel(): React.JSX.Element {
         </span>
       </div>
       <AuthBanner />
+      {noneConnected && (
+        <div className="mx-3 mt-3 rounded-xl border border-[var(--line)] bg-black/[.03] px-3 py-2 text-[12.5px] text-[var(--text2)]">
+          {t('chat.setupHint')}{' '}
+          <button
+            type="button"
+            onClick={() => openSettings('ai')}
+            className="font-medium text-[var(--text)] underline underline-offset-2"
+          >
+            {t('chat.setupLink')}
+          </button>
+        </div>
+      )}
       {/* 플레이북 적용 안내 한 줄 — 어떤 절차를 따르는지 사용자가 바로 알 수 있게 한다 */}
       {playbookNames.length > 0 && (
         <div className="border-b border-black/5 px-3.5 py-2 text-[11.5px] text-[var(--text2)]">

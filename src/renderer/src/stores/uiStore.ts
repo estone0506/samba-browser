@@ -9,6 +9,7 @@ import {
   type SidebarSections
 } from '@shared/settings'
 import { toggleSection } from '@renderer/components/layout/sidebar-view'
+import { DEFAULT_SECTION_KEY, resolveSectionKey } from '@renderer/components/settings/sections'
 
 // 가운데 카드에 무엇을 그릴지. 'browser' 가 아니면 네이티브 웹뷰는 접히고
 // 대신 렌더러가 그린 화면(개인정보 등)이 카드를 채운다
@@ -47,6 +48,11 @@ interface UiState {
   setResizing: (v: boolean) => void
   setCaptureOverlayOpen: (v: boolean) => void
   setView: (v: MainView) => void
+  // 설정 화면에서 열려 있는 섹션. 설정 화면 밖에서도 바꿀 수 있어야 해서 여기 둔다
+  settingsSection: string
+  setSettingsSection: (section: string) => void
+  /** 다른 화면에서 "설정 → 어떤 섹션" 으로 바로 보내는 링크용 */
+  openSettings: (section: string) => void
   toggleVaultPanel: () => void
   closeVaultPanel: () => void
 }
@@ -87,6 +93,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   setResizing: (v) => set({ resizing: v }),
   setCaptureOverlayOpen: (v) => set({ captureOverlayOpen: v }),
   setView: (v) => set({ view: v }),
+  settingsSection: DEFAULT_SECTION_KEY,
+  setSettingsSection: (section) => set({ settingsSection: resolveSectionKey(section) }),
+  openSettings: (section) => set({ view: 'settings', settingsSection: resolveSectionKey(section) }),
   toggleVaultPanel: () => set((s) => ({ vaultPanelOpen: !s.vaultPanelOpen })),
   closeVaultPanel: () => set({ vaultPanelOpen: false })
 }))

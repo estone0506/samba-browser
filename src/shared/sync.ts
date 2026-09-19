@@ -31,9 +31,46 @@ export interface AuthState {
    */
   plan: 'free' | 'pro'
   deviceId: string | null
-  /** .env 가 채워져 있는가 */
+  /** Supabase 접속 정보(앱 설정 또는 .env)가 채워져 있는가 */
   configured: boolean
 }
+
+// === Supabase 연결 입력값 검증 ============================================
+// 설정 → 계정의 "Supabase 연결" 폼과 메인 저장 경로가 같은 규칙을 쓴다.
+// anon(publishable) 키는 공개 키라 저장해도 되지만, service_role 키는 RLS 를
+// 통째로 우회하므로 형식 검사로 걸러 낸다
+
+/** `https://<프로젝트>.supabase.co` 같은 프로젝트 URL 인가 */
+export function isSupabaseProjectUrl(v: string): boolean {
+  const s = v.trim()
+  if (!s.startsWith('https://')) return false
+  try {
+    const u = new URL(s)
+    return u.hostname.length > 0 && u.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * publishable 키(`sb_publishable_...`) 또는 예전 형식의 JWT anon 키(`eyJ...`)인가.
+ * `sb_secret_`·`service_role` 처럼 비밀 키로 보이는 값은 거부한다
+ */
+export function isSupabaseAnonKey(v: string): boolean {
+  const s = v.trim()
+  if (s.length < 20) return false
+  if (/^sb_secret_/i.test(s) || /service_role/i.test(s)) return false
+  return s.startsWith('sb_publishable_') || s.startsWith('eyJ')
+}
+
+/** 설정 화면에 그대로 보여 주지 않기 위한 마스킹(앞 12자 + … + 뒤 4자) */
+export function maskSupabaseKey(v: string): string {
+  const s = v.trim()
+  if (s.length === 0) return ''
+  if (s.length <= 20) return `${s.slice(0, 4)}…`
+  return `${s.slice(0, 12)}…${s.slice(-4)}`
+}
+// === Supabase 연결 입력값 검증 끝 =========================================
 
 /** 설정 화면의 기기 목록 한 줄 */
 export interface DeviceDto {
