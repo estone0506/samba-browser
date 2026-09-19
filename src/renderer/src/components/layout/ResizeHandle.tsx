@@ -50,7 +50,7 @@ export function ResizeHandle({ getWidth, onWidth, side, onEnd }: Props): React.J
         start.current = null
         setResizing(false)
       }}
-      className="group relative z-10 w-1.5 shrink-0 cursor-col-resize select-none"
+      className="group relative z-10 -mx-0.5 w-2.5 shrink-0 cursor-col-resize select-none"
     >
       {/* 얇은 선은 평소엔 투명, 올리면 살짝 보인다 */}
       <div className="absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded bg-transparent transition-colors group-hover:bg-black/15" />
