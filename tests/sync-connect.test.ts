@@ -7,7 +7,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { openDatabase, type Db } from '../src/main/db/client'
 import { VaultService } from '../src/main/vault/service'
 import { AuthService } from '../src/main/sync/auth'
-import { SyncConnection, workspaceRemoteId } from '../src/main/sync/connect'
+import { SyncConnection } from '../src/main/sync/connect'
+import { DEFAULT_WORKSPACE_REMOTE_ID, workspaceRemoteId } from '../src/main/sync/workspace-id'
 import { DEVICES_TABLE } from '../src/main/sync/devices'
 import { SyncEngineHolder, SYNC_POLL_INTERVAL_MS } from '../src/main/sync/engine'
 import { SyncOutbox } from '../src/main/sync/outbox'
@@ -197,5 +198,18 @@ describe('SyncConnection', () => {
     const first = workspaceRemoteId(db, 1)
     expect(workspaceRemoteId(db, 1)).toBe(first)
     expect(workspaceRemoteId(db, 2)).not.toBe(first)
+  })
+
+  it('기본 작업공간은 고정 uuid 를 쓰고, 옛 기기 로컬 uuid 도 갈아탄다', () => {
+    // New-C1 — PC 마다 다른 uuid 면 풀 필터에 걸려 두 번째 PC 로 아무것도 내려오지 않는다
+    const legacy = workspaceRemoteId(db, 1)
+    expect(legacy).not.toBe(DEFAULT_WORKSPACE_REMOTE_ID)
+
+    expect(workspaceRemoteId(db, 1, true)).toBe(DEFAULT_WORKSPACE_REMOTE_ID)
+    // 한 번 갈아타면 그대로 굳는다
+    expect(workspaceRemoteId(db, 1, true)).toBe(DEFAULT_WORKSPACE_REMOTE_ID)
+    expect(workspaceRemoteId(db, 1)).toBe(DEFAULT_WORKSPACE_REMOTE_ID)
+    // 추가 작업공간은 여전히 기기 로컬 uuid 다
+    expect(workspaceRemoteId(db, 2)).not.toBe(DEFAULT_WORKSPACE_REMOTE_ID)
   })
 })

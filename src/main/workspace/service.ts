@@ -2,9 +2,10 @@
 // 활성 작업공간 id 는 DB 가 아니라 설정(activeWorkspaceId)에 둔다. 기기마다 다를 수 있어
 // 동기화 대상이 아니기 때문이다.
 //
-// workspaces 표 자체는 2b 에서 동기화하지 않는다(2c 예정) — SYNC_TABLES 에 없고,
-// 원격 uuid 도 PC 마다 따로 만들어져(connect.workspaceRemoteId) 서로 다르다.
-// 그래서 remote_id 컬럼은 2b 동안 항상 null 이다.
+// workspaces 표 자체는 2b 에서 동기화하지 않는다(2c 예정) — SYNC_TABLES 에 없어
+// remote_id 컬럼은 2b 동안 항상 null 이다.
+// 다만 **기본 작업공간만은 기기 간 공유** 대상이라, 그 원격 uuid 는 모든 PC 가 같은
+// 고정값을 쓴다(sync/workspace-id.ts). 추가 작업공간은 기기 로컬 uuid 라 공유되지 않는다.
 
 import { asc, eq, isNull } from 'drizzle-orm'
 import type { Db } from '../db/client'

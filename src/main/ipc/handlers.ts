@@ -42,7 +42,8 @@ import { AuthService } from '../sync/auth'
 import { hasSupabaseEnv } from '../sync/env'
 import { createSessionStore } from '../sync/session-store'
 import { createSupabaseBackend } from '../sync/supabase-backend'
-import { SyncConnection, workspaceRemoteId } from '../sync/connect'
+import { SyncConnection } from '../sync/connect'
+import { workspaceRemoteId } from '../sync/workspace-id'
 import type { DeviceService } from '../sync/devices'
 import { WorkspaceService } from '../workspace/service'
 import { workspaceShortcutIndex } from '../workspace/shortcut'
@@ -593,10 +594,11 @@ export function registerIpc(
     vault,
     settings,
     bookmarks: importService,
-    // 주기마다 다시 불린다 — 작업공간을 바꿔도 다음 주기부터 새 uuid 로 올라간다
+    // 주기마다 다시 불린다 — 작업공간을 바꿔도 다음 주기부터 새 uuid 로 올라간다.
+    // 기본 작업공간만 기기 간 공유 대상이라 고정 uuid 를 쓴다(2b 범위)
     workspace: () => {
-      const localId = workspace.activeId()
-      return { localId, remoteId: workspaceRemoteId(db, localId) }
+      const scope = workspace.scope()
+      return { localId: scope.id, remoteId: workspaceRemoteId(db, scope.id, scope.isDefault) }
     },
     device: {
       hostname: () => os.hostname(),
