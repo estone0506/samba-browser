@@ -82,6 +82,7 @@ function build(
     secret?: boolean
     typeResult?: 'ok' | 'unsupported-text'
     tick?: () => string | null
+    waitForSmsCode?: PhoneToolContext['waitForSmsCode']
   } = {}
 ): Built {
   const list = opts.phones ?? [fakePhone()]
@@ -106,7 +107,8 @@ function build(
     assigned: () => null,
     confirm,
     tick: opts.tick ?? ((): string | null => null),
-    onStep: (label, ok) => steps.push({ label, ok })
+    onStep: (label, ok) => steps.push({ label, ok }),
+    waitForSmsCode: opts.waitForSmsCode
   }
   return { tools: createPhoneTools(ctx) as unknown as ToolStub[], ops, confirm, steps, ctx }
 }
@@ -123,11 +125,12 @@ const ARGS: Record<string, Record<string, unknown>> = {
   phone_type: { text: 'hello' },
   phone_key: { key: 'back' },
   phone_swipe: { from: { x: 10, y: 900 }, to: { x: 10, y: 200 } },
-  phone_screenshot: {}
+  phone_screenshot: {},
+  wait_for_sms_code: {}
 }
 
 describe('폰 도구 목록', () => {
-  it('도구 6종의 이름이 정해진 이름과 같다', () => {
+  it('도구 7종의 이름이 정해진 이름과 같다', () => {
     const { tools } = build()
     expect(tools.map((t) => t.name)).toEqual([
       'phone_get_screen',
@@ -135,7 +138,8 @@ describe('폰 도구 목록', () => {
       'phone_type',
       'phone_key',
       'phone_swipe',
-      'phone_screenshot'
+      'phone_screenshot',
+      'wait_for_sms_code'
     ])
     expect(PHONE_TOOL_NAMES).toEqual(tools.map((t) => t.name))
   })
@@ -166,7 +170,7 @@ describe('권한 모드(read_only)', () => {
 })
 
 describe('Pro 게이트', () => {
-  it('Pro 가 아니면 6종 전부 거부한다', async () => {
+  it('Pro 가 아니면 전부 거부한다', async () => {
     const { tools, ops } = build({ isPro: false, mode: 'full' })
     for (const t of tools) {
       const r = await t.handler(ARGS[t.name])
@@ -334,7 +338,8 @@ describe('금고 비접근', () => {
       'mode',
       'onStep',
       'phones',
-      'tick'
+      'tick',
+      'waitForSmsCode'
     ])
   })
 })
@@ -379,5 +384,36 @@ describe('createPhoneOps — adb 배선', () => {
     expect(calls).toContain(`-s ${SERIAL} shell input keyevent KEYCODE_BACK`)
     // 보낼 수 없는 글자는 adb 를 부르지 않는다
     expect(calls.some((c) => c.includes('input text'))).toBe(false)
+  })
+})
+
+describe('wait_for_sms_code', () => {
+  it('성공하면 자릿수만 마스킹해 돌려준다(인증번호 값은 나가지 않는다)', async () => {
+    const waitForSmsCode = vi.fn(async () => ({ filled: true, digits: 6 }))
+    const { tools, steps } = build({ waitForSmsCode })
+    const r = await get(tools, 'wait_for_sms_code').handler({ host: 'toss.im' })
+    expect(textOut(r)).toBe('filled: ######')
+    expect(waitForSmsCode).toHaveBeenCalledWith('toss.im')
+    expect(steps.at(-1)).toEqual({ label: '문자 인증 대기', ok: true })
+  })
+
+  it('문자가 오지 않으면 timeout 이다', async () => {
+    const { tools } = build({ waitForSmsCode: vi.fn(async () => ({ filled: false, digits: 0 })) })
+    const r = await get(tools, 'wait_for_sms_code').handler({})
+    expect(textOut(r)).toBe('timeout')
+  })
+
+  it('인증 흐름이 배선되지 않으면 거부한다', async () => {
+    const { tools } = build()
+    const r = await get(tools, 'wait_for_sms_code').handler({})
+    expect(textOut(r)).toBe('refused: sms auth is not available')
+  })
+
+  it('read_only 모드에서는 부르지 않는다', async () => {
+    const waitForSmsCode = vi.fn(async () => ({ filled: true, digits: 6 }))
+    const { tools } = build({ mode: 'read_only', waitForSmsCode })
+    const r = await get(tools, 'wait_for_sms_code').handler({})
+    expect(textOut(r)).toBe('refused: read-only mode')
+    expect(waitForSmsCode).not.toHaveBeenCalled()
   })
 })

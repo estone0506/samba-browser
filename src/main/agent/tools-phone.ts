@@ -1,4 +1,4 @@
-// 폰 AI 도구 6종. 금고에 접근하지 않는다 — 비밀값은 pay-secret.ts 만 다룬다.
+// 폰 AI 도구. 금고에 접근하지 않는다 — 비밀값은 pay-secret.ts 만 다룬다.
 // 호출 상한(tick)·진행 로그(onStep)는 웹 도구와 같은 것을 공유한다.
 //
 // 안전 규칙(3단계 Global Constraints):
@@ -48,8 +48,19 @@ export const PHONE_TOOL_NAMES = [
   'phone_type',
   'phone_key',
   'phone_swipe',
-  'phone_screenshot'
+  'phone_screenshot',
+  'wait_for_sms_code'
 ]
+
+/** 인증 대기 결과 — 값이 아니라 "채웠는가 · 몇 자리인가" 만 오간다 */
+export interface SmsCodeOutcome {
+  filled: boolean
+  digits: number
+}
+
+// 인증 흐름이 배선되지 않은 실행에서 돌려주는 문구
+const NO_AUTH_FLOW = 'refused: sms auth is not available'
+const AUTH_TIMEOUT = 'timeout'
 
 export interface Point {
   x: number
@@ -77,6 +88,11 @@ export interface PhoneToolContext {
   confirm: (action: string, kind?: 'danger' | 'finish') => Promise<boolean>
   tick: () => string | null
   onStep: (label: string, ok: boolean) => void
+  /**
+   * 문자 인증을 끝까지 수행한다(auth-flow 의 runSmsAuth 를 배선부가 꽂는다).
+   * 인증번호 값은 돌려주지 않는다 — 이미 페이지에 채워졌기 때문이다
+   */
+  waitForSmsCode?: (host?: string) => Promise<SmsCodeOutcome>
 }
 
 // 스키마가 서로 다른 도구를 한 배열에 담기 위한 공통 타입(웹 도구 배열과 같은 취지).
@@ -277,9 +293,32 @@ export function createPhoneTools(ctx: PhoneToolContext): PhoneTool[] {
     }
   )
 
+  // 문자 인증 대기 — 폰에 온 인증번호를 페이지 입력칸에 바로 채운다.
+  // 모델에게는 마스킹된 결과(`filled: ####`)만 준다. 값은 어떤 경로로도 나가지 않는다
+  const waitSmsCode = tool(
+    'wait_for_sms_code',
+    'Wait for the SMS verification code to arrive on the phone and fill it into the page field. Returns only a masked result - you never see the code itself.',
+    { host: z.string().optional().describe('site host that is asking for the code') },
+    ({ host }) =>
+      act('문자 인증 대기', true, async () => {
+        if (!ctx.waitForSmsCode) return NO_AUTH_FLOW
+        const r = await ctx.waitForSmsCode(host)
+        // 자릿수까지만 알려 준다(모델이 "6자리를 채웠다" 정도만 알면 된다)
+        return r.filled ? `filled: ${'#'.repeat(Math.max(0, r.digits))}` : AUTH_TIMEOUT
+      })
+  )
+
   // 스키마가 도구마다 달라 한 배열로 모으려면 좁히기가 필요하다(SDK 도 내부적으로 같은 처리를 한다).
   // any 를 쓰지 않으려고 unknown 을 거쳐 좁힌다 — 실행 시 모양은 그대로다
-  return [getScreen, tap, typeTool, keyTool, swipe, screenshot] as unknown as PhoneTool[]
+  return [
+    getScreen,
+    tap,
+    typeTool,
+    keyTool,
+    swipe,
+    screenshot,
+    waitSmsCode
+  ] as unknown as PhoneTool[]
 }
 
 /**
