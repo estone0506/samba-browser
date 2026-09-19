@@ -619,7 +619,16 @@
     "dangerDesc": "계정을 지우면 서버의 동기화 데이터가 모두 사라져요",
     "deleteConfirmLabel": "확인을 위해 {{word}} 를 입력하세요",
     "deleteAccount": "계정 삭제",
-    "deleteAccountUnavailable": "계정 삭제는 아직 준비 중이에요"
+    "deleteAccountUnavailable": "계정 삭제는 아직 준비 중이에요",
+    "errors": {
+      "invalidCredentials": "이메일 또는 비밀번호가 맞지 않아요",
+      "emailNotConfirmed": "이메일 확인이 아직 안 됐어요. 받은 메일의 링크를 눌러 주세요",
+      "alreadyRegistered": "이미 가입된 이메일이에요. 로그인해 주세요",
+      "weakPassword": "비밀번호가 너무 짧거나 단순해요(8자 이상)",
+      "rateLimited": "시도가 너무 많아요. 잠시 후 다시 해 주세요",
+      "network": "서버에 연결할 수 없어요. 인터넷 연결을 확인해 주세요",
+      "generic": "로그인에 실패했어요. 잠시 후 다시 시도해 주세요"
+    }
   },
   "sync": {
     "title": "동기화",

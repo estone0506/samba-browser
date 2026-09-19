@@ -17,6 +17,20 @@ import {
 // 계정 삭제를 활성화하려면 사용자가 그대로 입력해야 하는 확인 문구
 const DELETE_CONFIRM_WORD = 'DELETE'
 
+// Supabase 가 돌려주는 영문 오류를 사용자 문구 키로 바꾼다. 모르는 오류는 일반 문구
+function authErrorKey(message: string): string {
+  const m = message.toLowerCase()
+  if (m.includes('invalid login credentials')) return 'account.errors.invalidCredentials'
+  if (m.includes('email not confirmed')) return 'account.errors.emailNotConfirmed'
+  if (m.includes('already registered') || m.includes('already been registered'))
+    return 'account.errors.alreadyRegistered'
+  if (m.includes('password should be') || m.includes('weak password'))
+    return 'account.errors.weakPassword'
+  if (m.includes('rate limit') || m.includes('too many')) return 'account.errors.rateLimited'
+  if (m.includes('fetch') || m.includes('network')) return 'account.errors.network'
+  return 'account.errors.generic'
+}
+
 export function AccountSection(): React.JSX.Element {
   const { t } = useTranslation()
   const auth = useAuthStore()
@@ -148,7 +162,7 @@ function SignInCard(): React.JSX.Element {
           autoComplete="current-password"
         />
       </SettingsRow>
-      {auth.error && <p className="text-[12px] text-[#b91c1c]">{auth.error}</p>}
+      {auth.error && <p className="text-[12px] text-[#b91c1c]">{t(authErrorKey(auth.error))}</p>}
       <div className="flex flex-wrap items-center gap-2">
         <PrimaryButton disabled={!canSubmit} onClick={submit}>
           {mode === 'signIn' ? t('account.signIn') : t('account.signUp')}
