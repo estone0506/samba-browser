@@ -10,7 +10,7 @@ import { playbookScheduleSchema, type PlaybookSchedule } from './schedule'
 /** 이름·트리거·절차 길이 상한. 동기화 값이라 한없이 커지지 않게 막는다 */
 export const PLAYBOOK_NAME_MAX = 60
 export const PLAYBOOK_TRIGGER_MAX = 80
-export const PLAYBOOK_INSTRUCTIONS_MAX = 20000
+export const PLAYBOOK_INSTRUCTIONS_MAX = 40000
 /** 플레이북 개수 상한(설정 한 칸에 실려 동기화되므로 넉넉하되 유한하게) */
 export const PLAYBOOK_MAX_COUNT = 50
 
