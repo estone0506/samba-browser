@@ -90,7 +90,8 @@
   },
   "auth": {
     "missing": "AI is not connected. Run claude login in a terminal or add an API key in Settings.",
-    "limit": "You've reached the AI usage limit. Please try again later."
+    "limit": "You've reached the AI usage limit. Please try again later.",
+    "notConnected": "No AI connection. Connect a subscription or add an API key in Settings > AI"
   },
   "settings": {
     "model": "Model",
@@ -113,7 +114,12 @@
       "deep": "Deep",
       "visual": "Visual",
       "use": "Use this path",
-      "inUse": "In use"
+      "inUse": "In use",
+      "codexSubscription": "Codex subscription",
+      "available": "Available",
+      "connect": "Connect",
+      "disconnect": "Disconnect",
+      "notConnectedShort": "Not connected"
     }
   },
   "capture": {
@@ -671,7 +677,19 @@
       "visualUsedIn": "Screenshot reading, captcha checks",
       "remapped": "Switching connection path remapped these models: {{list}}",
       "dismiss": "Got it"
-    }
+    },
+    "codexSubscriptionDesc": "Uses the OpenAI Codex CLI login on this PC",
+    "codexInstallHint": "Codex CLI is not installed. Install it in a terminal, then check again",
+    "codexLoginHint": "Run codex login in a terminal",
+    "availableHint": "This PC has a CLI login, but it is not connected yet. Press Connect to let the AI use it",
+    "loginNeededTitle": "Login required",
+    "loginNeededDetail": "Log in from the terminal window, then press Reconnect. The app never types your credentials for you",
+    "openTerminal": "Open terminal",
+    "retryConnect": "Reconnect",
+    "close": "Close",
+    "disconnectTitle": "Disconnect this subscription?",
+    "disconnectBody": "Once disconnected, the AI stops using this subscription. You can connect again anytime",
+    "disconnectKeepsCli": "Your CLI login files on this PC are left untouched - only the app connection record is cleared"
   },
   "recovery": {
     "title": "Reissue recovery key",

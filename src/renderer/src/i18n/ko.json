@@ -90,7 +90,8 @@
   },
   "auth": {
     "missing": "AI 연결이 안 됐어요. 터미널에서 claude login 을 실행하거나 설정에서 API 키를 입력하세요.",
-    "limit": "AI 사용 한도에 도달했어요. 잠시 후 다시 시도하세요."
+    "limit": "AI 사용 한도에 도달했어요. 잠시 후 다시 시도하세요.",
+    "notConnected": "AI 연결이 없어요. 설정 > AI 연결에서 구독을 연결하거나 API 키를 넣어 주세요"
   },
   "settings": {
     "model": "모델",
@@ -113,7 +114,12 @@
       "deep": "깊게",
       "visual": "화면 인식",
       "use": "이 경로 쓰기",
-      "inUse": "사용 중"
+      "inUse": "사용 중",
+      "codexSubscription": "Codex 구독",
+      "available": "연결 가능",
+      "connect": "연결",
+      "disconnect": "연결 해지",
+      "notConnectedShort": "연결 필요"
     }
   },
   "capture": {
@@ -671,7 +677,19 @@
       "visualUsedIn": "스크린샷 이해·캡차 확인",
       "remapped": "연결 경로를 바꿔서 {{list}} 모델이 자동으로 대체됐어요",
       "dismiss": "확인"
-    }
+    },
+    "codexSubscriptionDesc": "이 PC 에 설치된 OpenAI Codex CLI 로그인을 씁니다",
+    "codexInstallHint": "Codex CLI 가 설치되어 있지 않아요. 터미널에서 설치한 뒤 다시 확인하세요",
+    "codexLoginHint": "터미널에서 codex login 을 실행해 주세요",
+    "availableHint": "이 PC 에 로그인 자격이 있지만 아직 연결하지 않았어요. [연결] 을 눌러야 AI 가 씁니다",
+    "loginNeededTitle": "로그인이 필요해요",
+    "loginNeededDetail": "터미널 창에서 로그인한 뒤 [다시 연결] 을 눌러 주세요. 앱은 아이디·비밀번호를 대신 입력하지 않아요",
+    "openTerminal": "터미널 열기",
+    "retryConnect": "다시 연결",
+    "close": "닫기",
+    "disconnectTitle": "연결을 해지할까요?",
+    "disconnectBody": "해지하면 AI 가 이 구독 경로를 더 이상 쓰지 않아요. 언제든 다시 연결할 수 있어요",
+    "disconnectKeepsCli": "이 PC 의 CLI 로그인 파일은 그대로 둡니다 — 앱의 연결 기록만 지워요"
   },
   "recovery": {
     "title": "복구 키 재발급",
