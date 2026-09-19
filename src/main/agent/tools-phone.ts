@@ -22,6 +22,7 @@ import {
 } from '../phone/input'
 import { execOutArgs, type AdbRunner } from '../phone/adb'
 import { dumpScreen } from '../phone/uitree'
+import { PAY_PROVIDERS, type PayProvider, type PayResult } from '../phone/pay'
 
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
 const NOT_PRO = 'refused: phone requires Pro plan'
@@ -41,6 +42,12 @@ export const PAYMENT_PACKAGES = [
   'com.kakao.talk',
   'com.nhn.android.search' // 네이버앱(네이버페이)
 ]
+
+/**
+ * 결제 승인 도구 이름. PHONE_TOOL_NAMES 와 따로 둔다 —
+ * 결제는 금고를 보는 별도 문맥(PayToolContext)으로만 등록되기 때문이다
+ */
+export const PAY_TOOL_NAME = 'phone_approve_payment'
 
 export const PHONE_TOOL_NAMES = [
   'phone_get_screen',
@@ -341,4 +348,67 @@ export function createPhoneOps(adb: AdbRunner, list: () => PhoneDto[]): PhoneOps
       return { png: await adb.runBinary(execOutArgs(serial, ['screencap', '-p'])), secret: false }
     }
   }
+}
+
+// --- 결제 승인 도구 ---------------------------------------------------------
+//
+// 결제는 폰 도구와 문맥을 나눈다. PhoneToolContext 는 금고를 보지 못하고(테스트로 단언),
+// 결제 실행기만 금고를 본다 — 다만 비밀번호 값은 pay-secret.ts 안에서만 복호화된다.
+// 확인 카드·상한 검사·재시도 금지는 전부 runPayApproval 안에 있다
+
+/** 모델이 도구로 넘길 수 있는 값. 폰·계정·금고는 배선부가 채운다(모델이 고르지 못한다) */
+export interface PayToolRequest {
+  provider: PayProvider
+  amountKrw: number
+  merchant: string
+  methodLabel: string
+}
+
+export interface PayToolContext {
+  isPro: () => boolean
+  tick: () => string | null
+  onStep: (label: string, ok: boolean) => void
+  // 결제 실행기(배선부가 runPayApproval 에 금고·폰·확인 카드를 묶어 넣는다)
+  run: (req: PayToolRequest) => Promise<PayResult>
+}
+
+const PAY_PROVIDER_NAMES = Object.keys(PAY_PROVIDERS) as [PayProvider, ...PayProvider[]]
+
+export function createPayTool(ctx: PayToolContext): PhoneTool {
+  const payTool = tool(
+    PAY_TOOL_NAME,
+    'Approve a payment that the web checkout handed to a Korean pay app on the phone. ' +
+      'The user always sees a confirmation card first. Never pass a payment password or PIN here - ' +
+      'this tool fills it on the phone by itself and the value never reaches you.',
+    {
+      provider: z.enum(PAY_PROVIDER_NAMES),
+      amountKrw: z.number().int().positive(),
+      merchant: z.string(),
+      methodLabel: z.string().describe('payment method shown to the user, e.g. 토스페이')
+    },
+    async (args): Promise<{ content: TextBlock[] }> => {
+      const label = '폰 결제 승인'
+      const over = ctx.tick()
+      // 상한 도달은 실행기까지 가지 않는다(별도 step 은 폰 도구 쪽에서 이미 남는다)
+      if (over) return text(over)
+      if (!ctx.isPro()) {
+        ctx.onStep(label, false)
+        return text(NOT_PRO)
+      }
+      try {
+        const r = await ctx.run({
+          provider: args.provider,
+          amountKrw: args.amountKrw,
+          merchant: args.merchant,
+          methodLabel: args.methodLabel
+        })
+        // 사유는 상태 이름뿐이다 — 화면 값은 담지 않는다(진행 로그는 실행기가 남긴다)
+        return text(r.ok ? 'ok' : `refused: ${r.reason ?? 'failed'}`)
+      } catch (e) {
+        ctx.onStep(label, false)
+        return text(`error: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+  )
+  return payTool as unknown as PhoneTool
 }

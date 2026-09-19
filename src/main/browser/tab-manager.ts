@@ -22,6 +22,9 @@ export interface Tab {
   view: WebContentsView
   profile: string
   mobile: boolean
+  // 이 탭을 window.open 으로 띄운 탭. 결제창처럼 별도 WebContents 로 열리는 팝업을
+  // 부모 탭에서 다시 찾기 위해 남긴다(결제 성공 리다이렉트 확인에 쓴다)
+  openerId?: string
 }
 
 // 설정을 아직 못 읽었을 때의 기본 주소. 설정이 들어오면 setDefaultUrl 로 덮인다
@@ -282,7 +285,21 @@ export class TabManager {
     return this.tabs.find((t) => t.view.webContents === wc) ?? null
   }
 
-  create(opts: { url?: string; profile?: string; mobile?: boolean } = {}): TabInfo {
+  /**
+   * 이 탭이 띄운 팝업 중 아직 살아 있는 가장 최근 것.
+   * 간편결제처럼 결제창이 별도 WebContents 로 열리는 사이트에서 성공 리다이렉트를 확인할 때 쓴다
+   */
+  popupOf(openerId: string): Tab | null {
+    for (let i = this.tabs.length - 1; i >= 0; i--) {
+      const t = this.tabs[i]
+      if (t.openerId === openerId && !t.view.webContents.isDestroyed()) return t
+    }
+    return null
+  }
+
+  create(
+    opts: { url?: string; profile?: string; mobile?: boolean; openerId?: string } = {}
+  ): TabInfo {
     if (this.disposed) throw new Error('window closed')
     // url 이 없으면(새 탭 버튼·첫 탭) 설정에서 계산된 기본 주소를 쓴다
     const url = opts.url ? opts.url : this.defaultUrl
@@ -312,7 +329,13 @@ export class TabManager {
     // 카드가 상단만 둥글고(rounded-t-2xl) 하단은 창 바닥에 닿는 edge-to-edge 레이아웃에서는
     // 0 으로 둬 하단 사각 모서리와 일치시킨다(상단은 카드 테두리 뒤에 가려져 시각적으로 차이가 적다)
     view.setBorderRadius(0)
-    const tab: Tab = { id: randomUUID(), view, profile, mobile: opts.mobile ?? false }
+    const tab: Tab = {
+      id: randomUUID(),
+      view,
+      profile,
+      mobile: opts.mobile ?? false,
+      ...(opts.openerId === undefined ? {} : { openerId: opts.openerId })
+    }
     this.tabs.push(tab)
     const wc = view.webContents
     this.attachInputHandler(wc)
@@ -366,7 +389,14 @@ export class TabManager {
         console.warn(`새 창 차단: ${target}`)
         return { action: 'deny' }
       }
-      this.create({ url: target, profile, mobile: tab.mobile })
+      // 새 창은 탭 목록에 등록해 스냅샷·조작 대상에 넣는다.
+      // 팝업은 부모 탭과 같은 profile 을 써야 로그인 세션·쿠키가 이어진다(결제창 필수)
+      try {
+        this.create({ url: target, profile, mobile: tab.mobile, openerId: tab.id })
+      } catch (e: unknown) {
+        // 여기서 던지면 페이지의 window.open 호출이 통째로 깨진다 — 로그만 남기고 막는다
+        console.warn('새 창 등록 실패', e instanceof Error ? e.message : String(e))
+      }
       return { action: 'deny' }
     })
     if (tab.mobile) void applyMobileEmulation(wc)
