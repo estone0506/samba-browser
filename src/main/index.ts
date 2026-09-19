@@ -16,6 +16,9 @@ import { runLoginHarness, writeVaultLocked } from './e2e/login-harness'
 const userDataOverride = process.env.SAMBA_USER_DATA
 if (userDataOverride) app.setPath('userData', userDataOverride)
 
+// 개발 모드(electron.exe 직접 실행)에서도 앱 이름이 'Electron' 대신 제품명으로 보이게 한다
+app.setName('SAMBA Browser')
+
 // 내부 페이지 스킴(samba://) 등록도 app.whenReady() 이전이어야 한다
 registerInternalScheme()
 
