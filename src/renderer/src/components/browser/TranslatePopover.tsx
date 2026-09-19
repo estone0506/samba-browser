@@ -40,7 +40,8 @@ export function TranslatePopover(): React.JSX.Element {
     (p: TranslateProgressDto | null): string => {
       if (!p) return ''
       if (p.phase === 'error') return t(`translate.fail.${p.reason ?? 'failed'}`)
-      if (p.kind === 'image') return p.phase === 'running' ? t('translate.imageWorking') : ''
+      if (p.kind === 'image')
+        return p.phase === 'running' ? t('translate.imageWorking') : t('translate.imageDone')
       if (p.total === 0) return ''
       const key = p.phase === 'running' ? 'translate.progress' : 'translate.progressDone'
       return t(key, { done: p.done, total: p.total })

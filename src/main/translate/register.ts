@@ -142,21 +142,38 @@ export function registerTranslate(deps: RegisterTranslateDeps): TranslateHandle 
   }
 
   const imageTranslate = async (wc: WebContents, srcUrl: string): Promise<void> => {
+    // 진행·결과 알림. 사유 문자열은 toTranslateProgress 가 네 가지 코드로 좁히므로
+    // 이미지 내용·응답 본문이 화면으로 새어 나가지 않는다
+    const emit = (input: { running?: boolean; done?: number; error?: string }): void =>
+      deps.emit(toTranslateProgress('image', { total: input.done ?? 0, ...input }))
+    // Visual 폴백조차 못 쓰는 상태(키 없음)였는지 — "글자 없음" 과 "AI 연결 없음" 을 구분한다
+    let visualUnavailable = false
+    emit({ running: true })
     try {
       const response = await wc.session.fetch(srcUrl)
-      if (!response.ok) return
+      if (!response.ok) {
+        emit({ error: 'translate:failed' })
+        return
+      }
       const bytes = Buffer.from(await response.arrayBuffer())
       // OCR·Visual 모두 PNG 만 다루므로 여기서 한 번 변환한다
       const image = nativeImage.createFromBuffer(bytes)
       const size = image.getSize()
-      if (size.width === 0 || size.height === 0) return
+      if (size.width === 0 || size.height === 0) {
+        emit({ error: 'translate:failed' })
+        return
+      }
       const png = image.toPNG()
       const lang = targetLang()
       const boxes = await translateImage(
         {
           ocr: localOcr,
-          visual: (buf, s) =>
-            readImageTextBoxes(
+          visual: (buf, s) => {
+            if (!deps.apiKeys.get('anthropic')) {
+              visualUnavailable = true
+              return Promise.resolve(null)
+            }
+            return readImageTextBoxes(
               {
                 apiKey: () => deps.apiKeys.get('anthropic'),
                 model: () => {
@@ -166,14 +183,18 @@ export function registerTranslate(deps: RegisterTranslateDeps): TranslateHandle 
               },
               buf,
               s
-            ),
+            )
+          },
           translate: (texts, l) => service.translate(texts, l)
         },
         png,
         size,
         lang
       )
-      if (boxes.length === 0) return
+      if (boxes.length === 0) {
+        emit({ error: visualUnavailable ? 'translate:needs-ai' : 'translate:no-text' })
+        return
+      }
       const dto: ImageTranslateDto = {
         src: srcUrl,
         naturalWidth: size.width,
@@ -181,9 +202,12 @@ export function registerTranslate(deps: RegisterTranslateDeps): TranslateHandle 
         boxes
       }
       await callPage(wc, `__sambaTranslate.showImageOverlay(${JSON.stringify(dto)})`)
+      emit({ done: boxes.length })
     } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'translate:failed'
+      emit({ error: message })
       // 이미지 바이트·응답 본문이 실리지 않도록 메시지만 짧게 남긴다
-      console.warn('이미지 번역 실패', err instanceof Error ? err.message : '')
+      console.warn('이미지 번역 실패', message)
     }
   }
 
