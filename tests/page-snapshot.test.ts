@@ -267,6 +267,19 @@ describe('커서 휴리스틱 — role·onclick 없는 클릭 가능한 DIV', ()
     expect(s.elements.map((e) => e.tag)).toEqual(['button'])
   })
 
+  it('항목 안의 아이콘(img)이 pointer 여도 텍스트가 있는 항목을 남긴다', () => {
+    // 무신사 컬러 드롭다운: 항목 div > span "(19)BLACK" + 컬러칩 img, 전부 cursor:pointer
+    document.body.innerHTML = `
+      <div data-cursor="pointer" id="item">
+        <span data-cursor="pointer">(19)BLACK</span>
+        <div data-cursor="pointer"><img data-cursor="pointer" alt=""></div>
+      </div>`
+    const s = buildSnapshot()
+    const texts = s.elements.map((e) => e.text)
+    expect(texts).toContain('(19)BLACK')
+    expect(s.elements.some((e) => e.tag === 'img')).toBe(false)
+  })
+
   it('조상·자손이 둘 다 pointer 면 안쪽(텍스트가 짧은 쪽)만 남긴다', () => {
     document.body.innerHTML = `
       <div data-cursor="pointer" id="row">

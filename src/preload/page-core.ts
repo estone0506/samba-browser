@@ -156,6 +156,22 @@ function sortByDocumentOrder(els: HTMLElement[]): HTMLElement[] {
 }
 
 /** 커서 휴리스틱 후보인가 — 텍스트가 짧게라도 있거나(≤120자) 그림(img/svg)이어야 한다 */
+function hasTextLabel(el: HTMLElement): boolean {
+  const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  return text.length > 0 && text.length <= CURSOR_TEXT_MAX
+}
+
+// 아이콘(img/svg/빈 칸)이 텍스트 있는 pointer 조상 안에 있는가 — 그러면 조상이 항목이다
+const ICON_ANCESTOR_DEPTH = 8
+function insideTextPointer(el: HTMLElement): boolean {
+  let node = el.parentElement
+  for (let i = 0; i < ICON_ANCESTOR_DEPTH && node && node !== document.body; i += 1) {
+    if (getComputedStyle(node).cursor === 'pointer' && hasTextLabel(node)) return true
+    node = node.parentElement
+  }
+  return false
+}
+
 function hasClickableLabel(el: HTMLElement): boolean {
   const tag = el.tagName.toLowerCase()
   if (tag === 'img' || tag === 'svg') return true
@@ -195,7 +211,10 @@ function collectCursorClickable(base: HTMLElement[]): HTMLElement[] {
     if (getComputedStyle(el).cursor !== 'pointer') continue
     if (!hasClickableLabel(el)) continue
     if (!isVisible(el, visible)) continue
-    // 문서 순서라 조상이 먼저 담긴다 — 자손이 들어오면 조상을 걷어낸다
+    // 문서 순서라 조상이 먼저 담긴다 — 텍스트가 있는 자손이 들어오면 조상을 걷어낸다.
+    // 단, 자손이 아이콘(img/svg)이나 빈 칸이고 조상에 텍스트가 있으면 조상을 남긴다 —
+    // 메뉴 항목 "(19)BLACK" 안의 컬러칩 이미지가 항목 자체를 밀어내던 문제
+    if (!hasTextLabel(el) && insideTextPointer(el)) continue
     while (picked.length > 0 && picked[picked.length - 1].contains(el)) picked.pop()
     picked.push(el)
   }
