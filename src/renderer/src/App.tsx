@@ -15,12 +15,22 @@ import { useBrowserStore } from '@renderer/stores/browserStore'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { useChatStore } from '@renderer/stores/chatStore'
 import { ResizeHandle } from '@renderer/components/layout/ResizeHandle'
+import { canResizeSidebar, sidebarWidthOf } from '@renderer/components/layout/sidebar-view'
 import { useVaultStore } from '@renderer/stores/vaultStore'
 
 export default function App(): React.JSX.Element {
   const { t } = useTranslation()
   const { refresh, setTabs } = useBrowserStore()
-  const { sidebarWidth, panelWidth, view, setSidebarWidth, setPanelWidth } = useUiStore()
+  const {
+    sidebarWidth,
+    sidebarCollapsed,
+    panelWidth,
+    view,
+    setSidebarWidth,
+    setSidebarCollapsed,
+    setSidebarSections,
+    setPanelWidth
+  } = useUiStore()
   const chat = useChatStore()
   const refreshVaultState = useVaultStore((s) => s.refreshState)
   const subscribeCapture = useVaultStore((s) => s.subscribeCapture)
@@ -35,14 +45,16 @@ export default function App(): React.JSX.Element {
     const name = t('app.name')
     document.title = activeTitle && view === 'browser' ? `${activeTitle} - ${name}` : name
   }, [activeTitle, view, t])
-  // 저장된 패널 폭 복원(기기별 설정)
+  // 저장된 패널 폭·사이드바 접힘 상태 복원(기기별 설정)
   useEffect(() => {
     void window.samba.settings.get().then((r) => {
       if (!r.ok) return
       setSidebarWidth(r.data.sidebarWidth)
       setPanelWidth(r.data.panelWidth)
+      setSidebarCollapsed(r.data.sidebarCollapsed)
+      setSidebarSections(r.data.sidebarSections)
     })
-  }, [setSidebarWidth, setPanelWidth])
+  }, [setSidebarWidth, setPanelWidth, setSidebarCollapsed, setSidebarSections])
   // 자동 저장 제안 카드(vault:capturePrompt) · 자동 갱신 토스트(vault:passwordUpdated) 구독은
   // 앱 전체에서 한 번만 한다
   useEffect(() => {
@@ -68,15 +80,18 @@ export default function App(): React.JSX.Element {
   }, [view])
   return (
     <div className="flex h-full bg-[var(--bg)]">
-      <Sidebar width={sidebarWidth} />
-      <ResizeHandle
-        side="right"
-        getWidth={() => useUiStore.getState().sidebarWidth}
-        onWidth={setSidebarWidth}
-        onEnd={() =>
-          void window.samba.settings.set({ sidebarWidth: useUiStore.getState().sidebarWidth })
-        }
-      />
+      <Sidebar width={sidebarWidthOf(sidebarCollapsed, sidebarWidth)} />
+      {/* 접힌 사이드바는 폭이 고정이라 손잡이를 숨긴다 */}
+      {canResizeSidebar(sidebarCollapsed) && (
+        <ResizeHandle
+          side="right"
+          getWidth={() => useUiStore.getState().sidebarWidth}
+          onWidth={setSidebarWidth}
+          onEnd={() =>
+            void window.samba.settings.set({ sidebarWidth: useUiStore.getState().sidebarWidth })
+          }
+        />
+      )}
       <main className="flex min-h-0 min-w-0 flex-1 flex-col pt-2.5 pr-2.5">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-2xl border border-[var(--line)] bg-white shadow-[0_1px_2px_rgba(0,0,0,.04),0_8px_24px_rgba(0,0,0,.06)]">
           {view === 'browser' ? (
