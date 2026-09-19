@@ -54,7 +54,9 @@ describe('확장 manifest 검증', () => {
       version: '1.2.3',
       manifestVersion: 3,
       description: '',
-      permissions: []
+      permissions: [],
+      iconPath: null,
+      defaultLocale: undefined
     })
   })
 
@@ -276,7 +278,9 @@ describe('ExtensionManager', () => {
       version: '1.0.0',
       manifestVersion: 3,
       description: '',
-      permissions: []
+      permissions: [],
+      iconPath: null,
+      defaultLocale: undefined
     })
   })
 
@@ -419,5 +423,18 @@ describe('ExtensionManager', () => {
       return
     }
     expect(keys).not.toContain('extensionPaths')
+  })
+})
+
+describe('확장 아이콘', () => {
+  it('manifest icons 중 가장 큰 것을 iconPath 로 뽑는다', async () => {
+    const { parseManifest } = await import('../src/main/extensions/manager')
+    const m = parseManifest({
+      name: 'x',
+      version: '1',
+      manifest_version: 3,
+      icons: { '16': 'a16.png', '128': 'a128.png', '48': 'a48.png' }
+    })
+    expect(m.iconPath).toBe('a128.png')
   })
 })

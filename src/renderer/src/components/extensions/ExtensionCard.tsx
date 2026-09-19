@@ -28,8 +28,12 @@ export function ExtensionCard({ item, onToggle, onRemove }: Props): React.JSX.El
       )}
     >
       <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-black/[0.04]">
-          <Puzzle className="h-5 w-5 text-[var(--text2)]" />
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-black/[0.04]">
+          {item.icon ? (
+            <img src={item.icon} alt="" draggable={false} className="h-7 w-7 object-contain" />
+          ) : (
+            <Puzzle className="h-5 w-5 text-[var(--text2)]" />
+          )}
         </span>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-[13px] font-semibold text-[var(--text)]">

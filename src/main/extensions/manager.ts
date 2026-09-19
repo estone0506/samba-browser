@@ -9,6 +9,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import type { Settings } from '../../shared/settings'
 import type { ExtensionDto, ExtensionError, ExtensionSource } from '../../shared/extensions'
+import { pickIconPath, readIconDataUrl, resolveExtensionName } from './import-sources'
 
 export type { ExtensionDto, ExtensionError, ExtensionSource }
 
@@ -40,6 +41,10 @@ export interface ExtensionManifest {
   description: string
   /** permissions + host_permissions 를 합친 것. 세부정보의 권한 요약에 쓴다 */
   permissions: string[]
+  /** manifest icons 중 가장 큰 것의 상대 경로(없으면 null) */
+  iconPath: string | null
+  /** `__MSG_…__` 를 풀 때 쓰는 default_locale */
+  defaultLocale?: string
 }
 
 /** manifest 의 문자열 배열 필드를 안전하게 읽는다(형식이 틀리면 빈 배열) */
@@ -74,7 +79,9 @@ export function parseManifest(raw: unknown): ExtensionManifest {
     version,
     manifestVersion: manifestVersion as 2 | 3,
     description: typeof o.description === 'string' ? o.description.trim() : '',
-    permissions
+    permissions,
+    iconPath: pickIconPath(o.icons),
+    defaultLocale: typeof o.default_locale === 'string' ? o.default_locale : undefined
   }
 }
 
@@ -251,9 +258,11 @@ export class ExtensionManager {
       version: loaded.version?.trim() || manifest.version,
       path: resolved,
       source,
-      description: manifest.description,
+      // 설명도 `__MSG_key__` 일 수 있어 이름과 같은 방식으로 푼다
+      description: resolveExtensionName(manifest.description, resolved, manifest.defaultLocale),
       permissions: manifest.permissions,
-      enabled: true
+      enabled: true,
+      icon: readIconDataUrl(resolved, manifest.iconPath)
     }
   }
 

@@ -132,7 +132,16 @@ export function ExtensionMenu(): React.JSX.Element {
                       !item.enabled && 'opacity-50'
                     )}
                   >
-                    <Puzzle className="h-4 w-4 shrink-0 text-[var(--text2)]" />
+                    {item.icon ? (
+                      <img
+                        src={item.icon}
+                        alt=""
+                        draggable={false}
+                        className="h-4 w-4 shrink-0 object-contain"
+                      />
+                    ) : (
+                      <Puzzle className="h-4 w-4 shrink-0 text-[var(--text2)]" />
+                    )}
                     <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--text)]">
                       {item.name}
                     </span>

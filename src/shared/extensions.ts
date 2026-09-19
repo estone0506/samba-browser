@@ -20,6 +20,8 @@ export interface ExtensionDto {
   permissions: string[]
   /** 꺼 두면 목록에는 남지만 세션에서는 걷어낸다 */
   enabled: boolean
+  /** manifest icons 중 가장 큰 것. data:image/... 형태. 없으면 기본 퍼즐 아이콘 */
+  icon?: string
 }
 
 /** 로드 실패 한 건. 앱을 멈추지 않고 화면에 표시만 한다 */
