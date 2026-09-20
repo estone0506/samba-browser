@@ -337,7 +337,10 @@ export const pageBridge = {
    */
   overlays: async (tab: Tab): Promise<PageOverlay[]> => {
     const { main, frames } = await callEveryFrame(tab, { op: 'overlays' }, overlayListSchema)
-    const out: PageOverlay[] = main.map((o) => ({ ...o, label: o.label.slice(0, OVERLAY_LABEL_MAX) }))
+    const out: PageOverlay[] = main.map((o) => ({
+      ...o,
+      label: o.label.slice(0, OVERLAY_LABEL_MAX)
+    }))
     for (const frame of frames) {
       for (const o of frame.value) {
         out.push({

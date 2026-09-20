@@ -3,12 +3,7 @@
 // preload 로드가 실패한다. 타입은 `import type` 만 사용(번들에 남지 않음), 값은 ./page-constants 에서.
 import type { KeypadSignals, PageElement, PageOverlay, PageSnapshot } from '../shared/snapshot'
 import { MAX_ELEMENTS } from './page-constants'
-import {
-  isCloseLabel,
-  isOverlay,
-  isSensitiveOverlay,
-  type OverlaySignals
-} from './page-overlay'
+import { isCloseLabel, isOverlay, isSensitiveOverlay, type OverlaySignals } from './page-overlay'
 import {
   detectLoginFields,
   detectSignedInHint,

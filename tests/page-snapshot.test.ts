@@ -51,14 +51,15 @@ describe('buildSnapshot', () => {
 })
 
 describe('performClick / performType', () => {
-  it('id로 클릭', () => {
+  it('id로 클릭', async () => {
     buildSnapshot()
     let clicked = false
     document.getElementById('l')!.addEventListener('click', (ev) => {
       ev.preventDefault()
       clicked = true
     })
-    expect(performClick(1)).toBe('ok')
+    // preventDefault 는 "페이지가 받아 갔다"는 신호라 폴백 없이 바로 ok
+    expect(await performClick(1)).toBe('ok')
     expect(clicked).toBe(true)
   })
   it('비밀 입력칸 입력 거부', () => {
@@ -70,9 +71,9 @@ describe('performClick / performType', () => {
     expect(performType(2, '삼바웨이브', false)).toBe('ok')
     expect((document.querySelector('[name=q]') as HTMLInputElement).value).toBe('삼바웨이브')
   })
-  it('없는 id는 오류', () => {
+  it('없는 id는 오류', async () => {
     buildSnapshot()
-    expect(performClick(99)).toMatch(/not found/)
+    expect(await performClick(99)).toMatch(/not found/)
   })
 })
 
@@ -110,13 +111,15 @@ describe('많은 요소 — registry 는 전부, 나열만 150개', () => {
     expect(s.total).toBe(TOTAL + 1)
   })
 
-  it('150 이후 요소도 id 로 클릭할 수 있다', () => {
+  it('150 이후 요소도 id 로 클릭할 수 있다', async () => {
     buildSnapshot()
     let clicked = false
     document.getElementById('cart')!.addEventListener('click', () => {
       clicked = true
+      // 화면이 실제로 바뀌어야 폴백 없이 끝난다(장바구니 담김 토스트를 흉내)
+      document.body.appendChild(document.createElement('span'))
     })
-    expect(performClick(TOTAL + 1)).toBe('ok')
+    expect(await performClick(TOTAL + 1)).toBe('ok')
     expect(clicked).toBe(true)
   })
 
@@ -241,14 +244,15 @@ describe('커서 휴리스틱 — role·onclick 없는 클릭 가능한 DIV', ()
     expect(s.elements[0].text).toContain('255')
   })
 
-  it('그 DIV 를 id 로 클릭할 수 있다', () => {
+  it('그 DIV 를 id 로 클릭할 수 있다', async () => {
     document.body.innerHTML = '<div data-cursor="pointer" id="opt">BLACK · 255</div>'
     buildSnapshot()
     let clicked = false
     document.getElementById('opt')!.addEventListener('click', () => {
       clicked = true
+      document.body.appendChild(document.createElement('span'))
     })
-    expect(performClick(1)).toBe('ok')
+    expect(await performClick(1)).toBe('ok')
     expect(clicked).toBe(true)
   })
 
@@ -364,7 +368,7 @@ describe('추가 role 수집', () => {
 })
 
 describe('performClick — React 합성 이벤트', () => {
-  it('pointerdown·mousedown·mouseup·click 순서로 쏜다', () => {
+  it('pointerdown·mousedown·mouseup·click 순서로 쏜다', async () => {
     document.body.innerHTML = '<button id="b">사이즈</button>'
     buildSnapshot()
     const seen: string[] = []
@@ -372,7 +376,9 @@ describe('performClick — React 합성 이벤트', () => {
     for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
       el.addEventListener(type, () => seen.push(type))
     }
-    expect(performClick(1)).toBe('ok')
+    // 화면이 바뀌면 Enter 폴백이 돌지 않아 순서가 그대로 남는다
+    el.addEventListener('click', () => document.body.appendChild(document.createElement('span')))
+    expect(await performClick(1)).toBe('ok')
     expect(seen).toEqual(['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'])
   })
 })
@@ -429,7 +435,7 @@ describe('프레임 채널 동작 실행(runAgentOp)', () => {
     expect(s.elements.map((e) => e.text)).toEqual(['닫기'])
   })
 
-  it('click·type 동작이 실제 요소에 닿는다', () => {
+  it('click·type 동작이 실제 요소에 닿는다', async () => {
     document.body.innerHTML = '<input type="text"><button>검색</button>'
     const s = runAgentOp({ op: 'snapshot', reqId: 3 }) as {
       elements: { id: number; tag: string }[]
@@ -441,8 +447,11 @@ describe('프레임 채널 동작 실행(runAgentOp)', () => {
     runAgentOp({ op: 'type', id: input.id, text: '서울시 강남구', submit: false, reqId: 4 })
     expect((document.querySelector('input') as HTMLInputElement).value).toBe('서울시 강남구')
     let clicked = false
-    document.querySelector('button')?.addEventListener('click', () => (clicked = true))
-    runAgentOp({ op: 'click', id: button.id, reqId: 5 })
+    document.querySelector('button')?.addEventListener('click', (ev) => {
+      ev.preventDefault()
+      clicked = true
+    })
+    await runAgentOp({ op: 'click', id: button.id, reqId: 5 })
     expect(clicked).toBe(true)
   })
 
