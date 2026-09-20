@@ -1070,6 +1070,8 @@
     "adding": "불러오는 중…",
     "empty": "불러온 확장이 없어요",
     "remove": "제거",
+    "removed": "'{{name}}' 을(를) 제거했어요",
+    "undo": "되돌리기",
     "cancel": "취소",
     "storeButton": "확장 설치",
     "storeHint": "크롬 웹스토어에서 원하는 확장을 찾아 'Chrome에 추가' 를 누르면 설치돼요",

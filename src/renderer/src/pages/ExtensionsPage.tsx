@@ -29,8 +29,20 @@ const MENU_LABEL_KEYS: Record<ExtensionMenu, string> = {
 // "폴더 불러오기" 는 크롬과 마찬가지로 개발자 모드를 켰을 때만 보인다
 export function ExtensionsPage(): React.JSX.Element {
   const { t } = useTranslation()
-  const { items, loadErrors, message, busy, load, addFolder, remove, setEnabled, clearMessage } =
-    useExtensionStore()
+  const {
+    items,
+    loadErrors,
+    message,
+    busy,
+    load,
+    addFolder,
+    remove,
+    removed,
+    undoRemove,
+    dismissRemoved,
+    setEnabled,
+    clearMessage
+  } = useExtensionStore()
   const [menu, setMenu] = useState<ExtensionMenu>(DEFAULT_EXTENSION_MENU)
   const [query, setQuery] = useState('')
   const [devMode, setDevMode] = useState(false)
@@ -152,6 +164,29 @@ export function ExtensionsPage(): React.JSX.Element {
                 <p className="flex items-start gap-3 rounded-[10px] border border-red-200 bg-red-50 px-3 py-2 text-[11.5px] text-red-600">
                   <span className="min-w-0 flex-1">{message}</span>
                   <button type="button" onClick={clearMessage} className="shrink-0 underline">
+                    {t('extensions.cancel')}
+                  </button>
+                </p>
+              )}
+
+              {/* 제거 되돌리기 — 5초 동안만 떠 있는다 */}
+              {removed && (
+                <p className="flex items-center gap-3 rounded-[10px] border border-[var(--line)] bg-black/[0.03] px-3 py-2 text-[11.5px] text-[var(--text)]">
+                  <span className="min-w-0 flex-1 truncate">
+                    {t('extensions.removed', { name: removed.name })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void undoRemove()}
+                    className="shrink-0 font-medium underline underline-offset-2"
+                  >
+                    {t('extensions.undo')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={dismissRemoved}
+                    className="shrink-0 text-[var(--text2)] underline underline-offset-2"
+                  >
                     {t('extensions.cancel')}
                   </button>
                 </p>
