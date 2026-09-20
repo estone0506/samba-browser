@@ -530,19 +530,25 @@ export class VaultService {
   // 기기에 감싸 저장된 키로 잠금 해제를 1회 시도한다. 성공하면 true.
   // 생성자의 tryDeviceUnlock 과 ensureUnlockedByDevice() 가 공유하는 핵심 로직이다
   private unlockWithDeviceKey(): boolean {
-    if (!this.isInitialized()) return false
-    if (!this.settings.get().vaultRememberDevice) return false
-    if (!this.canUseSafeStorage() || !this.safeStorage) return false
+    // 실패 사유는 값 없이 한 줄만 남긴다 — "왜 매번 잠겨 있나"를 사용자가 알 수 있게
+    const skip = (why: string): false => {
+      console.warn(`키마스터 기기 키 자동 해제 안 함: ${why}`)
+      return false
+    }
+    if (!this.isInitialized()) return skip('금고 미설정')
+    if (!this.settings.get().vaultRememberDevice) return skip('이 PC에서 기억 꺼짐')
+    if (!this.canUseSafeStorage() || !this.safeStorage)
+      return skip('safeStorage 사용 불가(앱 준비 전?)')
     const wrapped = this.repo.getMeta(META_DEVICE_KEY)
-    if (!wrapped) return false
+    if (!wrapped) return skip('저장된 기기 키 없음')
     const ct = this.repo.getMeta(META_VERIFIER_CT)
     const iv = this.repo.getMeta(META_VERIFIER_IV)
-    if (!ct || !iv) return false
+    if (!ct || !iv) return skip('검증값 없음')
     try {
       const key = Buffer.from(this.safeStorage.decryptString(wrapped), 'base64')
       if (!checkVerifier(key, { ciphertext: ct, iv })) {
         zeroize(key)
-        return false
+        return skip('기기 키가 현재 마스터와 맞지 않음(마스터 변경 후 다시 기억 필요)')
       }
       this.key = key
       this.restartAutoLock()
@@ -550,7 +556,7 @@ export class VaultService {
       return true
     } catch {
       // 복호화 실패(다른 기기·사용자) → 잠긴 상태 유지
-      return false
+      return skip('기기 키 복호화 실패(다른 사용자·기기)')
     }
   }
 
