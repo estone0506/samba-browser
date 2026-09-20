@@ -37,6 +37,7 @@ import {
   submitForm,
   isSecretField,
   keypadSignals,
+  detectOverlays,
   runAgentOp,
   installCaptureListener
 } from './page-core'
@@ -89,7 +90,9 @@ if (location.protocol !== 'chrome-extension:') {
     // 최신 스냅샷 기준으로 요소가 비밀 입력칸(type=password)인지 확인(fill_secret 대상 검증용)
     isSecretField: (id: number) => isSecretField(id),
     // 결제 비밀번호 키패드 판정용 신호(값은 담기지 않는다)
-    keypadSignals: () => keypadSignals()
+    keypadSignals: () => keypadSignals(),
+    // 화면을 덮고 있는 레이어(공지·쿠폰·앱 설치 배너·결제 확인창) 목록
+    overlays: () => detectOverlays()
   }
 
   // globalThis 에 직접 대입(any 없이 타입 안전하게)
@@ -102,8 +105,11 @@ if (location.protocol !== 'chrome-extension:') {
     if (typeof raw !== 'object' || raw === null) return
     const reqId = (raw as { reqId?: unknown }).reqId
     if (typeof reqId !== 'number') return
+    // click 처럼 결과를 기다려야 하는 동작이 있어 언제나 Promise 로 감싸 답한다
     try {
-      ipcRenderer.send(PAGE_IPC.agentResult, { reqId, ok: true, value: runAgentOp(raw) })
+      void Promise.resolve(runAgentOp(raw))
+        .then((value) => ipcRenderer.send(PAGE_IPC.agentResult, { reqId, ok: true, value }))
+        .catch(() => ipcRenderer.send(PAGE_IPC.agentResult, { reqId, ok: false }))
     } catch {
       // 오류 내용(페이지 값이 섞일 수 있다)은 보내지 않는다 — 실패했다는 사실만 알린다
       ipcRenderer.send(PAGE_IPC.agentResult, { reqId, ok: false })

@@ -4,6 +4,7 @@ import type { TabManager, Tab } from '../browser/tab-manager'
 import { pageBridge } from '../browser/page-bridge'
 import type { LoginFieldsResult } from '../browser/page-bridge'
 import { serializeSnapshot } from '../../shared/snapshot'
+import type { PageOverlay } from '../../shared/snapshot'
 import { isDangerous } from '../../shared/danger'
 import type { PermissionMode, VaultAccessPolicy } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
@@ -497,6 +498,33 @@ ${handoffToolResult(result)}`
   const keypadRefusal = async (tab: Tab, refusal: string): Promise<string | null> =>
     (await secretKeypadGate.check(tab)) === null ? null : refusal
 
+  /**
+   * 화면을 덮고 있는 레이어 목록. 페이지를 못 읽으면 빈 목록으로 본다
+   * (오버레이 안내는 덤이라 실패가 읽기 도구를 막으면 안 된다)
+   */
+  const overlaysOf = async (tab: Tab): Promise<PageOverlay[]> => {
+    try {
+      return await pageBridge.overlays(tab)
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * get_page·find_elements 앞머리에 붙이는 한 줄.
+   * 덮고 있는 레이어가 없으면 null
+   */
+  const overlayNotice = async (tab: Tab): Promise<string | null> => {
+    const list = await overlaysOf(tab)
+    const first = list[0]
+    if (!first) return null
+    const head = `OVERLAY: "${first.label}" is covering the page`
+    // 결제·로그인 모달은 절대 대신 닫지 않는다 — 존재만 알린다
+    if (first.sensitive) return `${head} - payment/sign-in dialog: do NOT dismiss it`
+    if (first.closeIds.length === 0) return `${head} - no close button found`
+    return `${head} - close ids: [${first.closeIds.join(', ')}]`
+  }
+
   const getPage = tool(
     'get_page',
     'Read the current page: URL, title, numbered interactive elements, visible text. ' +
@@ -511,9 +539,9 @@ ${handoffToolResult(result)}`
         // 사람의 추가 확인이 필요하면 **알리기만** 한다 — 읽기 도구가 최장 10분 막히면
         // 모델이 다음 수를 두지 못한다. 실제 넘김·대기는 login 같은 행동 도구가 건다
         const notice = await captchaNotice(tab)
-        if (!notice) return snapshot
-        return `${notice}
-${snapshot}`
+        // 화면을 덮는 레이어는 맨 앞에 알린다 — 뒤에 있는 버튼을 누르려다 실패하지 않게
+        const overlay = await overlayNotice(tab)
+        return [overlay, notice, snapshot].filter((line) => line !== null).join('\n')
       })
   )
 
@@ -528,8 +556,13 @@ ${snapshot}`
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
         const snapshot = await pageBridge.snapshot(tab, query)
-        if (snapshot.elements.length === 0) return `no element matches "${query}"`
-        return serializeSnapshot({ ...snapshot, text: '' })
+        const overlay = await overlayNotice(tab)
+        if (snapshot.elements.length === 0) {
+          const miss = `no element matches "${query}"`
+          return overlay === null ? miss : `${overlay}\n${miss}`
+        }
+        const listed = serializeSnapshot({ ...snapshot, text: '' })
+        return overlay === null ? listed : `${overlay}\n${listed}`
       })
   )
 
@@ -694,6 +727,50 @@ ${snapshot}`
         if (keypad) return keypad
         return pageBridge.scroll(tab, direction, id)
       })
+  )
+
+  // 한 번의 호출에서 닫아 볼 레이어 개수
+  const MAX_DISMISS = 3
+
+  const dismissOverlay = tool(
+    'dismiss_overlay',
+    'Close the notice, coupon, event or app-install layer that covers the page (up to 3 of them). ' +
+      'Use it when a click answers "clicked but nothing changed" or get_page starts with an OVERLAY line. ' +
+      'Payment, password, sign-in and verification dialogs are never touched - answer those yourself or ask the user.',
+    {},
+    () =>
+      guard('레이어 닫기', () =>
+        withPopupNotice(async () => {
+          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+          const tab = activeOr(ctx)
+          if (!tab) return 'no active tab'
+          // 결제 비밀번호 키패드 화면에서는 아무것도 누르지 않는다
+          const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
+          if (keypad) return keypad
+          const before = await overlaysOf(tab)
+          if (before.length === 0) return 'no overlay is covering the page'
+          const sensitive = before.filter((o) => o.sensitive)
+          const targets = before
+            .filter((o) => !o.sensitive && o.closeIds.length > 0)
+            .slice(0, MAX_DISMISS)
+          const kept =
+            sensitive.length === 0 ? '' : ` left alone (sensitive): "${sensitive[0].label}"`
+          if (targets.length === 0) {
+            return sensitive.length > 0
+              ? `refused: only a payment/sign-in dialog is open ("${sensitive[0].label}") - answer it yourself or ask the user`
+              : `overlay "${before[0].label}" has no close button; scroll or press Escape on screen${kept}`
+          }
+          const closed: string[] = []
+          for (const overlay of targets) {
+            const r = await pageBridge.click(tab, overlay.closeIds[0])
+            closed.push(`"${overlay.label}" -> ${r}`)
+          }
+          await pageBridge.waitForLoad(tab)
+          const after = await overlaysOf(tab)
+          return `dismissed ${closed.length}: ${closed.join('; ')}
+overlays left: ${after.length}${kept}`
+        })
+      )
   )
 
   const wait = tool(
@@ -1040,6 +1117,7 @@ ${snapshot}`
       typeTool,
       select,
       scroll,
+      dismissOverlay,
       wait,
       newTab,
       listTabs,
@@ -1066,6 +1144,7 @@ export const SAMBA_TOOL_NAMES = [
   'type',
   'select',
   'scroll',
+  'dismiss_overlay',
   'wait',
   'new_tab',
   'list_tabs',
