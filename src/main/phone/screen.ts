@@ -26,6 +26,23 @@ const FAST_RESTART_MS = 1000
 const MAX_FAST_RESTARTS = 3
 /** screencap 한 장 제한 시간 */
 const STILL_TIMEOUT_MS = 5000
+/** 간이 화면이 연달아 실패할 때 주기를 늘려 가는 상한(ms) */
+export const STILL_MAX_INTERVAL_MS = 15_000
+/**
+ * 간이 화면이 이만큼 연달아 실패하면 전송을 포기한다.
+ * 기기를 뽑으면 screencap 이 영영 실패하는데, 그대로 두면 1초마다 adb 를
+ * 끝없이 부른다(재시작 폭주)
+ */
+export const MAX_STILL_FAILURES = 10
+
+/**
+ * 연속 실패 횟수에 따른 다음 시도까지의 대기(지수 백오프, 상한 있음).
+ * 한두 번의 실패는 잠깐 튄 것일 수 있으니 주기를 그대로 두고, 그 뒤부터 늘린다
+ */
+export function stillDelay(failures: number): number {
+  if (failures <= 2) return STILL_INTERVAL_MS
+  return Math.min(STILL_INTERVAL_MS * 2 ** (failures - 2), STILL_MAX_INTERVAL_MS)
+}
 
 export interface ScreenChunk {
   serial: string
@@ -44,7 +61,8 @@ export interface ScreenStreamDeps {
   size: () => ScreenSize
   fps: () => ScreenFps
   onChunk: (c: ScreenChunk) => void
-  onModeChange: (serial: string, mode: ScreenMode) => void
+  /** mode 가 null 이면 전송을 포기했다는 뜻이다(기기 분리 등) */
+  onModeChange: (serial: string, mode: ScreenMode | null) => void
   now: () => number
   setTimeout?: (fn: () => void, ms: number) => unknown
   clearTimeout?: (handle: unknown) => void
@@ -141,6 +159,8 @@ interface Session {
   // `wm size` 조회 결과로 만든 --size 값(조회 실패면 null). 폰당 한 번만 조회한다
   sizeArg: string | null
   sizeResolved: boolean
+  // 간이 화면이 연달아 실패한 횟수(성공하면 0 으로 돌아간다)
+  stillFailures: number
 }
 
 export class ScreenStream {
@@ -167,7 +187,8 @@ export class ScreenStream {
       segmentStartedAt: this.deps.now(),
       fastRestarts: 0,
       sizeArg: null,
-      sizeResolved: false
+      sizeResolved: false,
+      stillFailures: 0
     }
     this.sessions.set(serial, s)
     void this.openVideo(s)
@@ -213,7 +234,7 @@ export class ScreenStream {
     cancel?.()
   }
 
-  private setMode(s: Session, mode: ScreenMode): void {
+  private setMode(s: Session, mode: ScreenMode | null): void {
     if (s.mode === mode) return
     s.mode = mode
     this.deps.onModeChange(s.serial, mode)
@@ -345,14 +366,33 @@ export class ScreenStream {
       png = null
     }
     if (s.stopped || s.gen !== gen) return
-    if (png && png.length > 0) this.emit(s, 'still', png, true)
+    if (png && png.length > 0) {
+      s.stillFailures = 0
+      this.emit(s, 'still', png, true)
+    } else {
+      s.stillFailures += 1
+      // 기기를 뽑은 경우다 — 영원히 1초마다 두드리지 않고 포기한다
+      if (s.stillFailures >= MAX_STILL_FAILURES) {
+        this.giveUp(s)
+        return
+      }
+    }
     this.later(
       s,
       () => {
         if (s.stopped || s.gen !== gen) return
         void this.captureStill(s, gen)
       },
-      STILL_INTERVAL_MS
+      stillDelay(s.stillFailures)
     )
+  }
+
+  /** 더 이상 화면을 받을 수 없다 — 세션을 접고 렌더러에 알린다 */
+  private giveUp(s: Session): void {
+    this.closeSegment(s)
+    s.stopped = true
+    this.sessions.delete(s.serial)
+    s.mode = null
+    this.deps.onModeChange(s.serial, null)
   }
 }
