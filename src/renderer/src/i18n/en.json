@@ -435,6 +435,8 @@
       "autoLock1d": "1 day",
       "autoLock1w": "1 week",
       "autoLockNever": "Never",
+      "holdDuringAgent": "Do not lock while AI is working",
+      "holdDuringAgentDesc": "When on, auto-lock waits until the AI task or scheduled run finishes, then the timer starts over",
       "accessPolicy": "AI access policy",
       "accessAlways": "Always allow",
       "accessAlwaysDesc": "Auto-unlock with this PC's remembered key even when locked",

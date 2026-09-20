@@ -75,6 +75,15 @@ export function SecuritySection({ settings, update }: SectionProps): React.JSX.E
             </button>
           ))}
         </div>
+        <SettingsToggleRow
+          label={t('vault.settings.holdDuringAgent')}
+          description={t('vault.settings.holdDuringAgentDesc')}
+        >
+          <Switch
+            checked={settings.vaultHoldLockDuringAgent}
+            onCheckedChange={(v) => update({ vaultHoldLockDuringAgent: v })}
+          />
+        </SettingsToggleRow>
       </SettingsSection>
 
       <SettingsSection title={t('vault.settings.accessPolicy')}>

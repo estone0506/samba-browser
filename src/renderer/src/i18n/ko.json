@@ -435,6 +435,8 @@
       "autoLock1d": "1일",
       "autoLock1w": "1주",
       "autoLockNever": "안 함",
+      "holdDuringAgent": "AI 작업 중에는 잠그지 않기",
+      "holdDuringAgentDesc": "켜 두면 AI 작업·예약 실행이 끝날 때까지 자동 잠금을 미루고, 끝나면 다시 시간을 세요",
       "accessPolicy": "AI 접근 정책",
       "accessAlways": "항상 허용",
       "accessAlwaysDesc": "잠겨 있어도 이 PC 기억 키로 자동 해제해서 채워요",
