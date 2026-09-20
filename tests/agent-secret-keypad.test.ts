@@ -80,8 +80,12 @@ describe('비밀 키패드 판정(순수 함수)', () => {
     expect(secretKeypadReason(signals({ digitButtons: 9, text: '결제 비밀번호' }))).toBeNull()
   })
 
-  it('짧은 비밀 입력칸(pinField)만으로도 키패드로 본다', () => {
-    expect(secretKeypadReason(signals({ pinField: true }))).toBe('pin-field')
+  it('짧은 비밀 입력칸(pinField)은 결제 비밀번호 문구가 함께 있을 때만 키패드로 본다', () => {
+    // ABC마트 주문서의 '주문비밀번호'(비회원용)처럼 일반 주문서에도 짧은 password 칸이 있다
+    expect(secretKeypadReason(signals({ pinField: true }))).toBeNull()
+    expect(
+      secretKeypadReason(signals({ pinField: true, text: '결제 비밀번호를 입력하세요' }))
+    ).toBe('pin-field')
   })
 
   it('평범한 장바구니 화면은 키패드가 아니다', () => {
