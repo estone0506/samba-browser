@@ -199,6 +199,9 @@ export const DEFAULT_SETTINGS = {
   // 활동 기록은 이 PC 에서 일어난 일이고 파일도 userData 안에만 있다 —
   // SYNCED_SETTING_KEYS 에 넣지 않는다(다른 PC 의 기록과 섞이면 판정이 뒤틀린다)
   activityRecording: true,
+  // 사이트 기억 — 성공한 경로·메모를 이 PC 의 파일(userData/site-memory.json)에만 남긴다.
+  // 관찰 결과는 이 PC 의 사실이고 서버로 나갈 이유도 없어 SYNCED_SETTING_KEYS 에 넣지 않는다
+  siteMemoryEnabled: true,
   // 사용자가 [숨기기] 를 누른 추천 후보. 30일이 지나면 다시 나타난다
   dismissedRecommendations: [] as DismissedRecommendation[],
   // === 활동 기록·추천 끝 ====================================================
@@ -368,6 +371,7 @@ export const settingsSchema = z.object({
   playbooks: playbookListSchema.catch(() => []),
   // === 활동 기록·추천 — 깨진 값은 통째로 비운다(기록은 복구할 가치가 낮다) ====
   activityRecording: z.boolean().catch(DEFAULT_SETTINGS.activityRecording),
+  siteMemoryEnabled: z.boolean().catch(DEFAULT_SETTINGS.siteMemoryEnabled),
   dismissedRecommendations: z
     .array(z.object({ key: z.string().min(1).max(400), at: z.number() }))
     // 후보 자체가 한 번에 몇 개뿐이라 숨김도 이만큼이면 넉넉하다

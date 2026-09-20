@@ -203,7 +203,10 @@ export const IPC = {
   activityRecommend: 'activity:recommend', // 설정 → 자동화 상단의 추천 목록
   activityDismiss: 'activity:dismiss', // [숨기기](30일 뒤 다시 나타난다)
   activityApply: 'activity:apply', // [예약 만들기]
-  activityClear: 'activity:clear' // "지금까지 기록 지우기"
+  activityClear: 'activity:clear', // "지금까지 기록 지우기"
+  // --- 사이트 기억 — 기억 본문은 화면으로 나가지 않는다. 호스트별 개수와 지우기뿐 ---
+  siteMemoryList: 'siteMemory:list', // 설정 → 동작의 "사이트 기억" 목록
+  siteMemoryForget: 'siteMemory:forget' // 호스트 한 곳의 기억 [지우기]
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -379,6 +382,8 @@ export type {
   RecommendDto,
   RecommendKind
 } from './activity-patterns'
+
+export type { SiteMemorySummary } from './site-memory'
 
 /** schedule:dispatch 로 가는 실행 요청. 토큰은 이 실행이 그 예약의 것임을 잇는 표식이다 */
 export interface ScheduleDispatchDto {

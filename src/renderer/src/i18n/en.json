@@ -755,7 +755,13 @@
       "activityDesc": "Spots things you repeat and suggests a schedule. The history stays on this PC and is never synced. Sites are kept as a domain only, instructions only after secrets are stripped.",
       "activityClear": "Clear history",
       "activityClearDesc": "Delete every activity history file stored on this PC",
-      "activityCleared": "Cleared"
+      "activityCleared": "Cleared",
+      "siteMemoryTitle": "Site memory",
+      "siteMemory": "Remember successful paths",
+      "siteMemoryDesc": "Once a task succeeds on a site, the path is remembered and handed to the next run. Memory stays on this PC and never moves to another device. Secrets and personal data (recipient, phone, address) are stripped before it is saved.",
+      "siteMemoryEmpty": "No sites remembered yet",
+      "siteMemoryCounts": "{{recipes}} paths · {{notes}} notes",
+      "siteMemoryForget": "Clear"
     },
     "security": {
       "autofillTitle": "Autofill"
