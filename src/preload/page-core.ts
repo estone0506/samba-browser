@@ -77,8 +77,10 @@ function assignIds(elements: readonly HTMLElement[]): void {
     }
   }
   if (registry.size === 0 && idSeq > 0) {
-    // 문서는 그대로인데 내용이 전부 갈렸다 — 번호를 처음부터 다시 쓴다
+    // 문서는 그대로인데 내용이 전부 갈렸다(SPA 라우팅) — 번호를 처음부터 다시 쓴다.
+    // 예전 번호는 아무 의미가 없으니 "사라진 번호" 기록도 함께 비운다
     idOf = new WeakMap()
+    goneIds = new Set()
     idSeq = 0
   }
   for (const el of elements) {
