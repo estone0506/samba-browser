@@ -63,8 +63,12 @@ import { installPageTranslate, type ImageOverlayDto } from './page-translate'
 //
 // 제스처·번역·계정 선택기·캡처·웹스토어·새 탭 브리지는 그대로 최상위 문서 전용이다
 const isTopFrame = window.self === window.top
+// 확장 문서(팝업·옵션 페이지)에는 이 preload 의 어떤 기능도 붙이지 않는다.
+// 크롬에서 확장 UI 는 브라우저 기능이 손대지 않는 자리이고, 제스처·번역·자동 채움이
+// 그 위에서 돌면 확장이 만든 화면을 우리가 바꿔 버리는 셈이 된다
+const isExtensionDocument = location.protocol === 'chrome-extension:'
 
-if (location.protocol !== 'chrome-extension:') {
+if (!isExtensionDocument) {
   // AI 실행기. contextIsolation 이 켜져 있으면 preload 는 격리 월드(WorldId 999)에서 실행되므로
   // contextBridge 로 메인 월드에 노출하지 않고 격리 월드 전역에만 둔다.
   // 메인 프로세스는 executeJavaScriptInIsolatedWorld(999, '__samba.snapshot()') 로 호출한다.
@@ -122,7 +126,7 @@ if (location.protocol !== 'chrome-extension:') {
 }
 
 // === 여기부터는 최상위 문서 전용 ============================================
-if (isTopFrame) {
+if (isTopFrame && !isExtensionDocument) {
   // 폼 제출 감지 → 메인의 vault:capture 로 전달(비밀번호는 이 채널로만, pendingCapture 에만 잠깐 머문다)
   // 격리 월드 preload 는 contextIsolation 하에서도 ipcRenderer 를 직접 사용할 수 있다
   // 옵션 없이 호출 → 합성(스크립트 생성) 이벤트는 무시하고 신뢰된(isTrusted) 사용자 이벤트만 처리한다

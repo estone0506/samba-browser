@@ -50,6 +50,19 @@ export function sessionWithExtension(id: string, candidates: readonly Session[])
   return null
 }
 
+/**
+ * 팝업이 머물러도 되는 주소인가 — 그 확장 자신의 `chrome-extension://<id>/` 문서뿐이다.
+ * 팝업 문서가 http(s)·file 로 넘어가면 확장 권한을 가진 창에서 남의 페이지가 도는 셈이 된다
+ */
+export function isOwnExtensionUrl(url: string, id: string): boolean {
+  try {
+    const u = new URL(url)
+    return u.protocol === 'chrome-extension:' && u.hostname === id
+  } catch {
+    return false
+  }
+}
+
 /** 창 하나가 가진 팝업은 언제나 최대 한 개다 */
 export class ExtensionPopupHost {
   private view: WebContentsView | null = null
@@ -109,6 +122,22 @@ export class ExtensionPopupHost {
     this.anchor = input.anchor
     this.size = { width: POPUP_DEFAULT_WIDTH, height: POPUP_DEFAULT_HEIGHT }
     const wc = view.webContents
+    // 팝업은 그 확장의 문서 안에서만 움직인다. 바깥 주소로 넘어가려 하면 막는다 —
+    // 팝업 창은 탭과 달리 주소 표시줄이 없어 사용자가 어디에 있는지 알 수 없고,
+    // 확장 세션 안에서 남의 페이지가 도는 것을 그대로 두면 안 된다
+    const guard = (e: { preventDefault: () => void }, url: string, what: string): void => {
+      if (isOwnExtensionUrl(url, input.id)) return
+      e.preventDefault()
+      console.warn(`확장 팝업 ${what} 차단: ${url}`)
+    }
+    wc.on('will-navigate', (e, url) => guard(e, url, '이동'))
+    wc.on('will-redirect', (e, url) => guard(e, url, '리다이렉트'))
+    // 팝업이 여는 새 창은 만들지 않는다(크롬도 팝업에서 뜬 창은 탭으로 보낸다).
+    // 여기서 허용하면 가드 없는 창이 확장 세션으로 열린다
+    wc.setWindowOpenHandler(({ url }) => {
+      console.warn(`확장 팝업 새 창 차단: ${url}`)
+      return { action: 'deny' }
+    })
     // 문서가 원하는 크기를 알려 오면 그 값으로 창을 맞춘다.
     // 신호가 오지 않는 문서라면 기본 크기(360×420)로 그대로 떠 있는다
     wc.on('preferred-size-changed', (_e, preferred) => {

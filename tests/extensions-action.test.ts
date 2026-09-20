@@ -18,6 +18,7 @@ import {
 import { parseManifest } from '../src/main/extensions/manager'
 import type { ExtensionAnchorDto } from '../src/shared/extensions'
 import { isExtensionUrl, isAllowedUrl } from '../src/shared/url'
+import { isOwnExtensionUrl } from '../src/main/extensions/popup-view'
 
 // SAMBA-WAVE 의 실제 manifest 에서 이 기능이 보는 부분만 옮겨 온 것
 const sambaWave = {
@@ -265,5 +266,25 @@ describe('popupBounds — 버튼 아래, 오른쪽 맞춤', () => {
     )
     expect(b.x).toBe(628)
     expect(b.y).toBe(74)
+  })
+})
+
+// I4 — 확장 팝업은 그 확장의 문서 밖으로 나가지 못한다
+describe('isOwnExtensionUrl — 팝업이 머물러도 되는 주소', () => {
+  const ID = 'abcdefghijklmnopabcdefghijklmnop'
+
+  it('같은 확장의 문서면 허용한다', () => {
+    expect(isOwnExtensionUrl(`chrome-extension://${ID}/popup.html`, ID)).toBe(true)
+    expect(isOwnExtensionUrl(`chrome-extension://${ID}/sub/page.html?q=1`, ID)).toBe(true)
+  })
+
+  it('다른 확장·웹·파일 주소는 막는다', () => {
+    expect(isOwnExtensionUrl('chrome-extension://otherotherotherotherotherother11/p.html', ID)).toBe(
+      false
+    )
+    expect(isOwnExtensionUrl('https://example.com/', ID)).toBe(false)
+    expect(isOwnExtensionUrl('file:///C:/Users/me/vault.db', ID)).toBe(false)
+    expect(isOwnExtensionUrl('javascript:alert(1)', ID)).toBe(false)
+    expect(isOwnExtensionUrl('주소가 아님', ID)).toBe(false)
   })
 })
