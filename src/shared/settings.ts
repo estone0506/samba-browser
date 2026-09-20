@@ -83,12 +83,16 @@ export const DEFAULT_SETTINGS = {
   dangerWords: DEFAULT_DANGER_WORDS,
   // 한 작업에서 허용하는 도구 호출 수. 주문 흐름(로그인→검색→옵션→장바구니→주문서)은
   // 40회로는 중간에 끊겨서 80회로 잡는다(상한은 MAX_TOOL_CALLS)
-  maxToolCalls: 80,
+  maxToolCalls: 120,
   permissionMode: 'guard' as const,
   finalConfirm: false,
   // Aside 방식: 자동 잠금 기본 1주(10080분), 이 PC 에서 기억 기본 켬
   vaultAutoLockMinutes: 10080,
   vaultRememberDevice: true,
+  // AI 작업·예약 실행이 도는 동안에는 자동 잠금을 보류한다(기본 켬).
+  // 몇 시간짜리 작업 중간에 금고가 잠겨 로그인 도구가 실패하는 것을 막는다.
+  // 기기마다 다르게 두고 싶은 값이라 SYNCED_SETTING_KEYS 에 넣지 않는다
+  vaultHoldLockDuringAgent: true,
   vaultAccessPolicy: 'while_unlocked' as const,
   vaultAutoSubmit: true,
   // 로그인 폼의 "로그인 상태 유지" 체크박스를 자동으로 켤지(세션 재사용 → 캡차 감소)
@@ -267,6 +271,8 @@ export const settingsSchema = z.object({
     .catch(DEFAULT_SETTINGS.vaultAutoLockMinutes),
   // 이 PC 에서 마스터 키를 safeStorage 로 감싸 기억할지 여부
   vaultRememberDevice: z.boolean().catch(DEFAULT_SETTINGS.vaultRememberDevice),
+  // AI 작업 중 자동 잠금 보류 여부
+  vaultHoldLockDuringAgent: z.boolean().catch(DEFAULT_SETTINGS.vaultHoldLockDuringAgent),
   // 키마스터 AI 에이전트 접근 정책
   vaultAccessPolicy: z.enum(VAULT_ACCESS_POLICIES).catch(DEFAULT_SETTINGS.vaultAccessPolicy),
   // 자동 채움 후 자동 제출 여부

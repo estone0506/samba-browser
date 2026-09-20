@@ -85,6 +85,9 @@ export class AgentRunner {
   private playbooks: PlaybookProvider | null = null
   // 사이트 기억. 없으면 기억을 붙이지도 남기지도 않는다(기존 호출부·테스트)
   private siteMemory: SiteMemoryService | null = null
+  // 실행 중인 작업이 쥔 금고 자동 잠금 보류 해제 함수. stop() 과 run() 의 finally 가
+  // 겹쳐 불러도 되도록 해제 함수 자체가 여러 번 호출에 안전하다
+  private releaseVaultHold: (() => void) | null = null
 
   constructor(
     private tabs: TabManager,
@@ -300,6 +303,9 @@ export class AgentRunner {
     this.generation += 1
     abort.abort()
     this.clearPending()
+    // 중단했으면 스트림이 실제로 끝날 때까지 기다리지 않고 곧바로 자동 잠금 보류를 푼다
+    this.releaseVaultHold?.()
+    this.releaseVaultHold = null
     this.emit({ type: 'status', state: 'stopped' })
   }
 
@@ -453,6 +459,10 @@ export class AgentRunner {
     emit({ type: 'status', state: 'running', toolCalls: 0 })
     // 어떤 플레이북이 적용됐는지 채팅에 한 줄로 알린다(절차 본문은 보내지 않는다)
     if (playbooks.length > 0) emit({ type: 'playbook', names: playbooks.map((p) => p.name) })
+    // 실행이 도는 동안에는 금고 자동 잠금을 보류한다(몇 시간짜리 작업 중간에 잠기면
+    // 로그인 도구가 실패한다). done/failed/stopped·예외 어느 쪽으로 끝나도 finally 에서 푼다
+    const releaseVaultHold = this.vault?.holdAutoLock('agent run') ?? ((): void => {})
+    this.releaseVaultHold = releaseVaultHold
     try {
       const backend = agentBackend()
       // 연결된 경로가 없다 — 실행하지 않고 "연결 필요" 안내로 끝낸다
@@ -566,6 +576,8 @@ export class AgentRunner {
         })
       }
     } finally {
+      releaseVaultHold()
+      if (this.releaseVaultHold === releaseVaultHold) this.releaseVaultHold = null
       // 이미 stop() 이나 다음 run() 이 상태를 가져갔으면 건드리지 않는다
       if (gen === this.generation) {
         this.abort = null

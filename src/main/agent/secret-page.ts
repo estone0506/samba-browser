@@ -74,7 +74,9 @@ export function secretKeypadReason(signals: KeypadSignals): SecretKeypadReason |
   if (signals.digitButtons >= DIGIT_BUTTON_MIN && SECRET_KEYPAD_TEXT_RE.test(signals.text)) {
     return 'digit-keypad'
   }
-  if (signals.pinField) return 'pin-field'
+  // 짧은 password 칸만으로는 판정하지 않는다 — ABC마트 주문서의 '주문비밀번호'(비회원용)처럼
+  // 일반 주문서에도 있어 페이지 전체를 막아 버렸다(실기). 결제 비밀번호 문구가 함께 있을 때만
+  if (signals.pinField && SECRET_KEYPAD_TEXT_RE.test(signals.text)) return 'pin-field'
   return null
 }
 

@@ -127,6 +127,24 @@ describe('matchKeepSignedIn / checkKeepSignedIn', () => {
 })
 
 describe('matchCaptchaSigns — 캡차·2FA 징후 판정', () => {
+  it('기프트카드 "인증번호" 칸만 있는 주문서는 캡차로 보지 않는다', () => {
+    const r = matchCaptchaSigns({
+      text: '기프트카드 입력 테이블로 카드번호, 인증번호, 잔액, 현금영수증 발급 을(를) 나타낸 표입니다. 카드번호 인증번호 잔액 조회 결제수단 선택',
+      frameSources: [],
+      hasCodeInput: true
+    })
+    expect(r.needsUser).toBe(false)
+  })
+
+  it('문자 인증번호 발송 문구는 사람에게 넘긴다', () => {
+    const r = matchCaptchaSigns({
+      text: '휴대폰 번호를 입력하고 인증번호 발송을 누르세요',
+      frameSources: [],
+      hasCodeInput: true
+    })
+    expect(r.needsUser).toBe(true)
+  })
+
   const base = { text: '', frameSources: [] as string[], hasCodeInput: false }
 
   it('캡차 iframe 은 그 자체로 넘김 대상', () => {

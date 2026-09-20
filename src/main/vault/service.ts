@@ -188,6 +188,8 @@ const UNDO_TTL_MS = 60_000
 const SALT_BYTES = 16
 const CAPTURE_TTL_MS = 60_000
 const MINUTE_MS = 60_000
+// setTimeout 이 받는 최대 지연(2^31-1 ms ≈ 24.8일)
+const MAX_TIMEOUT_MS = 2_147_483_647
 
 export class VaultService {
   private readonly repo: VaultRepo
@@ -195,6 +197,11 @@ export class VaultService {
   // 마스터 키. 잠금 해제 상태에서만 값이 있고, lock() 이 0으로 덮어쓴다
   private key: Buffer | null = null
   private autoLockTimer: ReturnType<typeof setTimeout> | undefined
+  // 자동 잠금 보류 토큰들. 하나라도 있으면 타이머가 만료돼도 잠그지 않는다
+  // (AI 작업·예약 실행이 몇 시간 도는 동안 금고가 잠겨 로그인 도구가 실패하는 것을 막는다)
+  private autoLockHolds = new Set<symbol>()
+  // 보류 때문에 잠금을 미뤘다는 안내를 보류 구간마다 한 번만 남기기 위한 표시
+  private autoLockDeferLogged = false
   // 발급했지만 아직 재입력 확인을 못 받은 복구 키(정규화된 값). 10분 뒤 스스로 버린다
   private pendingRecovery: { compact: string; expiresAt: number } | null = null
   private captureTimer: ReturnType<typeof setTimeout> | undefined
@@ -393,11 +400,13 @@ export class VaultService {
     return true
   }
 
+  // 사용자가 직접 [잠금] 을 눌렀을 때도 이 함수를 탄다 — 보류가 걸려 있어도 즉시 잠근다
   lock(): void {
     if (this.autoLockTimer) {
       clearTimeout(this.autoLockTimer)
       this.autoLockTimer = undefined
     }
+    this.autoLockDeferLogged = false
     // 확인 못 받은 복구 키는 잠그는 순간 버린다(마스터 키가 없으면 감쌀 수도 없다)
     this.pendingRecovery = null
     // 키 zeroize 는 DB 상태와 무관하게 항상 수행한다(메모리에 평문 키를 남기지 않는 것이 최우선)
@@ -484,13 +493,58 @@ export class VaultService {
     this.emit()
   }
 
+  /**
+   * 자동 잠금을 보류한다. 돌려주는 함수를 부르면 보류가 풀리고,
+   * 마지막 보류가 풀리는 순간 타이머를 '지금 + 설정 분' 으로 다시 건다.
+   * 같은 토큰을 여러 번 풀어도 안전하다(러너의 stop 과 finally 가 겹쳐 부른다).
+   * 설정(vaultHoldLockDuringAgent)이 꺼져 있으면 아무것도 하지 않는 함수를 돌려준다
+   */
+  holdAutoLock(reason: string): () => void {
+    if (!this.settings.get().vaultHoldLockDuringAgent) return () => {}
+    const token = Symbol(reason)
+    this.autoLockHolds.add(token)
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      if (!this.autoLockHolds.delete(token)) return
+      if (this.autoLockHolds.size > 0) return
+      this.autoLockDeferLogged = false
+      // 보류 중에 만료됐든 아니든, 마지막 보류가 풀린 시점부터 설정 분을 다시 센다
+      if (this.key) this.restartAutoLock()
+    }
+  }
+
   private restartAutoLock(): void {
     if (this.autoLockTimer) clearTimeout(this.autoLockTimer)
     const minutes = this.settings.get().vaultAutoLockMinutes
+    this.armAutoLock(minutes * MINUTE_MS)
+  }
+
+  /**
+   * 자동 잠금 타이머를 건다. setTimeout 은 32비트(약 24.8일)를 넘으면 1ms 로 뭉개져 곧바로 잠겨 버리므로
+   * (실기: 30일로 설정하자 켜자마자 잠김) 상한 이하로 쪼개 남은 시간을 이어서 건다
+   */
+  private armAutoLock(remainingMs: number): void {
+    const slice = Math.min(remainingMs, MAX_TIMEOUT_MS)
+    const rest = remainingMs - slice
     this.autoLockTimer = setTimeout(() => {
       this.autoLockTimer = undefined
+      if (rest > 0) {
+        this.armAutoLock(rest)
+        return
+      }
+      // 보류가 걸려 있으면 잠그지 않고 그대로 둔다 — 보류가 풀릴 때 타이머를 다시 건다.
+      // 설정을 도중에 꺼 두었으면 보류를 무시하고 예정대로 잠근다
+      if (this.autoLockHolds.size > 0 && this.settings.get().vaultHoldLockDuringAgent) {
+        if (!this.autoLockDeferLogged) {
+          this.autoLockDeferLogged = true
+          console.info('키마스터 자동 잠금 보류 중(AI 작업)')
+        }
+        return
+      }
       this.lock()
-    }, minutes * MINUTE_MS)
+    }, slice)
     // 자동 잠금 타이머 때문에 프로세스가 살아 있지 않도록 한다
     this.autoLockTimer.unref?.()
   }
@@ -530,19 +584,25 @@ export class VaultService {
   // 기기에 감싸 저장된 키로 잠금 해제를 1회 시도한다. 성공하면 true.
   // 생성자의 tryDeviceUnlock 과 ensureUnlockedByDevice() 가 공유하는 핵심 로직이다
   private unlockWithDeviceKey(): boolean {
-    if (!this.isInitialized()) return false
-    if (!this.settings.get().vaultRememberDevice) return false
-    if (!this.canUseSafeStorage() || !this.safeStorage) return false
+    // 실패 사유는 값 없이 한 줄만 남긴다 — "왜 매번 잠겨 있나"를 사용자가 알 수 있게
+    const skip = (why: string): false => {
+      console.warn(`키마스터 기기 키 자동 해제 안 함: ${why}`)
+      return false
+    }
+    if (!this.isInitialized()) return skip('금고 미설정')
+    if (!this.settings.get().vaultRememberDevice) return skip('이 PC에서 기억 꺼짐')
+    if (!this.canUseSafeStorage() || !this.safeStorage)
+      return skip('safeStorage 사용 불가(앱 준비 전?)')
     const wrapped = this.repo.getMeta(META_DEVICE_KEY)
-    if (!wrapped) return false
+    if (!wrapped) return skip('저장된 기기 키 없음')
     const ct = this.repo.getMeta(META_VERIFIER_CT)
     const iv = this.repo.getMeta(META_VERIFIER_IV)
-    if (!ct || !iv) return false
+    if (!ct || !iv) return skip('검증값 없음')
     try {
       const key = Buffer.from(this.safeStorage.decryptString(wrapped), 'base64')
       if (!checkVerifier(key, { ciphertext: ct, iv })) {
         zeroize(key)
-        return false
+        return skip('기기 키가 현재 마스터와 맞지 않음(마스터 변경 후 다시 기억 필요)')
       }
       this.key = key
       this.restartAutoLock()
@@ -550,7 +610,7 @@ export class VaultService {
       return true
     } catch {
       // 복호화 실패(다른 기기·사용자) → 잠긴 상태 유지
-      return false
+      return skip('기기 키 복호화 실패(다른 사용자·기기)')
     }
   }
 

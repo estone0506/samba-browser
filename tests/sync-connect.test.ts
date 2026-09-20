@@ -162,7 +162,20 @@ describe('SyncConnection', () => {
     expect(backend.calls.select).toBe(before)
   })
 
+  it('첫 동기화 주기의 토큰 만료(오래된 세션 복원)는 로그아웃만 하고 금고는 잠그지 않는다', async () => {
+    await auth.signIn(EMAIL, 'password-1234')
+    expect(vault.state()).toBe('unlocked')
+    // 엔진의 첫 주기가 돌기 전에 세션이 이미 만료돼 있다(앱을 오래 뒀다 켠 상황)
+    backend.expireAuth()
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(SYNC_POLL_INTERVAL_MS)
+    expect(auth.state().signedIn).toBe(false)
+    // 기기 키로 열어 둔 금고를 세션 복원 실패가 도로 닫지 않는다
+    expect(vault.state()).toBe('unlocked')
+  })
+
   it('토큰이 만료되면 로그아웃하고 금고를 잠근다', async () => {
+    // 첫 주기가 정상으로 지나간 뒤의 만료
     await auth.signIn(EMAIL, 'password-1234')
     await vi.advanceTimersByTimeAsync(0)
 
