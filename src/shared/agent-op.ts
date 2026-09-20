@@ -22,13 +22,3 @@ export type AgentOp =
   | { op: 'rectOf'; id: number }
   | { op: 'keypadSignals' }
   | { op: 'overlays' }
-
-/** 메인 → 프레임 요청(동작 + 짝 맞추기용 번호) */
-export type AgentOpRequest = AgentOp & { reqId: number }
-
-/** 프레임 → 메인 응답. 실패하면 ok:false 만 온다(오류 문구에 페이지 값이 섞이지 않게) */
-export interface AgentOpReply {
-  reqId: number
-  ok: boolean
-  value?: unknown
-}

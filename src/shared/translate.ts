@@ -33,9 +33,6 @@ export const TRANSLATE_CACHE_LIMIT = 10000
 // 번역할 값 하나가 너무 길면(예: 통째로 붙은 본문) 잘라서 보낸다
 export const TRANSLATE_MAX_TEXT = 2000
 
-// AI 연결이 없을 때 렌더러가 보여 줄 안내 i18n 키(평문 문장이 아니다)
-export const TRANSLATE_NEEDS_AI = 'translate.needsAi'
-
 /** 격리 월드 preload → 메인 번역 요청 */
 export interface TranslateRequest {
   lang: TranslateLang

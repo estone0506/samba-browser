@@ -79,9 +79,3 @@ export function callFrameOp(
     }
   })
 }
-
-/** 테스트용 — 대기 중인 요청 비우기 */
-export function clearFrameCalls(): void {
-  for (const entry of pending.values()) clearTimeout(entry.timer)
-  pending.clear()
-}

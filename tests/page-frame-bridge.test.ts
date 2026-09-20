@@ -16,8 +16,7 @@ vi.mock('../src/main/browser/frame-channel', () => ({
     frameCalls.push({ host, op })
     if (frameReply.fail.has(host)) throw new Error('frame call failed')
     return frame.result
-  },
-  clearFrameCalls: (): void => undefined
+  }
 }))
 
 const { pageBridge } = await import('../src/main/browser/page-bridge')

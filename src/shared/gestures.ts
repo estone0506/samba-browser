@@ -9,7 +9,6 @@
 
 /** 인식하는 방향 4가지. L 왼쪽 · R 오른쪽 · U 위 · D 아래 */
 export const GESTURE_DIRECTIONS = ['L', 'R', 'U', 'D'] as const
-export type GestureDirection = (typeof GESTURE_DIRECTIONS)[number]
 
 /**
  * 제스처가 실행할 동작.
@@ -60,7 +59,6 @@ export const GESTURE_SEQUENCES = [
   'UR',
   'RU'
 ] as const
-export type GestureSequence = (typeof GESTURE_SEQUENCES)[number]
 
 /**
  * 웨일 기본 매핑 그대로.

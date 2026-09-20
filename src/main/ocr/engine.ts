@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { PNG } from 'pngjs'
@@ -382,13 +382,3 @@ export class OcrEngine {
 
 export { clipText }
 export type { OcrLine, BoxTuple }
-
-/** 모델 파일 크기 합계(안내 문구용) */
-export async function modelsDiskUsage(dir: string): Promise<number> {
-  let sum = 0
-  for (const f of OCR_MODEL_FILES) {
-    const s = await stat(join(dir, f.name)).catch(() => null)
-    if (s) sum += s.size
-  }
-  return sum
-}

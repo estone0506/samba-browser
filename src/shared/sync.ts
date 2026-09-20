@@ -148,8 +148,6 @@ export const SYNCED_SETTING_KEYS = [
   'playbooks'
 ] as const
 
-export type SyncedSettingKey = (typeof SYNCED_SETTING_KEYS)[number]
-
 /**
  * 마스터 키 재료 동기화 키(settings 표에 얹어 보낸다).
  * salt·KDF 파라미터·검증자는 비밀이 아니다 — 이것만으로는 금고를 열 수 없고,
