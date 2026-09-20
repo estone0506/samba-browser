@@ -15,8 +15,83 @@ import {
   type SignedInHint
 } from './login-detect'
 
-// 스냅샷 id → 실제 DOM 요소 매핑 (스냅샷마다 갱신)
-let registry: HTMLElement[] = []
+// --- 안정 id 표 -----------------------------------------------------------
+//
+// id 는 **문서(프레임)마다 한 번만** 매긴다. 같은 요소는 몇 번을 다시 스냅샷해도 같은 번호이고,
+// 새로 생긴 요소만 새 번호를 받는다. 드롭다운을 열어 앞쪽에 요소가 끼어들어도
+// "90(L) 은 1555번" 이 그대로 유지된다 — 예전처럼 번호가 통째로 밀리면
+// AI 가 직전 목록을 보고 엉뚱한 항목(85)을 누르게 된다.
+//
+// 요소 → id 는 WeakMap 이라 DOM 이 사라지면 함께 사라지고,
+// id → 요소 는 Map 이라 없어진 번호를 "사라졌다" 고 알려 줄 수 있다.
+// 페이지를 옮기면 document 가 바뀌고 preload 가 다시 실행되어 자연히 초기화된다
+
+/** 요소 → 이 문서에서 처음 받은 id */
+let idOf: WeakMap<Element, number> = new WeakMap()
+/** id → 실제 DOM 요소. 떨어져 나간 요소는 스냅샷 때 정리한다 */
+let registry: Map<number, HTMLElement> = new Map()
+/** 마지막으로 나눠 준 id(문서 안에서만 증가) */
+let idSeq = 0
+/** 한때 있었지만 지금은 사라진 id. 모델에게 "없는 번호" 와 구분해 알려 준다 */
+let goneIds: Set<number> = new Set()
+/** 이 표가 어느 document 것인지(문서가 바뀌면 처음부터 다시 매긴다) */
+let idDoc: Document | null = null
+/** 마지막 스냅샷이 모은 요소들(문서 순서). 로그인 폼·레이어 판정이 순서대로 훑는다 */
+let lastOrder: HTMLElement[] = []
+
+// goneIds 가 한없이 커지지 않도록 하는 상한(넘으면 비운다 — 최신 것만 알려 주면 충분하다)
+const GONE_IDS_MAX = 2000
+
+/** id 표를 처음 상태로 되돌린다(문서 교체·테스트용) */
+export function resetElementIds(): void {
+  idOf = new WeakMap()
+  registry = new Map()
+  goneIds = new Set()
+  lastOrder = []
+  idSeq = 0
+  idDoc = typeof document === 'undefined' ? null : document
+}
+
+/** 사라진 id 를 기록한다(상한을 넘으면 비운다) */
+function markGone(id: number): void {
+  if (goneIds.size >= GONE_IDS_MAX) goneIds = new Set()
+  goneIds.add(id)
+}
+
+/**
+ * 이번 스냅샷에 나온 요소들로 id 표를 갱신한다.
+ * - 이미 번호가 있는 요소는 그 번호 그대로
+ * - 처음 보는 요소만 다음 번호
+ * - 문서에서 떨어져 나간 요소는 표에서 지우고 goneIds 에 남긴다
+ *
+ * 화면 전체가 갈린 경우(이전 요소가 하나도 남지 않음)에는 번호를 1번부터 다시 매긴다 —
+ * SPA 라우팅으로 페이지가 통째로 바뀐 것이라, 어차피 예전 번호는 아무 의미가 없다
+ */
+function assignIds(elements: readonly HTMLElement[]): void {
+  if (idDoc !== document) resetElementIds()
+  // 떨어져 나간 요소 정리
+  for (const [id, el] of registry) {
+    if (el.isConnected === false) {
+      registry.delete(id)
+      markGone(id)
+    }
+  }
+  if (registry.size === 0 && idSeq > 0) {
+    // 문서는 그대로인데 내용이 전부 갈렸다 — 번호를 처음부터 다시 쓴다
+    idOf = new WeakMap()
+    idSeq = 0
+  }
+  for (const el of elements) {
+    let id = idOf.get(el)
+    if (id === undefined) {
+      id = ++idSeq
+      idOf.set(el, id)
+    }
+    registry.set(id, el)
+    goneIds.delete(id)
+  }
+  lastOrder = elements.slice()
+}
 
 // 기본 수집 셀렉터. 역할(role)·시맨틱으로 "누를 수 있다"고 선언한 요소들.
 // 옵션·탭·메뉴 항목까지 넓힌 이유: 쇼핑몰 상품 페이지의 컬러/사이즈 선택이 대부분 이 부류다
@@ -108,7 +183,7 @@ function labelOf(el: HTMLElement): string {
   return ''
 }
 
-/** 요소 하나를 스냅샷 항목으로 만든다(id 는 registry 순서 그대로) */
+/** 요소 하나를 스냅샷 항목으로 만든다(id 는 안정 id 표에서 받은 번호) */
 function describeElement(el: HTMLElement, id: number, clickable = false): PageElement {
   const input = el as HTMLInputElement
   const inputType = el.tagName === 'INPUT' ? input.type : undefined
@@ -271,11 +346,11 @@ export function buildSnapshot(options: SnapshotOptions = {}): PageSnapshot {
   )
   const clickable = collectCursorClickable(base)
   const clickableSet = new Set<HTMLElement>(clickable)
-  // 두 목록을 합쳐 문서 순서로 정렬한다(id 가 화면 순서와 어긋나지 않도록)
+  // 두 목록을 합쳐 문서 순서로 정렬한다(처음 보는 요소의 id 가 화면 순서와 어긋나지 않도록)
   const all = clickable.length > 0 ? sortByDocumentOrder(base.concat(clickable)) : base
-  // id 는 문서 순서로 매기고 registry 에는 전부 남긴다(나열 순서가 바뀌어도 id 는 안정적이다)
-  registry = all
-  const described = all.map((el, i) => describeElement(el, i + 1, clickableSet.has(el)))
+  // id 는 문서 안에서 한 번만 매긴다 — 나열 순서가 바뀌어도, 요소가 끼어들어도 그대로다
+  assignIds(all)
+  const described = all.map((el) => describeElement(el, idOf.get(el) ?? 0, clickableSet.has(el)))
   // selector 는 registry 를 건드리지 않는다 — 나열 범위만 좁힌다(id 는 언제나 문서 순서)
   const selector = options.selector?.trim()
   const roots = selector ? selectorRoots(selector) : null
@@ -322,8 +397,26 @@ export function buildSnapshot(options: SnapshotOptions = {}): PageSnapshot {
 }
 
 function get(id: number): HTMLElement | null {
-  return registry[id - 1] ?? null
+  const el = registry.get(id)
+  if (!el) return null
+  if (el.isConnected === false) {
+    registry.delete(id)
+    markGone(id)
+    return null
+  }
+  return el
 }
+
+/**
+ * id 조회에 실패한 이유를 한 줄로.
+ * 한때 있었던 번호면 "사라졌다" 고 알려 준다 — id 가 밀린 게 아니라는 뜻이라
+ * 모델이 목록을 다시 읽고 같은 항목을 다시 찾게 된다
+ */
+function missingMessage(id: number, suffix = ' (call get_page again)'): string {
+  const what = goneIds.has(id) ? 'is gone' : 'not found'
+  return `element ${id} ${what}${suffix}`
+}
+
 
 // 등록된 요소가 비밀 입력칸(type=password)인지 여부. 최신 스냅샷 기준으로 판단하며,
 // registry 에 없는 id 는 false(비밀 입력칸 아님으로 간주 → 호출부가 거부한다)
@@ -501,7 +594,7 @@ function fireEnter(el: HTMLElement): void {
 
 export async function performClick(id: number): Promise<string> {
   const el = get(id)
-  if (!el) return `element ${id} not found (call get_page again)`
+  if (!el) return missingMessage(id)
   // jsdom 등 일부 환경은 scrollIntoView 를 구현하지 않음
   el.scrollIntoView?.({ block: 'center' })
   const covered = coveredByNote(el)
@@ -532,7 +625,7 @@ export async function performClick(id: number): Promise<string> {
 
 export function performType(id: number, text: string, submit: boolean): string {
   const el = get(id)
-  if (!el) return `element ${id} not found (call get_page again)`
+  if (!el) return missingMessage(id)
   const input = el as HTMLInputElement
   if (input.type === 'password') return 'refused: SECRET field. Ask the user to type it.'
   el.focus()
@@ -551,7 +644,7 @@ export function performType(id: number, text: string, submit: boolean): string {
 
 export function performSelect(id: number, value: string): string {
   const el = get(id) as HTMLSelectElement | null
-  if (!el) return `element ${id} not found`
+  if (!el) return missingMessage(id, '')
   if (el.tagName !== 'SELECT') return 'refused: not a select'
   const opt = Array.from(el.options).find((o) => o.value === value || o.text.trim() === value)
   if (!opt) return `option "${value}" not found`
@@ -582,7 +675,7 @@ export function performScroll(dir: 'up' | 'down', id?: number): string {
   const sign = dir === 'down' ? 1 : -1
   if (id !== undefined) {
     const el = get(id)
-    if (!el) return `element ${id} not found (call get_page again)`
+    if (!el) return missingMessage(id)
     const box = scrollableAncestor(el)
     if (box) {
       box.scrollTop += sign * box.clientHeight * 0.8
@@ -599,7 +692,7 @@ export function performScroll(dir: 'up' | 'down', id?: number): string {
 // 격리 월드에서 메인 프로세스만 호출한다(AI 텍스트 도구인 performType 과 달리 password 를 막지 않음)
 export function fillValue(id: number, value: string): string {
   const el = get(id)
-  if (!el) return `element ${id} not found (call get_page again)`
+  if (!el) return missingMessage(id)
   const input = el as HTMLInputElement
   el.focus()
   const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set
@@ -651,7 +744,8 @@ const LOGIN_TEXT = /로그인하기|로그인|login|sign in/i
 // 실제 판정은 login-detect 모듈(Chromium/Bitwarden 규칙 이식)이 담당한다
 export function findLoginFields(): LoginFields {
   buildSnapshot()
-  return detectLoginFields(registry)
+  // id 는 안정 id 표에서 가져온다 — 목록 순서가 아니라 요소가 처음 받은 번호다
+  return detectLoginFields(lastOrder, (el) => idOf.get(el))
 }
 
 // 이미 로그인된 상태인지 힌트를 돌려준다(판정은 login-detect 모듈)
@@ -746,7 +840,7 @@ export function checkKeepSignedIn(anchorId?: number): string {
 // 요소의 form 이 있으면 requestSubmit, 없으면 click 으로 제출(둘 다 실제 제출 동작을 유발)
 export function submitForm(id: number): string {
   const el = get(id)
-  if (!el) return `element ${id} not found (call get_page again)`
+  if (!el) return missingMessage(id)
   const form = formOf(el)
   if (form && typeof form.requestSubmit === 'function') form.requestSubmit()
   else el.click()
@@ -941,7 +1035,10 @@ function describeOverlay(el: HTMLElement, index: Map<HTMLElement, number>): Page
 export function detectOverlays(): PageOverlay[] {
   buildSnapshot()
   const index = new Map<HTMLElement, number>()
-  registry.forEach((el, i) => index.set(el, i + 1))
+  for (const el of lastOrder) {
+    const id = idOf.get(el)
+    if (id !== undefined) index.set(el, id)
+  }
   const visible: VisibilityCache = new Map()
   const found: HTMLElement[] = []
   for (const el of overlayCandidates()) {

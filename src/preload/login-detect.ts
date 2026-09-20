@@ -342,24 +342,40 @@ function isSocialButton(el: HTMLElement): boolean {
   return SOCIAL_RE.test(buttonTextOf(el))
 }
 
-// registry(현재 스냅샷) 안에서 제출 버튼의 id(1-base)를 찾는다
-export function findSubmit(registry: HTMLElement[], anchor?: HTMLElement): number | undefined {
+/**
+ * 요소 → 스냅샷 id 를 알려 주는 함수.
+ * 주지 않으면 목록 순서(1-base)를 id 로 본다 — 안정 id 표가 없는 호출부(테스트)용 기본값이다
+ */
+export type IdLookup = (el: HTMLElement) => number | undefined
+
+// 목록 순서를 id 로 쓰는 기본 조회기
+function indexLookup(registry: readonly HTMLElement[]): IdLookup {
+  return (el) => {
+    const i = registry.indexOf(el)
+    return i === -1 ? undefined : i + 1
+  }
+}
+
+// registry(현재 스냅샷) 안에서 제출 버튼의 id 를 찾는다
+export function findSubmit(
+  registry: readonly HTMLElement[],
+  anchor?: HTMLElement,
+  idOf: IdLookup = indexLookup(registry)
+): number | undefined {
   const form = anchor ? formOf(anchor) : null
   if (form) {
-    for (let i = 0; i < registry.length; i++) {
-      const el = registry[i]
+    for (const el of registry) {
       if (formOf(el) !== form) continue
       if (!isSubmitLike(el)) continue
       if (isSocialButton(el)) continue
-      return i + 1
+      return idOf(el)
     }
   }
-  for (let i = 0; i < registry.length; i++) {
-    const el = registry[i]
+  for (const el of registry) {
     if (!isButtonish(el)) continue
     if (isSocialButton(el)) continue
     if (!SUBMIT_TEXT_RE.test(buttonTextOf(el))) continue
-    return i + 1
+    return idOf(el)
   }
   return undefined
 }
@@ -379,27 +395,37 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
-export function detectLoginFields(registry: HTMLElement[]): LoginFields {
+/**
+ * 로그인 폼 탐지. idOf 를 주면 그 함수가 돌려주는 안정 id 를 그대로 쓴다
+ * (주지 않으면 registry 목록 순서를 id 로 본다)
+ */
+export function detectLoginFields(
+  registry: readonly HTMLElement[],
+  idOf: IdLookup = indexLookup(registry)
+): LoginFields {
   const iframe = inIframe()
   const pwEl = passwordElement()
+  // 목록에 없는 요소는 id 도 없다 — 스냅샷에 잡히지 않은 칸은 가리킬 수 없다
+  const idIn = (el: HTMLElement | undefined): number | undefined =>
+    el && registry.includes(el) ? idOf(el) : undefined
 
   if (pwEl) {
-    const pwIdx = registry.indexOf(pwEl)
+    const pwId = idIn(pwEl)
     const userEl = usernameElementFor(pwEl)
-    const userIdx = userEl ? registry.indexOf(userEl) : -1
-    const submit = findSubmit(registry, pwEl)
+    const userId = idIn(userEl)
+    const submit = findSubmit(registry, pwEl, idOf)
     let confidence = 0.35
-    if (userIdx !== -1) confidence += 0.3
+    if (userId !== undefined) confidence += 0.3
     if (submit !== undefined) confidence += 0.15
     if (autocompleteOf(pwEl).includes('current-password')) confidence += 0.1
     if (userEl && (autocompleteOf(userEl) === 'username' || autocompleteOf(userEl) === 'email')) {
       confidence += 0.1
     }
     return {
-      username: userIdx === -1 ? undefined : userIdx + 1,
-      password: pwIdx === -1 ? undefined : pwIdx + 1,
+      username: userId,
+      password: pwId,
       submit,
-      stage: userIdx === -1 ? 'password-only' : 'single',
+      stage: userId === undefined ? 'password-only' : 'single',
       confidence: round2(Math.min(confidence, 1)),
       iframe
     }
@@ -407,15 +433,15 @@ export function detectLoginFields(registry: HTMLElement[]): LoginFields {
 
   const userEl = standaloneUsernameElement()
   if (userEl) {
-    const userIdx = registry.indexOf(userEl)
-    if (userIdx !== -1) {
-      const submit = findSubmit(registry, userEl)
+    const userId = idIn(userEl)
+    if (userId !== undefined) {
+      const submit = findSubmit(registry, userEl, idOf)
       let confidence = 0.4
       if (submit !== undefined) confidence += 0.15
       const auto = autocompleteOf(userEl)
       if (auto === 'username' || auto === 'email') confidence += 0.1
       return {
-        username: userIdx + 1,
+        username: userId,
         submit,
         stage: 'username-only',
         confidence: round2(Math.min(confidence, 1)),

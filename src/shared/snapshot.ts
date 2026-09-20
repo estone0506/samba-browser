@@ -54,6 +54,10 @@ export interface KeypadSignals {
   pinField: boolean
 }
 
+// 스냅샷 머리말 한 줄. id 가 스냅샷마다 밀리지 않는다는 사실을 모델에게 알려 준다 —
+// 예전 목록에서 본 번호를 그대로 눌러도 된다는 뜻이다
+export const STABLE_ID_NOTE = 'NOTE: ids are stable across snapshots on this page.'
+
 export const MAX_TEXT_CHARS = 8000
 export const MAX_ELEMENTS = 150
 
@@ -110,6 +114,7 @@ export function serializeSnapshot(s: PageSnapshot): string {
     `URL: ${s.url}`,
     `TITLE: ${s.title}`,
     '',
+    STABLE_ID_NOTE,
     'INTERACTIVE ELEMENTS:',
     ...elementLines(listedElements(s)),
     ...truncationNote(s),
