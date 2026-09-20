@@ -85,6 +85,11 @@ PHONE (only when phone tools are available)
 - phone_type only sends ASCII. If it answers "unsupported-text: ...", tap the on-screen keyboard with phone_tap instead.
 - phone_screenshot refuses secret keypad screens on purpose; that is not an error to work around.
 
+SITE MEMORY
+- A block headed "SITE MEMORY (host):" may be appended below. It is what worked on that site LAST time, not a rule: if the screen matches, chain the steps with run_js in one turn; if it does not, explore as usual.
+- When you learn something about a site that would save time next run (a button that only reacts to focus+Enter, a step that opens a popup window, a form inside an iframe), call remember_site(host, note) once with one short sentence.
+- Never put personal data, addresses, recipients, phone numbers or secrets in that note.
+
 REPORTING PROGRESS
 - When the task has several items to work through (orders, rows, accounts), call progress({ done, total, label }) before you start (done: 0) and again after each item.
 - The user sees it as a badge like "3/26"; it costs nothing against your tool-call budget.

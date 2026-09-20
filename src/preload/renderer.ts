@@ -45,6 +45,7 @@ import {
   type ScheduleStatusDto,
   type RecommendApplyDto,
   type RecommendDto,
+  type SiteMemorySummary,
   type PhoneDto,
   type PhoneUpdatedDto,
   type PhoneAuthWaitingDto,
@@ -220,6 +221,11 @@ const api = {
     apply: (key: string): Promise<IpcResult<RecommendApplyDto | null>> =>
       invoke(IPC.activityApply, key),
     clear: (): Promise<IpcResult<boolean>> => invoke(IPC.activityClear)
+  },
+  // 사이트 기억 — 호스트별 개수만 나간다(경로·메모 본문은 메인에 남는다)
+  siteMemory: {
+    list: (): Promise<IpcResult<SiteMemorySummary[]>> => invoke(IPC.siteMemoryList),
+    forget: (host: string): Promise<IpcResult<boolean>> => invoke(IPC.siteMemoryForget, host)
   },
   settings: {
     get: (): Promise<IpcResult<Settings>> => invoke(IPC.settingsGet),
