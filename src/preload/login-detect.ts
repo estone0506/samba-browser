@@ -98,8 +98,10 @@ export const CAPTCHA_STRONG_RE =
 
 // 약한 징후 — 일상적인 주문·영수증 화면에도 나오는 말이라
 // 입력칸(인증번호 칸)이 함께 있을 때만 넘김으로 본다
+// '인증번호' 낱말 하나로는 판정하지 않는다 — ABC마트 주문서의 "기프트카드 인증번호" 칸에 걸려
+// 정상 주문서를 캡차로 오판했다(실기). 문자·휴대폰·본인 인증 맥락이나 발송·전송이 함께 있어야 한다
 export const CAPTCHA_WEAK_RE =
-  /인증번호|영수증|2단계|2차\s?인증|verification\s?code|one.?time\s?code|two.?factor/i
+  /인증번호\s*(발송|전송|재전송|요청)|(문자|SMS|휴대폰|본인)\s*인증|영수증|2단계|2차\s?인증|verification\s?code|one.?time\s?code|two.?factor/i
 
 // 캡차 위젯 iframe 의 주소 패턴
 export const CAPTCHA_FRAME_RE = /recaptcha|hcaptcha|turnstile|funcaptcha|geetest/i
