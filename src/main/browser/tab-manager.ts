@@ -36,6 +36,8 @@ export interface Tab {
   // 이 탭을 window.open 으로 띄운 탭. 결제창처럼 별도 WebContents 로 열리는 팝업을
   // 부모 탭에서 다시 찾기 위해 남긴다(결제 성공 리다이렉트 확인에 쓴다)
   openerId?: string
+  // 지금 주소에 맞는 웹스토어 UA 를 다시 거는 함수(모바일 모드 해제 뒤 호출)
+  refreshWebstoreUa?: () => void
 }
 
 /**
@@ -647,7 +649,7 @@ export class TabManager {
     guardNavigation(wc, allowExtension)
     // 웹스토어 페이지 JS 가 읽는 navigator.userAgent 도 헤더와 같은 크롬 UA 로 맞춘다.
     // 모바일 탭은 emulation.ts 가 UA 를 따로 관리하므로 건드리지 않는다
-    installWebstoreNavigatorUserAgent(wc, () => tab.mobile)
+    tab.refreshWebstoreUa = installWebstoreNavigatorUserAgent(wc, () => tab.mobile)
     // 페이지 JS 대화상자(alert/confirm/prompt)는 작업 실행 중에만 자동으로 닫는다
     installDialogHandler(wc, {
       // SAMBA_E2E 환경변수는 개발 빌드에서만 인정한다(패키징된 앱에서 자동 처리 금지)
@@ -838,7 +840,12 @@ export class TabManager {
     const wc = tab.view.webContents
     // 에뮬레이션 적용/해제가 끝난 뒤에 새로고침해야 UA·뷰포트가 반영된다
     if (mobile) await applyMobileEmulation(wc)
-    else await clearMobileEmulation(wc)
+    else {
+      await clearMobileEmulation(wc)
+      // 모바일 해제는 UA 를 앱 기본값으로 되돌린다 — 웹스토어에 머물러 있었다면
+      // 설치 버튼이 사라지므로 지금 주소에 맞는 UA 를 다시 건다
+      tab.refreshWebstoreUa?.()
+    }
     if (!wc.isDestroyed()) wc.reload()
     this.emit()
   }
