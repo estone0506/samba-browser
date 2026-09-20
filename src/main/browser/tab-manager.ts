@@ -581,7 +581,10 @@ export class TabManager {
       webPreferences: {
         session: ses,
         sandbox: true,
-        contextIsolation: true
+        contextIsolation: true,
+        // iframe(카카오 우편번호·결제 키패드) 안에도 페이지 preload(__samba)가 돌게 한다.
+        // 이 값이 없으면 Electron 은 최상위 프레임에서만 preload 를 실행한다
+        nodeIntegrationInSubFrames: true
       }
     })
     // WebContentsView 는 네이티브 레이어라 CSS overflow-hidden 으로 잘리지 않는다.
@@ -674,7 +677,14 @@ export class TabManager {
       // about:blank 팝업을 먼저 열고 폼을 target 으로 보내는 결제 흐름이 통째로 깨진다.
       // 창은 Electron 의 표준 경로에 맡기고(직접 createWindow 로 만들면 부모 탭이 이동하는 순간
       // 브라우저 프로세스가 죽는 경우가 있었다), did-create-window 에서 받아 추적만 한다
-      return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true } }
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          autoHideMenuBar: true,
+          // 팝업 창의 iframe 에도 preload 가 돌게 — 나머지 webPreferences 는 여는 창에서 물려받는다
+          webPreferences: { nodeIntegrationInSubFrames: true }
+        }
+      }
     })
     wc.on('did-create-window', (popupWin) => this.registerPopup(popupWin, tab.id, profile))
     if (tab.mobile) void applyMobileEmulation(wc)
@@ -744,7 +754,14 @@ export class TabManager {
     // 팝업이 또 창을 열면(결제 → 인증창) 같은 규칙으로 창을 만든다
     wc.setWindowOpenHandler(({ url: target }) => {
       if (!isAllowedUrl(target)) return { action: 'deny' }
-      return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true } }
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          autoHideMenuBar: true,
+          // 팝업 창의 iframe 에도 preload 가 돌게 — 나머지 webPreferences 는 여는 창에서 물려받는다
+          webPreferences: { nodeIntegrationInSubFrames: true }
+        }
+      }
     })
     wc.on('did-create-window', (child) => this.registerPopup(child, openerId, profile))
     win.on('close', (event) => this.popups.handleClose(popup, () => event.preventDefault()))
