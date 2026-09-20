@@ -1008,6 +1008,17 @@ overlays left: ${after.length}${kept}`
           closeTargetOf(ctx.tabs, id)
           return `ok: closed ${target.kind} ${id}`
         }
+        case 'tabs.open': {
+          // new_tab 도구와 같은 규칙: 내부 페이지 금지, url 없으면 빈 페이지
+          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+          const raw = args[0]
+          const o = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
+          const url = typeof o.url === 'string' ? o.url : 'about:blank'
+          const profile = typeof o.profile === 'string' ? o.profile : undefined
+          if (isInternalUrl(url)) return `${BLOCKED_URL_MESSAGE} (${url})`
+          const t = ctx.tabs.create({ url, ...(profile ? { profile } : {}) })
+          return `ok: tab ${t.id}${profile ? ` (profile ${profile})` : ''}`
+        }
         default:
           return RUN_JS_NO_SECRET_TOOLS
       }
@@ -1021,7 +1032,7 @@ overlays left: ${after.length}${kept}`
       'page.get({query,selector,interactive}) -> {tree,diff,total,elements}, page.click(id), ' +
       'page.type(id,text,submit), page.select(id,value), page.scroll(dir,id), page.text(id), ' +
       'page.find(query), page.dismissOverlay(), page.url(), page.title(), ' +
-      'tabs.list()/switch(id)/close(id), sleep(ms), log(...). ' +
+      'tabs.list()/switch(id)/close(id)/open({url, profile}), sleep(ms), log(...). ' +
       'Use log() and return a value; both come back to you. ' +
       'fill_secret, login and the phone tools are NOT available here - call those tools directly.',
     { code: z.string().describe(`JavaScript, ${RUN_JS_MAX_CODE} characters or fewer`) },

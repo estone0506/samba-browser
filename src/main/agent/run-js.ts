@@ -94,7 +94,9 @@ const BOOTSTRAP = `(() => {
   g.tabs = {
     list: () => invoke('tabs.list', []),
     switch: (id) => invoke('tabs.switch', [id]),
-    close: (id) => invoke('tabs.close', [id])
+    close: (id) => invoke('tabs.close', [id]),
+    // 계정별 프로필 탭을 한 턴에 여러 개 열 때 쓴다(계정 비교를 로그아웃 없이 병렬로)
+    open: (opts) => invoke('tabs.open', [opts])
   }
   // 전역 객체를 손에 쥐지 못하게 한다(마지막에 지운다 — 위에서는 g 로 썼다)
   delete g.globalThis

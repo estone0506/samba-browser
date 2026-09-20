@@ -79,6 +79,8 @@ export class AgentRunner {
   private generation = 0
   // 대화 기록 저장 훅(채팅 저장소). 없으면 기록을 남기지 않는다
   private transcript: TranscriptSink | null = null
+  // 사용자 지시 하나당 자동 이어가기 허용 횟수(무한 반복 방지)
+  private autoContinueLeft = 1
   // 폰 도구 배선. 없으면 폰 도구를 등록하지 않는다(3단계 전 실행·테스트)
   private phones: PhoneBridge | null = null
   // 자동화 플레이북 목록 공급자. 없으면 시스템 프롬프트에 아무것도 덧붙이지 않는다
@@ -339,6 +341,8 @@ export class AgentRunner {
     const gen = ++this.generation
     // 이 실행이 남길 대화 기록. 화면으로 나가는 이벤트와 같은 값만 모은다(라벨·본문)
     const entry: TranscriptEntry = { prompt, text: '', steps: [] }
+    // 자동 이어가기 문장이 아니면 사용자의 새 지시 — 허용 횟수를 되돌린다
+    if (!prompt.startsWith('직전 작업을 그 자리에서 이어서')) this.autoContinueLeft = 1
     // 이 실행의 행동 도구 호출 기록. 성공으로 끝나면 사이트 기억이 여기서 경로를 뽑는다
     const calls: AgentToolCall[] = []
     const startedAt = Date.now()
@@ -544,6 +548,16 @@ export class AgentRunner {
             const text = deduper.accept(msg.subtype === 'success' ? msg.result : '')
             if (text) emit({ type: 'text', text })
           }
+          // 도구를 여러 번 부르다가 done 없이 조용히 끝난 경우(실기: 로그인 뒤 빈 응답으로 종료) —
+          // 사람이 "계속"을 치기 전에 한 번만 자동으로 이어 달라고 한다
+          const silentStop =
+            !failed &&
+            counter.count() >= 3 &&
+            !entry.steps.some(
+              (st) => st.label.startsWith('완료:') || st.label.startsWith('계속 진행:')
+            ) &&
+            !entry.steps.some((st) => /넘김|handoff|확인 대기/.test(st.label)) &&
+            this.autoContinueLeft > 0
           settled = true
           emit({
             type: 'status',
@@ -551,6 +565,14 @@ export class AgentRunner {
             toolCalls: counter.count(),
             message: failed ? (kind ? `auth:${kind}` : detail || msg.subtype) : undefined
           })
+          if (silentStop) {
+            this.autoContinueLeft -= 1
+            emit({ type: 'text', text: '(답 없이 멈춰 자동으로 이어갑니다)' })
+            void this.run(
+              '직전 작업을 그 자리에서 이어서 끝까지 진행하고, 끝나면 done 으로 보고해.',
+              chatId
+            )
+          }
         }
       }
     } catch (e) {
