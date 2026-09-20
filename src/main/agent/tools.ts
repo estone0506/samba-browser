@@ -885,8 +885,14 @@ overlays left: ${after.length}${kept}`
   // 똑같은 본체(doClick·doType·…)를 거치므로 가드를 우회할 수 없다.
   // fill_secret·login·폰 도구는 일부러 노출하지 않는다 — 비밀 경로는 기존 도구로만 간다
 
-  /** run_js 안 동작 한 건도 도구와 같은 호출 상한을 쓴다. 상한이면 실행 자체를 끊는다 */
+  /**
+   * run_js 안 동작은 5건당 1회로 상한을 센다(run_js 호출 자체가 1회).
+   * 동작마다 세면 80회 상한이 한두 화면에서 바닥나 run_js 를 쓸 이유가 없어진다(실기 관찰)
+   */
+  let runJsActions = 0
   const runJsTick = (): void => {
+    runJsActions += 1
+    if (runJsActions % 5 !== 0) return
     const over = ctx.tick()
     if (over) {
       if (!limitNotified) {

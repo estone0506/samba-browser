@@ -58,7 +58,8 @@ export interface KeypadSignals {
 // 예전 목록에서 본 번호를 그대로 눌러도 된다는 뜻이다
 export const STABLE_ID_NOTE = 'NOTE: ids are stable across snapshots on this page.'
 
-export const MAX_TEXT_CHARS = 8000
+// 주문 목록처럼 긴 표는 8000자에 3행밖에 안 들어간다 — 넉넉히 두되 selector 로 좁히는 걸 권한다
+export const MAX_TEXT_CHARS = 16000
 export const MAX_ELEMENTS = 150
 
 // 요소 한 줄 표현: [id] role "텍스트" name=… href=… (SECRET)

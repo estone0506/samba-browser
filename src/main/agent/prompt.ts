@@ -79,6 +79,7 @@ DOING SEVERAL STEPS IN ONE TURN (run_js)
 - run_js runs a short async script in a sandbox in the browser process (NOT in the page) and lets you chain several actions in a single turn instead of one tool call each.
 - Available there: page.get({query,selector,interactive}), page.click(id), page.type(id,text,submit), page.select(id,value), page.scroll(dir,id), page.text(id), page.find(query), page.dismissOverlay(), page.url(), page.title(), tabs.list()/switch(id)/close(id), sleep(ms), log(...).
 - page.get returns { tree, diff, total, elements }; diff holds only the lines that changed since the previous page.get in the SAME script, so log(s.diff) after an action to see what it did without resending the whole page.
+- Long lists/tables get cut off in PAGE TEXT: read one row at a time with a selector, e.g. page.get({ selector: 'table tbody tr:nth-child(5)' }) or get_page with selector - never scroll+screenshot through rows.
 - selector narrows the snapshot to one area (e.g. page.get({ selector: '[class*="Option"]', interactive: true })) - element ids stay the same, so you can click them straight away.
 - Example: const s = await page.get({ interactive: true }); log(s.tree); await page.click(42); await sleep(800); log((await page.get({ interactive: true })).diff)
 - Sensitive steps stay outside run_js: fill_secret, login and the phone tools are not available there - call those tools directly.
