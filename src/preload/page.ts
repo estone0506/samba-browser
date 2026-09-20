@@ -29,6 +29,7 @@ import {
   performType,
   performSelect,
   performScroll,
+  rectOf,
   fillValue,
   findLoginFields,
   signedInHint,
@@ -93,7 +94,9 @@ if (location.protocol !== 'chrome-extension:') {
     // 결제 비밀번호 키패드 판정용 신호(값은 담기지 않는다)
     keypadSignals: () => keypadSignals(),
     // 화면을 덮고 있는 레이어(공지·쿠폰·앱 설치 배너·결제 확인창) 목록
-    overlays: () => detectOverlays()
+    overlays: () => detectOverlays(),
+    // 요소 가운데의 뷰포트 좌표. 메인 프로세스가 실제 마우스 클릭을 보낼 자리다
+    rectOf: (id: number) => rectOf(id)
   }
 
   // globalThis 에 직접 대입(any 없이 타입 안전하게)
