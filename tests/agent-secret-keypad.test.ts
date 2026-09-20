@@ -44,6 +44,7 @@ const {
   isSecretKeypad,
   secretKeypadReason,
   secretKeypadGate,
+  mergeKeypadSignals,
   DIGIT_BUTTON_MIN
 } = await import('../src/main/agent/secret-page')
 const { createSambaTools, PAYMENT_KEYPAD_REFUSAL, SECRET_SCREEN_REFUSAL, KEYPAD_HANDOFF_MESSAGE } =
@@ -85,6 +86,52 @@ describe('비밀 키패드 판정(순수 함수)', () => {
 
   it('평범한 장바구니 화면은 키패드가 아니다', () => {
     expect(isSecretKeypad(plain)).toBe(false)
+  })
+})
+
+describe('프레임 신호 합산(iframe 보안 키패드)', () => {
+  it('바깥 문구 + iframe 숫자 버튼을 합쳐 키패드로 본다', () => {
+    // 페이코 보안 키패드: 문구는 결제창(바깥)에, 숫자 버튼 10개는 iframe 안에 있다
+    const merged = mergeKeypadSignals([
+      signals({ url: 'https://order.musinsa.com/pay', text: '결제 비밀번호를 입력하세요' }),
+      signals({ url: 'https://kpad.payco.com/keypad', text: '', digitButtons: DIGIT_BUTTON_MIN })
+    ])
+    expect(merged.digitButtons).toBe(DIGIT_BUTTON_MIN)
+    expect(secretKeypadReason(merged)).toBe('digit-keypad')
+  })
+
+  it('프레임마다 따로 보면 어느 쪽도 기준을 못 넘는다(합산이 필요한 이유)', () => {
+    const outer = signals({ text: '결제 비밀번호를 입력하세요' })
+    const inner = signals({ url: 'https://kpad.example/k', text: '', digitButtons: 5 })
+    expect(secretKeypadReason(outer)).toBeNull()
+    expect(secretKeypadReason(inner)).toBeNull()
+    // 두 프레임에 5개씩 흩어져 있어도 합치면 10개다
+    const merged = mergeKeypadSignals([outer, inner, signals({ digitButtons: 5, text: '' })])
+    expect(merged.digitButtons).toBe(10)
+    expect(secretKeypadReason(merged)).toBe('digit-keypad')
+  })
+
+  it('iframe 이 PIN 인증 주소면 그 주소를 대표로 쓴다', () => {
+    const merged = mergeKeypadSignals([
+      signals({ url: 'https://order.musinsa.com/checkout' }),
+      signals({ url: 'https://cert.vno.co.kr/app/pinCert.do' })
+    ])
+    expect(merged.url).toBe('https://cert.vno.co.kr/app/pinCert.do')
+    expect(secretKeypadReason(merged)).toBe('pin-url')
+  })
+
+  it('어느 프레임에든 짧은 비밀 입력칸이 있으면 살린다', () => {
+    expect(mergeKeypadSignals([plain, signals({ pinField: true })]).pinField).toBe(true)
+  })
+
+  it('프레임이 메인 하나뿐이면 그대로다', () => {
+    expect(mergeKeypadSignals([plain])).toEqual(plain)
+  })
+
+  it('읽어 온 프레임이 하나도 없으면 빈 신호다(일반 페이지를 막지 않는다)', () => {
+    const empty = mergeKeypadSignals([])
+    expect(empty).toEqual({ url: '', text: '', digitButtons: 0, pinField: false })
+    expect(secretKeypadReason(empty)).toBeNull()
   })
 })
 

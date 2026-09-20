@@ -649,3 +649,53 @@ export function installCaptureListener(
     true
   )
 }
+
+// --- 프레임 채널 동작 실행 -------------------------------------------------
+//
+// 메인 프로세스는 하위 프레임(iframe)의 격리 월드를 직접 실행할 수 없어서,
+// 코드 문자열 대신 미리 정해진 동작 이름만 IPC 로 보낸다. 여기서는 그 이름을
+// 이 문서의 함수로 이어 준다 — **자기 document 만** 다루며, 목록에 없는 이름은 무시한다
+
+/** 메인이 보낸 동작 하나를 이 프레임에서 실행한다. 모르는 동작이면 null */
+export function runAgentOp(raw: unknown): unknown {
+  if (typeof raw !== 'object' || raw === null) return null
+  const r = raw as {
+    op?: unknown
+    id?: unknown
+    text?: unknown
+    value?: unknown
+    query?: unknown
+    submit?: unknown
+    dir?: unknown
+  }
+  const id = typeof r.id === 'number' ? r.id : 0
+  const text = typeof r.text === 'string' ? r.text : ''
+  const value = typeof r.value === 'string' ? r.value : ''
+  switch (r.op) {
+    case 'snapshot':
+      return buildSnapshot(typeof r.query === 'string' ? { query: r.query } : {})
+    case 'textOf':
+      return textOf(id)
+    case 'click':
+      return performClick(id)
+    case 'type':
+      return performType(id, text, r.submit === true)
+    case 'select':
+      return performSelect(id, value)
+    case 'scroll':
+      return performScroll(
+        r.dir === 'up' ? 'up' : 'down',
+        typeof r.id === 'number' ? r.id : undefined
+      )
+    case 'fillValue':
+      return fillValue(id, value)
+    case 'submitForm':
+      return submitForm(id)
+    case 'isSecretField':
+      return isSecretField(id)
+    case 'keypadSignals':
+      return keypadSignals()
+    default:
+      return null
+  }
+}

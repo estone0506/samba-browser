@@ -1,7 +1,15 @@
-import type { WebContents } from 'electron'
+import type { WebContents, WebFrameMain } from 'electron'
 import { z } from 'zod'
 import type { KeypadSignals, PageElement, PageSnapshot } from '../../shared/snapshot'
 import { findCodeField as pickCodeField } from '../phone/auth-flow'
+import type { AgentOp } from '../../shared/agent-op'
+import { callFrameOp } from './frame-channel'
+import {
+  decodeFrameId,
+  mergeFrameSnapshots,
+  MAX_AGENT_FRAMES,
+  type FrameSnapshot
+} from './frame-id'
 import type { Tab } from './tab-manager'
 
 // preload 가 실행되는 격리 월드 id. Electron 의 WorldId.ISOLATED_WORLD = 999
@@ -63,19 +71,124 @@ const captchaHintSchema = z.object({ needsUser: z.boolean(), matched: z.string()
 export type SignedInHintResult = z.infer<typeof signedInHintSchema>
 export type CaptchaHintResult = z.infer<typeof captchaHintSchema>
 
-// 탭 안 preload(격리 월드의 __samba)를 호출하고 결과를 스키마로 검증한다
+// --- 프레임 ---------------------------------------------------------------
+//
+// 주소 검색(카카오 우편번호)·결제 보안 키패드는 iframe 안에 있다. preload 는 모든
+// 프레임에서 돌며 프레임마다 자기 __samba 를 만든다.
+//
+// 메인 프레임은 webContents.executeJavaScriptInIsolatedWorld 로 바로 부르고,
+// 하위 프레임은 그런 API 가 없어 frame-channel 의 IPC 통로로 동작 이름만 보내 시킨다.
+//
+// 프레임 번호는 framesInSubtree 순서(문서 트리 순서)를 그대로 쓴다. 한 작업 동안
+// 프레임 구성이 바뀌지 않는 한 안정적이고, 바뀌면 다음 get_page 가 새 번호를 준다
+
+/** AI 가 들여다볼 프레임인가. about:blank·빈 프레임·확장 프로그램 프레임은 뺀다 */
+export function isAgentFrameUrl(url: string): boolean {
+  if (!url || url === 'about:blank') return false
+  return /^https?:\/\//i.test(url)
+}
+
+function frameUrl(frame: WebFrameMain): string {
+  try {
+    return frame.url ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/** 프레임 주소의 호스트(구분 헤더용). 못 읽으면 빈 문자열 */
+export function frameHost(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * AI 가 다룰 하위 프레임 목록(메인 프레임은 빼고 상한까지).
+ * framesInSubtree 를 갖추지 않은 대역(테스트 스텁)에서는 빈 목록이다
+ */
+export function agentSubFrames(wc: WebContents): WebFrameMain[] {
+  try {
+    const main: WebFrameMain | undefined = wc.mainFrame
+    const all = main?.framesInSubtree
+    if (!main || !Array.isArray(all)) return []
+    return all.filter((f) => f !== main && isAgentFrameUrl(frameUrl(f))).slice(0, MAX_AGENT_FRAMES)
+  } catch {
+    return []
+  }
+}
+
+// 결과 검증. 페이지에서 돌아온 값은 전부 신뢰하지 않는다
+function verify<T>(raw: unknown, expr: string, schema: z.ZodType<T>): T {
+  const parsed = schema.safeParse(raw)
+  if (!parsed.success) throw new Error(`unexpected page result for ${expr}`)
+  return parsed.data
+}
+
+// 탭 안 preload(격리 월드의 __samba)를 호출하고 결과를 스키마로 검증한다(메인 프레임)
 async function call<T>(wc: WebContents, expr: string, schema: z.ZodType<T>): Promise<T> {
   if (wc.isDestroyed()) throw new Error('page is gone')
   // webContents.executeJavaScriptInIsolatedWorld 는 메인 프레임의 지정 월드에서 실행한다
   const raw: unknown = await wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [
     { code: expr }
   ])
-  const parsed = schema.safeParse(raw)
-  if (!parsed.success) throw new Error(`unexpected page result for ${expr}`)
-  return parsed.data
+  return verify(raw, expr, schema)
 }
 
-// query 는 code 문자열 안에 들어간다. JSON.stringify 가 이스케이프하지 않는
+// 특정 프레임에서 동작 하나를 시킨다(IPC 통로). 실패는 그대로 던진다
+async function callFrame<T>(frame: WebFrameMain, op: AgentOp, schema: z.ZodType<T>): Promise<T> {
+  return verify(await callFrameOp(frame, op), op.op, schema)
+}
+
+/**
+ * id 가 가리키는 프레임에서 동작을 시킨다. opOf 는 그 프레임 안에서의 지역 id 를 받아
+ * 동작을 만든다. 프레임이 사라졌으면 오류를 던진다(도구가 문구로 감싼다)
+ */
+async function callById<T>(
+  tab: Tab,
+  id: number,
+  opOf: (localId: number) => AgentOp,
+  schema: z.ZodType<T>
+): Promise<T> {
+  const wc = tab.view.webContents
+  const { frameIndex, id: localId } = decodeFrameId(id)
+  const op = opOf(localId)
+  if (frameIndex === 0) return call(wc, opToCode(op), schema)
+  if (wc.isDestroyed()) throw new Error('page is gone')
+  const frame = agentSubFrames(wc)[frameIndex - 1]
+  if (!frame) throw new Error(`frame ${frameIndex} is gone`)
+  return callFrame(frame, op, schema)
+}
+
+/** 메인 프레임 + 살아 있는 하위 프레임에서 같은 동작을 돌린다. 실패한 프레임은 건너뛴다 */
+async function callEveryFrame<T>(
+  tab: Tab,
+  op: AgentOp,
+  schema: z.ZodType<T>
+): Promise<{ main: T; frames: { index: number; host: string; value: T }[] }> {
+  const wc = tab.view.webContents
+  const main = await call(wc, opToCode(op), schema)
+  const frames: { index: number; host: string; value: T }[] = []
+  const subs = agentSubFrames(wc)
+  for (let i = 0; i < subs.length; i += 1) {
+    try {
+      frames.push({
+        index: i + 1,
+        host: frameHost(frameUrl(subs[i])),
+        value: await callFrame(subs[i], op, schema)
+      })
+    } catch {
+      // preload 가 아직 안 붙었거나 프레임이 사라지면 실패한다 —
+      // 그 프레임만 생략하고 나머지는 그대로 쓴다
+      continue
+    }
+  }
+  return { main, frames }
+}
+
+// 값이 code 문자열 안에 들어간다. JSON.stringify 가 이스케이프하지 않는
 // U+2028/U+2029(줄 구분자)는 미리 걷어내 code 가 깨지지 않게 한다
 const LINE_SEPARATORS = [String.fromCharCode(0x2028), String.fromCharCode(0x2029)]
 
@@ -86,32 +199,67 @@ function encodeQuery(query: string): string {
   return JSON.stringify(clean)
 }
 
+// 비밀값이 섞일 수 있는 문자열. U+2028/2029 를 직접 이스케이프해 둔다
+function encodeValue(value: string): string {
+  return JSON.stringify(value)
+    .split(LINE_SEPARATORS[0])
+    .join('\\u2028')
+    .split(LINE_SEPARATORS[1])
+    .join('\\u2029')
+}
+
+/** 메인 프레임용 — 동작을 격리 월드에서 실행할 __samba 호출식으로 바꾼다 */
+function opToCode(op: AgentOp): string {
+  switch (op.op) {
+    case 'snapshot':
+      return `__samba.snapshot(${op.query === undefined ? '' : encodeQuery(op.query)})`
+    case 'textOf':
+      return `__samba.textOf(${op.id})`
+    case 'click':
+      return `__samba.click(${op.id})`
+    case 'type':
+      return `__samba.type(${op.id}, ${encodeValue(op.text)}, ${op.submit})`
+    case 'select':
+      return `__samba.select(${op.id}, ${encodeValue(op.value)})`
+    case 'scroll':
+      return `__samba.scroll(${JSON.stringify(op.dir)}${op.id === undefined ? '' : `, ${op.id}`})`
+    case 'fillValue':
+      return `__samba.fillValue(${op.id}, ${encodeValue(op.value)})`
+    case 'submitForm':
+      return `__samba.submitForm(${op.id})`
+    case 'isSecretField':
+      return `__samba.isSecretField(${op.id})`
+    case 'keypadSignals':
+      return '__samba.keypadSignals()'
+  }
+}
+
 export const pageBridge = {
   // query 를 주면 라벨·name·href·placeholder 가 일치하는 요소만 나열한다(id 는 그대로)
-  snapshot: (tab: Tab, query?: string): Promise<PageSnapshot> =>
-    call(
-      tab.view.webContents,
-      `__samba.snapshot(${query === undefined ? '' : encodeQuery(query)})`,
-      snapshotSchema
-    ),
+  snapshot: async (tab: Tab, query?: string): Promise<PageSnapshot> => {
+    const op: AgentOp = query === undefined ? { op: 'snapshot' } : { op: 'snapshot', query }
+    const { main, frames } = await callEveryFrame(tab, op, snapshotSchema)
+    // 아무것도 없는 프레임(광고·추적용 빈 iframe)은 목록을 흐리기만 한다
+    const useful: FrameSnapshot[] = frames
+      .filter((f) => f.value.elements.length > 0 || f.value.text.length > 0)
+      .map((f) => ({ index: f.index, host: f.host, snapshot: f.value }))
+    return mergeFrameSnapshots(main, useful)
+  },
   // 요소 [id] 의 실제 페이지 텍스트. 없으면 빈 문자열
   textOf: (tab: Tab, id: number): Promise<string> =>
-    call(tab.view.webContents, `__samba.textOf(${id})`, resultSchema),
+    callById(tab, id, (n) => ({ op: 'textOf', id: n }), resultSchema),
   click: (tab: Tab, id: number): Promise<string> =>
-    call(tab.view.webContents, `__samba.click(${id})`, resultSchema),
+    callById(tab, id, (n) => ({ op: 'click', id: n }), resultSchema),
   type: (tab: Tab, id: number, text: string, submit: boolean): Promise<string> =>
-    call(
-      tab.view.webContents,
-      `__samba.type(${id}, ${JSON.stringify(text)}, ${submit})`,
-      resultSchema
-    ),
+    callById(tab, id, (n) => ({ op: 'type', id: n, text, submit }), resultSchema),
   select: (tab: Tab, id: number, value: string): Promise<string> =>
-    call(tab.view.webContents, `__samba.select(${id}, ${JSON.stringify(value)})`, resultSchema),
-  // id 를 주면 그 요소를 품은 스크롤 상자(드롭다운 목록 등)를 스크롤한다
+    callById(tab, id, (n) => ({ op: 'select', id: n, value }), resultSchema),
+  // id 를 주면 그 요소를 품은 스크롤 상자(드롭다운 목록 등)를 그 요소가 있는 프레임에서 스크롤한다
   scroll: (tab: Tab, dir: 'up' | 'down', id?: number): Promise<string> =>
-    call(
-      tab.view.webContents,
-      `__samba.scroll(${JSON.stringify(dir)}${id === undefined ? '' : `, ${id}`})`,
+    callById(
+      tab,
+      id ?? 0,
+      (n) => (id === undefined ? { op: 'scroll', dir } : { op: 'scroll', dir, id: n }),
       resultSchema
     ),
   // 값 주입(SECRET 허용) — 값이 code 문자열 안에 들어가므로, 실패해도 code 를 담은 오류를
@@ -126,9 +274,18 @@ export const pageBridge = {
       const encoded = JSON.stringify(value)
         .replace(/\u2028/g, '\\u2028')
         .replace(/\u2029/g, '\\u2029')
-      const raw: unknown = await wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [
-        { code: `__samba.fillValue(${id}, ${encoded})` }
-      ])
+      // 요소가 iframe 안(주소 입력·결제 폼)이면 그 프레임의 preload 에 맡긴다
+      const { frameIndex, id: localId } = decodeFrameId(id)
+      if (frameIndex !== 0) {
+        const frame = agentSubFrames(wc)[frameIndex - 1]
+        if (!frame) return 'fill failed'
+        const fromFrame = resultSchema.safeParse(
+          await callFrameOp(frame, { op: 'fillValue', id: localId, value })
+        )
+        return fromFrame.success ? fromFrame.data : 'fill failed'
+      }
+      const code = `__samba.fillValue(${localId}, ${encoded})`
+      const raw: unknown = await wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code }])
       const parsed = resultSchema.safeParse(raw)
       return parsed.success ? parsed.data : 'fill failed'
     } catch {
@@ -147,6 +304,15 @@ export const pageBridge = {
   // 결제 비밀번호 키패드 신호(비밀 화면 판정용). 입력 내용은 읽지 않는다
   keypadSignals: (tab: Tab): Promise<KeypadSignals> =>
     call(tab.view.webContents, '__samba.keypadSignals()', keypadSignalsSchema),
+  /**
+   * 메인 프레임 + iframe 전부의 키패드 신호. 페이코 보안 키패드처럼 숫자 버튼이
+   * iframe 안에만 있는 화면을 놓치지 않으려면 프레임까지 봐야 한다.
+   * 합산과 판정은 main/agent/secret-page 의 순수 함수가 한다
+   */
+  keypadSignalsAll: async (tab: Tab): Promise<KeypadSignals[]> => {
+    const { main, frames } = await callEveryFrame(tab, { op: 'keypadSignals' }, keypadSignalsSchema)
+    return [main, ...frames.map((f) => f.value)]
+  },
   // 캡차·2FA 징후 감지(사용자 넘김 판단용)
   captchaHint: (tab: Tab): Promise<CaptchaHintResult> =>
     call(tab.view.webContents, '__samba.captchaHint()', captchaHintSchema),
@@ -158,10 +324,10 @@ export const pageBridge = {
       resultSchema
     ),
   submitForm: (tab: Tab, id: number): Promise<string> =>
-    call(tab.view.webContents, `__samba.submitForm(${id})`, resultSchema),
+    callById(tab, id, (n) => ({ op: 'submitForm', id: n }), resultSchema),
   // 최신 스냅샷 기준 요소가 비밀 입력칸(type=password)인지 확인(fill_secret 대상 검증용)
   isSecretField: (tab: Tab, id: number): Promise<boolean> =>
-    call(tab.view.webContents, `__samba.isSecretField(${id})`, boolSchema),
+    callById(tab, id, (n) => ({ op: 'isSecretField', id: n }), boolSchema),
   waitForLoad: (tab: Tab, timeoutMs = 10000): Promise<void> =>
     new Promise<void>((resolve) => {
       const wc = tab.view.webContents

@@ -8,6 +8,9 @@ export interface PageElement {
   href?: string
   inputType?: string
   isSecret: boolean
+  // iframe 안 요소면 프레임 번호와 호스트. 메인 프레임 요소에는 없다.
+  // 나열할 때 [frame N: host] 구분 헤더를 붙이는 데 쓴다(id 자체에도 번호가 들어 있다)
+  frame?: { index: number; host: string }
 }
 
 export interface PageSnapshot {
@@ -47,9 +50,36 @@ function formatElement(e: PageElement): string {
   return parts.join(' ')
 }
 
+/**
+ * 실제로 나열할 요소. 메인 프레임은 예전처럼 MAX_ELEMENTS 개까지,
+ * iframe 요소는 따로 MAX_ELEMENTS 개까지 나열한다 — 메인 프레임이 상한을 다 써 버려
+ * 주소 검색창(iframe)이 목록에서 통째로 빠지는 일이 없어야 한다
+ */
+export function listedElements(s: PageSnapshot): PageElement[] {
+  const framed = s.elements.filter((e) => e.frame !== undefined)
+  if (framed.length === 0) return s.elements.slice(0, MAX_ELEMENTS)
+  const main = s.elements.filter((e) => e.frame === undefined)
+  return main.slice(0, MAX_ELEMENTS).concat(framed.slice(0, MAX_ELEMENTS))
+}
+
+// 프레임이 바뀌는 자리에 [frame N: host] 구분 헤더를 끼운다
+function elementLines(elements: PageElement[]): string[] {
+  const lines: string[] = []
+  let current = 0
+  for (const e of elements) {
+    const index = e.frame?.index ?? 0
+    if (index !== current) {
+      current = index
+      if (index > 0) lines.push(`[frame ${index}: ${e.frame?.host ?? ''}]`)
+    }
+    lines.push(formatElement(e))
+  }
+  return lines
+}
+
 // 나열이 잘렸을 때 모델에게 되찾는 방법을 알려 준다
 function truncationNote(s: PageSnapshot): string[] {
-  const shown = Math.min(s.elements.length, MAX_ELEMENTS)
+  const shown = listedElements(s).length
   const total = s.total ?? shown
   if (total <= shown) return []
   return [
@@ -64,7 +94,7 @@ export function serializeSnapshot(s: PageSnapshot): string {
     `TITLE: ${s.title}`,
     '',
     'INTERACTIVE ELEMENTS:',
-    ...s.elements.slice(0, MAX_ELEMENTS).map(formatElement),
+    ...elementLines(listedElements(s)),
     ...truncationNote(s),
     '',
     'PAGE TEXT:',
