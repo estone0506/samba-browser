@@ -5,7 +5,13 @@ import { IPC } from '../../shared/ipc'
 import type { Settings } from '../../shared/settings'
 import type { ScreenMode } from '../../shared/phone'
 import { isPhoneKey, pressKey, swipe, tap, toDeviceCoord } from './input'
-import { parseWmSize } from './screen'
+import {
+  DISPLAY_DUMP_ARGS,
+  parseDisplayCurrentSize,
+  parseDisplayRotation,
+  parseWmSize,
+  rotatedSize
+} from './screen'
 import { shellArgs } from './adb'
 import { createAdbRunner, createSpawner, type AdbRunner } from './process'
 import { ScreenStream } from './screen'
@@ -96,7 +102,11 @@ export function registerPhoneScreenIpc(deps: PhoneScreenIpcDeps): PhoneScreenIpc
   })
 
   // 사용자가 앱 안 폰 화면을 직접 누른 경우. 좌표는 0~1 비율로 받아 폰 해상도로 환산한다.
-  // 해상도는 `wm size` 로 읽되, 가로/세로 회전으로 바뀌므로 짧게만 캐시한다
+  //
+  // `wm size` 는 회전과 상관없이 물리 해상도(세로 기준)를 돌려준다. 폰을 가로로 눕히면
+  // 화면에 그려지는 프레임은 뒤집혀 있으므로 그대로 쓰면 탭 좌표가 어긋난다 —
+  // `dumpsys window displays` 의 `cur=`(없으면 회전값)으로 지금 화면 크기를 맞춘다.
+  // 회전은 언제든 바뀌므로 짧게만 캐시한다
   const sizeCache = new Map<string, { width: number; height: number; at: number }>()
   const deviceSize = async (serial: string): Promise<{ width: number; height: number }> => {
     const now = Date.now()
@@ -104,10 +114,15 @@ export function registerPhoneScreenIpc(deps: PhoneScreenIpcDeps): PhoneScreenIpc
     if (cached && now - cached.at < SIZE_CACHE_TTL_MS) {
       return { width: cached.width, height: cached.height }
     }
-    const res = await adb.run(shellArgs(serial, 'wm size'))
-    const phys = parseWmSize(res.stdout) ?? { width: 1080, height: 2400 }
-    sizeCache.set(serial, { ...phys, at: now })
-    return phys
+    const [sizeRes, dumpRes] = await Promise.all([
+      adb.run(shellArgs(serial, 'wm size')),
+      adb.run(shellArgs(serial, DISPLAY_DUMP_ARGS)).catch(() => ({ stdout: '' }))
+    ])
+    const phys = parseWmSize(sizeRes.stdout) ?? { width: 1080, height: 2400 }
+    const dump = dumpRes.stdout ?? ''
+    const size = rotatedSize(phys, parseDisplayRotation(dump), parseDisplayCurrentSize(dump))
+    sizeCache.set(serial, { ...size, at: now })
+    return size
   }
   const ratioToDevice = async (
     serial: string,

@@ -67,6 +67,48 @@ export function parseWmSize(stdout: string): PhysicalSize | null {
   return { width, height }
 }
 
+/** 회전을 읽는 dumpsys 명령(`cur=` 과 회전값이 함께 들어 있다) */
+export const DISPLAY_DUMP_ARGS = ['dumpsys', 'window', 'displays']
+
+/**
+ * `dumpsys window displays` 의 `cur=WxH` — 지금 화면에 실제로 그려지는 크기다.
+ * 가로로 눕히면 여기가 이미 뒤집혀 있어 `wm size`(물리 해상도)보다 정확하다
+ */
+export function parseDisplayCurrentSize(stdout: string): PhysicalSize | null {
+  const m = /\bcur=(\d+)x(\d+)/.exec(stdout)
+  if (!m) return null
+  const width = Number(m[1])
+  const height = Number(m[2])
+  if (!width || !height) return null
+  return { width, height }
+}
+
+/**
+ * 화면 회전(0·90·180·270). `ROTATION_90` 형태와 `mRotation=1` 형태를 모두 읽는다.
+ * 0~3 은 90도 단위 번호이므로 90 을 곱한다
+ */
+export function parseDisplayRotation(stdout: string): 0 | 90 | 180 | 270 | null {
+  const m = /(?:mCurrentRotation|mRotation|rotation)=(?:ROTATION_)?(\d+)/.exec(stdout)
+  if (!m) return null
+  const raw = Number(m[1])
+  const deg = raw <= 3 ? raw * 90 : raw
+  return deg === 0 || deg === 90 || deg === 180 || deg === 270 ? deg : null
+}
+
+/**
+ * 물리 해상도와 회전으로 "지금 화면" 크기를 만든다.
+ * `cur=` 을 읽었으면 그대로 쓰고, 없으면 90·270 에서 가로·세로를 맞바꾼다
+ */
+export function rotatedSize(
+  phys: PhysicalSize,
+  rotation: 0 | 90 | 180 | 270 | null,
+  current?: PhysicalSize | null
+): PhysicalSize {
+  if (current) return current
+  if (rotation === 90 || rotation === 270) return { width: phys.height, height: phys.width }
+  return phys
+}
+
 /** 짝수로 맞춘다(인코더가 홀수 해상도를 싫어한다) */
 function even(v: number): number {
   return Math.max(2, Math.round(v / 2) * 2)

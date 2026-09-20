@@ -23,9 +23,10 @@ interface Setup {
   callArgs: (channel: string, ...args: unknown[]) => unknown
 }
 
-function setup(over: Partial<Settings> = {}): Setup {
+function setup(over: Partial<Settings> = {}, displayDump = ''): Setup {
   const adb = new FakeAdb()
   adb.reply('wm size', 'Physical size: 1080x2400\n')
+  if (displayDump) adb.reply('dumpsys window displays', displayDump)
   const handlers = new Map<string, (...args: never[]) => unknown>()
   const sent: { channel: string; payload: unknown }[] = []
   const spawned: string[][] = []
@@ -174,5 +175,42 @@ describe('registerPhoneScreenIpc', () => {
     await flush()
     expect(adb.streamArgs[0].join(' ')).toContain('--size 720x1600')
     call(IPC.phoneScreenStop, SERIAL)
+  })
+})
+
+// --- M8 회전 보정 ------------------------------------------------------------
+// `wm size` 는 회전과 상관없이 물리 해상도를 돌려준다. 가로로 눕힌 폰에서
+// 그대로 쓰면 탭 좌표가 어긋나므로 dumpsys 의 cur=·회전값으로 맞춘다
+
+describe('화면 회전 보정', () => {
+  it('cur= 이 있으면 그 크기로 환산한다(가로 화면)', async () => {
+    const { adb, callArgs } = setup(
+      {},
+      'Display: mDisplayId=0\n  init=1080x2400 420dpi cur=2400x1080 app=2400x1080\n'
+    )
+    await callArgs(IPC.phoneTap, SERIAL, 0.5, 0.25)
+    const tapCall = adb.calls.find((c) => c.includes('tap'))
+    expect(tapCall?.slice(-2)).toEqual(['1200', '270'])
+  })
+
+  it('cur= 이 없으면 회전값(90·270)으로 가로·세로를 맞바꾼다', async () => {
+    const { adb, callArgs } = setup({}, 'mCurrentRotation=ROTATION_90\n')
+    await callArgs(IPC.phoneTap, SERIAL, 0.5, 0.25)
+    const tapCall = adb.calls.find((c) => c.includes('tap'))
+    expect(tapCall?.slice(-2)).toEqual(['1200', '270'])
+  })
+
+  it('세로(ROTATION_0)면 물리 해상도를 그대로 쓴다', async () => {
+    const { adb, callArgs } = setup({}, 'mCurrentRotation=ROTATION_0\n')
+    await callArgs(IPC.phoneTap, SERIAL, 0.5, 0.25)
+    const tapCall = adb.calls.find((c) => c.includes('tap'))
+    expect(tapCall?.slice(-2)).toEqual(['540', '600'])
+  })
+
+  it('dumpsys 를 읽지 못해도 물리 해상도로 계속 동작한다', async () => {
+    const { adb, callArgs } = setup()
+    await callArgs(IPC.phoneTap, SERIAL, 0.5, 0.25)
+    const tapCall = adb.calls.find((c) => c.includes('tap'))
+    expect(tapCall?.slice(-2)).toEqual(['540', '600'])
   })
 })
