@@ -135,6 +135,20 @@ type Gate =
 
 const keyNames = Object.keys(PHONE_KEYS) as [PhoneKey, ...PhoneKey[]]
 
+/**
+ * 지금 쓸 수 있는 폰이 한 대라도 붙어 있는가.
+ * 폰이 없으면 도구 목록에서 폰 도구를 아예 빼 버린다 — 웹 작업 중에 모델이
+ * phone_tap 을 부르는 혼동을 없애기 위해서다(실기에서 관찰). 폰을 꽂으면 다음 실행부터 다시 보인다
+ */
+export function hasConnectedPhone(ctx: Pick<PhoneToolContext, 'phones'>): boolean {
+  try {
+    return ctx.phones.list().some((p) => p.state === 'online')
+  } catch {
+    // 장치 목록을 못 읽으면 폰이 없는 것으로 본다(도구를 내보내지 않는 쪽이 안전하다)
+    return false
+  }
+}
+
 export function createPhoneTools(ctx: PhoneToolContext): PhoneTool[] {
   // 상한 도달 알림은 1회만 보낸다(웹 도구와 같은 규칙)
   let limitNotified = false

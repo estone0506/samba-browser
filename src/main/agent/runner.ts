@@ -4,6 +4,7 @@ import type { SettingsStore } from '../settings/store'
 import type { AgentEvent } from '../../shared/ipc'
 import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
+import { hasConnectedPhone } from './tools-phone'
 import type { PayToolRequest, PhoneToolContext, SmsCodeOutcome } from './tools-phone'
 import type { PayResult } from '../phone/pay'
 import type { PhoneRunContext } from '../phone/wiring'
@@ -278,14 +279,16 @@ export class AgentRunner {
     }
     // 사용자 문장에 걸리는 플레이북 — 시스템 프롬프트 뒤에 절차를 덧붙이고, 화면에는 이름만 알린다
     const playbooks = this.matchedPlaybooks(prompt)
+    // 폰이 안 붙어 있으면 폰 도구를 내보내지 않으므로(createSambaTools) 프롬프트의 폰 절도 한 줄로 줄인다
+    const phoneAvailable = this.phones !== null && this.phones !== undefined && hasConnectedPhone(this.phones)
     const systemPrompt = (
       mode: 'read_only' | 'guard' | 'full',
       effort?: typeof s.agentEffort
     ): string =>
       appendPlaybooks(
         effort === undefined
-          ? buildSystemPrompt(s.language, mode)
-          : buildSystemPrompt(s.language, mode, effort),
+          ? buildSystemPrompt(s.language, mode, 'medium', phoneAvailable)
+          : buildSystemPrompt(s.language, mode, effort, phoneAvailable),
         playbooks
       )
     const counter = makeCounter(s.maxToolCalls)

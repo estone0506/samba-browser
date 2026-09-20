@@ -26,6 +26,7 @@ import { createOcrTool } from './tools-ocr'
 import {
   createPayTool,
   createPhoneTools,
+  hasConnectedPhone,
   PAY_TOOL_NAME,
   PHONE_TOOL_NAMES,
   type PayToolContext,
@@ -637,7 +638,8 @@ ${handoffToolResult(result)}`
 
   const getPage = tool(
     'get_page',
-    'Read the current page: URL, title, numbered interactive elements, visible text. ' +
+    'For single actions; prefer run_js for sequences. ' +
+      'Read the current page: URL, title, numbered interactive elements, visible text. ' +
       'At most 150 elements are listed; pass query to list only the ones matching that text. ' +
       'Pass selector (a CSS selector) to list only what is inside it - element ids stay the same. ' +
       'Pass diff=true to get only the lines that changed since your last get_page on this tab.',
@@ -685,7 +687,9 @@ ${handoffToolResult(result)}`
   // guard() 를 그대로 쓰지 않고, 같은 호출 상한·step 기록 로직만 인라인으로 맞춘다
   const screenshot = tool(
     'screenshot',
-    'Screenshot the active tab as an image. Use when get_page text is not enough (image captcha, chart, layout). Password fields show as dots, never the real value.',
+    'Screenshot the active tab as an image. Do NOT use it when the text snapshot already answers the question - ' +
+      'only when get_page text is not enough (image captcha, chart, layout). ' +
+      'Password fields show as dots, never the real value.',
     { full: z.boolean().optional() },
     async () => {
       const over = ctx.tick()
@@ -758,7 +762,7 @@ ${handoffToolResult(result)}`
 
   const click = tool(
     'click',
-    'Click element [n] from get_page.',
+    'For single actions; prefer run_js for sequences. Click element [n] from get_page.',
     { id: z.number().int(), label: z.string().describe('element text, for logging') },
     ({ id, label }) => guard(`클릭: ${label} (#${id})`, () => doClick(id, label))
   )
@@ -1324,7 +1328,9 @@ overlays left: ${after.length}${kept}`
       login,
       progress,
       done,
-      ...(ctx.phone ? createPhoneTools(ctx.phone) : []),
+      // 폰이 한 대도 붙어 있지 않으면 폰 도구를 아예 내보내지 않는다 —
+      // 목록에 있으면 모델이 웹 작업 중에도 phone_tap 을 부른다(실기에서 관찰)
+      ...(ctx.phone && hasConnectedPhone(ctx.phone) ? createPhoneTools(ctx.phone) : []),
       ...(ctx.pay ? [createPayTool(ctx.pay)] : [])
     ]
   })
