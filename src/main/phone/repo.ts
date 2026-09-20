@@ -1,8 +1,9 @@
 // 폰 · 인증 이벤트 · 계정-폰 매핑 저장소. 전부 PC 로컬 전용이라 동기화하지 않는다
 // (SYNC_TABLES 에 넣지 않는다 — tests/phone-repo.test.ts 에서 단언).
 //
-// 비밀값 방어: auth_events 는 문자 본문을 절대 담지 않는다 — 추출된 인증번호(code)와
-// 발신번호 뒷 4자리(senderTail)만 남긴다
+// 비밀값 방어: auth_events 는 문자 본문도 인증번호도 담지 않는다 — 발신번호 뒷 4자리
+// (senderTail)와 지표에 필요한 값만 남긴다. 인증번호는 화면에 채우는 그 순간에만
+// 메모리에 있고, 저장할 때는 자리수만 남기고 버린다(I20)
 
 import { and, desc, eq, gte } from 'drizzle-orm'
 import type { Db } from '../db/client'
@@ -41,6 +42,15 @@ export interface UpsertSeenInput {
   // 그때그때 덮어쓴다) — 인터페이스 일관성을 위해 받기만 한다
   state: PhoneState
   at: number
+}
+
+/**
+ * 인증번호를 자리수만 남긴 표시로 바꾼다(`123456` → `••••••`).
+ * 지표(무인 처리율·자리수)는 이 값으로 충분하고, 평문은 디스크에 남지 않는다
+ */
+export function maskCode(code: string | null | undefined): string | null {
+  if (!code) return null
+  return '•'.repeat(code.length)
 }
 
 /** 처음 본 폰의 기본 별칭 — 모델명이 있으면 모델명, 없으면 serial 뒤 4자리 */
@@ -159,7 +169,11 @@ export class PhoneRepo {
 
   // --- 인증 이벤트 ------------------------------------------------------------
 
-  /** 문자 본문은 받지 않는다 — code·senderTail 만 저장한다 */
+  /**
+   * 문자 본문은 받지 않는다. 인증번호(code)도 디스크에 남기지 않는다 —
+   * 지표에 필요한 것은 "몇 자리였나" 뿐이라 자리수만 별표로 바꿔 저장한다.
+   * (예전 버전이 남긴 평문은 purgeStoredCodes 가 지운다)
+   */
   recordAuthEvent(input: Omit<AuthEventDto, 'id'>): void {
     this.d
       .insert(authEvents)
@@ -171,7 +185,7 @@ export class PhoneRepo {
         ok: input.ok,
         method: input.method,
         elapsedMs: input.elapsedMs,
-        code: input.code,
+        code: maskCode(input.code),
         senderTail: input.senderTail,
         payMethod: input.payMethod ?? null,
         at: input.at
@@ -198,6 +212,26 @@ export class PhoneRepo {
       )
       .get()
     return row !== undefined
+  }
+
+  /** 예전 버전이 평문으로 남긴 인증번호를 자리수 표시로 바꾼다(앱 시작 때 한 번) */
+  purgeStoredCodes(): number {
+    const rows = this.d
+      .select({ id: authEvents.id, code: authEvents.code })
+      .from(authEvents)
+      .all()
+    let changed = 0
+    for (const row of rows) {
+      if (!row.code || !/[0-9]/.test(row.code)) continue
+      this.d
+        .update(authEvents)
+        .set({ code: maskCode(row.code) })
+        .where(eq(authEvents.id, row.id))
+        .run()
+      changed += 1
+    }
+    if (changed > 0) this.db.scheduleSave()
+    return changed
   }
 
   listAuthEvents(limit: number = DEFAULT_LIST_LIMIT): AuthEventDto[] {

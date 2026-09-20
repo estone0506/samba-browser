@@ -1086,6 +1086,13 @@ export function registerIpc(
   // 원클릭 설치본이 들어가는 자리(%APPDATA%/SAMBA Browser/phone-tools)
   const phoneToolsRoot = join(app.getPath('userData'), 'phone-tools')
   const phoneRepo = new PhoneRepo(db)
+  // 예전 버전이 auth_events 에 평문으로 남긴 인증번호를 자리수 표시로 바꾼다(I20)
+  try {
+    const purged = phoneRepo.purgeStoredCodes()
+    if (purged > 0) console.log(`저장된 인증번호 ${purged}건을 자리수 표시로 바꿨습니다`)
+  } catch (e: unknown) {
+    console.warn('저장된 인증번호 정리 실패', e instanceof Error ? e.message : String(e))
+  }
   // 비밀번호 화면 표식(결제 실행기가 갱신 → 화면 전송이 참조)과 ARS 진행 로그 중계
   const phoneSecretGate = new SecretScreenGate()
   const phoneProgress = new AgentProgressRelay()
