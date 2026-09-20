@@ -76,6 +76,10 @@ export const IPC = {
   // 마우스 제스처 — 페이지 preload 가 인식한 방향 시퀀스와, 메인이 밀어 주는 설정
   pageGesture: 'page:gesture', // preload(격리 월드) → main (send)
   pageGestureConfig: 'page:gestureConfig', // main → preload 이벤트
+  // AI 가 iframe 안 요소를 다루기 위한 프레임 채널. 코드 문자열은 오가지 않고
+  // 미리 정해진 동작 이름(shared/agent-op 의 AgentOp)과 인자만 오간다
+  pageAgentCall: 'page:agentCall', // main → 해당 프레임 preload (frame.send)
+  pageAgentResult: 'page:agentResult', // 프레임 preload → main (send)
   // 파비콘 — 사이트 자체에서만 받아온 dataUrl 을 돌려준다(제3자 전송 없음)
   faviconGet: 'favicon:get',
   // --- 작업공간(브라우저 프로필) ---------------------------------------------
@@ -199,7 +203,10 @@ export const IPC = {
   activityRecommend: 'activity:recommend', // 설정 → 자동화 상단의 추천 목록
   activityDismiss: 'activity:dismiss', // [숨기기](30일 뒤 다시 나타난다)
   activityApply: 'activity:apply', // [예약 만들기]
-  activityClear: 'activity:clear' // "지금까지 기록 지우기"
+  activityClear: 'activity:clear', // "지금까지 기록 지우기"
+  // --- 사이트 기억 — 기억 본문은 화면으로 나가지 않는다. 호스트별 개수와 지우기뿐 ---
+  siteMemoryList: 'siteMemory:list', // 설정 → 동작의 "사이트 기억" 목록
+  siteMemoryForget: 'siteMemory:forget' // 호스트 한 곳의 기억 [지우기]
 } as const
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -217,6 +224,11 @@ export interface TabInfo {
   mobile: boolean
   loading: boolean
   active: boolean
+  /**
+   * 탭인지 팝업 창(결제창·주소 검색창)인지. 예전 페이로드와 맞추기 위해 선택 항목이며,
+   * 없으면 탭으로 본다. 팝업은 탭 바에는 나오지 않고 사이드바에만 배지로 보인다
+   */
+  kind?: 'tab' | 'popup'
 }
 
 // 렌더러가 메인에 알려주는 웹뷰 영역(사이드바·패널 제외)
@@ -370,6 +382,8 @@ export type {
   RecommendDto,
   RecommendKind
 } from './activity-patterns'
+
+export type { SiteMemorySummary } from './site-memory'
 
 /** schedule:dispatch 로 가는 실행 요청. 토큰은 이 실행이 그 예약의 것임을 잇는 표식이다 */
 export interface ScheduleDispatchDto {

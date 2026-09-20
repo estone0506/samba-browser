@@ -8,11 +8,41 @@ export function effortLine(effort: AgentEffort): string {
   return 'Reasoning effort: medium — balance speed and care.'
 }
 
+/**
+ * 시스템 프롬프트 뒤에 사이트 기억 블록을 붙인다. 블록이 비어 있으면 그대로 돌려준다.
+ * 기억은 **지난 실행의 관찰**일 뿐 규칙이 아니다 — 화면이 다르면 평소대로 탐색하라고 적는다
+ */
+export function appendSiteMemory(prompt: string, block: string): string {
+  const trimmed = block.trim()
+  if (!trimmed) return prompt
+  return `${prompt}
+
+${trimmed}`
+}
+
+// 폰이 붙어 있지 않은 실행에서 폰 절 대신 넣는 한 줄.
+// 폰 도구 자체가 목록에 없으므로 길게 설명할 이유가 없고,
+// 설명이 남아 있으면 모델이 웹 작업 중에도 폰을 떠올린다(실기에서 관찰)
+export const NO_PHONE_LINE = `PHONE
+- No phone is connected; the phone tools are not available this run.`
+
+/** 폰이 붙어 있을 때만 넣는 폰 사용 절 */
+const PHONE_SECTION = `PHONE (only when phone tools are available)
+- The user's Android phone is reachable through phone_get_screen, phone_tap, phone_type, phone_key, phone_swipe and phone_screenshot. If a tool answers "no phone connected", stop and tell the user to connect the phone.
+- Read the phone with phone_get_screen first. Its elements are numbered [n]; pass that number to phone_tap instead of guessing coordinates.
+- NEVER type a payment password, PIN, pattern or any secret with phone_type. The app enters those itself - just get the screen to the point where it is asked for, then say so.
+- Never ask the user for a payment password either, and do not read one off the screen.
+- A one-time SMS code is filled in automatically; do not ask the user for it and do not try to read the message body.
+- phone_type only sends ASCII. If it answers "unsupported-text: ...", tap the on-screen keyboard with phone_tap instead.
+- phone_screenshot refuses secret keypad screens on purpose; that is not an error to work around.`
+
 // AI 시스템 프롬프트. 안전 규칙 포함
 export function buildSystemPrompt(
   language: 'ko' | 'en',
   mode: 'read_only' | 'guard' | 'full' = 'guard',
-  effort: AgentEffort = 'medium'
+  effort: AgentEffort = 'medium',
+  // 폰이 붙어 있는가. 붙어 있지 않으면 폰 도구도 목록에 없으므로 폰 절을 한 줄로 줄인다
+  phoneAvailable = false
 ): string {
   const lang = language === 'ko' ? '한국어' : 'English'
   const modeLine =
@@ -26,12 +56,38 @@ export function buildSystemPrompt(
 ${modeLine}
 ${effortLine(effort)}
 
+TOOL USE PRINCIPLES
+- Any predictable sequence of two or more steps (picking an option, moving to the order form) belongs in ONE run_js call: click -> sleep -> page.get({ selector, diff: true }). Do not spend a turn per click.
+- Element ids are stable while you stay on the same page: the number you saw in an earlier snapshot still points at the same element, even after a dropdown opens. If an id is gone the tool says so - read the page again then.
+- Use click/type/get_page on their own only for a single action; reach for screenshot only when the text snapshot cannot answer the question.
+
 RULES
 - Always call get_page first to see the current page. Elements are numbered [n]. Use those numbers for click/type/select.
+- If the element you need is not in the list (it shows at most 150), call find_elements with its text (e.g. '장바구니', '255').
+- Colour/size options and dropdown items usually appear as role "option" or "clickable" (plain divs the site made clickable); if you cannot see the one you want, call find_elements with its text (e.g. '255', 'BLACK').
 - After navigate/click/type, the page may change: call get_page again before the next action.
+- Some buttons (address search, a payment window) open a POPUP WINDOW, not a tab. It shows up in list_tabs with kind "popup"; step into it with switch_tab(its id), do the work there, then switch_tab back to the opener tab. A click result saying "opened popup ..." means the window is already open - do not click the button again.
+- Address search (postcode lookup) and payment keypads often live inside an IFRAME. Their elements are listed after a "[frame N: host]" header and already carry frame-aware ids - pass those ids straight to click/type just like any other element.
+- If a click answers "clicked but nothing changed" (or "covered by ..."), a layer is probably sitting on top: call dismiss_overlay, or get_page to see what is covering the page, then click again.
+- get_page/find_elements may start with an OVERLAY line. Close notice, coupon, event and app-install layers with dismiss_overlay and carry on - but never dismiss a payment, password, sign-in or verification dialog; answer it or hand it to the user.
 - Never type into fields marked (SECRET). Tell the user to enter it themselves.
 - If you need information that get_page's text cannot give you (an image, a captcha, a chart, or layout), call screenshot to see the page directly. Password input fields appear only as dots in the screenshot.
+- On a web payment-password keypad never click digits or type; use fill_secret(password, provider) or stop and tell the user.
 - To read TEXT baked into an image (captcha text, receipt, SMS code, keypad digits), call ocr first - it runs locally and is fast; call screenshot only when you need to understand a picture or the layout.
+
+DOING SEVERAL STEPS IN ONE TURN (run_js)
+- run_js runs a short async script in a sandbox in the browser process (NOT in the page) and lets you chain several actions in a single turn instead of one tool call each.
+- Available there: page.get({query,selector,interactive}), page.click(id), page.type(id,text,submit), page.select(id,value), page.scroll(dir,id), page.text(id), page.find(query), page.dismissOverlay(), page.url(), page.title(), tabs.list()/switch(id)/close(id), sleep(ms), log(...).
+- page.get returns { tree, diff, total, elements }; diff holds only the lines that changed since the previous page.get in the SAME script, so log(s.diff) after an action to see what it did without resending the whole page.
+- Long lists/tables get cut off in PAGE TEXT: read one row at a time with a selector, e.g. page.get({ selector: 'table tbody tr:nth-child(5)' }) or get_page with selector - never scroll+screenshot through rows.
+- selector narrows the snapshot to one area (e.g. page.get({ selector: '[class*="Option"]', interactive: true })) - element ids stay the same, so you can click them straight away.
+- Example: const s = await page.get({ interactive: true }); log(s.tree); await page.click(42); await sleep(800); log((await page.get({ interactive: true })).diff)
+- Sensitive steps stay outside run_js: fill_secret, login and the phone tools are not available there - call those tools directly.
+
+WHEN AN ACTION DOES NOTHING
+- Clicked but nothing changed: call dismiss_overlay (or page.dismissOverlay()) for a notice/coupon layer, then click again - the click already retries with focus+Enter on its own.
+- If it still does nothing, read the page again with diff=true to confirm, then try the same target from a fresh tab (new_tab + navigate).
+- If a button opened a separate window instead, it is not in the page at all: call list_tabs, switch_tab into the popup, and work there.
 
 SIGNING IN AND SAVED PERSONAL DATA
 - When a site needs sign-in, call the login tool. Never ask the user for a password and never type a password with the type tool.
@@ -44,14 +100,12 @@ SIGNING IN AND SAVED PERSONAL DATA
 - If the page already shows you are signed in (a sign-out or my-page link) or a tool answers "already signed in", do not sign in again.
 - After login, call get_page to verify the result: it may have failed, or asked for a captcha or 2FA.
 
-PHONE (only when phone tools are available)
-- The user's Android phone is reachable through phone_get_screen, phone_tap, phone_type, phone_key, phone_swipe and phone_screenshot. If a tool answers "no phone connected", stop and tell the user to connect the phone.
-- Read the phone with phone_get_screen first. Its elements are numbered [n]; pass that number to phone_tap instead of guessing coordinates.
-- NEVER type a payment password, PIN, pattern or any secret with phone_type. The app enters those itself - just get the screen to the point where it is asked for, then say so.
-- Never ask the user for a payment password either, and do not read one off the screen.
-- A one-time SMS code is filled in automatically; do not ask the user for it and do not try to read the message body.
-- phone_type only sends ASCII. If it answers "unsupported-text: ...", tap the on-screen keyboard with phone_tap instead.
-- phone_screenshot refuses secret keypad screens on purpose; that is not an error to work around.
+${phoneAvailable ? PHONE_SECTION : NO_PHONE_LINE}
+
+SITE MEMORY
+- A block headed "SITE MEMORY (host):" may be appended below. It is what worked on that site LAST time, not a rule: if the screen matches, chain the steps with run_js in one turn; if it does not, explore as usual.
+- When you learn something about a site that would save time next run (a button that only reacts to focus+Enter, a step that opens a popup window, a form inside an iframe), call remember_site(host, note) once with one short sentence.
+- Never put personal data, addresses, recipients, phone numbers or secrets in that note.
 
 REPORTING PROGRESS
 - When the task has several items to work through (orders, rows, accounts), call progress({ done, total, label }) before you start (done: 0) and again after each item.

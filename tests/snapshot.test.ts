@@ -45,8 +45,9 @@ describe('serializeSnapshot', () => {
   it('비밀 입력칸은 SECRET 표시', () => {
     expect(serializeSnapshot(snap)).toContain('[3] textbox name=pw (SECRET)')
   })
-  it('본문은 8000자에서 자름', () => {
-    const long = { ...snap, text: 'a'.repeat(9000) }
-    expect(serializeSnapshot(long).length).toBeLessThan(9000)
+  it('본문은 16000자에서 자름', () => {
+    const long = { ...snap, text: 'a'.repeat(17000) }
+    expect(serializeSnapshot(long).length).toBeLessThan(17000)
+    expect(serializeSnapshot(long)).toContain('a'.repeat(16000))
   })
 })

@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Switch } from '@renderer/components/ui/switch'
 import type { PermissionMode } from '@shared/settings'
 import { useRecommendStore } from '@renderer/stores/recommendStore'
+import { useSiteMemoryStore } from '@renderer/stores/siteMemoryStore'
 import {
   SecondaryButton,
   SegmentedGroup,
@@ -27,6 +28,13 @@ export function AgentSection({ settings, update }: SectionProps): React.JSX.Elem
   const clearActivity = (): void => {
     void clearHistory().then((ok) => setCleared(ok))
   }
+  // 사이트 기억 — 호스트별 개수만 받아 온다(경로·메모 본문은 화면으로 오지 않는다)
+  const siteMemoryItems = useSiteMemoryStore((s) => s.items)
+  const loadSiteMemory = useSiteMemoryStore((s) => s.load)
+  const forgetSite = useSiteMemoryStore((s) => s.forget)
+  useEffect(() => {
+    void loadSiteMemory()
+  }, [loadSiteMemory])
 
   return (
     <>
@@ -101,6 +109,36 @@ export function AgentSection({ settings, update }: SectionProps): React.JSX.Elem
             {t(cleared ? 'settingsPage.agent.activityCleared' : 'settingsPage.agent.activityClear')}
           </SecondaryButton>
         </SettingsRow>
+      </SettingsSection>
+
+      <SettingsSection title={t('settingsPage.agent.siteMemoryTitle')}>
+        <SettingsToggleRow
+          label={t('settingsPage.agent.siteMemory')}
+          description={t('settingsPage.agent.siteMemoryDesc')}
+        >
+          <Switch
+            checked={settings.siteMemoryEnabled}
+            onCheckedChange={(v) => update({ siteMemoryEnabled: v })}
+          />
+        </SettingsToggleRow>
+        {siteMemoryItems.length === 0 ? (
+          <SettingsRow label={t('settingsPage.agent.siteMemoryEmpty')}>{null}</SettingsRow>
+        ) : (
+          siteMemoryItems.map((item) => (
+            <SettingsRow
+              key={item.host}
+              label={item.host}
+              description={t('settingsPage.agent.siteMemoryCounts', {
+                recipes: item.recipes,
+                notes: item.notes
+              })}
+            >
+              <SecondaryButton onClick={() => void forgetSite(item.host)}>
+                {t('settingsPage.agent.siteMemoryForget')}
+              </SecondaryButton>
+            </SettingsRow>
+          ))
+        )}
       </SettingsSection>
 
       <SettingsSection title={t('settingsPage.agent.cleanupTitle')}>

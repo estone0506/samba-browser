@@ -15,6 +15,13 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const { pageBridge } = vi.hoisted(() => ({
   pageBridge: {
+    // 결제 비밀번호 키패드 판정 — 기본은 '평범한 화면'
+    keypadSignals: vi.fn(async () => ({
+      url: 'https://shop.example/',
+      text: '',
+      digitButtons: 0,
+      pinField: false
+    })),
     snapshot: vi.fn(),
     textOf: vi.fn(async () => ''),
     click: vi.fn(async () => 'ok'),
@@ -91,6 +98,50 @@ beforeEach(() => {
   pageBridge.type.mockImplementation(async () => 'ok')
   pageBridge.waitForLoad.mockClear()
   create.mockClear()
+})
+
+describe('find_elements — 나열 상한 뒤의 요소 되찾기', () => {
+  const found = {
+    url: 'https://shop.example/goods/1',
+    title: '상품',
+    text: '상품 설명',
+    elements: [
+      { id: 173, tag: 'button', role: 'button', text: '장바구니', isSecret: false },
+      { id: 174, tag: 'button', role: 'button', text: '장바구니 담기', isSecret: false }
+    ],
+    total: 2
+  }
+
+  it('검색어를 페이지 스냅샷에 그대로 넘기고 일치하는 id 를 돌려준다', async () => {
+    pageBridge.snapshot.mockResolvedValue(found)
+    const { tools } = build(true)
+    const r = await get(tools, 'find_elements').handler({ query: '장바구니' })
+    expect(pageBridge.snapshot).toHaveBeenCalledWith(fakeTab, '장바구니')
+    expect(textOut(r)).toContain('[173]')
+    expect(textOut(r)).toContain('[174]')
+  })
+
+  it('일치하는 요소가 없으면 그렇게 알린다', async () => {
+    pageBridge.snapshot.mockResolvedValue({ ...found, elements: [], total: 0 })
+    const { tools } = build(true)
+    expect(textOut(await get(tools, 'find_elements').handler({ query: '없는말' }))).toContain(
+      'no element matches'
+    )
+  })
+
+  it('get_page 도 query 를 그대로 넘긴다', async () => {
+    pageBridge.snapshot.mockResolvedValue(found)
+    const { tools } = build(true)
+    await get(tools, 'get_page').handler({ query: '255' })
+    expect(pageBridge.snapshot).toHaveBeenCalledWith(fakeTab, '255', undefined)
+  })
+
+  it('query 없이 부르면 undefined 로 넘긴다(전체 나열)', async () => {
+    pageBridge.snapshot.mockResolvedValue(found)
+    const { tools } = build(true)
+    await get(tools, 'get_page').handler({})
+    expect(pageBridge.snapshot).toHaveBeenCalledWith(fakeTab, undefined, undefined)
+  })
 })
 
 describe('click 위험 게이트 — 판정 근거는 AI 라벨이 아니라 페이지 텍스트', () => {

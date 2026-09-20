@@ -12,6 +12,7 @@
 //   - TRANSLATE_MAX_NODES/TRANSLATE_MAX_CHARS/TRANSLATE_CONCURRENCY ← src/shared/translate.ts 의 동명 상수
 //   - PAGE_IPC.captureRegionMode/captureElementRect ← 같은 파일의 IPC 동명 채널
 //   - PAGE_IPC.webstoreInstall/webstoreInstallResult ← 같은 파일의 IPC.pageWebstoreInstall/pageWebstoreInstallResult
+//   - PAGE_IPC.agentCall/agentResult ← 같은 파일의 IPC.pageAgentCall/pageAgentResult
 //   - INTERNAL_PROTOCOL ← src/shared/url.ts 의 INTERNAL_SCHEME + ':'
 //
 // 왜 복제하는가:
@@ -48,7 +49,11 @@ export const PAGE_IPC = {
   // 크롬 웹스토어 탭에서 "Chrome에 추가" 를 눌렀을 때 설치를 요청하는 채널(page → main)
   webstoreInstall: 'page:webstoreInstall',
   // 설치 결과를 눌렀던 그 탭으로 돌려주는 채널(main → page)
-  webstoreInstallResult: 'page:webstoreInstallResult'
+  webstoreInstallResult: 'page:webstoreInstallResult',
+  // AI 프레임 채널: 메인이 이 프레임에서 동작 하나를 시키고(agentCall) 결과를 받는다(agentResult).
+  // iframe(주소 검색·보안 키패드) 안 요소를 다루기 위한 통로다
+  agentCall: 'page:agentCall',
+  agentResult: 'page:agentResult'
 } as const
 
 // 번역 배치 상한·동시 실행 수 사본

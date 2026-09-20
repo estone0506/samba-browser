@@ -30,6 +30,8 @@ import type { PlaybookInput } from '../../shared/playbook'
 import { ScheduleRunStore } from '../schedule/runs'
 import { PlaybookScheduler } from '../schedule/scheduler'
 import { ActivityStore } from '../activity/store'
+import { SiteMemoryStore } from '../agent/site-memory-store'
+import { SiteMemoryService } from '../agent/site-memory'
 import { ActivityRecorder } from '../activity/recorder'
 import { RecommendService } from '../activity/recommend'
 import { RECENT_CHAT_LIMIT, type AppendMessageInput } from '../../shared/chat'
@@ -212,6 +214,11 @@ export function registerIpc(
   // 자동화 플레이북. 사용자 문장에 트리거가 들어 있으면 러너가 절차를 시스템 프롬프트에 덧붙인다
   const playbooks = new PlaybookStore(settings)
   agent.setPlaybooks(() => playbooks.list())
+  // 사이트 기억. 파일은 이 PC 의 userData 안에만 있고 동기화 대상이 아니다.
+  // 켬/끔은 설정 한 칸(siteMemoryEnabled)으로 매번 다시 읽는다 — 끄면 곧바로 멈춘다
+  const siteMemoryStore = new SiteMemoryStore(join(app.getPath('userData'), 'site-memory.json'))
+  const siteMemory = new SiteMemoryService(siteMemoryStore, () => settings.get().siteMemoryEnabled)
+  agent.setSiteMemory(siteMemory)
   // 예약 실행. 실행 기록은 이 PC 의 파일에만 남는다(동기화 대상이 아니다)
   const scheduleRuns = new ScheduleRunStore(join(app.getPath('userData'), 'schedule-runs.json'))
   const scheduler = new PlaybookScheduler({
@@ -303,12 +310,14 @@ export function registerIpc(
     vault.dispose()
   })
 
-  handleFromRenderer(IPC.tabList, () => tabs.list())
+  // 팝업(결제창·주소 검색창)까지 함께 돌려준다 — 사이드바가 "팝업" 배지로 보여 준다
+  handleFromRenderer(IPC.tabList, () => tabs.listAll())
   handleFromRenderer(IPC.tabCreate, (o: { url?: string; profile?: string; mobile?: boolean }) =>
     tabs.create(o)
   )
-  handleFromRenderer(IPC.tabClose, (id: string) => tabs.close(id))
-  handleFromRenderer(IPC.tabActivate, (id: string) => tabs.activate(id))
+  // 팝업 id 로도 닫기·전환이 되게 대상(탭+팝업) 경로로 보낸다
+  handleFromRenderer(IPC.tabClose, (id: string) => tabs.closeTarget(id))
+  handleFromRenderer(IPC.tabActivate, (id: string) => tabs.focusTarget(id))
   handleFromRenderer(IPC.tabNavigate, (id: string, url: string) => tabs.navigate(id, url))
   handleFromRenderer(IPC.tabBack, (id: string) => tabs.back(id))
   handleFromRenderer(IPC.tabForward, (id: string) => tabs.forward(id))
@@ -356,6 +365,10 @@ export function registerIpc(
     scheduler.setPaused(playbookId, paused)
   )
   // --- 활동 기록·추천 — 기록은 이 PC 안에만 있고 화면으로는 후보만 나간다 ----
+  // 사이트 기억 — 화면에는 호스트별 개수만 나간다(경로·메모 본문은 메인에 남는다).
+  // 지우기는 이 길뿐이다 — AI 도구로는 지우지 못한다
+  handleFromRenderer(IPC.siteMemoryList, () => siteMemory.summary())
+  handleFromRenderer(IPC.siteMemoryForget, (host: string) => siteMemory.forget(host))
   handleFromRenderer(IPC.activityRecommend, () => recommend.list())
   handleFromRenderer(IPC.activityDismiss, (key: string) => recommend.dismiss(key))
   handleFromRenderer(IPC.activityApply, (key: string) => recommend.apply(key))

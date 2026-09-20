@@ -4,11 +4,14 @@ import type { SettingsStore } from '../settings/store'
 import type { AgentEvent } from '../../shared/ipc'
 import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
+import { hasConnectedPhone } from './tools-phone'
 import type { PayToolRequest, PhoneToolContext, SmsCodeOutcome } from './tools-phone'
 import type { PayResult } from '../phone/pay'
 import type { PhoneRunContext } from '../phone/wiring'
-import { buildSystemPrompt } from './prompt'
+import { appendSiteMemory, buildSystemPrompt } from './prompt'
 import { appendPlaybooks, matchPlaybooks, type PlaybookDto } from '../../shared/playbook'
+import type { AgentToolCall } from '../../shared/site-memory'
+import type { SiteMemoryBlock, SiteMemoryService } from './site-memory'
 import type { ScheduleRunOverrides } from '../../shared/schedule'
 import {
   runQuery,
@@ -80,6 +83,8 @@ export class AgentRunner {
   private phones: PhoneBridge | null = null
   // 자동화 플레이북 목록 공급자. 없으면 시스템 프롬프트에 아무것도 덧붙이지 않는다
   private playbooks: PlaybookProvider | null = null
+  // 사이트 기억. 없으면 기억을 붙이지도 남기지도 않는다(기존 호출부·테스트)
+  private siteMemory: SiteMemoryService | null = null
 
   constructor(
     private tabs: TabManager,
@@ -104,6 +109,11 @@ export class AgentRunner {
     this.playbooks = provider
   }
 
+  /** 사이트 기억을 붙인다. null 이면 기억 주입·학습·remember_site 가 모두 꺼진다 */
+  setSiteMemory(service: SiteMemoryService | null): void {
+    this.siteMemory = service
+  }
+
   /**
    * 이 프롬프트에 걸리는 플레이북을 찾는다.
    * 공급자가 던져도 실행 자체는 막지 않는다(플레이북 없이 평소대로 돈다)
@@ -115,6 +125,60 @@ export class AgentRunner {
     } catch (e: unknown) {
       console.error('플레이북 조회 실패', e instanceof Error ? e.message : String(e))
       return []
+    }
+  }
+
+  /**
+   * 이번 실행에 붙일 사이트 기억 블록. 기억이 붙어 있지 않거나 아는 호스트가 없으면 빈 블록이다.
+   * 기억 조회가 실패해도 실행 자체는 막지 않는다(기억 없이 평소대로 돈다)
+   */
+  private siteMemoryBlock(prompt: string, playbooks: PlaybookDto[]): SiteMemoryBlock {
+    const empty: SiteMemoryBlock = { text: '', hosts: [], usedRecipe: false }
+    if (!this.siteMemory) return empty
+    try {
+      return this.siteMemory.blockFor({
+        prompt,
+        playbookTexts: playbooks.map((p) => p.instructions),
+        currentUrl: this.currentUrl()
+      })
+    } catch (e: unknown) {
+      console.error('사이트 기억 조회 실패', e instanceof Error ? e.message : String(e))
+      return empty
+    }
+  }
+
+  /** 활성 탭의 주소. 탭이 없거나 이미 닫혔으면 빈 문자열 */
+  private currentUrl(): string {
+    try {
+      return this.tabs.active()?.view.webContents.getURL() ?? ''
+    } catch {
+      return ''
+    }
+  }
+
+  /**
+   * 성공으로 끝난 실행을 마무리한다 — 성공 경로를 기억에 접고, 속도 지표를 한 줄 남긴다.
+   * 기억 저장이 실패해도 실행 결과에는 영향을 주지 않는다
+   */
+  private finishRun(run: {
+    prompt: string
+    calls: AgentToolCall[]
+    startedAt: number
+    /** 이번 실행의 전체 도구 호출 수(관찰 도구 포함) */
+    toolCalls: number
+    usedRecipe: boolean
+  }): void {
+    const seconds = Math.round((Date.now() - run.startedAt) / 1000)
+    // 효과 비교용 한 줄. 기억을 실어 보낸 실행이면 표식이 붙는다
+    console.info(
+      `작업 완료 — 도구 호출 ${run.toolCalls}회·${seconds}초` +
+        (run.usedRecipe ? ' (usedRecipe: true)' : '')
+    )
+    if (!this.siteMemory) return
+    try {
+      this.siteMemory.learn({ prompt: run.prompt, calls: run.calls })
+    } catch (e: unknown) {
+      console.error('사이트 기억 저장 실패', e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -269,24 +333,45 @@ export class AgentRunner {
     const gen = ++this.generation
     // 이 실행이 남길 대화 기록. 화면으로 나가는 이벤트와 같은 값만 모은다(라벨·본문)
     const entry: TranscriptEntry = { prompt, text: '', steps: [] }
+    // 이 실행의 행동 도구 호출 기록. 성공으로 끝나면 사이트 기억이 여기서 경로를 뽑는다
+    const calls: AgentToolCall[] = []
+    const startedAt = Date.now()
+    // 사용자 문장에 걸리는 플레이북 — 시스템 프롬프트 뒤에 절차를 덧붙이고, 화면에는 이름만 알린다
+    const playbooks = this.matchedPlaybooks(prompt)
+    // 이번 실행에 붙일 사이트 기억 블록(지시문·플레이북 본문·현재 탭 URL 에서 호스트를 뽑는다)
+    const memory = this.siteMemoryBlock(prompt, playbooks)
     // 이 실행이 최신 세대일 때만 UI 로 이벤트를 보낸다
     const emit = (e: AgentEvent): void => {
       if (gen !== this.generation) return
       if (e.type === 'text') entry.text = entry.text ? `${entry.text}\n${e.text}` : e.text
       if (e.type === 'step') entry.steps.push({ label: e.label, ok: e.ok })
+      // 성공으로 끝난 실행에서만 경로를 남긴다. 속도 지표도 여기서 한 줄 적는다
+      if (e.type === 'status' && e.state === 'done') {
+        this.finishRun({
+          prompt,
+          calls,
+          startedAt,
+          toolCalls: e.toolCalls ?? 0,
+          usedRecipe: memory.usedRecipe
+        })
+      }
       this.emit(e)
     }
-    // 사용자 문장에 걸리는 플레이북 — 시스템 프롬프트 뒤에 절차를 덧붙이고, 화면에는 이름만 알린다
-    const playbooks = this.matchedPlaybooks(prompt)
+    // 폰이 안 붙어 있으면 폰 도구를 내보내지 않으므로(createSambaTools) 프롬프트의 폰 절도 한 줄로 줄인다
+    const phoneAvailable =
+      this.phones !== null && this.phones !== undefined && hasConnectedPhone(this.phones)
     const systemPrompt = (
       mode: 'read_only' | 'guard' | 'full',
       effort?: typeof s.agentEffort
     ): string =>
-      appendPlaybooks(
-        effort === undefined
-          ? buildSystemPrompt(s.language, mode)
-          : buildSystemPrompt(s.language, mode, effort),
-        playbooks
+      appendSiteMemory(
+        appendPlaybooks(
+          effort === undefined
+            ? buildSystemPrompt(s.language, mode, 'medium', phoneAvailable)
+            : buildSystemPrompt(s.language, mode, effort, phoneAvailable),
+          playbooks
+        ),
+        memory.text
       )
     const counter = makeCounter(s.maxToolCalls)
     const deduper = createTextDeduper()
@@ -326,6 +411,11 @@ export class AgentRunner {
       vaultExcludedHosts: s.vaultExcludedHosts,
       tick: counter.tick,
       onStep: (label, ok) => emit({ type: 'step', label, ok }),
+      // 행동 도구 호출만 넘어온다(관찰 도구는 오지 않는다)
+      onCall: (call) => calls.push(call),
+      siteMemory: this.siteMemory
+        ? { remember: (host, note) => this.siteMemory?.remember(host, note) ?? '' }
+        : undefined,
       onProgress: ({ done, total, label }) =>
         emit(
           label === undefined

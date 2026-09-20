@@ -25,6 +25,7 @@ import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emul
 import { installWebstoreNavigatorUserAgent, installWebstoreUserAgent } from './webstore-ua'
 import { installDialogHandler, isAutomationActive } from './dialogs'
 import { PopupRegistry, type PopupEntry } from './popups'
+import { buildTargets, pickAgentTargetId, type AgentTarget } from './targets'
 import { getFaviconService, type FaviconResponse } from '../favicon/service'
 
 export interface Tab {
@@ -142,6 +143,10 @@ export class TabManager {
   private tabs: Tab[] = []
   private popups = new PopupRegistry<BrowserWindow>()
   private activeId: string | null = null
+  // AI 가 switch_tab 으로 고른 팝업. 그 팝업이 닫히면 계산 단계에서 자동으로 무시된다
+  private focusedPopupId: string | null = null
+  // 팝업이 새로 열렸을 때 알리는 구독자(AI 도구가 "팝업이 열렸다"를 결과에 붙인다)
+  private popupOpenedListeners: Array<(target: AgentTarget) => void> = []
   private layout: Layout = {
     x: 0,
     y: 0,
@@ -352,7 +357,8 @@ export class TabManager {
 
   private emit(): void {
     if (this.disposed) return
-    const list = this.list()
+    // 팝업까지 함께 보낸다 — 사이드바가 결제창·주소 검색창을 "팝업" 배지로 보여 준다
+    const list = this.listAll()
     for (const cb of this.listeners) cb(list)
   }
 
@@ -363,8 +369,10 @@ export class TabManager {
     this.listeners = []
     this.activatedListeners = []
     this.closedListeners = []
+    this.popupOpenedListeners = []
     this.tabs = []
     this.activeId = null
+    this.focusedPopupId = null
     // 부모 창이 사라졌는데 결제창만 남아 떠 있지 않게 팝업도 함께 파괴한다
     this.popups.destroyAll()
   }
@@ -404,14 +412,120 @@ export class TabManager {
     return popup ? this.asTab(popup) : null
   }
 
-  /** 팝업 창을 탭 모양으로 감싼다 — 소비자는 .view.webContents 만 쓴다(페이지 브리지·결제 확인) */
+  /**
+   * 팝업 창을 탭 모양으로 감싼다 — 소비자는 .view.webContents 와 .view.getBounds() 만 쓴다.
+   * getBounds 는 화면 캡처·OCR 이 대상 크기를 알아야 해서 함께 채운다. 팝업은 창 전체가
+   * 곧 페이지라 원점은 (0,0) 이다(탭 뷰 좌표와 같은 의미로 맞춘다)
+   */
   private asTab(p: Popup): Tab {
+    const win = p.win
+    const view = {
+      webContents: win.webContents,
+      getBounds: (): { x: number; y: number; width: number; height: number } => {
+        if (win.isDestroyed()) return { x: 0, y: 0, width: 0, height: 0 }
+        const [width, height] = win.getContentSize()
+        return { x: 0, y: 0, width, height }
+      }
+    }
     return {
       id: p.id,
-      view: { webContents: p.win.webContents } as unknown as WebContentsView,
+      view: view as unknown as WebContentsView,
       profile: p.profile,
       mobile: false,
       openerId: p.openerId
+    }
+  }
+
+  // === AI 작업 대상(탭 + 팝업) ==============================================
+
+  /** 탭과 살아 있는 팝업을 한 목록으로. AI 의 list_tabs 와 사이드바 목록이 같이 쓴다 */
+  listTargets(): AgentTarget[] {
+    const tabs = this.list().map((t) => ({ id: t.id, title: t.title, url: t.url }))
+    const popups = this.popups.alive().map((p) => ({
+      id: p.id,
+      title: p.win.isDestroyed() ? '' : p.win.webContents.getTitle(),
+      url: p.win.isDestroyed() ? '' : p.win.webContents.getURL(),
+      openerId: p.openerId
+    }))
+    return buildTargets(tabs, popups, this.activeId, this.focusedPopupId)
+  }
+
+  /**
+   * 렌더러(탭 바·사이드바)가 보는 목록. 탭 뒤에 살아 있는 팝업을 kind 'popup' 으로 붙인다.
+   * 팝업은 active 를 언제나 false 로 둔다 — 렌더러의 "활성 탭"(주소창·뒤로가기 대상)은
+   * 언제나 진짜 탭이어야 하기 때문이다
+   */
+  listAll(): TabInfo[] {
+    const popups: TabInfo[] = this.popups.alive().map((p) => ({
+      id: p.id,
+      url: p.win.isDestroyed() ? '' : p.win.webContents.getURL(),
+      title: p.win.isDestroyed() ? '' : p.win.webContents.getTitle(),
+      profile: p.profile,
+      mobile: false,
+      loading: p.win.isDestroyed() ? false : p.win.webContents.isLoading(),
+      active: false,
+      kind: 'popup'
+    }))
+    return [...this.list().map((t) => ({ ...t, kind: 'tab' as const })), ...popups]
+  }
+
+  /** id 로 팝업을 찾는다(살아 있는 것만) */
+  private popupById(id: string): Popup | null {
+    return this.popups.find((p) => p.id === id)
+  }
+
+  /**
+   * AI 가 지금 조작할 대상. focusTarget 으로 고른 팝업이 살아 있으면 그 팝업,
+   * 아니면 활성 탭이다 — 결제창이 닫히면 자동으로 원래 탭으로 돌아온다
+   */
+  agentTarget(): Tab | null {
+    const alive = this.popups.alive()
+    const id = pickAgentTargetId(
+      this.focusedPopupId,
+      alive.map((p) => p.id),
+      this.activeId
+    )
+    if (id === null) return null
+    const popup = alive.find((p) => p.id === id)
+    if (popup) return this.asTab(popup)
+    // 표식이 가리키던 팝업이 닫혔으면 표식을 지워 둔다(다음 호출부터는 계산이 짧아진다)
+    this.focusedPopupId = null
+    return this.get(id)
+  }
+
+  /** AI 작업 대상을 고른다. 탭이면 전환, 팝업이면 그 창에 포커스를 준다 */
+  focusTarget(id: string): void {
+    const popup = this.popupById(id)
+    if (popup) {
+      this.focusedPopupId = id
+      if (!popup.win.isDestroyed()) {
+        popup.win.show()
+        popup.win.focus()
+      }
+      this.emit()
+      return
+    }
+    this.focusedPopupId = null
+    this.activate(id)
+  }
+
+  /** 대상을 닫는다. 팝업이면 창을 닫고, 탭이면 기존 close 와 같다 */
+  closeTarget(id: string): void {
+    const popup = this.popupById(id)
+    if (!popup) {
+      this.close(id)
+      return
+    }
+    if (this.focusedPopupId === id) this.focusedPopupId = null
+    if (!popup.win.isDestroyed()) popup.win.close()
+    this.emit()
+  }
+
+  /** 팝업이 새로 열릴 때 알림을 받는다. 해제 함수를 돌려준다 */
+  onPopupOpened(cb: (target: AgentTarget) => void): () => void {
+    this.popupOpenedListeners.push(cb)
+    return () => {
+      this.popupOpenedListeners = this.popupOpenedListeners.filter((f) => f !== cb)
     }
   }
 
@@ -467,7 +581,10 @@ export class TabManager {
       webPreferences: {
         session: ses,
         sandbox: true,
-        contextIsolation: true
+        contextIsolation: true,
+        // iframe(카카오 우편번호·결제 키패드) 안에도 페이지 preload(__samba)가 돌게 한다.
+        // 이 값이 없으면 Electron 은 최상위 프레임에서만 preload 를 실행한다
+        nodeIntegrationInSubFrames: true
       }
     })
     // WebContentsView 는 네이티브 레이어라 CSS overflow-hidden 으로 잘리지 않는다.
@@ -560,7 +677,14 @@ export class TabManager {
       // about:blank 팝업을 먼저 열고 폼을 target 으로 보내는 결제 흐름이 통째로 깨진다.
       // 창은 Electron 의 표준 경로에 맡기고(직접 createWindow 로 만들면 부모 탭이 이동하는 순간
       // 브라우저 프로세스가 죽는 경우가 있었다), did-create-window 에서 받아 추적만 한다
-      return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true } }
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          autoHideMenuBar: true,
+          // 팝업 창의 iframe 에도 preload 가 돌게 — 나머지 webPreferences 는 여는 창에서 물려받는다
+          webPreferences: { nodeIntegrationInSubFrames: true }
+        }
+      }
     })
     wc.on('did-create-window', (popupWin) => this.registerPopup(popupWin, tab.id, profile))
     if (tab.mobile) void applyMobileEmulation(wc)
@@ -630,14 +754,35 @@ export class TabManager {
     // 팝업이 또 창을 열면(결제 → 인증창) 같은 규칙으로 창을 만든다
     wc.setWindowOpenHandler(({ url: target }) => {
       if (!isAllowedUrl(target)) return { action: 'deny' }
-      return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true } }
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          autoHideMenuBar: true,
+          // 팝업 창의 iframe 에도 preload 가 돌게 — 나머지 webPreferences 는 여는 창에서 물려받는다
+          webPreferences: { nodeIntegrationInSubFrames: true }
+        }
+      }
     })
     wc.on('did-create-window', (child) => this.registerPopup(child, openerId, profile))
     win.on('close', (event) => this.popups.handleClose(popup, () => event.preventDefault()))
     win.once('closed', () => {
       this.popups.remove(popup)
       this.lastDialogMessage.delete(popup.id)
+      // AI 가 이 팝업을 보고 있었으면 표식을 지워 활성 탭으로 돌아가게 한다
+      if (this.focusedPopupId === popup.id) this.focusedPopupId = null
+      this.emit()
     })
+    // 제목·주소가 정해진 뒤에 알려야 안내 문구가 빈 문자열이 되지 않는다
+    wc.once('dom-ready', () => this.notifyPopupOpened(popup))
+    this.emit()
+  }
+
+  /** 새로 열린 팝업을 구독자(AI 도구)와 렌더러에 알린다 */
+  private notifyPopupOpened(popup: Popup): void {
+    if (this.disposed || popup.handle.isDestroyed()) return
+    const target = this.listTargets().find((t) => t.id === popup.id)
+    if (target) for (const cb of this.popupOpenedListeners) cb(target)
+    this.emit()
   }
 
   close(id: string): void {
