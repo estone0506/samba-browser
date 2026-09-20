@@ -194,23 +194,28 @@ describe('run_js 는 도구와 같은 가드를 지난다', () => {
 })
 
 describe('run_js 호출 상한', () => {
-  it('run_js 1회 + 동작 수만큼 센다', async () => {
+  it('run_js 1회 + 동작 5건당 1회로 센다(동작마다 세면 상한이 금방 바닥난다)', async () => {
     const { run, ticks } = build()
     await run("await page.click(1, 'a'); await page.click(2, 'b'); await sleep(1)")
-    expect(ticks()).toBe(4)
+    // run_js 자체 1회. 동작 2건은 5건 미만이라 추가로 세지 않는다
+    expect(ticks()).toBe(1)
+    await run(
+      "await page.click(1, 'a'); await page.click(2, 'b'); await page.click(3, 'c'); await page.click(4, 'd'); await page.click(5, 'e')"
+    )
+    // 두 번째 run_js 1회 + 누적 동작 7건 → 5건째에서 1회
+    expect(ticks()).toBe(3)
   })
 
   it('상한을 넘으면 그 자리에서 멈춘다', async () => {
-    const { run } = build({ limit: 2 })
+    const { run } = build({ limit: 1 })
     const out = await run(
-      "await page.click(1, 'a'); await page.click(2, 'b'); await page.click(3, 'c')"
+      "await page.click(1, 'a'); await page.click(2, 'b'); await page.click(3, 'c'); await page.click(4, 'd'); await page.click(5, 'e'); await page.click(6, 'f')"
     )
     expect(out).toContain('tool call limit reached')
-    expect(pageBridge.click).toHaveBeenCalledTimes(1)
+    // run_js 1회로 상한(1)에 닿고, 5번째 동작에서 상한 검사에 걸려 6번째는 실행되지 않는다
+    expect(pageBridge.click).toHaveBeenCalledTimes(4)
   })
-})
 
-describe('run_js page.get 결과', () => {
   it('tree·diff·total·elements 를 돌려준다', async () => {
     const { run } = build()
     const out = await run('const s = await page.get(); return Object.keys(s).sort().join(",")')
