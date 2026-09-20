@@ -188,6 +188,8 @@ const UNDO_TTL_MS = 60_000
 const SALT_BYTES = 16
 const CAPTURE_TTL_MS = 60_000
 const MINUTE_MS = 60_000
+// setTimeout 이 받는 최대 지연(2^31-1 ms ≈ 24.8일)
+const MAX_TIMEOUT_MS = 2_147_483_647
 
 export class VaultService {
   private readonly repo: VaultRepo
@@ -516,8 +518,22 @@ export class VaultService {
   private restartAutoLock(): void {
     if (this.autoLockTimer) clearTimeout(this.autoLockTimer)
     const minutes = this.settings.get().vaultAutoLockMinutes
+    this.armAutoLock(minutes * MINUTE_MS)
+  }
+
+  /**
+   * 자동 잠금 타이머를 건다. setTimeout 은 32비트(약 24.8일)를 넘으면 1ms 로 뭉개져 곧바로 잠겨 버리므로
+   * (실기: 30일로 설정하자 켜자마자 잠김) 상한 이하로 쪼개 남은 시간을 이어서 건다
+   */
+  private armAutoLock(remainingMs: number): void {
+    const slice = Math.min(remainingMs, MAX_TIMEOUT_MS)
+    const rest = remainingMs - slice
     this.autoLockTimer = setTimeout(() => {
       this.autoLockTimer = undefined
+      if (rest > 0) {
+        this.armAutoLock(rest)
+        return
+      }
       // 보류가 걸려 있으면 잠그지 않고 그대로 둔다 — 보류가 풀릴 때 타이머를 다시 건다.
       // 설정을 도중에 꺼 두었으면 보류를 무시하고 예정대로 잠근다
       if (this.autoLockHolds.size > 0 && this.settings.get().vaultHoldLockDuringAgent) {
@@ -528,7 +544,7 @@ export class VaultService {
         return
       }
       this.lock()
-    }, minutes * MINUTE_MS)
+    }, slice)
     // 자동 잠금 타이머 때문에 프로세스가 살아 있지 않도록 한다
     this.autoLockTimer.unref?.()
   }

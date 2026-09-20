@@ -168,3 +168,30 @@ describe('AI 작업 중 잠금 보류 문구', () => {
     }
   })
 })
+
+describe('자동 잠금 타이머의 32비트 한계', () => {
+  let db: Db
+
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    db = await openDatabase(':memory:')
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    db.close()
+  })
+
+  it('30일(2^31ms 초과)로 두면 곧바로 잠기지 않고 만료 시점에 잠긴다', async () => {
+    // 실기: setTimeout 이 32비트를 넘는 지연을 1ms 로 뭉개 켜자마자 잠겼다
+    const v = new VaultService(db, makeSettings({ vaultAutoLockMinutes: 43200 }))
+    await v.setup('master-pw')
+    vi.advanceTimersByTime(60 * MIN)
+    expect(v.state()).toBe('unlocked')
+    vi.advanceTimersByTime(25 * 24 * 60 * MIN)
+    expect(v.state()).toBe('unlocked')
+    vi.advanceTimersByTime(5 * 24 * 60 * MIN + MIN)
+    expect(v.state()).toBe('locked')
+    v.dispose()
+  })
+})
