@@ -35,6 +35,7 @@ import {
   clampRect,
   fullPageHeight,
   fullPageSteps,
+  maxFullPageCssHeight,
   isCaptureMode,
   parseCaptureElementRect,
   type CaptureMode,
@@ -160,10 +161,16 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
     const metrics = (await wc.executeJavaScript(FULL_PAGE_METRICS_JS, true)) as {
       totalHeight: number
       viewportHeight: number
+      viewportWidth: number
       headerHeight: number
       scrollY: number
+      deviceScale: number
     }
-    const steps = fullPageSteps(metrics)
+    // 화면 배율까지 감안해 결과 이미지 높이를 미리 묶는다(디바이스 픽셀 상한)
+    const steps = fullPageSteps({
+      ...metrics,
+      maxHeight: maxFullPageCssHeight(metrics.viewportWidth, metrics.deviceScale)
+    })
     if (steps.length === 0) throw new Error('페이지 크기를 읽지 못했습니다')
 
     // 첫 장으로 배율을 잰다(고해상도 화면에서 이미지 픽셀 ≠ CSS 픽셀)
@@ -299,28 +306,6 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
       viewport: toDevice(wanted),
       scaleFactor: source.scaleFactor
     }
-  })
-
-  deps.handle(IPC.captureSaveVideo, (rawBytes: unknown, rawMode: unknown): void => {
-    const mode: CaptureMode = isCaptureMode(rawMode) ? rawMode : 'videoScreen'
-    const bytes =
-      rawBytes instanceof Uint8Array
-        ? rawBytes
-        : rawBytes instanceof ArrayBuffer
-          ? new Uint8Array(rawBytes)
-          : null
-    if (!bytes || bytes.byteLength === 0) throw new Error('녹화 데이터가 비어 있습니다')
-    const dir = targetDir()
-    const target = uniqueCaptureFile(dir, new Date(), 'webm', (p) => existsSync(p))
-    writeFileSync(target.filePath, bytes)
-    deps.send(IPC.captureDone, {
-      mode,
-      filePath: target.filePath,
-      fileName: target.fileName,
-      previewDataUrl: '',
-      width: 0,
-      height: 0
-    } satisfies CaptureResultDto)
   })
 
   // --- 녹화 스트리밍 저장: 시작 때 파일을 열고 청크를 바로 이어 쓴다 ----------
@@ -534,7 +519,9 @@ const FULL_PAGE_METRICS_JS = `(() => {
   return {
     totalHeight: Math.round(totalHeight),
     viewportHeight: Math.round(window.innerHeight),
+    viewportWidth: Math.round(window.innerWidth),
     headerHeight: Math.round(headerHeight),
-    scrollY: Math.round(window.scrollY)
+    scrollY: Math.round(window.scrollY),
+    deviceScale: window.devicePixelRatio || 1
   }
 })()`

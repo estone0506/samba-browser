@@ -3,6 +3,9 @@ import {
   CAPTURE_MODES,
   DEFAULT_CAPTURE_SHORTCUTS,
   MAX_FULL_PAGE_HEIGHT,
+  MAX_FULL_PAGE_DEVICE_HEIGHT,
+  MAX_FULL_PAGE_DEVICE_PIXELS,
+  maxFullPageCssHeight,
   captureExtension,
   captureFileName,
   captureShortcutMode,
@@ -239,5 +242,41 @@ describe('캡처 설정', () => {
     })
     expect(s.captureShortcuts.fullPage).toBe('Ctrl+Shift+P')
     expect(s.captureShortcuts.direct).toBe('Alt+1')
+  })
+})
+
+// --- I17 전체 페이지 캡처 상한(디바이스 픽셀) ---------------------------------
+
+describe('maxFullPageCssHeight — 화면 배율까지 감안한 높이 상한', () => {
+  it('배율 1 에서는 기존 CSS 상한을 그대로 쓴다', () => {
+    expect(maxFullPageCssHeight(1280, 1)).toBe(MAX_FULL_PAGE_HEIGHT)
+  })
+
+  it('고배율 화면에서는 디바이스 픽셀 높이 상한이 먼저 걸린다', () => {
+    const at3 = maxFullPageCssHeight(1280, 3)
+    expect(at3).toBeLessThan(MAX_FULL_PAGE_HEIGHT)
+    // 결과를 디바이스 픽셀로 되돌려도 상한을 넘지 않는다
+    expect(at3 * 3).toBeLessThanOrEqual(MAX_FULL_PAGE_DEVICE_HEIGHT)
+  })
+
+  it('아주 넓은 페이지는 총 픽셀 상한으로 더 짧아진다', () => {
+    const wide = maxFullPageCssHeight(8000, 2)
+    expect(wide * 2 * (8000 * 2)).toBeLessThanOrEqual(MAX_FULL_PAGE_DEVICE_PIXELS)
+  })
+
+  it('배율이 이상한 값이면 1 로 본다', () => {
+    expect(maxFullPageCssHeight(1280, 0)).toBe(MAX_FULL_PAGE_HEIGHT)
+    expect(maxFullPageCssHeight(1280, Number.NaN)).toBe(MAX_FULL_PAGE_HEIGHT)
+  })
+
+  it('상한은 fullPageSteps 의 maxHeight 로 그대로 쓰인다', () => {
+    const maxHeight = maxFullPageCssHeight(1280, 3)
+    const steps = fullPageSteps({
+      totalHeight: 500_000,
+      viewportHeight: 900,
+      headerHeight: 0,
+      maxHeight
+    })
+    expect(fullPageHeight(steps)).toBe(maxHeight)
   })
 })

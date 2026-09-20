@@ -109,6 +109,7 @@ import {
 import { registerTranslate } from '../translate/register'
 // === 사진·영상 캡처 — 배선은 capture/capture-ipc.ts 한 곳에 모여 있다 =================
 import { registerCaptureIpc } from '../capture/capture-ipc'
+import { isAllowedCaptureDir } from '../capture/paths'
 import type { CaptureShortcutInput } from '../../shared/capture'
 
 /**
@@ -389,6 +390,13 @@ export function registerIpc(
     wrap(() => settingsForSender(settings.get(), win, e.sender))
   )
   handleFromRenderer(IPC.settingsSet, (patch: Partial<Settings>) => {
+    // 저장 폴더는 렌더러가 임의 경로를 넣지 못한다 — 폴더 선택 다이얼로그(메인)로만 자유롭다
+    if (
+      typeof patch.captureDir === 'string' &&
+      !isAllowedCaptureDir(patch.captureDir, app.getPath('home'))
+    ) {
+      throw new Error('저장 폴더는 홈 폴더 안에서만 지정할 수 있어요')
+    }
     const s = settings.set(patch)
     // 홈 주소·새 탭 주소·검색엔진이 바뀌면 tab-manager 도 즉시 반영한다
     applyBrowserDefaults(s)
