@@ -144,13 +144,29 @@ function verify<T>(raw: unknown, expr: string, schema: z.ZodType<T>): T {
 }
 
 // 탭 안 preload(격리 월드의 __samba)를 호출하고 결과를 스키마로 검증한다(메인 프레임)
+// 메인 프레임 호출 상한. 페이지가 alert/confirm 으로 멈춰 있거나 렌더러가 바쁘면
+// executeJavaScriptInIsolatedWorld 는 영영 돌아오지 않는다 — 기다리다 도구 전체가 멈춘다
+const MAIN_CALL_TIMEOUT_MS = 20_000
+
 async function call<T>(wc: WebContents, expr: string, schema: z.ZodType<T>): Promise<T> {
   if (wc.isDestroyed()) throw new Error('page is gone')
   // webContents.executeJavaScriptInIsolatedWorld 는 메인 프레임의 지정 월드에서 실행한다
-  const raw: unknown = await wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [
-    { code: expr }
-  ])
-  return verify(raw, expr, schema)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('page did not respond (busy or blocked by a dialog)')),
+      MAIN_CALL_TIMEOUT_MS
+    )
+  })
+  try {
+    const raw: unknown = await Promise.race([
+      wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code: expr }]),
+      timeout
+    ])
+    return verify(raw, expr, schema)
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 // 특정 프레임에서 동작 하나를 시킨다(IPC 통로). 실패는 그대로 던진다

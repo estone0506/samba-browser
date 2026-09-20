@@ -204,6 +204,28 @@ export function resolveAccount(
   return accounts.length === 1 ? accounts[0] : null
 }
 
+// 도구 하나의 상한 시간. run_js 는 자체 30초 상한이 있으므로 그보다 넉넉히 둔다
+const TOOL_TIMEOUT_MS = 90_000
+
+async function withToolTimeout<T>(p: Promise<T>, ms: number): Promise<T | string> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<string>((resolve) => {
+    timer = setTimeout(
+      () =>
+        resolve(
+          `error: the page did not respond within ${Math.round(ms / 1000)}s (a dialog, a stuck popup or heavy loading). ` +
+            'Call list_tabs/get_page again, or switch to another tab.'
+        ),
+      ms
+    )
+  })
+  try {
+    return await Promise.race([p, timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 export interface ToolContext {
   tabs: TabManager
   dangerWords: string[]
@@ -345,7 +367,9 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
       return text(over)
     }
     try {
-      const r = await fn()
+      // 페이지가 대화상자·무한 로딩으로 응답하지 않으면 실행 전체가 멈춘다(실기에서 14분 대기).
+      // 도구 하나는 이 시간 안에 끝나야 하고, 넘기면 문구로 돌려줘 모델이 다른 길을 찾게 한다
+      const r = await withToolTimeout(fn(), TOOL_TIMEOUT_MS)
       const raw = typeof r === 'string' ? r : JSON.stringify(r)
       const ok = !/not found|not set up|host unknown|refused|denied|error|locked|fail/i.test(raw)
       ctx.onStep(resolveLabel(), ok)
