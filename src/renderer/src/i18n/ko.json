@@ -1169,6 +1169,11 @@
       "create": "예약 만들기",
       "savePlaybook": "플레이북으로 저장",
       "dismiss": "숨기기"
+    },
+    "summary": {
+      "daily": "매일 {{time}} · {{label}}",
+      "weekly": "매주 {{weekday}}요일 {{time}} · {{label}}",
+      "frequent": "자주 하는 일 · {{label}}"
     }
   }
 }

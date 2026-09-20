@@ -5,7 +5,7 @@ import { Sparkles } from 'lucide-react'
 import type { RecommendDto } from '@shared/activity-patterns'
 import { PrimaryButton, SecondaryButton } from '@renderer/components/settings/shared'
 import { relativeTime, weekdayLabelKey } from './schedule-view'
-import { actionKeyOf, sentenceOf } from './recommend-view'
+import { actionKeyOf, sentenceOf, summaryOf } from './recommend-view'
 
 /**
  * 추천 목록 — 설정 → 자동화 맨 위에만 그린다(채팅에는 넣지 않는다).
@@ -45,6 +45,7 @@ export function RecommendCard({
         {items.map((item) => {
           const weekday = item.weekday === undefined ? '' : t(weekdayLabelKey(item.weekday))
           const sentence = sentenceOf(item, weekday)
+          const summary = summaryOf(item, weekday)
           const last = relativeTime(item.lastAt, now)
           const actionKey = actionKeyOf(item)
           return (
@@ -52,7 +53,11 @@ export function RecommendCard({
               key={item.key}
               className="rounded-[11px] border border-[var(--line)] px-3 py-2.5 last:mb-0"
             >
-              <p className="text-[12.5px] leading-snug text-[var(--text)]">
+              {/* 한 줄 요약(사용자 요청) — 아래 문장은 근거 설명 */}
+              <p className="truncate text-[12.5px] font-medium text-[var(--text)]">
+                {t(summary.key, summary.params)}
+              </p>
+              <p className="mt-0.5 text-[11.5px] leading-snug text-[var(--text2)]">
                 {t(sentence.key, sentence.params)}
               </p>
               <p className="mt-1 text-[11px] text-[var(--text2)]">

@@ -1169,6 +1169,11 @@
       "create": "Create schedule",
       "savePlaybook": "Save as playbook",
       "dismiss": "Hide"
+    },
+    "summary": {
+      "daily": "Daily {{time}} · {{label}}",
+      "weekly": "Weekly {{weekday}} {{time}} · {{label}}",
+      "frequent": "Frequent · {{label}}"
     }
   }
 }
