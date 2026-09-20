@@ -49,6 +49,102 @@ export function buildCrxUrl(id: string, chromiumVersion: string): string {
 const CRX_MAGIC = 'Cr24'
 
 /**
+ * 내려받기가 끝나도 되는 호스트. 업데이트 서버는 구글의 배포망으로 리다이렉트하므로
+ * 최종 주소가 여기 없는 곳이면 받지 않는다(리다이렉트로 임의 호스트에서 받는 것을 막는다)
+ */
+export const CRX_ALLOWED_HOST_SUFFIXES = ['google.com', 'googleusercontent.com', 'gvt1.com']
+
+/** https 이고 허용 호스트(또는 그 하위 도메인)인가 */
+export function isAllowedCrxUrl(url: string): boolean {
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'https:') return false
+    return CRX_ALLOWED_HOST_SUFFIXES.some((s) => u.hostname === s || u.hostname.endsWith(`.${s}`))
+  } catch {
+    return false
+  }
+}
+
+/** 확장 id 인코딩 — 바이트의 각 니블을 a~p 로 적는다(크로미움과 같은 방식) */
+function encodeCrxId(bytes: Buffer): string {
+  let out = ''
+  for (const b of bytes) {
+    out += String.fromCharCode(97 + (b >> 4)) + String.fromCharCode(97 + (b & 0x0f))
+  }
+  return out
+}
+
+/** protobuf varint 하나를 읽는다 */
+function readVarint(buf: Buffer, at: number): { value: number; next: number } | null {
+  let value = 0
+  let shift = 0
+  let i = at
+  while (i < buf.length) {
+    const byte = buf[i++]
+    value += (byte & 0x7f) * 2 ** shift
+    if ((byte & 0x80) === 0) return { value, next: i }
+    shift += 7
+    if (shift > 49) return null
+  }
+  return null
+}
+
+/** protobuf 메시지에서 지정한 번호의 length-delimited 필드를 찾는다 */
+function findLengthField(buf: Buffer, field: number): Buffer | null {
+  let at = 0
+  while (at < buf.length) {
+    const key = readVarint(buf, at)
+    if (!key) return null
+    at = key.next
+    const wire = key.value & 0x07
+    const no = Math.floor(key.value / 8)
+    if (wire === 2) {
+      const len = readVarint(buf, at)
+      if (!len) return null
+      const start = len.next
+      const end = start + len.value
+      if (end > buf.length) return null
+      if (no === field) return buf.subarray(start, end)
+      at = end
+      continue
+    }
+    if (wire === 0) {
+      const v = readVarint(buf, at)
+      if (!v) return null
+      at = v.next
+      continue
+    }
+    if (wire === 5) {
+      at += 4
+      continue
+    }
+    if (wire === 1) {
+      at += 8
+      continue
+    }
+    return null
+  }
+  return null
+}
+
+/**
+ * CRX3 헤더에 적힌 확장 id 를 읽는다.
+ * CrxFileHeader.signed_header_data(필드 10000) 안의 SignedData.crx_id(필드 1, 16바이트)다.
+ * 서명 자체는 검증하지 않지만, 요청한 id 와 받은 파일이 같은 확장인지는 이 값으로 확인한다
+ */
+export function parseCrxId(buffer: Buffer): string | null {
+  if (buffer.length < 16) return null
+  const headerLength = buffer.readUInt32LE(8)
+  const end = 12 + headerLength
+  if (headerLength <= 0 || end > buffer.length) return null
+  const signed = findLengthField(buffer.subarray(12, end), 10000)
+  if (!signed) return null
+  const crxId = findLengthField(signed, 1)
+  if (!crxId || crxId.length !== 16) return null
+  return encodeCrxId(crxId)
+}
+
+/**
  * CRX3 파일에서 ZIP 부분만 잘라 낸다.
  * 구조는 [매직 4B][버전 4B LE][헤더 길이 4B LE][헤더][ZIP] 이다.
  * CRX2(버전 2)는 헤더 구조가 달라 받지 않는다 — 웹스토어도 더 이상 내주지 않는다
@@ -151,6 +247,8 @@ export interface CrxFetcher {
   ): Promise<{
     ok: boolean
     status: number
+    /** 리다이렉트를 따라간 최종 주소(있으면 호스트를 확인한다) */
+    url?: string
     /** 스트림. 있으면 조각 단위로 읽어 상한을 넘는 즉시 끊는다 */
     body?: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array> | null
     arrayBuffer: () => Promise<ArrayBuffer>
@@ -225,6 +323,11 @@ export async function downloadCrx(
   try {
     const res = await fetchImpl(url, { signal: controller.signal })
     if (!res.ok) throw new Error(`내려받기에 실패했어요 (HTTP ${res.status})`)
+    // 업데이트 서버는 배포망으로 리다이렉트한다 — 최종 주소가 구글 호스트가 아니면 받지 않는다
+    if (typeof res.url === 'string' && res.url && !isAllowedCrxUrl(res.url)) {
+      controller.abort()
+      throw new Error('허용하지 않는 주소로 연결됐어요')
+    }
     const buf = await readCapped(res, maxBytes, () => controller.abort())
     if (buf.length === 0) throw new Error('내려받은 파일이 비어 있어요')
     return buf
@@ -255,6 +358,11 @@ export interface InstallWebstoreDeps {
   fetchImpl: CrxFetcher
   /** manifest.json 읽기(테스트에서 바꿔 끼운다) */
   readManifest?: (dir: string) => unknown
+  /**
+   * 기존 폴더를 지우기 직전에 부른다(I19). 호출부가 세션·목록에서 먼저 걷어내
+   * "쓰고 있는 폴더를 지웠다가 나중에 걷어내는" 순서가 되지 않게 한다
+   */
+  onBeforeReplace?: (dest: string) => void
 }
 
 /**
@@ -268,7 +376,13 @@ export async function installFromWebstore(
   const id = extractExtensionId(input)
   const dest = join(deps.destRoot, id)
   const crx = await downloadCrx(buildCrxUrl(id, deps.chromiumVersion), deps.fetchImpl)
+  // 받은 파일이 정말 그 확장인지 헤더의 crx_id 로 맞춰 본다
+  const actualId = parseCrxId(crx)
+  if (!actualId) throw new Error('CRX 헤더에서 확장 id 를 읽지 못했어요')
+  if (actualId !== id) throw new Error(`요청한 확장과 다른 파일이에요 (${actualId})`)
   const zip = parseCrx3(crx)
+  // 폴더를 건드리기 전에 호출부가 세션·목록에서 먼저 걷어낸다
+  deps.onBeforeReplace?.(dest)
   if (existsSync(dest)) rmSync(dest, { recursive: true, force: true })
   mkdirSync(dest, { recursive: true })
   try {

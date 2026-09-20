@@ -26,6 +26,25 @@ function clearLegacyPinned(): void {
   }
 }
 
+/** 제거 되돌리기 토스트가 떠 있는 시간(ms) */
+export const EXTENSION_UNDO_MS = 5000
+
+/** 방금 제거한 확장 — 되돌리기는 같은 폴더를 다시 불러오는 것으로 끝난다 */
+export interface RemovedExtension {
+  id: string
+  name: string
+  path: string
+}
+
+// 되돌리기 토스트 타이머. 상태에 넣지 않는다(리렌더 대상이 아니다)
+let undoTimer: number | null = null
+
+function clearUndoTimer(): void {
+  if (undoTimer === null) return
+  clearTimeout(undoTimer)
+  undoTimer = null
+}
+
 // 확장 목록은 전용 페이지와 주소창 퍼즐 메뉴 두 곳에서 쓰므로 한 곳에 모아 둔다.
 // 목록을 바꾸는 일은 전부 메인에서 벌어지고, 여기는 그 결과를 다시 읽기만 한다
 interface ExtensionState {
@@ -51,6 +70,12 @@ interface ExtensionState {
   /** 폴더 선택창은 메인이 연다. 취소하면 목록을 건드리지 않는다 */
   addFolder: () => Promise<void>
   remove: (id: string) => Promise<void>
+  /** 방금 제거한 확장(되돌리기 토스트용). 5초가 지나면 null 로 돌아간다 */
+  removed: RemovedExtension | null
+  /** 되돌리기 — 제거한 폴더를 그대로 다시 불러온다 */
+  undoRemove: () => Promise<void>
+  /** 토스트를 닫는다(되돌리기 없이) */
+  dismissRemoved: () => void
   setEnabled: (id: string, enabled: boolean) => Promise<void>
   clearMessage: () => void
 }
@@ -128,13 +153,44 @@ export const useExtensionStore = create<ExtensionState>((set, get) => ({
     }
   },
 
+  removed: null,
+
+  // 제거는 확인창 없이 바로 하되(크롬과 같다), 되돌릴 틈을 준다.
+  // 제거해도 폴더는 디스크에 남으므로 같은 경로를 다시 불러오면 그대로 돌아온다
   remove: async (id) => {
+    const item = get().items.find((e) => e.id === id)
     const r = await window.samba.extensions.remove(id)
     if (!r.ok) {
       set({ message: r.error })
       return
     }
     await get().load()
+    if (!item) return
+    clearUndoTimer()
+    set({ removed: { id, name: item.name, path: item.path } })
+    undoTimer = setTimeout(() => {
+      undoTimer = null
+      set({ removed: null })
+    }, EXTENSION_UNDO_MS) as unknown as number
+  },
+
+  undoRemove: async () => {
+    const target = get().removed
+    clearUndoTimer()
+    set({ removed: null })
+    if (!target) return
+    // 꺼 둔 확장이었더라도 되돌리면 켜진 상태로 돌아온다(add 는 항상 로드한다)
+    const r = await window.samba.extensions.load(target.path)
+    if (!r.ok) {
+      set({ message: r.error })
+      return
+    }
+    await get().load()
+  },
+
+  dismissRemoved: () => {
+    clearUndoTimer()
+    set({ removed: null })
   },
 
   setEnabled: async (id, enabled) => {

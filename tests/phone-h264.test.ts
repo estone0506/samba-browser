@@ -6,7 +6,8 @@ import {
   nalType,
   hasKeyframe,
   toAnnexB,
-  AnnexBAssembler
+  AnnexBAssembler,
+  MAX_TAIL_BYTES
 } from '../src/main/phone/h264'
 
 /** 4바이트 시작 코드 + 페이로드 */
@@ -108,5 +109,37 @@ describe('toAnnexB', () => {
 
   it('빈 배열은 빈 버퍼다', () => {
     expect(toAnnexB([]).length).toBe(0)
+  })
+})
+
+// --- I21 꼬리 무한 증가 상한 ---------------------------------------------------
+
+describe('AnnexBAssembler 꼬리 상한', () => {
+  it('시작 코드 없는 바이트가 상한을 넘으면 버린다', () => {
+    const a = new AnnexBAssembler()
+    // 시작 코드가 한 번도 없는 쓰레기 바이트(0xff 로 채운다)
+    const junk = Buffer.alloc(MAX_TAIL_BYTES / 2 + 1, 0xff)
+    expect(a.push(junk)).toEqual([])
+    expect(a.didOverflow()).toBe(false)
+    expect(a.push(junk)).toEqual([])
+    expect(a.didOverflow()).toBe(true)
+    // 버린 뒤에도 다음 온전한 조각은 정상으로 나간다
+    const out = a.push(Buffer.concat([nal4(7, 0x11), nal4(1, 0x22)]))
+    expect(out.map(nalType)).toEqual([7])
+  })
+
+  it('끝나지 않는 NAL 하나가 계속 자라도 상한에서 끊는다', () => {
+    const a = new AnnexBAssembler()
+    // 시작 코드 하나 + 끝없이 이어지는 페이로드
+    a.push(Buffer.concat([nal4(1, 0x01), Buffer.alloc(MAX_TAIL_BYTES + 1, 0xff)]))
+    expect(a.didOverflow()).toBe(true)
+  })
+
+  it('reset 은 상한 표식도 되돌린다', () => {
+    const a = new AnnexBAssembler()
+    a.push(Buffer.alloc(MAX_TAIL_BYTES + 1, 0xff))
+    expect(a.didOverflow()).toBe(true)
+    a.reset()
+    expect(a.didOverflow()).toBe(false)
   })
 })

@@ -106,7 +106,7 @@ describe('PhoneRepo', () => {
     expect(repo.phoneForAccount(1)).toBeNull()
   })
 
-  it('recordAuthEvent 는 본문 컬럼 없이 code·senderTail 만 저장한다', () => {
+  it('recordAuthEvent 는 본문도 인증번호 평문도 저장하지 않는다(I20)', () => {
     repo.recordAuthEvent({
       jobId: 'job-1',
       phoneId: null,
@@ -122,10 +122,30 @@ describe('PhoneRepo', () => {
 
     const events = repo.listAuthEvents()
     expect(events).toHaveLength(1)
-    expect(events[0].code).toBe('123456')
+    // 평문은 남지 않고 자리수만 남는다
+    expect(events[0].code).toBe('••••••')
+    expect(events[0].code).not.toContain('1')
     expect(events[0].senderTail).toBe('1234')
     // 문자 본문(body)을 담는 컬럼이 있어서는 안 된다
     expect(Object.keys(events[0])).not.toContain('body')
+  })
+
+  it('purgeStoredCodes 는 예전에 평문으로 남은 인증번호를 자리수 표시로 바꾼다', () => {
+    repo.recordAuthEvent({
+      jobId: 'job-2',
+      phoneId: null,
+      kind: 'sms',
+      siteHost: 'example.com',
+      ok: true,
+      method: 'sms_query',
+      elapsedMs: 900,
+      code: '654321',
+      senderTail: '1234',
+      at: 2000
+    })
+    // 저장 시점에 이미 가려지므로 더 지울 것이 없다
+    expect(repo.purgeStoredCodes()).toBe(0)
+    expect(repo.listAuthEvents()[0].code).not.toMatch(/[0-9]/)
   })
 
   it('unattendedRate 가 kind·기간별 total·ok 를 센다', () => {

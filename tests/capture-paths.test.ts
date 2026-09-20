@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { join } from 'node:path'
-import { resolveCaptureDir, samePath, uniqueCaptureFile } from '../src/main/capture/paths'
+import { join, sep } from 'node:path'
+import {
+  isAllowedCaptureDir,
+  resolveCaptureDir,
+  samePath,
+  uniqueCaptureFile
+} from '../src/main/capture/paths'
 import { DEFAULT_CAPTURE_FOLDER_NAME } from '../src/shared/capture'
 import { blitRows, createCanvas, toDeviceStep, type RgbaImage } from '../src/main/capture/stitch'
 
@@ -125,5 +130,33 @@ describe('경로 비교(저장 폴더 안인지 판정)', () => {
     expect(samePath('C:/a/b', 'C:/a/c', true)).toBe(false)
     expect(samePath('C:/a/b', 'C:/a/b/c', true)).toBe(false)
     expect(samePath('', 'C:/a/b')).toBe(false)
+  })
+})
+
+// --- I14 settings:set 으로 들어온 저장 폴더 --------------------------------------
+
+describe('isAllowedCaptureDir — 렌더러가 보낸 저장 폴더', () => {
+  const HOME = join('C:', 'Users', 'test')
+
+  it('빈 값은 기본 폴더를 쓰겠다는 뜻이라 허용한다', () => {
+    expect(isAllowedCaptureDir('', HOME, true)).toBe(true)
+    expect(isAllowedCaptureDir('   ', HOME, true)).toBe(true)
+  })
+
+  it('홈 폴더 안이면 허용한다(대소문자·끝 구분자 차이 무시)', () => {
+    expect(isAllowedCaptureDir(join(HOME, 'Pictures', '캡처'), HOME, true)).toBe(true)
+    expect(isAllowedCaptureDir(HOME, HOME, true)).toBe(true)
+    expect(isAllowedCaptureDir(join(HOME, 'Downloads') + sep, HOME, true)).toBe(true)
+  })
+
+  it('홈 밖·상위 이탈·널 바이트는 막는다', () => {
+    expect(isAllowedCaptureDir(join('C:', 'Windows', 'System32'), HOME, true)).toBe(false)
+    expect(isAllowedCaptureDir(join(HOME, '..', 'other'), HOME, true)).toBe(false)
+    expect(isAllowedCaptureDir(join('C:', 'Users', 'testother'), HOME, true)).toBe(false)
+    expect(isAllowedCaptureDir(join(HOME, 'x') + '\u0000y', HOME, true)).toBe(false)
+  })
+
+  it('홈 경로를 모르면 빈 값 말고는 받지 않는다', () => {
+    expect(isAllowedCaptureDir(join('C:', 'any'), '', true)).toBe(false)
   })
 })

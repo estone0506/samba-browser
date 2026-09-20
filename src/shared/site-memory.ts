@@ -288,7 +288,8 @@ function formatRecipe(recipe: SiteRecipe): string {
   const steps = recipe.steps
     .map((s) => `${s.tool} ${s.label}${s.urlPattern ? ` @${s.urlPattern}` : ''}`)
     .join(' > ')
-  return `- 경로(${recipe.goal}): ${steps}`
+  // 지시문 원문(goal)은 넣지 않는다 — 테스트 지시("결제 금지" 등)가 규칙처럼 주입돼 실제 실행을 막았다
+  return `- 지난 성공 경로: ${steps}`
 }
 
 /**

@@ -9,6 +9,9 @@ import {
   KEYFRAME_TIMEOUT_MS,
   RECORD_SEGMENT_MS,
   STILL_INTERVAL_MS,
+  STILL_MAX_INTERVAL_MS,
+  MAX_STILL_FAILURES,
+  stillDelay,
   type ScreenChunk,
   type ScreenStreamDeps
 } from '../src/main/phone/screen'
@@ -82,7 +85,7 @@ interface Harness {
   adb: FakeAdb
   clock: FakeClock
   chunks: ScreenChunk[]
-  modes: { serial: string; mode: ScreenMode }[]
+  modes: { serial: string; mode: ScreenMode | null }[]
   stream: ScreenStream
 }
 
@@ -91,7 +94,7 @@ function makeHarness(over: Partial<ScreenStreamDeps> & { adb?: FakeAdb } = {}): 
   if (!over.adb) adb.reply('wm size', WM_SIZE)
   const clock = new FakeClock()
   const chunks: ScreenChunk[] = []
-  const modes: { serial: string; mode: ScreenMode }[] = []
+  const modes: { serial: string; mode: ScreenMode | null }[] = []
   const stream = new ScreenStream({
     size: () => 720,
     fps: () => 15,
@@ -311,5 +314,44 @@ describe('ScreenStream', () => {
     expect(h.stream.mode(SERIAL)).toBe('video')
     h.stream.stop(SERIAL)
     expect(h.stream.mode(SERIAL)).toBeNull()
+  })
+})
+
+// --- I10 기기 분리 시 무한 재시작 방지 ----------------------------------------
+
+describe('stillDelay — 연속 실패에 따른 백오프', () => {
+  it('한두 번 실패까지는 주기를 그대로 둔다', () => {
+    expect(stillDelay(0)).toBe(STILL_INTERVAL_MS)
+    expect(stillDelay(2)).toBe(STILL_INTERVAL_MS)
+  })
+
+  it('그 뒤로는 2배씩 늘리되 상한에서 멈춘다', () => {
+    expect(stillDelay(3)).toBe(STILL_INTERVAL_MS * 2)
+    expect(stillDelay(4)).toBe(STILL_INTERVAL_MS * 4)
+    expect(stillDelay(20)).toBe(STILL_MAX_INTERVAL_MS)
+  })
+})
+
+describe('간이 화면이 계속 실패하면 포기한다(기기 분리)', () => {
+  it('상한만큼 실패하면 모드를 null 로 알리고 더 두드리지 않는다', async () => {
+    // screencap 이 늘 빈 버퍼를 돌려주는 상황 = 기기를 뽑은 상태
+    const h = makeHarness()
+    h.stream.start(SERIAL)
+    await flush()
+    await h.clock.advance(KEYFRAME_TIMEOUT_MS)
+    expect(h.modes.at(-1)).toEqual({ serial: SERIAL, mode: 'still' })
+
+    // 넉넉히 시간을 흘려 상한까지 실패시킨다
+    for (let i = 0; i < MAX_STILL_FAILURES + 2; i++) {
+      await h.clock.advance(STILL_MAX_INTERVAL_MS)
+    }
+
+    expect(h.modes.at(-1)).toEqual({ serial: SERIAL, mode: null })
+    expect(h.stream.mode(SERIAL)).toBeNull()
+    // 타이머가 남아 있지 않다 — 1초마다 adb 를 부르던 고리가 끊겼다
+    expect(h.clock.pending).toBe(0)
+    const before = h.adb.calls.length
+    await h.clock.advance(STILL_MAX_INTERVAL_MS * 5)
+    expect(h.adb.calls.length).toBe(before)
   })
 })

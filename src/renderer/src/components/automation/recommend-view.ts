@@ -30,3 +30,17 @@ export function actionKeyOf(candidate: RecommendDto): string | null {
   if (candidate.playbookId === undefined) return 'recommend.action.savePlaybook'
   return null
 }
+
+/** 카드 맨 위 한 줄 요약 — "매일 09:00 · 플레이북 이름" 처럼 종류·시각·대상만 */
+export function summaryOf(candidate: RecommendDto, weekdayLabel = ''): Phrase {
+  const base = { label: candidate.label }
+  if (candidate.kind === 'daily')
+    return { key: 'recommend.summary.daily', params: { ...base, time: candidate.at ?? '' } }
+  if (candidate.kind === 'weekly') {
+    return {
+      key: 'recommend.summary.weekly',
+      params: { ...base, time: candidate.at ?? '', weekday: weekdayLabel }
+    }
+  }
+  return { key: 'recommend.summary.frequent', params: base }
+}

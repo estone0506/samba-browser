@@ -148,6 +148,9 @@ export const BUILTIN_PLAYBOOKS: readonly Omit<PlaybookDto, 'updatedAt'>[] = [
       '삼바 미이행',
       '미이행 주문',
       '미배송 주문 처리',
+      '주문처리',
+      '주문 처리',
+      '상품주문번호',
       'samba unfulfilled'
     ],
     instructions: UNFULFILLED_INSTRUCTIONS,

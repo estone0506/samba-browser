@@ -109,6 +109,7 @@ import {
 import { registerTranslate } from '../translate/register'
 // === 사진·영상 캡처 — 배선은 capture/capture-ipc.ts 한 곳에 모여 있다 =================
 import { registerCaptureIpc } from '../capture/capture-ipc'
+import { isAllowedCaptureDir } from '../capture/paths'
 import type { CaptureShortcutInput } from '../../shared/capture'
 
 /**
@@ -389,6 +390,13 @@ export function registerIpc(
     wrap(() => settingsForSender(settings.get(), win, e.sender))
   )
   handleFromRenderer(IPC.settingsSet, (patch: Partial<Settings>) => {
+    // 저장 폴더는 렌더러가 임의 경로를 넣지 못한다 — 폴더 선택 다이얼로그(메인)로만 자유롭다
+    if (
+      typeof patch.captureDir === 'string' &&
+      !isAllowedCaptureDir(patch.captureDir, app.getPath('home'))
+    ) {
+      throw new Error('저장 폴더는 홈 폴더 안에서만 지정할 수 있어요')
+    }
     const s = settings.set(patch)
     // 홈 주소·새 탭 주소·검색엔진이 바뀌면 tab-manager 도 즉시 반영한다
     applyBrowserDefaults(s)
@@ -957,9 +965,10 @@ export function registerIpc(
     settings
   )
   void extensions.loadSaved().catch((e: unknown) => console.error('저장된 확장 로드 실패', e))
-  tabs.setSessionHook((ses) => {
+  tabs.setSessionHook((ses, partition) => {
+    // 파티션 이름을 함께 넘긴다 — 같은 세션이 두 번 들어와도 한 번만 붙는다
     void extensions
-      .attachHost(createSessionExtensionHost(ses))
+      .attachHost(createSessionExtensionHost(ses), partition)
       .catch((e: unknown) => console.error('파티션 세션 확장 로드 실패', e))
   })
 
@@ -1077,6 +1086,13 @@ export function registerIpc(
   // 원클릭 설치본이 들어가는 자리(%APPDATA%/SAMBA Browser/phone-tools)
   const phoneToolsRoot = join(app.getPath('userData'), 'phone-tools')
   const phoneRepo = new PhoneRepo(db)
+  // 예전 버전이 auth_events 에 평문으로 남긴 인증번호를 자리수 표시로 바꾼다(I20)
+  try {
+    const purged = phoneRepo.purgeStoredCodes()
+    if (purged > 0) console.log(`저장된 인증번호 ${purged}건을 자리수 표시로 바꿨습니다`)
+  } catch (e: unknown) {
+    console.warn('저장된 인증번호 정리 실패', e instanceof Error ? e.message : String(e))
+  }
   // 비밀번호 화면 표식(결제 실행기가 갱신 → 화면 전송이 참조)과 ARS 진행 로그 중계
   const phoneSecretGate = new SecretScreenGate()
   const phoneProgress = new AgentProgressRelay()

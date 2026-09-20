@@ -1070,6 +1070,8 @@
     "adding": "Loading…",
     "empty": "No extensions loaded",
     "remove": "Remove",
+    "removed": "Removed '{{name}}'",
+    "undo": "Undo",
     "cancel": "Cancel",
     "storeButton": "Install extensions",
     "storeHint": "Find the extension you want in the Chrome Web Store and press \"Add to Chrome\" to install it",
@@ -1169,6 +1171,11 @@
       "create": "Create schedule",
       "savePlaybook": "Save as playbook",
       "dismiss": "Hide"
+    },
+    "summary": {
+      "daily": "Daily {{time}} · {{label}}",
+      "weekly": "Weekly {{weekday}} {{time}} · {{label}}",
+      "frequent": "Frequent · {{label}}"
     }
   }
 }
