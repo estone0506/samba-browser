@@ -20,11 +20,29 @@ export function appendSiteMemory(prompt: string, block: string): string {
 ${trimmed}`
 }
 
+// 폰이 붙어 있지 않은 실행에서 폰 절 대신 넣는 한 줄.
+// 폰 도구 자체가 목록에 없으므로 길게 설명할 이유가 없고,
+// 설명이 남아 있으면 모델이 웹 작업 중에도 폰을 떠올린다(실기에서 관찰)
+export const NO_PHONE_LINE = `PHONE
+- No phone is connected; the phone tools are not available this run.`
+
+/** 폰이 붙어 있을 때만 넣는 폰 사용 절 */
+const PHONE_SECTION = `PHONE (only when phone tools are available)
+- The user's Android phone is reachable through phone_get_screen, phone_tap, phone_type, phone_key, phone_swipe and phone_screenshot. If a tool answers "no phone connected", stop and tell the user to connect the phone.
+- Read the phone with phone_get_screen first. Its elements are numbered [n]; pass that number to phone_tap instead of guessing coordinates.
+- NEVER type a payment password, PIN, pattern or any secret with phone_type. The app enters those itself - just get the screen to the point where it is asked for, then say so.
+- Never ask the user for a payment password either, and do not read one off the screen.
+- A one-time SMS code is filled in automatically; do not ask the user for it and do not try to read the message body.
+- phone_type only sends ASCII. If it answers "unsupported-text: ...", tap the on-screen keyboard with phone_tap instead.
+- phone_screenshot refuses secret keypad screens on purpose; that is not an error to work around.`
+
 // AI 시스템 프롬프트. 안전 규칙 포함
 export function buildSystemPrompt(
   language: 'ko' | 'en',
   mode: 'read_only' | 'guard' | 'full' = 'guard',
-  effort: AgentEffort = 'medium'
+  effort: AgentEffort = 'medium',
+  // 폰이 붙어 있는가. 붙어 있지 않으면 폰 도구도 목록에 없으므로 폰 절을 한 줄로 줄인다
+  phoneAvailable = false
 ): string {
   const lang = language === 'ko' ? '한국어' : 'English'
   const modeLine =
@@ -37,6 +55,11 @@ export function buildSystemPrompt(
 
 ${modeLine}
 ${effortLine(effort)}
+
+TOOL USE PRINCIPLES
+- Any predictable sequence of two or more steps (picking an option, moving to the order form) belongs in ONE run_js call: click -> sleep -> page.get({ selector, diff: true }). Do not spend a turn per click.
+- Element ids are stable while you stay on the same page: the number you saw in an earlier snapshot still points at the same element, even after a dropdown opens. If an id is gone the tool says so - read the page again then.
+- Use click/type/get_page on their own only for a single action; reach for screenshot only when the text snapshot cannot answer the question.
 
 RULES
 - Always call get_page first to see the current page. Elements are numbered [n]. Use those numbers for click/type/select.
@@ -76,14 +99,7 @@ SIGNING IN AND SAVED PERSONAL DATA
 - If the page already shows you are signed in (a sign-out or my-page link) or a tool answers "already signed in", do not sign in again.
 - After login, call get_page to verify the result: it may have failed, or asked for a captcha or 2FA.
 
-PHONE (only when phone tools are available)
-- The user's Android phone is reachable through phone_get_screen, phone_tap, phone_type, phone_key, phone_swipe and phone_screenshot. If a tool answers "no phone connected", stop and tell the user to connect the phone.
-- Read the phone with phone_get_screen first. Its elements are numbered [n]; pass that number to phone_tap instead of guessing coordinates.
-- NEVER type a payment password, PIN, pattern or any secret with phone_type. The app enters those itself - just get the screen to the point where it is asked for, then say so.
-- Never ask the user for a payment password either, and do not read one off the screen.
-- A one-time SMS code is filled in automatically; do not ask the user for it and do not try to read the message body.
-- phone_type only sends ASCII. If it answers "unsupported-text: ...", tap the on-screen keyboard with phone_tap instead.
-- phone_screenshot refuses secret keypad screens on purpose; that is not an error to work around.
+${phoneAvailable ? PHONE_SECTION : NO_PHONE_LINE}
 
 SITE MEMORY
 - A block headed "SITE MEMORY (host):" may be appended below. It is what worked on that site LAST time, not a rule: if the screen matches, chain the steps with run_js in one turn; if it does not, explore as usual.

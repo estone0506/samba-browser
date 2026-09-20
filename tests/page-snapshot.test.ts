@@ -319,9 +319,11 @@ describe('커서 휴리스틱 — role·onclick 없는 클릭 가능한 DIV', ()
     const started = Date.now()
     const s = buildSnapshot()
     const elapsed = Date.now() - started
-    // 시간 예산(120ms)에 걸리면 그보다 적게 담길 수 있다 — 상한만 단언한다
+    // 수집은 개수 상한(4000)과 시간 예산(120ms) 둘 다로 끊긴다. 테스트를 여럿 동시에 돌리면
+    // 시간 예산이 먼저 걸려 4000에 살짝 못 미치므로, 상한이 600 같은 작은 값으로 되돌아가는
+    // 회귀(600 등 작은 값)만 잡도록 넉넉한 구간으로 단언한다
     expect(s.total).toBeLessThanOrEqual(4000)
-    expect(s.total).toBeGreaterThan(0)
+    expect(s.total).toBeGreaterThan(1000)
     // 회귀 방지용 넉넉한 상한(실측은 수 ms 수준)
     expect(elapsed).toBeLessThan(3000)
   })
