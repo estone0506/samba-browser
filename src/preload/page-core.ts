@@ -1,8 +1,14 @@
 // [규칙] 이 파일은 page.ts 와 함께 sandbox preload 로 번들된다.
 // src/shared/* 에서 **값(value)** 을 import 하지 말 것 — Rollup 청크 분리로 require() 가 생겨
 // preload 로드가 실패한다. 타입은 `import type` 만 사용(번들에 남지 않음), 값은 ./page-constants 에서.
-import type { KeypadSignals, PageElement, PageSnapshot } from '../shared/snapshot'
+import type { KeypadSignals, PageElement, PageOverlay, PageSnapshot } from '../shared/snapshot'
 import { MAX_ELEMENTS } from './page-constants'
+import {
+  isCloseLabel,
+  isOverlay,
+  isSensitiveOverlay,
+  type OverlaySignals
+} from './page-overlay'
 import {
   detectLoginFields,
   detectSignedInHint,
@@ -321,20 +327,172 @@ function fireMouseEvent(el: HTMLElement, type: string): void {
   el.dispatchEvent(ev)
 }
 
-export function performClick(id: number): string {
+// --- 클릭 결과 확인 --------------------------------------------------------
+//
+// 무신사 '구매하기'처럼 합성 클릭도 좌표 클릭도 먹지 않는 버튼이 있다. 브랜드 공지·쿠폰
+// 레이어가 화면을 덮고 있거나, 사이트가 키보드 활성화(Enter)만 받는 경우다.
+// 그래서 클릭 전후를 비교해 "아무 일도 없었다"면 포커스 후 Enter 로 한 번 더 시도한다.
+
+/** 클릭 전후를 비교할 기준값 */
+export interface ClickBaseline {
+  url: string
+  /** body 의 자식 수 — 모달·토스트가 붙으면 늘어난다 */
+  children: number
+  /** body 텍스트 길이 */
+  textLength: number
+  /** 포커스가 어디 있는가 */
+  active: Element | null
+  /** 대상 요소의 aria-expanded */
+  expanded: string
+  /** 대상 요소의 class(선택 상태를 클래스로 표시하는 UI 대응) */
+  className: string
+}
+
+/** 최대 이만큼 지켜본 뒤에도 변화가 없으면 실패로 본다 */
+const CLICK_SETTLE_MS = 400
+const CLICK_POLL_MS = 40
+/** 가린 요소 설명에 담을 class 이름 최대 길이 */
+const COVER_LABEL_MAX = 60
+
+/** 첫 클릭도 Enter 도 통하지 않았을 때 모델에게 주는 안내 */
+export const CLICK_NO_CHANGE_NOTE =
+  'clicked but nothing changed (an overlay may be covering it; call dismiss_overlay or check get_page)'
+
+/** 지금 화면 상태를 기준값으로 찍는다 */
+export function readClickBaseline(el: HTMLElement): ClickBaseline {
+  const body = document.body
+  const text = (body?.innerText || body?.textContent || '') as string
+  return {
+    url: location.href,
+    children: body?.children.length ?? 0,
+    textLength: text.length,
+    active: document.activeElement,
+    expanded: el.getAttribute('aria-expanded') ?? '',
+    className: el.getAttribute('class') ?? ''
+  }
+}
+
+/** 기준값이 하나라도 달라졌는가(순수 비교) */
+export function baselineChanged(before: ClickBaseline, after: ClickBaseline): boolean {
+  return (
+    before.url !== after.url ||
+    before.children !== after.children ||
+    before.textLength !== after.textLength ||
+    before.active !== after.active ||
+    before.expanded !== after.expanded ||
+    before.className !== after.className
+  )
+}
+
+/**
+ * 클릭 좌표(요소 가운데)를 다른 요소가 가리고 있으면 "covered by tag.class" 를 돌려준다.
+ * 좌표를 못 구하거나 elementFromPoint 가 없는 환경(jsdom 기본)에서는 null
+ */
+export function coveredByNote(el: HTMLElement): string | null {
+  const rect = el.getBoundingClientRect?.()
+  if (!rect || (rect.width === 0 && rect.height === 0)) return null
+  if (typeof document.elementFromPoint !== 'function') return null
+  const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+  if (!hit || hit === el) return null
+  // 자손(아이콘 span)이나 조상(패딩 영역)이 잡히는 것은 가려진 게 아니다
+  if (el.contains(hit) || hit.contains(el)) return null
+  const tag = hit.tagName.toLowerCase()
+  const cls = (hit.getAttribute('class') ?? '').trim().split(/\s+/)[0]
+  return `covered by ${cls ? `${tag}.${cls}` : tag}`.slice(0, COVER_LABEL_MAX)
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** 기준값이 달라질 때까지 최대 CLICK_SETTLE_MS 동안 지켜본다 */
+async function waitForChange(el: HTMLElement, before: ClickBaseline): Promise<boolean> {
+  const startedAt = Date.now()
+  for (;;) {
+    if (baselineChanged(before, readClickBaseline(el))) return true
+    if (Date.now() - startedAt >= CLICK_SETTLE_MS) return false
+    await sleep(CLICK_POLL_MS)
+  }
+}
+
+/**
+ * 페이지가 클릭을 실제로 "처리했는지" 지켜본다.
+ * preventDefault 했거나(대부분의 SPA 버튼) stopPropagation 으로 문서까지 오지 못하게
+ * 막았다면 사이트가 받아 간 것이다 — 화면이 당장 안 바뀌어도(비동기 요청) 성공으로 본다
+ */
+function watchClickHandled(): { handled: () => boolean; stop: () => void } {
+  let reached = false
+  let bubbled = false
+  let prevented = false
+  const onCapture = (): void => {
+    reached = true
+  }
+  const onBubble = (ev: Event): void => {
+    bubbled = true
+    if (ev.defaultPrevented) prevented = true
+  }
+  document.addEventListener('click', onCapture, true)
+  document.addEventListener('click', onBubble, false)
+  return {
+    handled: () => prevented || (reached && !bubbled),
+    stop: () => {
+      document.removeEventListener('click', onCapture, true)
+      document.removeEventListener('click', onBubble, false)
+    }
+  }
+}
+
+/** 결과 문자열에 "가려져 있다" 안내를 덧붙인다 */
+function withCoverNote(base: string, covered: string | null): string {
+  return covered === null ? base : `${base}; ${covered}`
+}
+
+/** 포커스 상태에서 Enter 키 한 벌을 쏜다 */
+function fireEnter(el: HTMLElement): void {
+  if (typeof KeyboardEvent !== 'function') return
+  for (const type of ['keydown', 'keypress', 'keyup']) {
+    el.dispatchEvent(
+      new KeyboardEvent(type, {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        bubbles: true,
+        cancelable: true,
+        composed: true
+      })
+    )
+  }
+}
+
+export async function performClick(id: number): Promise<string> {
   const el = get(id)
   if (!el) return `element ${id} not found (call get_page again)`
   // jsdom 등 일부 환경은 scrollIntoView 를 구현하지 않음
   el.scrollIntoView?.({ block: 'center' })
-  // React 합성 이벤트(onPointerDown/onMouseDown 으로만 반응하는 옵션 UI)를 위해
-  // 실제 사용자 클릭과 같은 순서로 쏜다. 마지막 click 은 네이티브 기본동작(링크 이동·체크박스
-  // 토글)이 살아 있도록 el.click() 으로 낸다
+  const covered = coveredByNote(el)
+  const before = readClickBaseline(el)
+  // 1차 — 기존 경로 그대로. React 합성 이벤트(onPointerDown/onMouseDown 으로만 반응하는
+  // 옵션 UI)를 위해 실제 사용자 클릭과 같은 순서로 쏘고, 마지막 click 은 네이티브 기본동작
+  // (링크 이동·폼 제출·체크박스 토글)이 살아 있도록 el.click() 으로 낸다
+  const watch = watchClickHandled()
   fireMouseEvent(el, 'pointerdown')
   fireMouseEvent(el, 'mousedown')
   fireMouseEvent(el, 'pointerup')
   fireMouseEvent(el, 'mouseup')
   el.click()
-  return 'ok'
+  const handled = watch.handled()
+  watch.stop()
+  if (handled) return withCoverNote('ok', covered)
+  if (await waitForChange(el, before)) return withCoverNote('ok', covered)
+  // 2차 폴백 — 포커스 후 Enter. 키보드 활성화만 받는 버튼(무신사 '구매하기') 대응.
+  // 포커스 자체가 기준값(active)을 바꾸므로 기준을 다시 찍고 비교한다
+  el.focus?.()
+  const afterFocus = readClickBaseline(el)
+  fireEnter(el)
+  const tag = el.tagName.toLowerCase()
+  if (tag === 'button' || tag === 'a') el.click()
+  if (await waitForChange(el, afterFocus)) return withCoverNote('ok (pressed Enter)', covered)
+  return withCoverNote(`ok; ${CLICK_NO_CHANGE_NOTE}`, covered)
 }
 
 export function performType(id: number, text: string, submit: boolean): string {
@@ -651,6 +809,117 @@ export function installCaptureListener(
   )
 }
 
+// --- 화면을 덮는 레이어 감지 ------------------------------------------------
+//
+// 상품·주문 페이지에 브랜드 공지·쿠폰·앱 설치 유도 레이어가 뜨면, AI 는 그 존재를 모른 채
+// 뒤에 있는 버튼을 누르려다 계속 실패한다. 먼저 "무엇이 덮고 있는지"를 알려 준다.
+// 판정 규칙은 page-overlay 의 순수 함수가 맡는다(테스트 가능)
+
+// 역할로 스스로 레이어라고 밝힌 요소들 — 깊이와 무관하게 본다
+const OVERLAY_ROLE_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog'
+// 그 밖의 고정 레이어는 body 에서 몇 단계 안쪽까지만 훑는다(전면 배너·바텀시트는 대개 얕다)
+const OVERLAY_SCAN_DEPTH = 8
+const OVERLAY_SCAN_MAX = 4000
+const OVERLAY_LABEL_MAX = 60
+// 민감 판정에 쓰는 레이어 본문 길이
+const OVERLAY_TEXT_MAX = 400
+// 한 번에 알릴 레이어 개수
+const OVERLAY_MAX = 5
+// 레이어 하나당 닫기 후보 개수
+const OVERLAY_CLOSE_MAX = 5
+
+/** 오버레이 후보 요소들(역할 선언 + body 얕은 층) */
+function overlayCandidates(): HTMLElement[] {
+  const body = document.body
+  if (!body) return []
+  const seen = new Set<HTMLElement>()
+  const out: HTMLElement[] = []
+  const push = (el: HTMLElement): void => {
+    if (seen.has(el) || out.length >= OVERLAY_SCAN_MAX) return
+    seen.add(el)
+    out.push(el)
+  }
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>(OVERLAY_ROLE_SELECTOR))) {
+    push(el)
+  }
+  let level = Array.from(body.children).filter((c): c is HTMLElement => c instanceof HTMLElement)
+  for (let d = 0; d < OVERLAY_SCAN_DEPTH && level.length > 0; d += 1) {
+    const next: HTMLElement[] = []
+    for (const el of level) {
+      push(el)
+      for (const child of Array.from(el.children)) {
+        if (child instanceof HTMLElement) next.push(child)
+      }
+    }
+    if (out.length >= OVERLAY_SCAN_MAX) break
+    level = next.slice(0, OVERLAY_SCAN_MAX)
+  }
+  return out
+}
+
+/** 요소 하나에서 오버레이 판정에 필요한 값을 잰다 */
+function overlaySignalsOf(el: HTMLElement): OverlaySignals {
+  const cs = getComputedStyle(el)
+  const rect = el.getBoundingClientRect?.()
+  const vw = window.innerWidth || document.documentElement.clientWidth || 0
+  const vh = window.innerHeight || document.documentElement.clientHeight || 0
+  const area = vw * vh
+  const w = rect ? Math.max(0, Math.min(rect.right, vw) - Math.max(rect.left, 0)) : 0
+  const h = rect ? Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0)) : 0
+  const z = Number.parseInt(cs.zIndex, 10)
+  return {
+    role: el.getAttribute('role') ?? '',
+    ariaModal: el.getAttribute('aria-modal') === 'true',
+    position: cs.position,
+    zIndex: Number.isNaN(z) ? 0 : z,
+    coverage: area > 0 ? (w * h) / area : 0
+  }
+}
+
+/** 레이어 하나를 결과 항목으로 만든다(닫기 후보는 registry 안에서만 고른다) */
+function describeOverlay(el: HTMLElement, index: Map<HTMLElement, number>): PageOverlay {
+  const body = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim()
+  const aria = el.getAttribute('aria-label') ?? ''
+  const heading = el.querySelector('h1, h2, h3, [role="heading"]')
+  const headingText = (heading?.textContent ?? '').replace(/\s+/g, ' ').trim()
+  const label = (aria || headingText || body).trim().slice(0, OVERLAY_LABEL_MAX)
+  const sensitive = isSensitiveOverlay(`${label} ${body.slice(0, OVERLAY_TEXT_MAX)}`)
+  const closeIds: number[] = []
+  // 결제·비밀번호·로그인 레이어는 닫기 후보를 아예 내놓지 않는다
+  if (!sensitive) {
+    for (const [node, id] of index) {
+      if (closeIds.length >= OVERLAY_CLOSE_MAX) break
+      if (node === el || !el.contains(node)) continue
+      if (isCloseLabel(labelOf(node)) || isCloseLabel(node.getAttribute('aria-label') ?? '')) {
+        closeIds.push(id)
+      }
+    }
+  }
+  return { id: index.get(el) ?? 0, label, closeIds, sensitive }
+}
+
+/**
+ * 지금 화면을 덮고 있는 레이어들. 스냅샷을 새로 만들어 id 를 맞춘 뒤 판정한다
+ * (SPA 는 화면이 바뀌어도 문서를 새로 만들지 않아 낡은 registry 가 남는다).
+ * 겹친 레이어는 가장 안쪽만 남긴다 — 배경 dim 이 아니라 실제 모달을 알려야 한다
+ */
+export function detectOverlays(): PageOverlay[] {
+  buildSnapshot()
+  const index = new Map<HTMLElement, number>()
+  registry.forEach((el, i) => index.set(el, i + 1))
+  const visible: VisibilityCache = new Map()
+  const found: HTMLElement[] = []
+  for (const el of overlayCandidates()) {
+    if (found.length >= OVERLAY_MAX) break
+    if (!isVisible(el, visible)) continue
+    if (!isOverlay(overlaySignalsOf(el))) continue
+    found.push(el)
+  }
+  return found
+    .filter((el) => !found.some((other) => other !== el && el.contains(other)))
+    .map((el) => describeOverlay(el, index))
+}
+
 // --- 프레임 채널 동작 실행 -------------------------------------------------
 //
 // 메인 프로세스는 하위 프레임(iframe)의 격리 월드를 직접 실행할 수 없어서,
@@ -696,6 +965,8 @@ export function runAgentOp(raw: unknown): unknown {
       return isSecretField(id)
     case 'keypadSignals':
       return keypadSignals()
+    case 'overlays':
+      return detectOverlays()
     default:
       return null
   }
