@@ -892,7 +892,8 @@
       "badUrl": "Enter a project URL that starts with https://",
       "badKey": "Enter an anon key starting with sb_publishable_ or eyJ. Never use a service_role key",
       "restartNeeded": "Saved. Restart the app to apply.",
-      "optional": "Leave it empty to use this PC only, without sync. See the README to create a project"
+      "optional": "Leave it empty to use this PC only, without sync. See the README to create a project",
+      "envInUse": "Currently connected with the .env values in the project folder (dev setup), so these fields look empty. Values entered here take priority"
     }
   },
   "sync": {

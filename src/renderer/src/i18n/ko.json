@@ -892,7 +892,8 @@
       "badUrl": "https:// 로 시작하는 프로젝트 URL 을 넣어 주세요",
       "badKey": "sb_publishable_ 또는 eyJ 로 시작하는 anon 키를 넣어 주세요. service_role 키는 쓰면 안 됩니다",
       "restartNeeded": "저장했습니다. 앱을 다시 시작하면 적용됩니다",
-      "optional": "비워 두면 동기화 없이 이 PC 에서만 씁니다. 만드는 방법은 README 의 \"내 Supabase 만들기\" 참고"
+      "optional": "비워 두면 동기화 없이 이 PC 에서만 씁니다. 만드는 방법은 README 의 \"내 Supabase 만들기\" 참고",
+      "envInUse": "지금은 프로젝트 폴더의 .env 값(개발용)으로 연결돼 있어 칸이 비어 보여요. 여기 값을 넣으면 그게 우선합니다"
     }
   },
   "sync": {

@@ -188,6 +188,10 @@ function SupabaseConnectCard(): React.JSX.Element {
       )}
       {error && <p className="text-[12px] text-red-600">{error}</p>}
       {done && <NotReadyNote text={t('account.supabase.restartNeeded')} />}
+      {/* 설정칸이 비었는데 동기화가 연결돼 있으면 .env(개발용) 값으로 도는 것 — 사용자가 "왜 비었지" 헷갈리지 않게 */}
+      {!connected && (
+        <p className="text-[11.5px] text-[var(--text2)]">{t('account.supabase.envInUse')}</p>
+      )}
       <p className="text-[11.5px] text-[var(--text2)]">{t('account.supabase.optional')}</p>
     </SettingsSection>
   )
