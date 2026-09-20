@@ -203,7 +203,9 @@ describe('주입 블록', () => {
     const block = buildSiteMemoryBlock([{ host: 'musinsa.com', entry }])
     expect(block).toContain(`SITE MEMORY (musinsa.com): ${SITE_MEMORY_HINT}`)
     expect(block).toContain("- 메모: '구매하기' 는 Enter 로 열린다")
-    expect(block).toContain('- 경로(무신사에서 255 사이즈 주문): click 구매하기 @/products/123')
+    expect(block).toContain('- 지난 성공 경로: click 구매하기 @/products/123')
+    // 지시문 원문은 규칙처럼 읽혀 실제 실행을 막을 수 있어 넣지 않는다
+    expect(block).not.toContain('무신사에서 255 사이즈 주문')
   })
 
   it('가장 최근 성공 경로부터 최대 2개만 싣는다', () => {
@@ -211,16 +213,16 @@ describe('주입 블록', () => {
       notes: [],
       recipes: [1, 2, 3, 4].map((n) => ({
         goal: `목표${n}`,
-        steps: [],
+        steps: [{ tool: 'click', label: `버튼${n}`, urlPattern: '/p' }],
         createdAt: n,
         uses: 0,
         lastOkAt: n
       }))
     }
     const block = buildSiteMemoryBlock([{ host: 'a.com', entry: many }])
-    expect(block).toContain('목표4')
-    expect(block).toContain('목표3')
-    expect(block).not.toContain('목표1')
+    expect(block).toContain('버튼4')
+    expect(block).toContain('버튼3')
+    expect(block).not.toContain('버튼1')
   })
 
   it('전체 길이 상한을 넘지 않는다', () => {
