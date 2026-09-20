@@ -195,6 +195,11 @@ export class VaultService {
   // 마스터 키. 잠금 해제 상태에서만 값이 있고, lock() 이 0으로 덮어쓴다
   private key: Buffer | null = null
   private autoLockTimer: ReturnType<typeof setTimeout> | undefined
+  // 자동 잠금 보류 토큰들. 하나라도 있으면 타이머가 만료돼도 잠그지 않는다
+  // (AI 작업·예약 실행이 몇 시간 도는 동안 금고가 잠겨 로그인 도구가 실패하는 것을 막는다)
+  private autoLockHolds = new Set<symbol>()
+  // 보류 때문에 잠금을 미뤘다는 안내를 보류 구간마다 한 번만 남기기 위한 표시
+  private autoLockDeferLogged = false
   // 발급했지만 아직 재입력 확인을 못 받은 복구 키(정규화된 값). 10분 뒤 스스로 버린다
   private pendingRecovery: { compact: string; expiresAt: number } | null = null
   private captureTimer: ReturnType<typeof setTimeout> | undefined
@@ -393,11 +398,13 @@ export class VaultService {
     return true
   }
 
+  // 사용자가 직접 [잠금] 을 눌렀을 때도 이 함수를 탄다 — 보류가 걸려 있어도 즉시 잠근다
   lock(): void {
     if (this.autoLockTimer) {
       clearTimeout(this.autoLockTimer)
       this.autoLockTimer = undefined
     }
+    this.autoLockDeferLogged = false
     // 확인 못 받은 복구 키는 잠그는 순간 버린다(마스터 키가 없으면 감쌀 수도 없다)
     this.pendingRecovery = null
     // 키 zeroize 는 DB 상태와 무관하게 항상 수행한다(메모리에 평문 키를 남기지 않는 것이 최우선)
@@ -484,11 +491,42 @@ export class VaultService {
     this.emit()
   }
 
+  /**
+   * 자동 잠금을 보류한다. 돌려주는 함수를 부르면 보류가 풀리고,
+   * 마지막 보류가 풀리는 순간 타이머를 '지금 + 설정 분' 으로 다시 건다.
+   * 같은 토큰을 여러 번 풀어도 안전하다(러너의 stop 과 finally 가 겹쳐 부른다).
+   * 설정(vaultHoldLockDuringAgent)이 꺼져 있으면 아무것도 하지 않는 함수를 돌려준다
+   */
+  holdAutoLock(reason: string): () => void {
+    if (!this.settings.get().vaultHoldLockDuringAgent) return () => {}
+    const token = Symbol(reason)
+    this.autoLockHolds.add(token)
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      if (!this.autoLockHolds.delete(token)) return
+      if (this.autoLockHolds.size > 0) return
+      this.autoLockDeferLogged = false
+      // 보류 중에 만료됐든 아니든, 마지막 보류가 풀린 시점부터 설정 분을 다시 센다
+      if (this.key) this.restartAutoLock()
+    }
+  }
+
   private restartAutoLock(): void {
     if (this.autoLockTimer) clearTimeout(this.autoLockTimer)
     const minutes = this.settings.get().vaultAutoLockMinutes
     this.autoLockTimer = setTimeout(() => {
       this.autoLockTimer = undefined
+      // 보류가 걸려 있으면 잠그지 않고 그대로 둔다 — 보류가 풀릴 때 타이머를 다시 건다.
+      // 설정을 도중에 꺼 두었으면 보류를 무시하고 예정대로 잠근다
+      if (this.autoLockHolds.size > 0 && this.settings.get().vaultHoldLockDuringAgent) {
+        if (!this.autoLockDeferLogged) {
+          this.autoLockDeferLogged = true
+          console.info('키마스터 자동 잠금 보류 중(AI 작업)')
+        }
+        return
+      }
       this.lock()
     }, minutes * MINUTE_MS)
     // 자동 잠금 타이머 때문에 프로세스가 살아 있지 않도록 한다
