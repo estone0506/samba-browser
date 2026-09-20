@@ -11,6 +11,7 @@ import {
   buildSnapshot,
   detectOverlays,
   performClick,
+  rectOf,
   coveredByNote,
   baselineChanged,
   readClickBaseline,
@@ -257,7 +258,7 @@ describe('performClick 폴백 — 첫 클릭이 먹지 않으면 Enter', () => {
     const r = await performClick(1)
     expect(keys).toContain('keydown:Enter')
     expect(keys).toContain('keyup:Enter')
-    expect(r).toContain('pressed Enter')
+    expect(r).toContain('via Enter')
     expect(document.activeElement).toBe(el)
   })
 
@@ -277,5 +278,116 @@ describe('performClick 폴백 — 첫 클릭이 먹지 않으면 Enter', () => {
     el.addEventListener('click', () => document.body.appendChild(document.createElement('div')))
     expect(await performClick(1)).toBe('ok')
     expect(keys).toEqual([])
+  })
+})
+
+/** 요소의 화면 위치·크기를 직접 심는다(jsdom 에는 레이아웃이 없다) */
+function stubRect(el: HTMLElement, left: number, top: number, width: number, height: number): void {
+  el.getBoundingClientRect = (): DOMRect =>
+    ({
+      top,
+      left,
+      right: left + width,
+      bottom: top + height,
+      width,
+      height,
+      x: left,
+      y: top,
+      toJSON: () => ({})
+    }) as DOMRect
+}
+
+describe('performClick 폴백 — 좌표 기준 클릭', () => {
+  afterEach(() => {
+    delete (document as Partial<Document>).elementFromPoint
+  })
+
+  it('버튼을 가린 요소(결과 행)에 좌표 클릭을 보내 선택이 된다', async () => {
+    // 롯데온 주소 검색: '사용' 버튼을 눌러도 사이트는 결과 행의 핸들러로만 선택을 처리한다
+    document.body.innerHTML = `
+      <li id="row" class="result">서울시 중구</li>
+      <button id="use">사용</button>`
+    buildSnapshot()
+    const use = document.getElementById('use') as HTMLElement
+    const row = document.getElementById('row') as HTMLElement
+    stubRect(use, 100, 200, 40, 20)
+    document.elementFromPoint = (): Element => row
+    let picked = 0
+    row.addEventListener('click', () => {
+      picked += 1
+      document.body.appendChild(document.createElement('div'))
+    })
+    const id = buildSnapshot().elements.find((e) => e.text === '사용')?.id as number
+    const r = await performClick(id)
+    expect(picked).toBe(1)
+    expect(r).toContain('via point click on li')
+  })
+
+  it('가려져 있지 않으면 대상 자신에게 좌표를 담아 다시 보낸다', async () => {
+    document.body.innerHTML = '<button id="buy">구매하기</button>'
+    buildSnapshot()
+    const el = document.getElementById('buy') as HTMLElement
+    stubRect(el, 10, 20, 100, 40)
+    document.elementFromPoint = (): Element => el
+    const seen: { type: string; x: number; y: number; button: number; buttons: number }[] = []
+    let coordClicks = 0
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      el.addEventListener(type, (ev) => {
+        const m = ev as MouseEvent
+        seen.push({ type, x: m.clientX, y: m.clientY, button: m.button, buttons: m.buttons })
+        // 좌표가 실린 클릭에만 반응하는 버튼
+        if (type === 'click' && m.clientX > 0) {
+          coordClicks += 1
+          document.body.appendChild(document.createElement('div'))
+        }
+      })
+    }
+    const r = await performClick(1)
+    expect(coordClicks).toBe(1)
+    expect(r).toContain('via point click')
+    // 1차 클릭은 좌표가 없고(0), 폴백 클릭에는 요소 가운데 좌표가 실린다
+    const withPoint = seen.filter((e) => e.x === 60 && e.y === 40)
+    expect(withPoint.map((e) => e.type)).toEqual([
+      'pointerdown',
+      'mousedown',
+      'pointerup',
+      'mouseup',
+      'click'
+    ])
+    expect(withPoint.every((e) => e.button === 0)).toBe(true)
+    expect(withPoint.find((e) => e.type === 'mousedown')?.buttons).toBe(1)
+    expect(withPoint.find((e) => e.type === 'mouseup')?.buttons).toBe(0)
+  })
+})
+
+describe('rectOf — 실제 마우스 클릭을 보낼 좌표', () => {
+  it('요소 가운데의 뷰포트 좌표를 돌려준다', () => {
+    document.body.innerHTML = '<button id="buy">구매하기</button>'
+    buildSnapshot()
+    stubRect(document.getElementById('buy') as HTMLElement, 30, 41, 101, 20)
+    expect(rectOf(1)).toEqual({ x: 81, y: 51 })
+  })
+
+  it('요소가 없거나 크기가 0 이면 null', () => {
+    document.body.innerHTML = '<button id="buy">구매하기</button>'
+    buildSnapshot()
+    expect(rectOf(1)).toBeNull()
+    expect(rectOf(9999)).toBeNull()
+  })
+})
+
+describe('투명 덮개 감지', () => {
+  const base = { role: '', ariaModal: false, position: 'fixed', zIndex: 0, coverage: 0.9 }
+
+  it('배경이 투명해도 클릭을 가로채는 fixed 층은 레이어다', () => {
+    expect(isOverlay({ ...base, transparentBg: true, pointerEvents: 'auto' })).toBe(true)
+  })
+
+  it('pointer-events:none 인 투명 층은 클릭을 막지 않는다', () => {
+    expect(isOverlay({ ...base, transparentBg: true, pointerEvents: 'none' })).toBe(false)
+  })
+
+  it('배경이 있는 낮은 z-index 층은 예전 규칙 그대로다', () => {
+    expect(isOverlay({ ...base, transparentBg: false, pointerEvents: 'auto' })).toBe(false)
   })
 })

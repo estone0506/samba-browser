@@ -36,8 +36,12 @@ interface FakeFrame {
 }
 
 /** 메인 프레임 결과 + 하위 프레임 목록을 가진 가짜 탭 */
-function fakeTab(mainResult: unknown, frames: FakeFrame[]): { tab: Tab; mainCalls: string[] } {
+function fakeTab(
+  mainResult: unknown,
+  frames: FakeFrame[]
+): { tab: Tab; mainCalls: string[]; inputEvents: Record<string, unknown>[] } {
   const mainCalls: string[] = []
+  const inputEvents: Record<string, unknown>[] = []
   // framesInSubtree 는 메인 프레임 자신을 맨 앞에 담는다(같은 객체여야 걸러진다)
   const mainFrame: { url: string; framesInSubtree: unknown[] } = {
     url: 'https://order.29cm.co.kr/order',
@@ -50,9 +54,10 @@ function fakeTab(mainResult: unknown, frames: FakeFrame[]): { tab: Tab; mainCall
     executeJavaScriptInIsolatedWorld: async (_world: number, scripts: { code: string }[]) => {
       mainCalls.push(scripts[0].code)
       return mainResult
-    }
+    },
+    sendInputEvent: (ev: Record<string, unknown>) => inputEvents.push(ev)
   }
-  return { tab: { view: { webContents } } as unknown as Tab, mainCalls }
+  return { tab: { view: { webContents } } as unknown as Tab, mainCalls, inputEvents }
 }
 
 const POSTCODE = 'https://postcode.map.daum.net/guide'
@@ -178,5 +183,40 @@ describe('pageBridge.keypadSignalsAll', () => {
     }
     const { tab } = fakeTab(mainSignals, [{ url: 'https://kpad.payco.com/', result: frameSignals }])
     expect(await pageBridge.keypadSignalsAll(tab)).toEqual([mainSignals, frameSignals])
+  })
+})
+
+describe('pageBridge.rectOf / clickAt — 실제 마우스 클릭 폴백', () => {
+  it('메인 프레임 요소의 좌표를 격리 월드에서 물어본다', async () => {
+    const { tab, mainCalls } = fakeTab({ x: 120, y: 340 }, [])
+    expect(await pageBridge.rectOf(tab, 7)).toEqual({ x: 120, y: 340 })
+    expect(mainCalls).toEqual(['__samba.rectOf(7)'])
+  })
+
+  it('iframe 안 요소는 화면 좌표를 알 수 없어 null 이다', async () => {
+    const { tab, mainCalls } = fakeTab({ x: 1, y: 2 }, [{ url: POSTCODE, result: null }])
+    expect(await pageBridge.rectOf(tab, 100015)).toBeNull()
+    expect(mainCalls).toEqual([])
+    expect(frameCalls).toEqual([])
+  })
+
+  it('좌표를 못 구하면 null 을 그대로 돌려준다', async () => {
+    const { tab } = fakeTab(null, [])
+    expect(await pageBridge.rectOf(tab, 3)).toBeNull()
+  })
+
+  it('clickAt 은 mouseDown·mouseUp 한 벌을 보낸다', () => {
+    const { tab, inputEvents } = fakeTab(null, [])
+    expect(pageBridge.clickAt(tab, 120.4, 340.6)).toBe(true)
+    expect(inputEvents).toEqual([
+      { type: 'mouseDown', x: 120, y: 341, button: 'left', clickCount: 1 },
+      { type: 'mouseUp', x: 120, y: 341, button: 'left', clickCount: 1 }
+    ])
+  })
+
+  it('좌표가 화면 밖(음수)이면 보내지 않는다', () => {
+    const { tab, inputEvents } = fakeTab(null, [])
+    expect(pageBridge.clickAt(tab, -5, 10)).toBe(false)
+    expect(inputEvents).toEqual([])
   })
 })
