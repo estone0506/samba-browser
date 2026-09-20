@@ -44,15 +44,13 @@ const stopped: string[] = []
 
 beforeEach(() => {
   stopped.length = 0
-  vi.stubGlobal(
-    'MediaRecorder',
-    class extends FakeMediaRecorder {
-      constructor() {
-        super()
-        recorder = this
-      }
-    }
-  )
+  // 만들어진 인스턴스를 테스트가 붙잡을 수 있게 생성 함수로 감싼다
+  const Recorder = function (): FakeMediaRecorder {
+    recorder = new FakeMediaRecorder()
+    return recorder
+  } as unknown as { new (): FakeMediaRecorder; isTypeSupported: () => boolean }
+  Recorder.isTypeSupported = (): boolean => true
+  vi.stubGlobal('MediaRecorder', Recorder)
   vi.stubGlobal('navigator', {
     mediaDevices: {
       getUserMedia: async () => ({

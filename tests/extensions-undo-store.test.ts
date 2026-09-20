@@ -2,10 +2,7 @@
 // window.samba 는 스텁으로 갈아 끼우고 타이머는 가짜 시계로 돌린다
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import {
-  useExtensionStore,
-  EXTENSION_UNDO_MS
-} from '../src/renderer/src/stores/extensionStore'
+import { useExtensionStore, EXTENSION_UNDO_MS } from '../src/renderer/src/stores/extensionStore'
 
 interface FakeItem {
   id: string

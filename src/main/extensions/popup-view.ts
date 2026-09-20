@@ -8,7 +8,7 @@
 // 세션은 반드시 그 확장이 로드된 탭 세션(파티션)과 같아야 한다 — 다른 세션에서 열면
 // 확장이 로드돼 있지 않아 문서 자체가 열리지 않는다.
 
-import { WebContentsView, type BrowserWindow, type Session, type WebContents } from 'electron'
+import { WebContentsView, type BrowserWindow, type Session } from 'electron'
 import type { ExtensionAnchorDto } from '../../shared/extensions'
 import {
   clampPopupSize,
@@ -71,21 +71,17 @@ export class ExtensionPopupHost {
   private size: PopupSize = { width: POPUP_DEFAULT_WIDTH, height: POPUP_DEFAULT_HEIGHT }
   private disposed = false
 
+  /** 창 resize 구독. dispose 에서 떼어 낸다(창은 남고 호스트만 버려지는 경우) */
+  private readonly onWindowResize = (): void => this.applyBounds()
+
   constructor(private readonly deps: ExtensionPopupDeps) {
     // 창 크기가 바뀌면 버튼도 같이 움직이므로 팝업 위치를 다시 맞춘다
-    deps.win.on('resize', () => this.applyBounds())
+    deps.win.on('resize', this.onWindowResize)
   }
 
   /** 지금 팝업이 떠 있는 확장 id(없으면 null) */
   activeId(): string | null {
     return this.openId
-  }
-
-  /** 이 webContents 가 지금 떠 있는 팝업인가(팝업이 보내는 IPC 의 발신자 검증) */
-  isPopupSender(wc: WebContents): boolean {
-    return (
-      this.view !== null && !this.view.webContents.isDestroyed() && this.view.webContents === wc
-    )
   }
 
   /**
@@ -170,7 +166,7 @@ export class ExtensionPopupHost {
   }
 
   /** 문서가 알려 온 선호 크기를 반영한다(상한 800×600 에서 자른다) */
-  setSize(width: unknown, height: unknown): void {
+  private setSize(width: unknown, height: unknown): void {
     if (!this.view) return
     this.size = clampPopupSize(width, height)
     this.applyBounds()
@@ -198,5 +194,11 @@ export class ExtensionPopupHost {
   dispose(): void {
     this.disposed = true
     this.close()
+    // 창이 살아 있는 채로 호스트만 버려질 수 있다 — 구독을 남기지 않는다
+    try {
+      if (!this.deps.win.isDestroyed()) this.deps.win.off('resize', this.onWindowResize)
+    } catch (e: unknown) {
+      console.warn('팝업 resize 구독 해제 실패', e instanceof Error ? e.message : String(e))
+    }
   }
 }

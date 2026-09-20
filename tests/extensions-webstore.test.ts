@@ -445,8 +445,7 @@ describe('설치 — 받은 파일이 요청한 확장인지 확인한다', () =
           ok: true,
           status: 200,
           url: 'https://evil.example.com/x.crx',
-          arrayBuffer: async () =>
-            crx.buffer.slice(crx.byteOffset, crx.byteOffset + crx.byteLength)
+          arrayBuffer: async () => crx.buffer.slice(crx.byteOffset, crx.byteOffset + crx.byteLength)
         })
       })
     ).rejects.toThrow(/허용하지 않는 주소/)

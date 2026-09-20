@@ -12,12 +12,7 @@ vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
   return {
     ...actual,
-    writeSync: (
-      fd: number,
-      buffer: Uint8Array,
-      offset?: number,
-      length?: number
-    ): number => {
+    writeSync: (fd: number, buffer: Uint8Array, offset?: number, length?: number): number => {
       if (control.fail) throw new Error(control.fail)
       const from = offset ?? 0
       const size = length ?? buffer.byteLength - from
@@ -49,7 +44,11 @@ function setup(): void {
       isDestroyed: () => false,
       webContents: { setBackgroundThrottling: () => undefined }
     } as never,
-    tabs: { active: () => null, hasWebContents: () => false } as never,
+    tabs: {
+      active: () => null,
+      hasWebContents: () => false,
+      onActivated: () => undefined
+    } as never,
     downloadsDir: () => dir
   })
 }

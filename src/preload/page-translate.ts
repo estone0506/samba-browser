@@ -407,6 +407,9 @@ export function installPageTranslate(deps: PageTranslateDeps): PageTranslateApi 
   // 지금 돌고 있는 묶음 수. 0 이면 더 보낼 것이 없다는 뜻이다
   let inFlight = 0
   let lastError = ''
+  // 원문 보기(restore)로 판을 갈아엎을 때마다 올린다. 옛 세대의 묶음이 뒤늦게
+  // 끝나도 숫자를 건드리지 않게 한다 — 예전에는 "12/0" 같은 진행률이 나왔다
+  let generation = 0
 
   // 마지막으로 요청한 대상 언어(스크롤로 새로 보이는 노드도 같은 언어로 번역한다)
   let targetLang = 'ko'
@@ -415,18 +418,21 @@ export function installPageTranslate(deps: PageTranslateDeps): PageTranslateApi 
     deps.progress?.({
       running: inFlight > 0,
       done: translatedCount,
-      total: queuedTotal,
+      // 분모가 분자보다 작아 보이는 일은 없어야 한다
+      total: Math.max(queuedTotal, translatedCount),
       ...(lastError ? { error: lastError } : {})
     })
   }
 
-  const translateElements = async (targets: HTMLElement[]): Promise<void> => {
+  const translateElements = async (targets: HTMLElement[], gen: number): Promise<void> => {
     if (targets.length === 0) return
     const texts = targets.map((el) => el.getAttribute(ORIG_ATTR) ?? '')
     // 배치를 동시에 여러 개 띄우고, 먼저 끝난 것부터 바로 화면에 꽂는다
     const tasks = splitBatches(texts).map((batch) => async (): Promise<void> => {
       const slice = batch.map((i) => texts[i])
       const reply = await deps.translate(slice, targetLang)
+      // 원문 보기로 판이 바뀌었으면 결과를 버린다(화면에도 숫자에도 반영하지 않는다)
+      if (gen !== generation) return
       if (!reply.ok) {
         lastError = reply.error
         report()
@@ -444,14 +450,16 @@ export function installPageTranslate(deps: PageTranslateDeps): PageTranslateApi 
   }
 
   const flush = async (targets: HTMLElement[]): Promise<void> => {
+    const gen = generation
     for (const el of targets) pending.delete(el)
     inFlight += 1
     report()
     try {
-      await translateElements(targets)
+      await translateElements(targets, gen)
     } finally {
       inFlight -= 1
-      report()
+      // 옛 세대의 묶음이 끝난 것은 지금 진행률과 상관이 없다
+      if (gen === generation) report()
     }
   }
 
@@ -505,6 +513,8 @@ export function installPageTranslate(deps: PageTranslateDeps): PageTranslateApi 
   }
 
   const restore = (): string => {
+    // 지금 돌고 있는 묶음의 결과는 여기서부터 버린다
+    generation += 1
     pending.clear()
     observer?.disconnect()
     observer = null

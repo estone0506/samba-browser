@@ -155,6 +155,12 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
     if (!wc.isDestroyed()) wc.send(IPC.captureRegionMode, { active: false })
   }
 
+  // 탭을 바꾸면 영역 선택 모드를 끈다. 그러지 않으면 뒤로 물러난 탭에 하이라이트가
+  // 그대로 남아 있다가, 나중에 돌아왔을 때 아무 요소나 눌러도 캡처가 찍힌다
+  deps.tabs.onActivated(() => {
+    for (const wc of [...regionTargets]) stopRegionMode(wc)
+  })
+
   /** 전체 페이지: 스크롤하며 찍은 장들을 이어붙인다 */
   const captureFullPage = async (): Promise<CaptureResultDto> => {
     const wc = activeWebContents()

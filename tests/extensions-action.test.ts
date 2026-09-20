@@ -279,9 +279,9 @@ describe('isOwnExtensionUrl — 팝업이 머물러도 되는 주소', () => {
   })
 
   it('다른 확장·웹·파일 주소는 막는다', () => {
-    expect(isOwnExtensionUrl('chrome-extension://otherotherotherotherotherother11/p.html', ID)).toBe(
-      false
-    )
+    expect(
+      isOwnExtensionUrl('chrome-extension://otherotherotherotherotherother11/p.html', ID)
+    ).toBe(false)
     expect(isOwnExtensionUrl('https://example.com/', ID)).toBe(false)
     expect(isOwnExtensionUrl('file:///C:/Users/me/vault.db', ID)).toBe(false)
     expect(isOwnExtensionUrl('javascript:alert(1)', ID)).toBe(false)

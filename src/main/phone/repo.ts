@@ -50,7 +50,7 @@ export interface UpsertSeenInput {
  */
 export function maskCode(code: string | null | undefined): string | null {
   if (!code) return null
-  return '•'.repeat(code.length)
+  return '\u2022'.repeat(code.length)
 }
 
 /** 처음 본 폰의 기본 별칭 — 모델명이 있으면 모델명, 없으면 serial 뒤 4자리 */
@@ -216,10 +216,7 @@ export class PhoneRepo {
 
   /** 예전 버전이 평문으로 남긴 인증번호를 자리수 표시로 바꾼다(앱 시작 때 한 번) */
   purgeStoredCodes(): number {
-    const rows = this.d
-      .select({ id: authEvents.id, code: authEvents.code })
-      .from(authEvents)
-      .all()
+    const rows = this.d.select({ id: authEvents.id, code: authEvents.code }).from(authEvents).all()
     let changed = 0
     for (const row of rows) {
       if (!row.code || !/[0-9]/.test(row.code)) continue
