@@ -442,9 +442,35 @@ export function textOf(id: number): string {
   return parts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
 }
 
-/** 마우스/포인터 이벤트 한 개를 쏜다(PointerEvent 가 없는 환경은 MouseEvent 로 대체) */
-function fireMouseEvent(el: HTMLElement, type: string): void {
-  const init = { bubbles: true, cancelable: true, composed: true }
+/** 클릭 좌표(뷰포트 기준) */
+interface ClickPoint {
+  x: number
+  y: number
+}
+
+/**
+ * 마우스/포인터 이벤트 한 개를 쏜다(PointerEvent 가 없는 환경은 MouseEvent 로 대체).
+ * point 를 주면 실제 마우스가 그 자리를 누른 것과 같은 좌표·버튼 정보를 담는다 —
+ * 좌표로 대상을 다시 찾는 사이트(결과 행 전체가 클릭 영역인 주소 검색 목록)가 있다
+ */
+function fireMouseEvent(el: HTMLElement, type: string, point?: ClickPoint): void {
+  const pressed = type === 'pointerdown' || type === 'mousedown'
+  const init = {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    ...(point === undefined
+      ? {}
+      : {
+          clientX: point.x,
+          clientY: point.y,
+          screenX: point.x,
+          screenY: point.y,
+          button: 0,
+          buttons: pressed ? 1 : 0,
+          detail: type === 'click' ? 1 : 0
+        })
+  }
   let ev: Event
   if (type.startsWith('pointer') && typeof PointerEvent === 'function') {
     ev = new PointerEvent(type, init)
@@ -454,6 +480,13 @@ function fireMouseEvent(el: HTMLElement, type: string): void {
     ev = new Event(type, init)
   }
   el.dispatchEvent(ev)
+}
+
+/** 한 요소에 좌표가 담긴 클릭 한 벌(pointerdown→…→click)을 순서대로 쏜다 */
+function firePointSequence(el: HTMLElement, point: ClickPoint): void {
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+    fireMouseEvent(el, type, point)
+  }
 }
 
 // --- 클릭 결과 확인 --------------------------------------------------------
@@ -518,16 +551,45 @@ export function baselineChanged(before: ClickBaseline, after: ClickBaseline): bo
  * 좌표를 못 구하거나 elementFromPoint 가 없는 환경(jsdom 기본)에서는 null
  */
 export function coveredByNote(el: HTMLElement): string | null {
-  const rect = el.getBoundingClientRect?.()
-  if (!rect || (rect.width === 0 && rect.height === 0)) return null
-  if (typeof document.elementFromPoint !== 'function') return null
-  const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
-  if (!hit || hit === el) return null
-  // 자손(아이콘 span)이나 조상(패딩 영역)이 잡히는 것은 가려진 게 아니다
-  if (el.contains(hit) || hit.contains(el)) return null
+  const hit = coveringElement(el)
+  if (!hit) return null
   const tag = hit.tagName.toLowerCase()
   const cls = (hit.getAttribute('class') ?? '').trim().split(/\s+/)[0]
   return `covered by ${cls ? `${tag}.${cls}` : tag}`.slice(0, COVER_LABEL_MAX)
+}
+
+/** 요소 가운데의 뷰포트 좌표. 크기가 없거나 rect 를 못 구하면 null */
+export function centerPointOf(el: HTMLElement): ClickPoint | null {
+  const rect = el.getBoundingClientRect?.()
+  if (!rect || (rect.width === 0 && rect.height === 0)) return null
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+}
+
+/**
+ * 클릭 좌표를 대신 차지하고 있는 요소(가리는 요소). 없으면 null.
+ * 자손(아이콘 span)이나 조상(패딩 영역)이 잡히는 것은 가려진 게 아니다
+ */
+export function coveringElement(el: HTMLElement): HTMLElement | null {
+  const point = centerPointOf(el)
+  if (!point) return null
+  if (typeof document.elementFromPoint !== 'function') return null
+  const hit = document.elementFromPoint(point.x, point.y)
+  if (!hit || hit === el) return null
+  if (el.contains(hit) || hit.contains(el)) return null
+  return hit instanceof HTMLElement ? hit : null
+}
+
+/**
+ * 요소 가운데의 뷰포트 좌표(스크롤 반영). 메인 프로세스가 실제 마우스 클릭
+ * (webContents.sendInputEvent)을 보낼 자리다. 요소가 없거나 크기가 0 이면 null
+ */
+export function rectOf(id: number): ClickPoint | null {
+  const el = get(id)
+  if (!el) return null
+  el.scrollIntoView?.({ block: 'center' })
+  const point = centerPointOf(el)
+  if (!point) return null
+  return { x: Math.round(point.x), y: Math.round(point.y) }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -620,7 +682,24 @@ export async function performClick(id: number): Promise<string> {
   fireEnter(el)
   const tag = el.tagName.toLowerCase()
   if (tag === 'button' || tag === 'a') el.click()
-  if (await waitForChange(el, afterFocus)) return withCoverNote('ok (pressed Enter)', covered)
+  if (await waitForChange(el, afterFocus)) return withCoverNote('ok (via Enter)', covered)
+  // 3차 폴백 — 좌표 기준 클릭.
+  //
+  // 롯데온 주소 검색 결과의 '사용' 버튼처럼, 사이트가 선택을 버튼이 아니라 결과 행(li)의
+  // 핸들러로 처리하거나 투명 레이어가 버튼을 덮고 있으면 버튼에 보낸 합성 클릭은 무시된다.
+  // 그래서 대상 가운데 좌표를 실제로 차지한 요소에게, 진짜 마우스와 같은 순서·좌표로 쏜다.
+  // 가려져 있지 않다면 대상 자신에게 좌표를 담아 한 번 더 보낸다(1차는 좌표 없이 보냈다)
+  const point = centerPointOf(el)
+  if (point) {
+    const hit = coveringElement(el)
+    const target = hit ?? el
+    const beforePoint = readClickBaseline(el)
+    firePointSequence(target, point)
+    if (await waitForChange(el, beforePoint)) {
+      const mark = hit ? `via point click on ${hit.tagName.toLowerCase()}` : 'via point click'
+      return withCoverNote(`ok (${mark})`, covered)
+    }
+  }
   return withCoverNote(`ok; ${CLICK_NO_CHANGE_NOTE}`, covered)
 }
 
@@ -997,12 +1076,16 @@ function overlaySignalsOf(el: HTMLElement): OverlaySignals {
   const w = rect ? Math.max(0, Math.min(rect.right, vw) - Math.max(rect.left, 0)) : 0
   const h = rect ? Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0)) : 0
   const z = Number.parseInt(cs.zIndex, 10)
+  const bg = (cs.backgroundColor ?? '').replace(/\s+/g, '')
   return {
     role: el.getAttribute('role') ?? '',
     ariaModal: el.getAttribute('aria-modal') === 'true',
     position: cs.position,
     zIndex: Number.isNaN(z) ? 0 : z,
-    coverage: area > 0 ? (w * h) / area : 0
+    coverage: area > 0 ? (w * h) / area : 0,
+    // 배경이 투명한데 클릭은 가로채는 "투명 덮개" 판정용
+    transparentBg: bg === '' || bg === 'transparent' || /,0(\.0+)?\)$/.test(bg),
+    pointerEvents: cs.pointerEvents ?? ''
   }
 }
 
@@ -1012,7 +1095,12 @@ function describeOverlay(el: HTMLElement, index: Map<HTMLElement, number>): Page
   const aria = el.getAttribute('aria-label') ?? ''
   const heading = el.querySelector('h1, h2, h3, [role="heading"]')
   const headingText = (heading?.textContent ?? '').replace(/\s+/g, ' ').trim()
-  const label = (aria || headingText || body).trim().slice(0, OVERLAY_LABEL_MAX)
+  // 투명 덮개는 글자가 없어 이름이 비는데, 이름 없는 레이어는 안내가 되지 않는다.
+  // 그럴 때는 태그·class 로 어떤 층인지 알려 준다(예: transparent layer div.zipCodeWrap)
+  const tag = el.tagName.toLowerCase()
+  const cls = (el.getAttribute('class') ?? '').trim().split(/\s+/)[0]
+  const fallback = `transparent layer ${cls ? `${tag}.${cls}` : tag}`
+  const label = ((aria || headingText || body).trim() || fallback).slice(0, OVERLAY_LABEL_MAX)
   const sensitive = isSensitiveOverlay(`${label} ${body.slice(0, OVERLAY_TEXT_MAX)}`)
   const closeIds: number[] = []
   // 결제·비밀번호·로그인 레이어는 닫기 후보를 아예 내놓지 않는다
@@ -1100,6 +1188,8 @@ export function runAgentOp(raw: unknown): unknown {
       return submitForm(id)
     case 'isSecretField':
       return isSecretField(id)
+    case 'rectOf':
+      return rectOf(id)
     case 'keypadSignals':
       return keypadSignals()
     case 'overlays':

@@ -28,6 +28,8 @@ const { pageBridge } = vi.hoisted(() => ({
     type: vi.fn(async () => 'ok'),
     select: vi.fn(async () => 'ok'),
     scroll: vi.fn(async () => 'ok'),
+    rectOf: vi.fn(async () => ({ x: 120, y: 340 })),
+    clickAt: vi.fn(() => true),
     waitForLoad: vi.fn(async () => {})
   }
 }))
@@ -94,6 +96,10 @@ beforeEach(() => {
   pageBridge.textOf.mockReset()
   pageBridge.click.mockReset()
   pageBridge.click.mockImplementation(async () => 'ok')
+  pageBridge.rectOf.mockReset()
+  pageBridge.rectOf.mockImplementation(async () => ({ x: 120, y: 340 }))
+  pageBridge.clickAt.mockReset()
+  pageBridge.clickAt.mockImplementation(() => true)
   pageBridge.type.mockReset()
   pageBridge.type.mockImplementation(async () => 'ok')
   pageBridge.waitForLoad.mockClear()
@@ -320,5 +326,34 @@ describe('ocr — 설정(ocrEnabled) 반영', () => {
     const r = await get(tools, 'ocr').handler({})
     expect(textOut(r)).toBe('refused: OCR is disabled in settings')
     expect(steps.at(-1)?.ok).toBe(false)
+  })
+})
+
+describe('click 마지막 폴백 — 진짜 마우스 클릭', () => {
+  const NO_CHANGE = 'ok; clicked but nothing changed (an overlay may be covering it)'
+
+  it('preload 폴백이 전부 헛돌면 요소 좌표에 실제 클릭을 보낸다', async () => {
+    pageBridge.click.mockImplementation(async () => NO_CHANGE)
+    const { tools } = build(true)
+    const r = await get(tools, 'click').handler({ id: 3, label: '사용' })
+    expect(pageBridge.rectOf).toHaveBeenCalledWith(fakeTab, 3)
+    expect(pageBridge.clickAt).toHaveBeenCalledWith(fakeTab, 120, 340)
+    expect(textOut(r)).toContain('via native click')
+  })
+
+  it('합성 클릭이 통했으면 실제 클릭은 보내지 않는다', async () => {
+    const { tools } = build(true)
+    const r = await get(tools, 'click').handler({ id: 3, label: '사용' })
+    expect(pageBridge.clickAt).not.toHaveBeenCalled()
+    expect(textOut(r)).toBe('ok')
+  })
+
+  it('좌표를 모르는 iframe 요소는 그대로 알린다', async () => {
+    pageBridge.click.mockImplementation(async () => NO_CHANGE)
+    pageBridge.rectOf.mockImplementation(async () => null)
+    const { tools } = build(true)
+    const r = await get(tools, 'click').handler({ id: 100003, label: '사용' })
+    expect(pageBridge.clickAt).not.toHaveBeenCalled()
+    expect(textOut(r)).toBe(NO_CHANGE)
   })
 })

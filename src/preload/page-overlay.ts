@@ -18,6 +18,10 @@ export interface OverlaySignals {
   zIndex: number
   /** 뷰포트 면적 대비 덮는 비율(0~1) */
   coverage: number
+  /** 배경이 투명한가(rgba(…,0)·transparent). 투명 덮개 판정용 */
+  transparentBg?: boolean
+  /** getComputedStyle 의 pointer-events. 'none' 이면 클릭을 가로채지 않는다 */
+  pointerEvents?: string
 }
 
 /** 이 비율 이상 덮어야 "화면을 가린다"고 본다 */
@@ -30,13 +34,17 @@ export const OVERLAY_Z_MIN = 10
  * 화면을 덮는 레이어인가.
  * - role=dialog|alertdialog 이거나 aria-modal 이면 크기와 무관하게 레이어다
  * - 그 밖에는 position 이 fixed/sticky 이고, 뷰포트의 30% 이상을 덮으며, z-index 가 커야 한다
+ * - **투명 덮개**(배경이 투명한데 클릭은 가로채는 fixed 요소)는 z-index 가 낮아도 레이어다.
+ *   눈에는 안 보여도 버튼 클릭을 먹어 버리는 층이라 모델에게 알려야 한다
  */
 export function isOverlay(s: OverlaySignals): boolean {
   const role = s.role.trim().toLowerCase()
   if (role === 'dialog' || role === 'alertdialog') return true
   if (s.ariaModal) return true
   if (s.position !== 'fixed' && s.position !== 'sticky') return false
-  return s.coverage >= OVERLAY_COVERAGE_MIN && s.zIndex >= OVERLAY_Z_MIN
+  if (s.coverage < OVERLAY_COVERAGE_MIN) return false
+  if (s.zIndex >= OVERLAY_Z_MIN) return true
+  return s.transparentBg === true && s.pointerEvents !== 'none'
 }
 
 // 라벨 하나로 딱 떨어지는 닫기 버튼들

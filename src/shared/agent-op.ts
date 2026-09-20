@@ -18,6 +18,8 @@ export type AgentOp =
   | { op: 'fillValue'; id: number; value: string }
   | { op: 'submitForm'; id: number }
   | { op: 'isSecretField'; id: number }
+  // 요소 가운데의 뷰포트 좌표(실제 마우스 클릭을 보낼 자리). 메인 프레임에서만 쓴다
+  | { op: 'rectOf'; id: number }
   | { op: 'keypadSignals' }
   | { op: 'overlays' }
 
