@@ -330,6 +330,9 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   // 슬롯은 하나뿐이라 "앞 녹화의 늦은 청크" 가 다음 녹화 파일에 섞일 수 있었다.
   // 그래서 시작할 때 token 을 발급하고, 이어 쓰기·마무리·취소는 토큰이 맞을 때만 듣는다
   let streaming: { token: string; fd: number; filePath: string; fileName: string } | null = null
+  // 청크 쓰기가 실패해 녹화가 중간에 끊긴 경우. 중지 때 이 표를 보고 사용자에게 알린다 —
+  // 조용히 지나가면 "녹화를 멈췄는데 아무 일도 없다"(잘린 파일)가 된다
+  let writeFailure: { token: string; message: string } | null = null
   // 렌더러는 웹뷰에 가려 '보이지 않는 창' 으로 취급되어 타이머·rAF 가 초당 한두 번으로
   // 묶인다. 녹화 중에는 크롭 캔버스를 그 속도로 그리면 영상이 뚝뚝 끊기므로 잠시 풀어 준다
   const setThrottling = (allowed: boolean): void => {
@@ -363,6 +366,7 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
     const target = uniqueCaptureFile(dir, new Date(), 'webm', (p) => existsSync(p))
     const fd = openSync(target.filePath, 'w')
     const token = randomUUID()
+    writeFailure = null
     streaming = { token, fd, filePath: target.filePath, fileName: target.fileName }
     setThrottling(false)
     return { token, fileName: target.fileName }
@@ -378,15 +382,28 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
           : null
     if (!bytes || bytes.byteLength === 0) return
     try {
-      writeSync(current.fd, bytes)
+      // writeSync 는 요청한 만큼 다 쓰지 못할 수 있다 — 남은 바이트를 마저 쓴다
+      let written = 0
+      while (written < bytes.byteLength) {
+        written += writeSync(current.fd, bytes, written, bytes.byteLength - written)
+      }
     } catch (e: unknown) {
-      // 이미 닫힌 핸들(EBADF)에 쓰려 한 경우다 — 조용히 삼키지 않고 슬롯을 정리한다
-      console.warn('녹화 청크 쓰기 실패', e instanceof Error ? e.message : String(e))
+      // 이미 닫힌 핸들(EBADF)·디스크 가득 참 등. 조용히 삼키지 않고 슬롯을 정리한 뒤
+      // 중지할 때 알릴 수 있도록 사유를 남긴다
+      const message = e instanceof Error ? e.message : String(e)
+      console.warn('녹화 청크 쓰기 실패', message)
+      writeFailure = { token: current.token, message }
       closeStreaming()
     }
   })
   deps.handle(IPC.captureEndVideo, (rawToken: unknown, rawMode: unknown): void => {
     const mode: CaptureMode = isCaptureMode(rawMode) ? rawMode : 'videoScreen'
+    // 중간에 쓰기가 실패해 이미 닫힌 녹화면 그 사유를 그대로 올린다(렌더러가 문구로 보여 준다)
+    if (writeFailure && writeFailure.token === rawToken) {
+      const { message } = writeFailure
+      writeFailure = null
+      throw new Error(`녹화를 파일에 다 쓰지 못했어요: ${message}`)
+    }
     if (!currentStreaming(rawToken)) return
     const closed = closeStreaming()
     if (!closed) return
@@ -401,6 +418,8 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   })
   // 녹화를 시작하지 못했거나 중간에 접었을 때. 파일을 닫고 빈 파일은 지운다
   deps.handle(IPC.captureCancelVideo, (rawToken: unknown): void => {
+    // 이미 실패로 닫힌 녹화를 취소하는 경우 — 표만 지우고 끝낸다(파일은 그때 닫혔다)
+    if (writeFailure && writeFailure.token === rawToken) writeFailure = null
     if (!currentStreaming(rawToken)) return
     const closed = closeStreaming()
     if (!closed) return

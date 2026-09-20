@@ -9,6 +9,10 @@ export const app = { getPath: (_name: string): string => '' }
 export const Menu = { buildFromTemplate: () => ({ popup: (): void => undefined }) }
 export const clipboard = { writeText: (_text: string): void => undefined }
 export const nativeImage = {}
+// capture/capture-ipc.ts 가 import 하는 이름(테스트는 파일 저장 경로만 확인한다)
+export const desktopCapturer = { getSources: async () => [] }
+export const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) }
+export const screen = { getPrimaryDisplay: () => ({ id: 0, size: { width: 0, height: 0 } }) }
 // browser/frame-channel.ts 가 iframe 응답을 받기 위해 쓴다(테스트는 프레임 호출을 직접 주입한다)
 export const ipcMain = {
   on: (_channel: string, _listener: (...args: unknown[]) => void): void => undefined,
