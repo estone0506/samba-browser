@@ -417,7 +417,6 @@ function missingMessage(id: number, suffix = ' (call get_page again)'): string {
   return `element ${id} ${what}${suffix}`
 }
 
-
 // 등록된 요소가 비밀 입력칸(type=password)인지 여부. 최신 스냅샷 기준으로 판단하며,
 // registry 에 없는 id 는 false(비밀 입력칸 아님으로 간주 → 호출부가 거부한다)
 export function isSecretField(id: number): boolean {
