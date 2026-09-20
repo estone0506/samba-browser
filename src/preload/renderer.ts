@@ -515,8 +515,6 @@ const api = {
     saveImage: (dataUrl: string): Promise<IpcResult<void>> => invoke(IPC.captureSaveImage, dataUrl),
     videoSource: (mode: CaptureMode): Promise<IpcResult<CaptureVideoSourceDto>> =>
       invoke(IPC.captureVideoSource, mode),
-    saveVideo: (bytes: Uint8Array, mode: CaptureMode): Promise<IpcResult<void>> =>
-      invoke(IPC.captureSaveVideo, bytes, mode),
     // 녹화 1건을 가리키는 token 을 받아, 이어 쓰기·마무리·취소에 그대로 돌려준다
     beginVideo: (mode: CaptureMode): Promise<IpcResult<CaptureBeginVideoDto>> =>
       invoke(IPC.captureBeginVideo, mode),

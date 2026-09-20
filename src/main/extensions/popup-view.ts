@@ -8,7 +8,7 @@
 // 세션은 반드시 그 확장이 로드된 탭 세션(파티션)과 같아야 한다 — 다른 세션에서 열면
 // 확장이 로드돼 있지 않아 문서 자체가 열리지 않는다.
 
-import { WebContentsView, type BrowserWindow, type Session, type WebContents } from 'electron'
+import { WebContentsView, type BrowserWindow, type Session } from 'electron'
 import type { ExtensionAnchorDto } from '../../shared/extensions'
 import {
   clampPopupSize,
@@ -50,6 +50,19 @@ export function sessionWithExtension(id: string, candidates: readonly Session[])
   return null
 }
 
+/**
+ * 팝업이 머물러도 되는 주소인가 — 그 확장 자신의 `chrome-extension://<id>/` 문서뿐이다.
+ * 팝업 문서가 http(s)·file 로 넘어가면 확장 권한을 가진 창에서 남의 페이지가 도는 셈이 된다
+ */
+export function isOwnExtensionUrl(url: string, id: string): boolean {
+  try {
+    const u = new URL(url)
+    return u.protocol === 'chrome-extension:' && u.hostname === id
+  } catch {
+    return false
+  }
+}
+
 /** 창 하나가 가진 팝업은 언제나 최대 한 개다 */
 export class ExtensionPopupHost {
   private view: WebContentsView | null = null
@@ -58,21 +71,17 @@ export class ExtensionPopupHost {
   private size: PopupSize = { width: POPUP_DEFAULT_WIDTH, height: POPUP_DEFAULT_HEIGHT }
   private disposed = false
 
+  /** 창 resize 구독. dispose 에서 떼어 낸다(창은 남고 호스트만 버려지는 경우) */
+  private readonly onWindowResize = (): void => this.applyBounds()
+
   constructor(private readonly deps: ExtensionPopupDeps) {
     // 창 크기가 바뀌면 버튼도 같이 움직이므로 팝업 위치를 다시 맞춘다
-    deps.win.on('resize', () => this.applyBounds())
+    deps.win.on('resize', this.onWindowResize)
   }
 
   /** 지금 팝업이 떠 있는 확장 id(없으면 null) */
   activeId(): string | null {
     return this.openId
-  }
-
-  /** 이 webContents 가 지금 떠 있는 팝업인가(팝업이 보내는 IPC 의 발신자 검증) */
-  isPopupSender(wc: WebContents): boolean {
-    return (
-      this.view !== null && !this.view.webContents.isDestroyed() && this.view.webContents === wc
-    )
   }
 
   /**
@@ -109,6 +118,22 @@ export class ExtensionPopupHost {
     this.anchor = input.anchor
     this.size = { width: POPUP_DEFAULT_WIDTH, height: POPUP_DEFAULT_HEIGHT }
     const wc = view.webContents
+    // 팝업은 그 확장의 문서 안에서만 움직인다. 바깥 주소로 넘어가려 하면 막는다 —
+    // 팝업 창은 탭과 달리 주소 표시줄이 없어 사용자가 어디에 있는지 알 수 없고,
+    // 확장 세션 안에서 남의 페이지가 도는 것을 그대로 두면 안 된다
+    const guard = (e: { preventDefault: () => void }, url: string, what: string): void => {
+      if (isOwnExtensionUrl(url, input.id)) return
+      e.preventDefault()
+      console.warn(`확장 팝업 ${what} 차단: ${url}`)
+    }
+    wc.on('will-navigate', (e, url) => guard(e, url, '이동'))
+    wc.on('will-redirect', (e, url) => guard(e, url, '리다이렉트'))
+    // 팝업이 여는 새 창은 만들지 않는다(크롬도 팝업에서 뜬 창은 탭으로 보낸다).
+    // 여기서 허용하면 가드 없는 창이 확장 세션으로 열린다
+    wc.setWindowOpenHandler(({ url }) => {
+      console.warn(`확장 팝업 새 창 차단: ${url}`)
+      return { action: 'deny' }
+    })
     // 문서가 원하는 크기를 알려 오면 그 값으로 창을 맞춘다.
     // 신호가 오지 않는 문서라면 기본 크기(360×420)로 그대로 떠 있는다
     wc.on('preferred-size-changed', (_e, preferred) => {
@@ -141,7 +166,7 @@ export class ExtensionPopupHost {
   }
 
   /** 문서가 알려 온 선호 크기를 반영한다(상한 800×600 에서 자른다) */
-  setSize(width: unknown, height: unknown): void {
+  private setSize(width: unknown, height: unknown): void {
     if (!this.view) return
     this.size = clampPopupSize(width, height)
     this.applyBounds()
@@ -169,5 +194,11 @@ export class ExtensionPopupHost {
   dispose(): void {
     this.disposed = true
     this.close()
+    // 창이 살아 있는 채로 호스트만 버려질 수 있다 — 구독을 남기지 않는다
+    try {
+      if (!this.deps.win.isDestroyed()) this.deps.win.off('resize', this.onWindowResize)
+    } catch (e: unknown) {
+      console.warn('팝업 resize 구독 해제 실패', e instanceof Error ? e.message : String(e))
+    }
   }
 }

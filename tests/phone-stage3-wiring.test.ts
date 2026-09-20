@@ -350,12 +350,13 @@ describe('통합 ① 웹 폼 → wait_for_sms_code → 문자 도착 → 자동 
     expect(h.filled).toEqual([{ id: 3, value: CODE }])
     expect(h.submitted).toEqual([3])
 
-    // 기록은 남되 문자 본문은 없다
+    // 기록은 남되 문자 본문도 인증번호 평문도 없다(I20 — 자리수만)
     const events = h.repo.listAuthEvents()
     expect(events).toHaveLength(1)
     expect(events[0].kind).toBe('sms')
     expect(events[0].ok).toBe(true)
-    expect(events[0].code).toBe(CODE)
+    expect(events[0].code).toHaveLength(CODE.length)
+    expect(events[0].code).not.toMatch(/[0-9]/)
     expect(events[0].senderTail).toBe('1234')
     expect(events[0].phoneId).toBe(1)
 

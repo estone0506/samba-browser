@@ -1,6 +1,6 @@
 // 캡처 저장 폴더·파일명 결정. fs 는 주입받아 테스트할 수 있게 남긴다
 
-import { join, resolve } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { captureFileName, DEFAULT_CAPTURE_FOLDER_NAME } from '../../shared/capture'
 
 export interface CapturePathFs {
@@ -53,6 +53,33 @@ export function samePath(
   }
   if (!a || !b) return false
   return normalize(a) === normalize(b)
+}
+
+/**
+ * 렌더러가 settings:set 으로 보낸 저장 폴더를 받아도 되는가(I14).
+ *
+ * 폴더 선택 다이얼로그로 고른 값은 메인이 직접 저장하므로 이 검사를 지나지 않는다.
+ * 반대로 IPC 로 들어온 문자열은 어디든 가리킬 수 있어, 사용자 홈 폴더 안으로 못 박는다 —
+ * 그러지 않으면 캡처 파일을 시스템 폴더에 쓰거나, 그 폴더의 파일을 캡처 파일인 양
+ * 열어 보게(capture:openFile) 만들 수 있다. 빈 문자열은 "기본 폴더" 라 허용한다
+ */
+export function isAllowedCaptureDir(
+  dir: string,
+  home: string,
+  caseInsensitive = process.platform === 'win32'
+): boolean {
+  const value = dir.trim()
+  if (!value) return true
+  if (!home) return false
+  // 널 바이트가 섞인 경로는 받지 않는다(fs 호출이 통째로 터진다)
+  if (value.includes('\0')) return false
+  const norm = (p: string): string => {
+    const unified = resolve(p).replace(/[\\/]+$/, '')
+    return caseInsensitive ? unified.toLowerCase() : unified
+  }
+  const target = norm(value)
+  const root = norm(home)
+  return target === root || target.startsWith(root.endsWith(sep) ? root : root + sep)
 }
 
 export interface CaptureFileTarget {

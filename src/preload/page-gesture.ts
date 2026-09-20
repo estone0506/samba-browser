@@ -192,7 +192,9 @@ export function installGestureRecognizer(deps: GestureRecognizerDeps): void {
   window.addEventListener(
     'mousemove',
     (e: MouseEvent) => {
-      if (!tracking) return
+      // 합성 이벤트(스크립트가 만든 mousemove)는 궤적에 섞지 않는다 —
+      // 페이지가 가짜 좌표를 흘려 넣어 원하는 제스처를 만들어 낼 수 있다
+      if (!tracking || !e.isTrusted) return
       points.push({ x: e.clientX, y: e.clientY })
       if (movedEnough()) draw()
     },
@@ -202,7 +204,7 @@ export function installGestureRecognizer(deps: GestureRecognizerDeps): void {
   window.addEventListener(
     'mouseup',
     (e: MouseEvent) => {
-      if (!tracking || e.button !== 2) return
+      if (!tracking || !e.isTrusted || e.button !== 2) return
       points.push({ x: e.clientX, y: e.clientY })
       const sequence = sequenceFromPoints(points)
       cancel()

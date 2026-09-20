@@ -44,22 +44,29 @@ interface FakeNavDetails {
 }
 
 function makeFakeWc(defaultUa: string): {
-  wc: { getUserAgent: () => string; setUserAgent: (ua: string) => void; on: unknown }
+  wc: object
   fireNavigation: (details: FakeNavDetails) => void
   uaHistory: string[]
 } {
   const uaHistory: string[] = []
   let handler: ((details: FakeNavDetails) => void) | null = null
+  // 지금 주소(refresh() 가 읽는 값). 항해가 일어나면 따라 바뀐다
+  let currentUrl = 'about:blank'
   const wc = {
     getUserAgent: () => defaultUa,
     setUserAgent: (ua: string) => uaHistory.push(ua),
+    getURL: () => currentUrl,
+    isDestroyed: () => false,
     on: (event: string, listener: (details: FakeNavDetails) => void) => {
       if (event === 'did-start-navigation') handler = listener
     }
   }
   return {
     wc,
-    fireNavigation: (details: FakeNavDetails) => handler?.(details),
+    fireNavigation: (details: FakeNavDetails) => {
+      if (details.isMainFrame) currentUrl = details.url
+      handler?.(details)
+    },
     uaHistory
   }
 }
@@ -96,5 +103,38 @@ describe('installWebstoreNavigatorUserAgent — 탭 이동에 맞춰 navigator U
     fireNavigation({ url: 'https://chromewebstore.google.com/detail/abc', isMainFrame: true })
     expect(uaHistory).toHaveLength(0)
     expect(isMobile).toHaveBeenCalled()
+  })
+})
+
+describe('refresh() — 모바일 모드를 껐을 때 웹스토어 UA 를 되살린다', () => {
+  it('웹스토어에 머문 채 모바일을 끄면 크롬 UA 를 다시 건다', () => {
+    const { wc, fireNavigation, uaHistory } = makeFakeWc(ELECTRON_UA)
+    let mobile = true
+    const refresh = installWebstoreNavigatorUserAgent(wc as never, () => mobile)
+    // 모바일 모드로 웹스토어에 들어가 있는 동안에는 UA 를 건드리지 않는다
+    fireNavigation({ url: 'https://chromewebstore.google.com/detail/abc', isMainFrame: true })
+    expect(uaHistory).toHaveLength(0)
+    // 모바일을 끄면 emulation 이 UA 를 비우므로, 지금 주소에 맞춰 다시 건다
+    mobile = false
+    refresh()
+    expect(uaHistory).toEqual([expect.stringContaining('Chrome/129.0.0.0')])
+  })
+
+  it('웹스토어가 아닌 곳이면 앱 기본 UA 로 되돌린다', () => {
+    const { wc, fireNavigation, uaHistory } = makeFakeWc(ELECTRON_UA)
+    let mobile = true
+    const refresh = installWebstoreNavigatorUserAgent(wc as never, () => mobile)
+    fireNavigation({ url: 'https://example.com/', isMainFrame: true })
+    mobile = false
+    refresh()
+    expect(uaHistory).toEqual([ELECTRON_UA])
+  })
+
+  it('모바일 모드가 아직 켜져 있으면 아무 것도 하지 않는다', () => {
+    const { wc, fireNavigation, uaHistory } = makeFakeWc(ELECTRON_UA)
+    const refresh = installWebstoreNavigatorUserAgent(wc as never, () => true)
+    fireNavigation({ url: 'https://chromewebstore.google.com/detail/abc', isMainFrame: true })
+    refresh()
+    expect(uaHistory).toHaveLength(0)
   })
 })

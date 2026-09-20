@@ -59,27 +59,55 @@ export function toAnnexB(nals: Buffer[]): Buffer {
 }
 
 /**
+ * 꼬리 상한(8MB). 2Mbps 스트림의 한 프레임은 수십~수백 KB 라 정상 상황에서는
+ * 절대 닿지 않는다. 시작 코드가 한 번도 나오지 않는 쓰레기 바이트가 계속 들어오면
+ * 꼬리가 무한정 자라므로 여기서 끊고 버린다(다음 키프레임부터 다시 맞춘다)
+ */
+export const MAX_TAIL_BYTES = 8 * 1024 * 1024
+
+/**
  * 스트림 청크를 모아 온전한 NAL 만 내보낸다.
  * 마지막(아직 끝을 모르는) NAL 은 다음 push 까지 꼬리로 보관한다
  */
 export class AnnexBAssembler {
   private tail: Buffer = Buffer.alloc(0)
+  /** 상한을 넘어 버린 바이트가 있었는가(호출부가 진단에 쓴다) */
+  private overflowed = false
 
   push(chunk: Buffer): Buffer[] {
     const buf: Buffer = this.tail.length > 0 ? Buffer.concat([this.tail, chunk]) : chunk
     const last = buf.lastIndexOf(START_CODE_3)
     if (last < 0) {
+      // 시작 코드가 없는 채로 상한을 넘으면 더 들고 있어 봐야 메모리만 먹는다
+      if (buf.length > MAX_TAIL_BYTES) {
+        this.overflowed = true
+        this.tail = Buffer.alloc(0)
+        return []
+      }
       this.tail = buf
       return []
     }
     // 마지막 시작 코드가 4바이트라면 앞의 0 까지 꼬리로 넘겨야 온전한 시작 코드가 된다
     const cut = last > 0 && buf[last - 1] === 0 ? last - 1 : last
-    this.tail = buf.subarray(cut)
+    const tail = buf.subarray(cut)
+    // 시작 코드 뒤에 끝나지 않는 NAL 하나가 계속 자라는 경우도 같은 상한으로 끊는다
+    if (tail.length > MAX_TAIL_BYTES) {
+      this.overflowed = true
+      this.tail = Buffer.alloc(0)
+    } else {
+      this.tail = tail
+    }
     return cut === 0 ? [] : splitAnnexB(buf.subarray(0, cut))
+  }
+
+  /** 꼬리가 상한을 넘어 버려진 적이 있는가 */
+  didOverflow(): boolean {
+    return this.overflowed
   }
 
   /** 세그먼트를 다시 열 때 이전 꼬리를 버린다 */
   reset(): void {
     this.tail = Buffer.alloc(0)
+    this.overflowed = false
   }
 }

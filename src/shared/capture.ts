@@ -300,6 +300,25 @@ export function videoRegionCrop(
 // === 전체 페이지 이어붙이기 ================================================
 /** 결과 이미지 최대 높이(CSS 픽셀). 아주 긴 페이지에서 메모리가 터지지 않게 자른다 */
 export const MAX_FULL_PAGE_HEIGHT = 20000
+/**
+ * 결과 이미지 최대 높이(디바이스 픽셀). CSS 상한만 두면 고해상도 화면(배율 2~3배)에서
+ * 실제 이미지가 그 배수만큼 커진다 — 캔버스 높이 한계(대부분 32767)에도 걸린다
+ */
+export const MAX_FULL_PAGE_DEVICE_HEIGHT = 32767
+/** 결과 이미지 총 픽셀 상한(RGBA 4바이트 기준 약 256MB) */
+export const MAX_FULL_PAGE_DEVICE_PIXELS = 64_000_000
+
+/**
+ * 화면 배율을 감안한 CSS 높이 상한(I17).
+ * 디바이스 픽셀 기준 높이·총 픽셀 상한을 CSS 픽셀로 되돌려 셋 중 가장 작은 값을 쓴다
+ */
+export function maxFullPageCssHeight(viewportWidth: number, deviceScale: number): number {
+  const scale = Number.isFinite(deviceScale) && deviceScale > 0 ? deviceScale : 1
+  const deviceWidth = Math.max(1, Math.round(viewportWidth * scale))
+  const byHeight = Math.floor(MAX_FULL_PAGE_DEVICE_HEIGHT / scale)
+  const byPixels = Math.floor(MAX_FULL_PAGE_DEVICE_PIXELS / deviceWidth / scale)
+  return Math.max(1, Math.min(MAX_FULL_PAGE_HEIGHT, byHeight, byPixels))
+}
 
 export interface FullPageMetrics {
   /** document 전체 높이 */

@@ -226,6 +226,38 @@ describe('TranslateService', () => {
     expect(JSON.parse(calls[0].prompt.slice(calls[0].prompt.indexOf('[')))).toEqual(['a', 'c'])
   })
 
+  it('같은 배치 안의 중복 원문은 한 번만 보낸다', async () => {
+    const { ask, calls } = fakeAsk()
+    const service = new TranslateService({
+      translator: () => new AiTranslator({ ask, model: () => 'haiku' }),
+      cache: new TranslateCache(null, 100)
+    })
+    expect(await service.translate(['a', 'b', 'a'], 'ko')).toEqual([
+      '[번역]a',
+      '[번역]b',
+      '[번역]a'
+    ])
+    expect(JSON.parse(calls[0].prompt.slice(calls[0].prompt.indexOf('[')))).toEqual(['a', 'b'])
+  })
+
+  it('동시에 도는 배치가 같은 문장을 두 번 물어보지 않는다', async () => {
+    const { ask, calls } = fakeAsk()
+    const service = new TranslateService({
+      translator: () => new AiTranslator({ ask, model: () => 'haiku' }),
+      cache: new TranslateCache(null, 100)
+    })
+    // 첫 배치가 아직 답하기 전에 같은 문장이 들어 있는 두 번째 배치가 출발한다
+    const [first, second] = await Promise.all([
+      service.translate(['a', 'b'], 'ko'),
+      service.translate(['b', 'c'], 'ko')
+    ])
+    expect(first).toEqual(['[번역]a', '[번역]b'])
+    expect(second).toEqual(['[번역]b', '[번역]c'])
+    // 'b' 는 한 번만 실려 나간다
+    const sent = calls.map((c) => JSON.parse(c.prompt.slice(c.prompt.indexOf('['))) as string[])
+    expect(sent.flat().filter((t) => t === 'b')).toHaveLength(1)
+  })
+
   it('AI 연결이 없으면 호출 없이 안내 오류를 던진다', async () => {
     const service = new TranslateService({
       translator: () => null,

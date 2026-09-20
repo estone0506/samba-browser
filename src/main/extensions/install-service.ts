@@ -69,10 +69,12 @@ export function createExtensionInstaller(deps: ExtensionInstallerDeps): Extensio
         const dest = await installFromWebstore(id, {
           destRoot: deps.extensionsRoot,
           chromiumVersion: deps.chromiumVersion,
-          fetchImpl: deps.fetchImpl
+          fetchImpl: deps.fetchImpl,
+          // 같은 폴더에 새 버전을 풀기 전에 먼저 세션·목록에서 걷어낸다 —
+          // 그러지 않으면 쓰고 있는 폴더를 지운 뒤에야 걷어내게 된다
+          onBeforeReplace: (target) => deps.manager.removeByPath(target)
         })
         id = dest.split(/[\\/]+/).at(-1) ?? id
-        deps.manager.removeByPath(dest)
         return { id, item: await deps.manager.add(dest, 'store') }
       } catch (e: unknown) {
         return { id, error: messageOf(e) }

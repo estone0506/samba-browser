@@ -68,14 +68,38 @@ export function isWebstoreUrl(url: string): boolean {
  *
  * 모바일 모드가 켜진 탭은 emulation.ts 가 UA(모바일 UA)를 따로 관리하므로 건드리지 않는다 —
  * isMobile() 이 true 를 돌려주는 동안은 아무 것도 하지 않는다
+ *
+ * 돌려주는 refresh() 는 항해 없이 UA 를 지금 주소에 맞춰 다시 건다.
+ * 모바일 모드를 끄면 emulation.ts 가 UA 를 앱 기본값('')으로 되돌리는데,
+ * 그때 탭이 이미 웹스토어에 머물러 있으면 다음 항해 전까지 크롬 UA 가 빠져 버린다 —
+ * 모바일 해제 직후 이 함수를 불러 웹스토어 UA 를 되살린다
  */
-export function installWebstoreNavigatorUserAgent(wc: WebContents, isMobile: () => boolean): void {
+export function installWebstoreNavigatorUserAgent(
+  wc: WebContents,
+  isMobile: () => boolean
+): () => void {
   // 앱 기본 UA(모바일 모드가 아닐 때 되돌아갈 값). 이후 언제 호출해도 같은 값이 나오도록
   // getUserAgent() 를 매번 다시 읽지 않고 최초 값을 고정해 둔다
   const defaultUa = wc.getUserAgent()
   const webstoreUa = chromeUserAgent(defaultUa)
+  const apply = (url: string): void => {
+    if (isMobile()) return
+    try {
+      if (wc.isDestroyed()) return
+      wc.setUserAgent(isWebstoreUrl(url) ? webstoreUa : defaultUa)
+    } catch (e: unknown) {
+      console.warn('웹스토어 UA 설정 실패', e instanceof Error ? e.message : String(e))
+    }
+  }
   wc.on('did-start-navigation', (details) => {
-    if (!details.isMainFrame || isMobile()) return
-    wc.setUserAgent(isWebstoreUrl(details.url) ? webstoreUa : defaultUa)
+    if (!details.isMainFrame) return
+    apply(details.url)
   })
+  return () => {
+    try {
+      if (!wc.isDestroyed()) apply(wc.getURL())
+    } catch (e: unknown) {
+      console.warn('웹스토어 UA 복구 실패', e instanceof Error ? e.message : String(e))
+    }
+  }
 }
