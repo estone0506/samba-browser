@@ -217,10 +217,7 @@ export function registerIpc(
   // 사이트 기억. 파일은 이 PC 의 userData 안에만 있고 동기화 대상이 아니다.
   // 켬/끔은 설정 한 칸(siteMemoryEnabled)으로 매번 다시 읽는다 — 끄면 곧바로 멈춘다
   const siteMemoryStore = new SiteMemoryStore(join(app.getPath('userData'), 'site-memory.json'))
-  const siteMemory = new SiteMemoryService(
-    siteMemoryStore,
-    () => settings.get().siteMemoryEnabled
-  )
+  const siteMemory = new SiteMemoryService(siteMemoryStore, () => settings.get().siteMemoryEnabled)
   agent.setSiteMemory(siteMemory)
   // 예약 실행. 실행 기록은 이 PC 의 파일에만 남는다(동기화 대상이 아니다)
   const scheduleRuns = new ScheduleRunStore(join(app.getPath('userData'), 'schedule-runs.json'))
