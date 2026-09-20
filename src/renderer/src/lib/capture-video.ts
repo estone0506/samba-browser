@@ -123,35 +123,54 @@ export async function startRecording(options: StartRecordingOptions): Promise<Re
 
   const mimeType = pickRecorderMime((m) => MediaRecorder.isTypeSupported(m))
   const recorder = new MediaRecorder(recordedStream, mimeType ? { mimeType } : undefined)
-  const chunks: Blob[] = []
   const onChunk = options.onChunk
+  // onChunk 가 있으면 청크는 곧바로 파일로 흘러가므로 메모리에 또 쌓지 않는다.
+  // (둘 다 들고 있으면 긴 녹화에서 영상 크기의 두 배가 렌더러 메모리에 남았다)
+  const chunks: Blob[] | null = onChunk ? null : []
   // 마지막 청크는 stop() 바로 앞에 dataavailable 로 온다. Blob→ArrayBuffer 변환이
   // 비동기라 그대로 두면 onstop 이 먼저 끝나고, 호출부가 파일을 닫아 마지막 조각이 사라진다.
   // 변환을 한 줄로 이어 두고 stop() 이 이 줄을 기다리게 한다(순서도 함께 지켜진다)
   let pendingChunks: Promise<unknown> = Promise.resolve()
   recorder.ondataavailable = (e): void => {
     if (e.data.size <= 0) return
-    chunks.push(e.data)
-    if (!onChunk) return
+    if (!onChunk) {
+      chunks?.push(e.data)
+      return
+    }
     pendingChunks = pendingChunks
       .then(() => e.data.arrayBuffer())
       .then((buf) => onChunk(new Uint8Array(buf)))
       .catch(() => undefined)
+  }
+  // onerror 는 stop() 을 기다리지 않고 지금 걸어 둔다 — 녹화 도중에 난 오류를
+  // 아무도 듣지 않으면 스트림·타이머가 그대로 돌고 사용자도 알 수 없다
+  let recorderError: Error | null = null
+  let onRecorderError: ((e: Error) => void) | null = null
+  recorder.onerror = (): void => {
+    recorderError = new Error('녹화 중 오류가 났어요')
+    for (const fn of cleanups) fn()
+    onRecorderError?.(recorderError)
   }
   recorder.start(1000)
 
   return {
     stop: () =>
       new Promise<Uint8Array>((resolve, reject) => {
-        recorder.onerror = (): void => {
-          for (const fn of cleanups) fn()
-          reject(new Error('녹화 중 오류가 났어요'))
+        // 이미 오류로 끝났으면 바로 알린다(정리는 onerror 에서 끝났다)
+        if (recorderError) {
+          reject(recorderError)
+          return
         }
+        onRecorderError = reject
         recorder.onstop = (): void => {
           for (const fn of cleanups) fn()
           // 마지막 청크 쓰기가 끝난 뒤에야 끝났다고 알린다
           void pendingChunks
-            .then(() => new Blob(chunks, { type: mimeType || 'video/webm' }).arrayBuffer())
+            .then(() =>
+              chunks
+                ? new Blob(chunks, { type: mimeType || 'video/webm' }).arrayBuffer()
+                : new ArrayBuffer(0)
+            )
             .then((buffer) => resolve(new Uint8Array(buffer)))
             .catch(reject)
         }
