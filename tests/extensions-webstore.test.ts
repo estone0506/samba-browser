@@ -11,7 +11,9 @@ import {
   installFromWebstore,
   MAX_UNZIPPED_BYTES,
   MAX_ZIP_ENTRIES,
+  isAllowedCrxUrl,
   parseCrx3,
+  parseCrxId,
   safeEntryPath
 } from '../src/main/extensions/webstore'
 
@@ -73,8 +75,27 @@ function makeZip(files: { name: string; data: string }[]): Buffer {
   return Buffer.concat([localPart, centralPart, end])
 }
 
+/** 확장 id(a~p 32자) → 16바이트 crx_id */
+function idToBytes(id: string): Buffer {
+  const out = Buffer.alloc(16)
+  for (let i = 0; i < 16; i++) {
+    out[i] = ((id.charCodeAt(i * 2) - 97) << 4) | (id.charCodeAt(i * 2 + 1) - 97)
+  }
+  return out
+}
+
+/** CrxFileHeader { signed_header_data(10000) = SignedData { crx_id(1) = 16바이트 } } */
+function crxHeaderFor(id: string): Buffer {
+  const crxId = idToBytes(id)
+  const signed = Buffer.concat([Buffer.from([0x0a, crxId.length]), crxId])
+  // 필드 10000, wire type 2 → key = 80002 → varint [0x82, 0xF1, 0x04]
+  return Buffer.concat([Buffer.from([0x82, 0xf1, 0x04, signed.length]), signed])
+}
+
+const DEFAULT_ID = 'cjpalhdlnbpafiamejdnhcphjbkeiagm'
+
 /** [Cr24][version LE][header length LE][header][zip] */
-function makeCrx(zip: Buffer, version = 3, header = Buffer.from('fake-crx3-header')): Buffer {
+function makeCrx(zip: Buffer, version = 3, header = crxHeaderFor(DEFAULT_ID)): Buffer {
   const head = Buffer.alloc(12)
   head.write('Cr24', 0, 'latin1')
   head.writeUInt32LE(version, 4)
@@ -303,7 +324,7 @@ describe('CRX 내려받기 방어', () => {
 
 describe('웹스토어 설치 전체 흐름(네트워크는 가짜)', () => {
   let root = ''
-  const id = 'cjpalhdlnbpafiamejdnhcphjbkeiagm'
+  const id = DEFAULT_ID
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'samba-ext-'))
   })
@@ -352,5 +373,97 @@ describe('웹스토어 설치 전체 흐름(네트워크는 가짜)', () => {
       })
     ).rejects.toThrow(/manifest.json/)
     expect(existsSync(join(root, id))).toBe(false)
+  })
+})
+
+// --- I9 CRX 최종 호스트·crx_id 대조 --------------------------------------------
+
+describe('isAllowedCrxUrl — 리다이렉트 최종 주소', () => {
+  it('구글 배포망 호스트는 허용한다', () => {
+    expect(isAllowedCrxUrl('https://clients2.google.com/service/update2/crx')).toBe(true)
+    expect(isAllowedCrxUrl('https://clients2.googleusercontent.com/crx/blobs/abc.crx')).toBe(true)
+    expect(isAllowedCrxUrl('https://edgedl.me.gvt1.com/edgedl/release2/x.crx')).toBe(true)
+  })
+
+  it('다른 호스트·http 는 막는다', () => {
+    expect(isAllowedCrxUrl('https://evil.example.com/x.crx')).toBe(false)
+    expect(isAllowedCrxUrl('https://notgoogle.com.evil.net/x.crx')).toBe(false)
+    expect(isAllowedCrxUrl('http://clients2.google.com/x.crx')).toBe(false)
+    expect(isAllowedCrxUrl('주소가 아님')).toBe(false)
+  })
+})
+
+describe('parseCrxId — 헤더에 적힌 확장 id', () => {
+  const zip = makeZip([{ name: 'manifest.json', data: '{"manifest_version":3}' }])
+
+  it('CRX3 헤더에서 id 를 읽는다', () => {
+    expect(parseCrxId(makeCrx(zip))).toBe(DEFAULT_ID)
+  })
+
+  it('헤더에 서명 데이터가 없으면 null', () => {
+    expect(parseCrxId(makeCrx(zip, 3, Buffer.from('fake-crx3-header')))).toBeNull()
+  })
+})
+
+describe('설치 — 받은 파일이 요청한 확장인지 확인한다', () => {
+  let root = ''
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'samba-ext-id-'))
+  })
+  afterEach(() => rmSync(root, { recursive: true, force: true }))
+
+  const fetcherFor = (crx: Buffer) => async () => ({
+    ok: true,
+    status: 200,
+    url: 'https://clients2.googleusercontent.com/crx/blobs/x.crx',
+    arrayBuffer: async () => crx.buffer.slice(crx.byteOffset, crx.byteOffset + crx.byteLength)
+  })
+
+  const zip = makeZip([
+    { name: 'manifest.json', data: '{"name":"a","version":"1.0","manifest_version":3}' }
+  ])
+
+  it('crx_id 가 다르면 거부하고 폴더도 만들지 않는다', async () => {
+    const other = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    await expect(
+      installFromWebstore(DEFAULT_ID, {
+        destRoot: root,
+        chromiumVersion: '140.0.0.0',
+        fetchImpl: fetcherFor(makeCrx(zip, 3, crxHeaderFor(other)))
+      })
+    ).rejects.toThrow(/다른 파일이에요/)
+    expect(existsSync(join(root, DEFAULT_ID))).toBe(false)
+  })
+
+  it('최종 주소가 구글 호스트가 아니면 받지 않는다', async () => {
+    const crx = makeCrx(zip)
+    await expect(
+      installFromWebstore(DEFAULT_ID, {
+        destRoot: root,
+        chromiumVersion: '140.0.0.0',
+        fetchImpl: async () => ({
+          ok: true,
+          status: 200,
+          url: 'https://evil.example.com/x.crx',
+          arrayBuffer: async () =>
+            crx.buffer.slice(crx.byteOffset, crx.byteOffset + crx.byteLength)
+        })
+      })
+    ).rejects.toThrow(/허용하지 않는 주소/)
+  })
+
+  it('I19 — 폴더를 지우기 전에 호출부가 먼저 걷어낸다', async () => {
+    const order: string[] = []
+    await installFromWebstore(DEFAULT_ID, {
+      destRoot: root,
+      chromiumVersion: '140.0.0.0',
+      fetchImpl: fetcherFor(makeCrx(zip)),
+      onBeforeReplace: (dest) => {
+        order.push('removed')
+        expect(existsSync(join(dest, 'manifest.json'))).toBe(false)
+      }
+    })
+    order.push('installed')
+    expect(order).toEqual(['removed', 'installed'])
   })
 })

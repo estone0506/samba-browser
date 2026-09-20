@@ -262,6 +262,27 @@ describe('ExtensionManager', () => {
     expect(second.removed).toEqual([dto2.id])
   })
 
+  it('I18 — 같은 파티션을 다시 붙여도 확장을 두 번 로드하지 않는다', async () => {
+    const mgr = new ExtensionManager(makeHost(), settings)
+    const dir = makeFolder('dedupe', validManifest('중복'))
+    await mgr.add(dir)
+
+    const second = makeHost()
+    await mgr.attachHost(second, 'persist:work')
+    // 훅을 다시 걸면 이미 있는 파티션에도 소급 호출이 온다
+    const again = makeHost()
+    await mgr.attachHost(again, 'persist:work')
+
+    expect(second.loaded).toEqual([dir])
+    expect(again.loaded).toEqual([])
+
+    // 중복으로 쌓이지 않았으므로 제거도 세션마다 한 번씩만 간다
+    const dto = mgr.list()[0]
+    mgr.remove(dto.id)
+    expect(second.removed).toEqual([dto.id])
+    expect(again.removed).toEqual([])
+  })
+
   it('loadSaved 가 끝나기 전에 attachHost 를 불러도 새 세션에 확장이 걸린다', async () => {
     // 앱이 뜨는 순서 그대로다 — loadSaved 를 기다리지 않고 첫 탭이 만들어지면서
     // 그 파티션 세션이 attachHost 로 들어온다. 예전에는 여기서 목록이 아직 비어 있어

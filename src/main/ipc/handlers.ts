@@ -957,9 +957,10 @@ export function registerIpc(
     settings
   )
   void extensions.loadSaved().catch((e: unknown) => console.error('저장된 확장 로드 실패', e))
-  tabs.setSessionHook((ses) => {
+  tabs.setSessionHook((ses, partition) => {
+    // 파티션 이름을 함께 넘긴다 — 같은 세션이 두 번 들어와도 한 번만 붙는다
     void extensions
-      .attachHost(createSessionExtensionHost(ses))
+      .attachHost(createSessionExtensionHost(ses), partition)
       .catch((e: unknown) => console.error('파티션 세션 확장 로드 실패', e))
   })
 

@@ -187,6 +187,8 @@ export class ExtensionManager {
   private entries: ExtensionDto[] = []
   /** 확장을 걸어 둔 세션들. hosts[0] 은 생성자로 받은 기본 세션이다 */
   private hosts: ExtensionHost[] = []
+  /** 이미 붙인 파티션 이름. 같은 세션을 두 번 붙여 목록이 불어나는 것을 막는다 */
+  private hostKeys = new Set<string>()
   private failures: ExtensionError[] = []
   /** 진행 중인 최초 로드. 새 파티션 세션에 확장을 걸기 전에 이것을 기다린다 */
   private ready: Promise<void> = Promise.resolve()
@@ -387,8 +389,16 @@ export class ExtensionManager {
   /**
    * 새로 만들어진 파티션 세션에 지금 목록을 다시 로드한다(작업공간 전환).
    * 실패는 오류 목록에만 남기고 던지지 않는다 — 탭 생성이 확장 때문에 막히면 안 되기 때문이다
+   *
+   * key(파티션 이름)를 주면 같은 세션을 두 번 붙이지 않는다. 훅을 다시 걸면
+   * 이미 있는 파티션에도 소급 호출이 오는데, 그때마다 hosts 가 늘어나면
+   * 같은 세션에 확장이 중복 로드되고 제거·재로드도 그 수만큼 돈다
    */
-  async attachHost(host: ExtensionHost): Promise<void> {
+  async attachHost(host: ExtensionHost, key?: string): Promise<void> {
+    if (key !== undefined) {
+      if (this.hostKeys.has(key)) return
+      this.hostKeys.add(key)
+    }
     this.hosts.push(host)
     // 첫 탭은 앱이 뜨자마자 만들어지므로 저장된 확장을 아직 다 읽지 못했을 수 있다.
     // 여기서 기다리지 않으면 그 탭 세션에는 확장이 하나도 걸리지 않는다
