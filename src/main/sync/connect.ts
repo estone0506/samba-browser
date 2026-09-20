@@ -134,7 +134,7 @@ export class SyncConnection {
       } catch (e: unknown) {
         // 취소된 기기가 재시작·세션 복원으로 되살아나면 안 된다 → 즉시 로그아웃·잠금
         if (e instanceof DeviceRevokedError) {
-          this.expire()
+          this.expire('revoked')
           return
         }
         throw e
@@ -176,8 +176,8 @@ export class SyncConnection {
             backfillSettings(db, ws, vault, { skipKeyMaterial: pulled.vaultKeyMismatch })
           )
         },
-        onAuthExpired: () => {
-          this.expire()
+        onAuthExpired: ({ firstCycle }) => {
+          this.expire(firstCycle ? 'startup' : 'token')
         }
       })
       this.engine = engine
@@ -186,12 +186,23 @@ export class SyncConnection {
     } catch (e: unknown) {
       // 연결에 실패해도 앱은 로컬 전용으로 계속 돈다. 사유만 남긴다(토큰·값 없음)
       console.error('동기화 연결 실패', e instanceof Error ? e.message : String(e))
+      this.lockOnNextTeardown = false
       this.teardown()
     }
   }
 
   /** 토큰 만료·기기 원격 로그아웃 — 서버를 부르지 않고 로컬만 로그아웃한다 */
-  private expire(): void {
+  // 다음 teardown 에서 금고를 잠글지. 사용자의 로그아웃이면 잠그고,
+  // 토큰 만료·연결 실패처럼 사용자가 한 일이 아니면 잠그지 않는다 —
+  // 앱 시작 직후 세션 갱신이 실패하면 기기 키로 열어 둔 금고가 매번 도로 잠겼다(실기)
+  private lockOnNextTeardown = true
+
+  /**
+   * 인증 만료 처리. 첫 동기화 주기의 만료는 "저장된 세션이 오래됐다"는 뜻이라 금고를 잠글 이유가 없다
+   * (기기 키로 열어 둔 금고가 켤 때마다 도로 잠겼다). 그 뒤의 만료·원격 기기 취소는 정상대로 잠근다
+   */
+  private expire(reason: 'token' | 'revoked' | 'startup' = 'token'): void {
+    if (reason === 'startup') this.lockOnNextTeardown = false
     this.teardown()
     this.closing = true
     try {
@@ -217,7 +228,8 @@ export class SyncConnection {
     // 로그아웃하면 금고는 곧바로 잠근다(로컬 DB 는 그대로 둔다).
     // 돌던 엔진이 있을 때만 잠근다 — 앱 시작 직후의 "아직 로그아웃" 상태에서까지 잠그면
     // 기기 키로 열어 둔 금고를 매번 도로 닫아 버린다
-    if (hadEngine) this.deps.vault.lock()
+    if (hadEngine && this.lockOnNextTeardown) this.deps.vault.lock()
+    this.lockOnNextTeardown = true
   }
 
   /** 최초 업로드·재검사 공통 호출부. 실패해도 동기화 자체는 계속 돈다(사유만 남긴다) */

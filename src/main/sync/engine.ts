@@ -30,7 +30,9 @@ export interface EngineDeps extends PushDeps {
    * 인증이 만료됐을 때 한 번 불린다. 로그아웃·금고 잠금 연결은 호출부(Task 9)가 한다 —
    * 엔진은 여기서 아무것도 스스로 정리하지 않는다
    */
-  onAuthExpired?: () => void
+  // firstCycle: 시작 후 첫 동기화 주기에서 만료됐는가(저장된 세션이 오래된 경우) —
+  // 연결부는 이때 금고를 잠그지 않는다
+  onAuthExpired?: (info: { firstCycle: boolean }) => void
 }
 
 export class SyncEngine {
@@ -43,6 +45,8 @@ export class SyncEngine {
   private lastError: string | undefined
   // 만료를 알린 뒤 다시 성공할 때까지는 같은 알림을 반복하지 않는다
   private authExpiredNotified = false
+  // 완료한 동기화 주기 수(첫 주기 판정용)
+  private cyclesDone = 0
   private readonly local: SyncLocal
 
   constructor(private readonly deps: EngineDeps) {
@@ -119,9 +123,10 @@ export class SyncEngine {
       this.lastError = e instanceof Error ? e.message : String(e)
       if (e instanceof AuthExpiredError && !this.authExpiredNotified) {
         this.authExpiredNotified = true
-        this.deps.onAuthExpired?.()
+        this.deps.onAuthExpired?.({ firstCycle: this.cyclesDone === 0 })
       }
     }
+    this.cyclesDone += 1
     const status = this.status()
     this.emit(status)
     return status
