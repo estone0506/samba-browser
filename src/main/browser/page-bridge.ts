@@ -33,7 +33,8 @@ const snapshotSchema = z.object({
   title: z.string(),
   text: z.string(),
   elements: z.array(elementSchema),
-  total: z.number().int().optional()
+  total: z.number().int().optional(),
+  selectorError: z.string().optional()
 })
 
 // 결제 비밀번호 키패드 판정용 신호. 값은 담기지 않는다(개수·존재 여부만)
@@ -226,8 +227,16 @@ function encodeValue(value: string): string {
 /** 메인 프레임용 — 동작을 격리 월드에서 실행할 __samba 호출식으로 바꾼다 */
 function opToCode(op: AgentOp): string {
   switch (op.op) {
-    case 'snapshot':
-      return `__samba.snapshot(${op.query === undefined ? '' : encodeQuery(op.query)})`
+    case 'snapshot': {
+      // selector 만 주는 경우도 있어 query 자리는 undefined 로 채운다
+      const args =
+        op.selector === undefined
+          ? op.query === undefined
+            ? ''
+            : encodeQuery(op.query)
+          : `${op.query === undefined ? 'undefined' : encodeQuery(op.query)}, ${encodeQuery(op.selector)}`
+      return `__samba.snapshot(${args})`
+    }
     case 'textOf':
       return `__samba.textOf(${op.id})`
     case 'click':
@@ -253,9 +262,15 @@ function opToCode(op: AgentOp): string {
 
 export const pageBridge = {
   // query 를 주면 라벨·name·href·placeholder 가 일치하는 요소만 나열한다(id 는 그대로)
-  snapshot: async (tab: Tab, query?: string): Promise<PageSnapshot> => {
-    const op: AgentOp = query === undefined ? { op: 'snapshot' } : { op: 'snapshot', query }
+  snapshot: async (tab: Tab, query?: string, selector?: string): Promise<PageSnapshot> => {
+    const op: AgentOp = {
+      op: 'snapshot',
+      ...(query === undefined ? {} : { query }),
+      ...(selector === undefined ? {} : { selector })
+    }
     const { main, frames } = await callEveryFrame(tab, op, snapshotSchema)
+    // 선택자가 잘못됐으면 프레임 합치기 전에 그대로 알린다
+    if (main.selectorError !== undefined) return main
     // 아무것도 없는 프레임(광고·추적용 빈 iframe)은 목록을 흐리기만 한다
     const useful: FrameSnapshot[] = frames
       .filter((f) => f.value.elements.length > 0 || f.value.text.length > 0)

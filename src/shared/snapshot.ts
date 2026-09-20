@@ -21,6 +21,8 @@ export interface PageSnapshot {
   // 페이지에서 보이는 상호작용 요소 전체 개수(나열은 MAX_ELEMENTS 개로 자른다).
   // 잘렸다는 사실을 모델이 알아야 find_elements 로 되찾을 수 있다
   total?: number
+  // selector 인자가 CSS 문법에 맞지 않을 때의 안내. 정상 스냅샷에는 없다
+  selectorError?: string
 }
 
 /**

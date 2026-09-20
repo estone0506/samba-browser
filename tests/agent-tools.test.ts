@@ -133,14 +133,14 @@ describe('find_elements — 나열 상한 뒤의 요소 되찾기', () => {
     pageBridge.snapshot.mockResolvedValue(found)
     const { tools } = build(true)
     await get(tools, 'get_page').handler({ query: '255' })
-    expect(pageBridge.snapshot).toHaveBeenCalledWith(fakeTab, '255')
+    expect(pageBridge.snapshot).toHaveBeenCalledWith(fakeTab, '255', undefined)
   })
 
   it('query 없이 부르면 undefined 로 넘긴다(전체 나열)', async () => {
     pageBridge.snapshot.mockResolvedValue(found)
     const { tools } = build(true)
     await get(tools, 'get_page').handler({})
-    expect(pageBridge.snapshot).toHaveBeenCalledWith(fakeTab, undefined)
+    expect(pageBridge.snapshot).toHaveBeenCalledWith(fakeTab, undefined, undefined)
   })
 })
 
