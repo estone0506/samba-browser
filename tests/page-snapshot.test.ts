@@ -452,3 +452,11 @@ describe('프레임 채널 동작 실행(runAgentOp)', () => {
     expect(runAgentOp('__samba.click(1)')).toBeNull()
   })
 })
+
+describe('href 없는 앵커', () => {
+  it('JS 버튼으로 쓰는 <a> 도 목록에 담는다', () => {
+    document.body.innerHTML = '<a class="add">배송지 추가하기</a>'
+    const s = buildSnapshot()
+    expect(s.elements.map((e) => e.text)).toContain('배송지 추가하기')
+  })
+})

@@ -19,8 +19,9 @@ let registry: HTMLElement[] = []
 
 // 기본 수집 셀렉터. 역할(role)·시맨틱으로 "누를 수 있다"고 선언한 요소들.
 // 옵션·탭·메뉴 항목까지 넓힌 이유: 쇼핑몰 상품 페이지의 컬러/사이즈 선택이 대부분 이 부류다
+// href 없는 <a> 도 담는다 — 무신사 배송지 팝업의 '배송지 추가하기'처럼 JS 버튼으로 쓰는 앵커가 흔하다
 const SELECTOR =
-  'a[href], button, input, select, textarea, [role="button"], [role="link"], [onclick], ' +
+  'a, button, input, select, textarea, [role="button"], [role="link"], [onclick], ' +
   '[contenteditable="true"], [role="option"], [role="menuitem"], [role="menuitemcheckbox"], ' +
   '[role="menuitemradio"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"], ' +
   '[role="combobox"], [role="listbox"] li, [tabindex]:not([tabindex="-1"]), summary, label[for]'
