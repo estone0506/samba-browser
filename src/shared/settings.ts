@@ -83,7 +83,7 @@ export const DEFAULT_SETTINGS = {
   dangerWords: DEFAULT_DANGER_WORDS,
   // 한 작업에서 허용하는 도구 호출 수. 주문 흐름(로그인→검색→옵션→장바구니→주문서)은
   // 40회로는 중간에 끊겨서 80회로 잡는다(상한은 MAX_TOOL_CALLS)
-  maxToolCalls: 80,
+  maxToolCalls: 120,
   permissionMode: 'guard' as const,
   finalConfirm: false,
   // Aside 방식: 자동 잠금 기본 1주(10080분), 이 PC 에서 기억 기본 켬
