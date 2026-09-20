@@ -1,11 +1,12 @@
 import type { WebContents, WebFrameMain } from 'electron'
 import { z } from 'zod'
-import type { KeypadSignals, PageElement, PageSnapshot } from '../../shared/snapshot'
+import type { KeypadSignals, PageElement, PageOverlay, PageSnapshot } from '../../shared/snapshot'
 import { findCodeField as pickCodeField } from '../phone/auth-flow'
 import type { AgentOp } from '../../shared/agent-op'
 import { callFrameOp } from './frame-channel'
 import {
   decodeFrameId,
+  encodeFrameId,
   mergeFrameSnapshots,
   MAX_AGENT_FRAMES,
   type FrameSnapshot
@@ -42,6 +43,20 @@ const keypadSignalsSchema = z.object({
   digitButtons: z.number().int(),
   pinField: z.boolean()
 })
+
+// 화면을 덮는 레이어 목록. label 은 페이지에서 온 문자열이라 길이를 잘라 쓴다
+const overlaySchema = z.object({
+  id: z.number().int(),
+  label: z.string(),
+  closeIds: z.array(z.number().int()),
+  sensitive: z.boolean()
+})
+const overlayListSchema = z.array(overlaySchema)
+
+/** 한 번에 모델에게 알릴 레이어 개수(프레임까지 합친 뒤) */
+export const MAX_OVERLAYS = 5
+/** 레이어 이름 길이 상한(페이지가 준 문자열이다) */
+const OVERLAY_LABEL_MAX = 60
 
 // 행동 도구(click/type/select/scroll/textOf)는 결과가 항상 문자열이어야 한다
 const resultSchema = z.string()
@@ -231,6 +246,8 @@ function opToCode(op: AgentOp): string {
       return `__samba.isSecretField(${op.id})`
     case 'keypadSignals':
       return '__samba.keypadSignals()'
+    case 'overlays':
+      return '__samba.overlays()'
   }
 }
 
@@ -312,6 +329,26 @@ export const pageBridge = {
   keypadSignalsAll: async (tab: Tab): Promise<KeypadSignals[]> => {
     const { main, frames } = await callEveryFrame(tab, { op: 'keypadSignals' }, keypadSignalsSchema)
     return [main, ...frames.map((f) => f.value)]
+  },
+  /**
+   * 지금 화면을 덮고 있는 레이어들(메인 프레임 + iframe).
+   * 팝업 안 공지·쿠폰 레이어도 잡히도록 프레임까지 훑고, 프레임 요소 id 에는
+   * 프레임 번호를 얹는다 — 그대로 click 에 넘길 수 있어야 한다
+   */
+  overlays: async (tab: Tab): Promise<PageOverlay[]> => {
+    const { main, frames } = await callEveryFrame(tab, { op: 'overlays' }, overlayListSchema)
+    const out: PageOverlay[] = main.map((o) => ({ ...o, label: o.label.slice(0, OVERLAY_LABEL_MAX) }))
+    for (const frame of frames) {
+      for (const o of frame.value) {
+        out.push({
+          id: encodeFrameId(frame.index, o.id),
+          label: o.label.slice(0, OVERLAY_LABEL_MAX),
+          closeIds: o.closeIds.map((n) => encodeFrameId(frame.index, n)),
+          sensitive: o.sensitive
+        })
+      }
+    }
+    return out.slice(0, MAX_OVERLAYS)
   },
   // 캡차·2FA 징후 감지(사용자 넘김 판단용)
   captchaHint: (tab: Tab): Promise<CaptchaHintResult> =>

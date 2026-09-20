@@ -19,6 +19,7 @@ export type AgentOp =
   | { op: 'submitForm'; id: number }
   | { op: 'isSecretField'; id: number }
   | { op: 'keypadSignals' }
+  | { op: 'overlays' }
 
 /** 메인 → 프레임 요청(동작 + 짝 맞추기용 번호) */
 export type AgentOpRequest = AgentOp & { reqId: number }
