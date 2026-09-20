@@ -65,6 +65,14 @@ const resultSchema = z.string()
 // isSecretField 결과는 boolean
 const boolSchema = z.boolean()
 
+// rectOf 결과 — 요소 가운데의 뷰포트 좌표. 못 구하면 null
+const pointSchema = z.object({ x: z.number(), y: z.number() }).nullable()
+
+export interface ClickPoint {
+  x: number
+  y: number
+}
+
 // findLoginFields 결과 — 못 찾은 필드는 없음(undefined).
 // stage 는 2단계 로그인(아이디 화면 → 비밀번호 화면) 흐름을 호출부가 구분하기 위한 값
 const loginFieldsSchema = z.object({
@@ -269,6 +277,8 @@ function opToCode(op: AgentOp): string {
       return `__samba.submitForm(${op.id})`
     case 'isSecretField':
       return `__samba.isSecretField(${op.id})`
+    case 'rectOf':
+      return `__samba.rectOf(${op.id})`
     case 'keypadSignals':
       return '__samba.keypadSignals()'
     case 'overlays':
@@ -399,6 +409,36 @@ export const pageBridge = {
   // 최신 스냅샷 기준 요소가 비밀 입력칸(type=password)인지 확인(fill_secret 대상 검증용)
   isSecretField: (tab: Tab, id: number): Promise<boolean> =>
     callById(tab, id, (n) => ({ op: 'isSecretField', id: n }), boolSchema),
+  /**
+   * 요소 가운데의 뷰포트 좌표(스크롤 반영). 실제 마우스 클릭(clickAt)을 보낼 자리다.
+   *
+   * iframe 안 요소는 지원하지 않는다 — 프레임의 화면 위치를 알려면 frame.frameElement 가
+   * 필요한데 메인 프로세스에서는 접근할 수 없어 좌표를 합산할 수 없다. 프레임 요소는
+   * preload 안의 폴백(합성 클릭·Enter·좌표 클릭)까지만 쓴다
+   */
+  rectOf: async (tab: Tab, id: number): Promise<ClickPoint | null> => {
+    const { frameIndex, id: localId } = decodeFrameId(id)
+    if (frameIndex !== 0) return null
+    return call(tab.view.webContents, opToCode({ op: 'rectOf', id: localId }), pointSchema)
+  },
+  /**
+   * 뷰포트 좌표에 진짜 마우스 클릭을 보낸다(webContents.sendInputEvent).
+   * 합성 이벤트를 무시하는 사이트(좌표로 대상을 다시 찾는 목록·투명 덮개)의 마지막 수단이다.
+   * 보낸 뒤 무슨 일이 일어났는지는 알 수 없어 "보냈다/못 보냈다"만 돌려준다
+   */
+  clickAt: (tab: Tab, x: number, y: number): boolean => {
+    const wc = tab.view.webContents
+    if (wc.isDestroyed()) return false
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) return false
+    const point = { x: Math.round(x), y: Math.round(y), button: 'left' as const, clickCount: 1 }
+    try {
+      wc.sendInputEvent({ type: 'mouseDown', ...point })
+      wc.sendInputEvent({ type: 'mouseUp', ...point })
+      return true
+    } catch {
+      return false
+    }
+  },
   waitForLoad: (tab: Tab, timeoutMs = 10000): Promise<void> =>
     new Promise<void>((resolve) => {
       const wc = tab.view.webContents

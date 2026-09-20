@@ -49,6 +49,9 @@ import type { AgentToolCall, SiteActionTool } from '../../shared/site-memory'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
+// preload 의 클릭 폴백이 전부 실패했을 때 결과에 들어가는 표식
+// (page-core 의 CLICK_NO_CHANGE_NOTE 앞부분. preload 모듈은 메인에서 import 하지 않는다)
+const CLICK_NO_CHANGE_MARK = 'clicked but nothing changed'
 // finalConfirm 이 거부됐을 때 모델이 계속 작업하도록 돌려주는 문자열
 const CONTINUE_INSTRUCTION = 'user asked to continue; do not finish yet'
 // 금고가 잠겨 있을 때 돌려주는 문자열(모델이 사용자에게 해제를 요청하도록 유도)
@@ -634,7 +637,14 @@ ${handoffToolResult(result)}`
       }
       const r = await pageBridge.click(tab, id)
       await pageBridge.waitForLoad(tab)
-      return r
+      // preload 의 폴백(합성 클릭 → Enter → 좌표 클릭)이 전부 헛돌았으면 마지막으로
+      // 진짜 마우스 클릭을 보낸다. 합성 이벤트를 아예 믿지 않는 사이트(롯데온 주소 검색
+      // 결과의 '사용')가 있어서다. 프레임 안 요소는 좌표를 알 수 없어 여기서 끝낸다
+      if (!r.includes(CLICK_NO_CHANGE_MARK)) return r
+      const point = await pageBridge.rectOf(tab, id).catch(() => null)
+      if (!point || !pageBridge.clickAt(tab, point.x, point.y)) return r
+      await pageBridge.waitForLoad(tab)
+      return `${r}; via native click (retried with a real mouse click; call get_page to check)`
     })
 
   const doType = async (id: number, value: string, submit: boolean): Promise<string> =>
