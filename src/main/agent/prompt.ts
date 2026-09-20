@@ -8,6 +8,18 @@ export function effortLine(effort: AgentEffort): string {
   return 'Reasoning effort: medium — balance speed and care.'
 }
 
+/**
+ * 시스템 프롬프트 뒤에 사이트 기억 블록을 붙인다. 블록이 비어 있으면 그대로 돌려준다.
+ * 기억은 **지난 실행의 관찰**일 뿐 규칙이 아니다 — 화면이 다르면 평소대로 탐색하라고 적는다
+ */
+export function appendSiteMemory(prompt: string, block: string): string {
+  const trimmed = block.trim()
+  if (!trimmed) return prompt
+  return `${prompt}
+
+${trimmed}`
+}
+
 // AI 시스템 프롬프트. 안전 규칙 포함
 export function buildSystemPrompt(
   language: 'ko' | 'en',

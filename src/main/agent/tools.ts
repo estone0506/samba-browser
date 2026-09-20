@@ -44,6 +44,7 @@ import {
   popupTargetsOf
 } from './target'
 import type { AgentTarget } from '../browser/targets'
+import type { AgentToolCall, SiteActionTool } from '../../shared/site-memory'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -216,6 +217,11 @@ export interface ToolContext {
   onStep: (label: string, ok: boolean) => void
   // 진행 상황 보고(progress 도구). 주입되지 않으면 도구는 받기만 하고 아무 데도 알리지 않는다
   onProgress?: (p: { done: number; total: number; label?: string }) => void
+  // 행동 도구(click·type·select·scroll·switch_tab·dismiss_overlay·run_js) 호출 1건을 그대로 넘긴다.
+  // 사이트 기억이 성공 경로를 뽑는 유일한 입구다 — 관찰 도구는 여기로 오지 않는다
+  onCall?: (call: AgentToolCall) => void
+  // 사이트 기억. 주입되지 않으면 remember_site 도구를 등록하지 않는다
+  siteMemory?: { remember: (host: string, note: string) => string }
   // 키마스터. 주입되지 않은 실행(구버전 호출부·테스트)에서는 금고 도구가 잠금으로 동작한다
   vault?: VaultService
   // 감사 로그에 남길 작업 식별자(실행 1건 = jobId 1개)
@@ -316,12 +322,19 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
   // 상한 도달 알림은 1회만 보낸다
   let limitNotified = false
 
-  // label 은 실행 뒤에야 알 수 있는 경우(예: login 의 호스트·계정)를 위해 함수도 받는다
+  // label 은 실행 뒤에야 알 수 있는 경우(예: login 의 호스트·계정)를 위해 함수도 받는다.
+  // action 을 주면 그 호출을 사이트 기억(onCall)으로도 흘려 보낸다 — 행동 도구만 준다
   const guard = async <T>(
     label: string | (() => string),
-    fn: () => Promise<T>
+    fn: () => Promise<T>,
+    action?: SiteActionTool
   ): Promise<ReturnType<typeof text>> => {
     const resolveLabel = (): string => (typeof label === 'string' ? label : label())
+    // 호출 1건을 사이트 기억으로 넘긴다. 기억이 붙어 있지 않으면 아무 일도 하지 않는다
+    const note = (ok: boolean, result: string): void => {
+      if (!action || !ctx.onCall) return
+      ctx.onCall({ tool: action, label: resolveLabel(), ok, result, url: currentUrl() })
+    }
     const over = ctx.tick()
     if (over) {
       if (!limitNotified) {
@@ -333,10 +346,9 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     try {
       const r = await fn()
       const raw = typeof r === 'string' ? r : JSON.stringify(r)
-      ctx.onStep(
-        resolveLabel(),
-        !/not found|not set up|host unknown|refused|denied|error|locked|fail/i.test(raw)
-      )
+      const ok = !/not found|not set up|host unknown|refused|denied|error|locked|fail/i.test(raw)
+      ctx.onStep(resolveLabel(), ok)
+      note(ok, raw)
       // 실행 중 자동으로 닫은 페이지 대화상자가 있으면 그 문구를 결과 앞에 알려 준다
       const dialog = ctx.tabs.takeDialogMessage?.()
       return text(
@@ -346,8 +358,10 @@ ${raw}`
           : raw
       )
     } catch (e) {
+      const message = `error: ${e instanceof Error ? e.message : String(e)}`
       ctx.onStep(resolveLabel(), false)
-      return text(`error: ${e instanceof Error ? e.message : String(e)}`)
+      note(false, message)
+      return text(message)
     }
   }
 
@@ -760,7 +774,7 @@ ${handoffToolResult(result)}`
     'click',
     'Click element [n] from get_page.',
     { id: z.number().int(), label: z.string().describe('element text, for logging') },
-    ({ id, label }) => guard(`클릭: ${label} (#${id})`, () => doClick(id, label))
+    ({ id, label }) => guard(`클릭: ${label} (#${id})`, () => doClick(id, label), 'click')
   )
 
   const typeTool = tool(
@@ -768,14 +782,14 @@ ${handoffToolResult(result)}`
     'Type text into input [n]. submit=true presses Enter.',
     { id: z.number().int(), text: z.string(), submit: z.boolean().default(false) },
     ({ id, text: t, submit }) =>
-      guard(`입력: "${t.slice(0, 30)}" (#${id})`, () => doType(id, t, submit))
+      guard(`입력: "${t.slice(0, 30)}" (#${id})`, () => doType(id, t, submit), 'type')
   )
 
   const select = tool(
     'select',
     'Choose an option in <select> [n] by value or visible text.',
     { id: z.number().int(), value: z.string() },
-    ({ id, value }) => guard(`선택: ${value} (#${id})`, () => doSelect(id, value))
+    ({ id, value }) => guard(`선택: ${value} (#${id})`, () => doSelect(id, value), 'select')
   )
 
   const scroll = tool(
@@ -786,8 +800,10 @@ ${handoffToolResult(result)}`
       'item, then call find_elements again.',
     { direction: z.enum(['up', 'down']), id: z.number().int().positive().optional() },
     ({ direction, id }) =>
-      guard(`스크롤 ${direction}${id === undefined ? '' : ` (#${id} 목록)`}`, () =>
-        doScroll(direction, id)
+      guard(
+        `스크롤 ${direction}${id === undefined ? '' : ` (#${id} 목록)`}`,
+        () => doScroll(direction, id),
+        'scroll'
       )
   )
 
@@ -831,7 +847,7 @@ overlays left: ${after.length}${kept}`
       'Use it when a click answers "clicked but nothing changed" or get_page starts with an OVERLAY line. ' +
       'Payment, password, sign-in and verification dialogs are never touched - answer those yourself or ask the user.',
     {},
-    () => guard('레이어 닫기', doDismissOverlay)
+    () => guard('레이어 닫기', doDismissOverlay, 'dismiss_overlay')
   )
 
   // --- run_js -----------------------------------------------------------
@@ -965,7 +981,7 @@ overlays left: ${after.length}${kept}`
       'Use log() and return a value; both come back to you. ' +
       'fill_secret, login and the phone tools are NOT available here - call those tools directly.',
     { code: z.string().describe(`JavaScript, ${RUN_JS_MAX_CODE} characters or fewer`) },
-    ({ code }) => guard(runJsLabel(code), () => runSandbox(code, makeRunJsBridge()))
+    ({ code }) => guard(runJsLabel(code), () => runSandbox(code, makeRunJsBridge()), 'run_js')
   )
 
   const wait = tool(
@@ -1009,12 +1025,16 @@ overlays left: ${after.length}${kept}`
       'When you are done inside a popup, call switch_tab again with the opener tab id.',
     { id: z.string() },
     ({ id }) =>
-      guard('탭 전환', async () => {
-        const target = targetList().find((t) => t.id === id)
-        if (!target) return `not found: no tab or popup with id ${id}`
-        focusTargetOf(ctx.tabs, id)
-        return `ok: now working in ${target.kind} ${id}. targets: ${JSON.stringify(targetList())}`
-      })
+      guard(
+        '탭 전환',
+        async () => {
+          const target = targetList().find((t) => t.id === id)
+          if (!target) return `not found: no tab or popup with id ${id}`
+          focusTargetOf(ctx.tabs, id)
+          return `ok: now working in ${target.kind} ${id}. targets: ${JSON.stringify(targetList())}`
+        },
+        'switch_tab'
+      )
   )
 
   const closeTab = tool(
@@ -1280,6 +1300,23 @@ overlays left: ${after.length}${kept}`
     }
   )
 
+  // 사이트 기억에 한 줄 남긴다. 저장 전에 비밀값·개인정보를 지우는 일은 서비스가 한다.
+  // 지우기(forget)는 도구로 열지 않는다 — 설정 화면에서만 지운다
+  const rememberSite = tool(
+    'remember_site',
+    'Remember one short lesson about this site for next time (e.g. "the 구매하기 button only ' +
+      'opens with focus+Enter", "the address popup is a separate window"). Call it at most a ' +
+      'couple of times per task, and never store personal data, addresses or secrets.',
+    {
+      host: z.string().describe('site host, e.g. musinsa.com'),
+      note: z.string().describe('one short sentence, no personal data')
+    },
+    ({ host, note }) =>
+      guard(`사이트 기억: ${host}`, async () =>
+        ctx.siteMemory ? ctx.siteMemory.remember(host, note) : 'refused: site memory is off'
+      )
+  )
+
   // done 은 guard 를 거치지 않으므로 도구 호출 상한(tick)에 계산되지 않는다.
   // 상한에 도달했을 때 "done 으로 마무리하라"고 안내하기 때문에, 마무리 호출까지 막으면 안 된다
   const done = tool(
@@ -1323,6 +1360,7 @@ overlays left: ${after.length}${kept}`
       fillSecret,
       login,
       progress,
+      ...(ctx.siteMemory ? [rememberSite] : []),
       done,
       ...(ctx.phone ? createPhoneTools(ctx.phone) : []),
       ...(ctx.pay ? [createPayTool(ctx.pay)] : [])
@@ -1351,6 +1389,8 @@ export const SAMBA_TOOL_NAMES = [
   'fill_secret',
   'login',
   'progress',
+  // 사이트 기억이 붙지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
+  'remember_site',
   'done',
   // 폰 도구가 주입되지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
   ...PHONE_TOOL_NAMES,
