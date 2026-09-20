@@ -70,7 +70,8 @@ if (location.protocol !== 'chrome-extension:') {
   // → 적대 페이지가 __samba 를 가로채거나 프로토타입 오염으로 결과를 왜곡할 수 없다.
   const api = {
     // query 를 주면 일치하는 요소만 나열한다(find_elements). id 는 언제나 문서 순서다
-    snapshot: (query?: string) => buildSnapshot({ query }),
+    // selector 를 주면 그 CSS 선택자 안쪽 요소만 나열한다(registry·id 는 그대로)
+    snapshot: (query?: string, selector?: string) => buildSnapshot({ query, selector }),
     // 요소의 실제 텍스트 조회(위험 행동 판정용)
     textOf: (id: number) => textOf(id),
     click: (id: number) => performClick(id),

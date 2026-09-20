@@ -9,7 +9,7 @@
 // 값(상수·함수)을 넣으면 Rollup 이 공용 청크를 만들어 preload 번들이 깨진다
 // (tests/preload-bundle.test.ts 참고)
 export type AgentOp =
-  | { op: 'snapshot'; query?: string }
+  | { op: 'snapshot'; query?: string; selector?: string }
   | { op: 'textOf'; id: number }
   | { op: 'click'; id: number }
   | { op: 'type'; id: number; text: string; submit: boolean }

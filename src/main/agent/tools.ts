@@ -4,7 +4,9 @@ import type { TabManager, Tab } from '../browser/tab-manager'
 import { pageBridge } from '../browser/page-bridge'
 import type { LoginFieldsResult } from '../browser/page-bridge'
 import { serializeSnapshot } from '../../shared/snapshot'
-import type { PageOverlay } from '../../shared/snapshot'
+import type { PageOverlay, PageSnapshot } from '../../shared/snapshot'
+import { diffLines } from '../../shared/snapshot-diff'
+import { runJsLabel, runSandbox, RUN_JS_MAX_CODE, type RunJsBridge } from './run-js'
 import { isDangerous } from '../../shared/danger'
 import type { PermissionMode, VaultAccessPolicy } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
@@ -100,6 +102,36 @@ const KEYPAD_HANDOFF_MATCHED = '결제 비밀번호 키패드'
 export const PROGRESS_INVALID = 'refused: progress needs 0 <= done <= total and total >= 1'
 // 진행 라벨 표시 상한(상품명이 길어도 진행 배지가 무너지지 않게)
 const PROGRESS_LABEL_MAX = 80
+// diff 를 부탁했는데 직전 읽기와 똑같을 때 돌려주는 문자열
+const NO_CHANGE = 'no change since the last get_page'
+// 직전 스냅샷 문자열을 기억해 둘 탭 개수(diff 용)
+const SNAPSHOT_CACHE_TABS = 5
+// run_js 안에서 비밀 입력칸에 쓰려 할 때 돌려주는 문자열. 비밀 경로는 fill_secret 뿐이다
+const RUN_JS_SECRET_REFUSAL =
+  'refused: that input is a secret field - use the fill_secret tool, not run_js'
+// run_js 가 노출하지 않는 것을 모델에게 알리는 문자열
+export const RUN_JS_NO_SECRET_TOOLS =
+  'refused: fill_secret, login and the phone tools are not available inside run_js'
+
+/**
+ * 탭별 직전 스냅샷 문자열 보관소(diff 용). 오래된 탭부터 버린다 —
+ * 탭을 많이 열어 둔 사용자에게서 메모리가 계속 늘면 안 된다
+ */
+export function rememberSnapshot(
+  cache: Map<string, string>,
+  tabId: string,
+  tree: string
+): string | undefined {
+  const prev = cache.get(tabId)
+  cache.delete(tabId)
+  cache.set(tabId, tree)
+  while (cache.size > SNAPSHOT_CACHE_TABS) {
+    const oldest = cache.keys().next().value
+    if (oldest === undefined) break
+    cache.delete(oldest)
+  }
+  return prev
+}
 
 /** progress 도구 입력 검증. 문제가 없으면 null, 있으면 모델이 읽을 거부 문구 */
 export function validateProgress(done: number, total: number): string | null {
@@ -525,23 +557,105 @@ ${handoffToolResult(result)}`
     return `${head} - close ids: [${first.closeIds.join(', ')}]`
   }
 
+  // --- 동작 본체 --------------------------------------------------------
+  //
+  // 도구(get_page·click·…)와 run_js 가 같은 함수를 쓴다. 가드(read_only·위험 단어 확인·
+  // 결제 키패드·SECRET)는 전부 여기 들어 있어, run_js 로 들어와도 빠져나갈 길이 없다.
+
+  // 탭별 직전 스냅샷 문자열(get_page 의 diff 인자용). 최대 SNAPSHOT_CACHE_TABS 개
+  const snapshotCache = new Map<string, string>()
+
+  /** 스냅샷을 읽어 직렬화한다. 실패·잘못된 selector 는 문자열로 돌려준다 */
+  const readSnapshot = async (options: {
+    query?: string
+    selector?: string
+  }): Promise<{ tab: Tab; snapshot: PageSnapshot; tree: string } | string> => {
+    const tab = activeOr(ctx)
+    if (!tab) return 'no active tab'
+    await pageBridge.waitForLoad(tab)
+    const snapshot = await pageBridge.snapshot(tab, options.query, options.selector)
+    if (snapshot.selectorError !== undefined) return `error: ${snapshot.selectorError}`
+    return { tab, snapshot, tree: serializeSnapshot(snapshot) }
+  }
+
+  const doClick = async (id: number, label: string): Promise<string> =>
+    withPopupNotice(async () => {
+      if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+      const tab = activeOr(ctx)
+      if (!tab) return 'no active tab'
+      // 결제 비밀번호 키패드에서는 숫자를 누르지 않는다
+      const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
+      if (keypad) return keypad
+      // 위험 판정 근거는 페이지의 실제 텍스트. AI 가 준 label 은 기록용일 뿐 신뢰하지 않는다
+      const pageText = await pageBridge.textOf(tab, id)
+      // full 모드는 위험 단어 확인을 생략한다(SECRET 거부·URL 허용목록·호출 상한은 그대로 유지)
+      if (ctx.mode !== 'full' && isDangerous(`${pageText} ${label}`, ctx.dangerWords)) {
+        const ok = await ctx.confirm(`클릭: ${pageText || label}`, 'danger')
+        if (!ok) return 'denied by user'
+      }
+      const r = await pageBridge.click(tab, id)
+      await pageBridge.waitForLoad(tab)
+      return r
+    })
+
+  const doType = async (id: number, value: string, submit: boolean): Promise<string> =>
+    withPopupNotice(async () => {
+      if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+      const tab = activeOr(ctx)
+      if (!tab) return 'no active tab'
+      // 결제 비밀번호 키패드에서는 입력하지 않는다(숫자칸·키패드 모두)
+      const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
+      if (keypad) return keypad
+      // 입력값 자체와 대상 입력칸의 실제 텍스트를 함께 판정
+      const pageText = await pageBridge.textOf(tab, id)
+      if (ctx.mode !== 'full' && isDangerous(`${pageText} ${value}`, ctx.dangerWords)) {
+        const ok = await ctx.confirm(`입력: ${value}${pageText ? ` → ${pageText}` : ''}`, 'danger')
+        if (!ok) return 'denied by user'
+      }
+      const r = await pageBridge.type(tab, id, value, submit)
+      if (submit) await pageBridge.waitForLoad(tab)
+      return r
+    })
+
+  const doSelect = async (id: number, value: string): Promise<string> =>
+    withPopupNotice(async () => {
+      if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+      const tab = activeOr(ctx)
+      if (!tab) return 'no active tab'
+      const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
+      if (keypad) return keypad
+      return pageBridge.select(tab, id, value)
+    })
+
+  const doScroll = async (direction: 'up' | 'down', id?: number): Promise<string> => {
+    const tab = activeOr(ctx)
+    if (!tab) return 'no active tab'
+    const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
+    if (keypad) return keypad
+    return pageBridge.scroll(tab, direction, id)
+  }
+
   const getPage = tool(
     'get_page',
     'Read the current page: URL, title, numbered interactive elements, visible text. ' +
-      'At most 150 elements are listed; pass query to list only the ones matching that text.',
-    { query: z.string().optional() },
-    ({ query }) =>
+      'At most 150 elements are listed; pass query to list only the ones matching that text. ' +
+      'Pass selector (a CSS selector) to list only what is inside it - element ids stay the same. ' +
+      'Pass diff=true to get only the lines that changed since your last get_page on this tab.',
+    { query: z.string().optional(), selector: z.string().optional(), diff: z.boolean().optional() },
+    ({ query, selector, diff }) =>
       guard(query ? `페이지 읽기: ${query}` : '페이지 읽기', async () => {
-        const tab = activeOr(ctx)
-        if (!tab) return 'no active tab'
-        await pageBridge.waitForLoad(tab)
-        const snapshot = serializeSnapshot(await pageBridge.snapshot(tab, query))
+        const read = await readSnapshot({ query, selector })
+        if (typeof read === 'string') return read
+        const { tab, tree } = read
+        const prev = rememberSnapshot(snapshotCache, tab.id, tree)
         // 사람의 추가 확인이 필요하면 **알리기만** 한다 — 읽기 도구가 최장 10분 막히면
         // 모델이 다음 수를 두지 못한다. 실제 넘김·대기는 login 같은 행동 도구가 건다
         const notice = await captchaNotice(tab)
         // 화면을 덮는 레이어는 맨 앞에 알린다 — 뒤에 있는 버튼을 누르려다 실패하지 않게
         const overlay = await overlayNotice(tab)
-        return [overlay, notice, snapshot].filter((line) => line !== null).join('\n')
+        // diff 는 직전 읽기가 있을 때만 뜻이 있다 — 처음이면 트리 전체를 준다
+        const body = diff === true && prev !== undefined ? diffLines(prev, tree) || NO_CHANGE : tree
+        return [overlay, notice, body].filter((line) => line !== null).join('\n')
       })
   )
 
@@ -646,27 +760,7 @@ ${handoffToolResult(result)}`
     'click',
     'Click element [n] from get_page.',
     { id: z.number().int(), label: z.string().describe('element text, for logging') },
-    ({ id, label }) =>
-      guard(`클릭: ${label} (#${id})`, () =>
-        withPopupNotice(async () => {
-          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
-          const tab = activeOr(ctx)
-          if (!tab) return 'no active tab'
-          // 결제 비밀번호 키패드에서는 숫자를 누르지 않는다
-          const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
-          if (keypad) return keypad
-          // 위험 판정 근거는 페이지의 실제 텍스트. AI 가 준 label 은 기록용일 뿐 신뢰하지 않는다
-          const pageText = await pageBridge.textOf(tab, id)
-          // full 모드는 위험 단어 확인을 생략한다(SECRET 거부·URL 허용목록·호출 상한은 그대로 유지)
-          if (ctx.mode !== 'full' && isDangerous(`${pageText} ${label}`, ctx.dangerWords)) {
-            const ok = await ctx.confirm(`클릭: ${pageText || label}`, 'danger')
-            if (!ok) return 'denied by user'
-          }
-          const r = await pageBridge.click(tab, id)
-          await pageBridge.waitForLoad(tab)
-          return r
-        })
-      )
+    ({ id, label }) => guard(`클릭: ${label} (#${id})`, () => doClick(id, label))
   )
 
   const typeTool = tool(
@@ -674,42 +768,14 @@ ${handoffToolResult(result)}`
     'Type text into input [n]. submit=true presses Enter.',
     { id: z.number().int(), text: z.string(), submit: z.boolean().default(false) },
     ({ id, text: t, submit }) =>
-      guard(`입력: "${t.slice(0, 30)}" (#${id})`, () =>
-        withPopupNotice(async () => {
-          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
-          const tab = activeOr(ctx)
-          if (!tab) return 'no active tab'
-          // 결제 비밀번호 키패드에서는 입력하지 않는다(숫자칸·키패드 모두)
-          const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
-          if (keypad) return keypad
-          // 입력값 자체와 대상 입력칸의 실제 텍스트를 함께 판정
-          const pageText = await pageBridge.textOf(tab, id)
-          if (ctx.mode !== 'full' && isDangerous(`${pageText} ${t}`, ctx.dangerWords)) {
-            const ok = await ctx.confirm(`입력: ${t}${pageText ? ` → ${pageText}` : ''}`, 'danger')
-            if (!ok) return 'denied by user'
-          }
-          const r = await pageBridge.type(tab, id, t, submit)
-          if (submit) await pageBridge.waitForLoad(tab)
-          return r
-        })
-      )
+      guard(`입력: "${t.slice(0, 30)}" (#${id})`, () => doType(id, t, submit))
   )
 
   const select = tool(
     'select',
     'Choose an option in <select> [n] by value or visible text.',
     { id: z.number().int(), value: z.string() },
-    ({ id, value }) =>
-      guard(`선택: ${value} (#${id})`, () =>
-        withPopupNotice(async () => {
-          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
-          const tab = activeOr(ctx)
-          if (!tab) return 'no active tab'
-          const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
-          if (keypad) return keypad
-          return pageBridge.select(tab, id, value)
-        })
-      )
+    ({ id, value }) => guard(`선택: ${value} (#${id})`, () => doSelect(id, value))
   )
 
   const scroll = tool(
@@ -720,17 +786,44 @@ ${handoffToolResult(result)}`
       'item, then call find_elements again.',
     { direction: z.enum(['up', 'down']), id: z.number().int().positive().optional() },
     ({ direction, id }) =>
-      guard(`스크롤 ${direction}${id === undefined ? '' : ` (#${id} 목록)`}`, async () => {
-        const tab = activeOr(ctx)
-        if (!tab) return 'no active tab'
-        const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
-        if (keypad) return keypad
-        return pageBridge.scroll(tab, direction, id)
-      })
+      guard(`스크롤 ${direction}${id === undefined ? '' : ` (#${id} 목록)`}`, () =>
+        doScroll(direction, id)
+      )
   )
 
   // 한 번의 호출에서 닫아 볼 레이어 개수
   const MAX_DISMISS = 3
+
+  const doDismissOverlay = async (): Promise<string> =>
+    withPopupNotice(async () => {
+      if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+      const tab = activeOr(ctx)
+      if (!tab) return 'no active tab'
+      // 결제 비밀번호 키패드 화면에서는 아무것도 누르지 않는다
+      const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
+      if (keypad) return keypad
+      const before = await overlaysOf(tab)
+      if (before.length === 0) return 'no overlay is covering the page'
+      const sensitive = before.filter((o) => o.sensitive)
+      const targets = before
+        .filter((o) => !o.sensitive && o.closeIds.length > 0)
+        .slice(0, MAX_DISMISS)
+      const kept = sensitive.length === 0 ? '' : ` left alone (sensitive): "${sensitive[0].label}"`
+      if (targets.length === 0) {
+        return sensitive.length > 0
+          ? `refused: only a payment/sign-in dialog is open ("${sensitive[0].label}") - answer it yourself or ask the user`
+          : `overlay "${before[0].label}" has no close button; scroll or press Escape on screen${kept}`
+      }
+      const closed: string[] = []
+      for (const overlay of targets) {
+        const r = await pageBridge.click(tab, overlay.closeIds[0])
+        closed.push(`"${overlay.label}" -> ${r}`)
+      }
+      await pageBridge.waitForLoad(tab)
+      const after = await overlaysOf(tab)
+      return `dismissed ${closed.length}: ${closed.join('; ')}
+overlays left: ${after.length}${kept}`
+    })
 
   const dismissOverlay = tool(
     'dismiss_overlay',
@@ -738,39 +831,141 @@ ${handoffToolResult(result)}`
       'Use it when a click answers "clicked but nothing changed" or get_page starts with an OVERLAY line. ' +
       'Payment, password, sign-in and verification dialogs are never touched - answer those yourself or ask the user.',
     {},
-    () =>
-      guard('레이어 닫기', () =>
-        withPopupNotice(async () => {
-          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+    () => guard('레이어 닫기', doDismissOverlay)
+  )
+
+  // --- run_js -----------------------------------------------------------
+  //
+  // 여러 동작을 한 턴에 묶어 실행한다. 코드는 **페이지가 아니라** 메인 프로세스의 vm
+  // 샌드박스에서 돌고, 거기서 쓸 수 있는 것은 아래 API 뿐이다. 모든 동작은 도구와
+  // 똑같은 본체(doClick·doType·…)를 거치므로 가드를 우회할 수 없다.
+  // fill_secret·login·폰 도구는 일부러 노출하지 않는다 — 비밀 경로는 기존 도구로만 간다
+
+  /** run_js 안 동작 한 건도 도구와 같은 호출 상한을 쓴다. 상한이면 실행 자체를 끊는다 */
+  const runJsTick = (): void => {
+    const over = ctx.tick()
+    if (over) {
+      if (!limitNotified) {
+        limitNotified = true
+        ctx.onStep('도구 호출 상한 도달', false)
+      }
+      throw new Error(over)
+    }
+  }
+
+  const asText = (v: unknown): string => (typeof v === 'string' ? v : String(v ?? ''))
+  const asId = (v: unknown): number =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : 0
+
+  /** 샌드박스가 부르는 동작 표. 실행 1건마다 새로 만든다(직전 스냅샷을 그 안에서만 기억) */
+  const makeRunJsBridge = (): RunJsBridge => {
+    let lastTree: string | undefined
+    return async (name, args) => {
+      runJsTick()
+      switch (name) {
+        case 'sleep': {
+          const ms = Math.min(Math.max(asId(args[0]), 0), 5000)
+          await new Promise((r) => setTimeout(r, ms))
+          return 'ok'
+        }
+        case 'page.get': {
+          const o = (typeof args[0] === 'object' && args[0] !== null ? args[0] : {}) as {
+            query?: unknown
+            selector?: unknown
+            interactive?: unknown
+          }
+          const read = await readSnapshot({
+            ...(typeof o.query === 'string' ? { query: o.query } : {}),
+            ...(typeof o.selector === 'string' ? { selector: o.selector } : {})
+          })
+          if (typeof read === 'string') return read
+          // interactive 를 주면 본문 텍스트는 빼고 요소 목록만 담는다
+          const tree =
+            o.interactive === true ? serializeSnapshot({ ...read.snapshot, text: '' }) : read.tree
+          const prev = lastTree
+          lastTree = tree
+          return {
+            tree,
+            diff: prev === undefined ? tree : diffLines(prev, tree) || NO_CHANGE,
+            total: read.snapshot.total ?? read.snapshot.elements.length,
+            elements: read.snapshot.elements.length
+          }
+        }
+        case 'page.click':
+          return doClick(asId(args[0]), asText(args[1]))
+        case 'page.type': {
           const tab = activeOr(ctx)
           if (!tab) return 'no active tab'
-          // 결제 비밀번호 키패드 화면에서는 아무것도 누르지 않는다
-          const keypad = await keypadRefusal(tab, PAYMENT_KEYPAD_REFUSAL)
-          if (keypad) return keypad
-          const before = await overlaysOf(tab)
-          if (before.length === 0) return 'no overlay is covering the page'
-          const sensitive = before.filter((o) => o.sensitive)
-          const targets = before
-            .filter((o) => !o.sensitive && o.closeIds.length > 0)
-            .slice(0, MAX_DISMISS)
-          const kept =
-            sensitive.length === 0 ? '' : ` left alone (sensitive): "${sensitive[0].label}"`
-          if (targets.length === 0) {
-            return sensitive.length > 0
-              ? `refused: only a payment/sign-in dialog is open ("${sensitive[0].label}") - answer it yourself or ask the user`
-              : `overlay "${before[0].label}" has no close button; scroll or press Escape on screen${kept}`
-          }
-          const closed: string[] = []
-          for (const overlay of targets) {
-            const r = await pageBridge.click(tab, overlay.closeIds[0])
-            closed.push(`"${overlay.label}" -> ${r}`)
-          }
-          await pageBridge.waitForLoad(tab)
-          const after = await overlaysOf(tab)
-          return `dismissed ${closed.length}: ${closed.join('; ')}
-overlays left: ${after.length}${kept}`
-        })
-      )
+          // 비밀 입력칸에는 run_js 로 값을 넣지 않는다 — fill_secret 만이 비밀 경로다
+          if (await pageBridge.isSecretField(tab, asId(args[0]))) return RUN_JS_SECRET_REFUSAL
+          return doType(asId(args[0]), asText(args[1]), args[2] === true)
+        }
+        case 'page.select':
+          return doSelect(asId(args[0]), asText(args[1]))
+        case 'page.scroll':
+          return doScroll(
+            args[0] === 'up' ? 'up' : 'down',
+            typeof args[1] === 'number' ? asId(args[1]) : undefined
+          )
+        case 'page.text': {
+          const tab = activeOr(ctx)
+          if (!tab) return 'no active tab'
+          return pageBridge.textOf(tab, asId(args[0]))
+        }
+        case 'page.find': {
+          const read = await readSnapshot({ query: asText(args[0]) })
+          if (typeof read === 'string') return read
+          return read.snapshot.elements.length === 0
+            ? `no element matches "${asText(args[0])}"`
+            : serializeSnapshot({ ...read.snapshot, text: '' })
+        }
+        case 'page.dismissOverlay':
+          return doDismissOverlay()
+        case 'page.url':
+          return currentUrl()
+        case 'page.title': {
+          const tab = activeOr(ctx)
+          if (!tab) return ''
+          // getTitle 이 없는 대역(테스트 스텁)에서는 빈 제목으로 본다
+          return typeof tab.view.webContents.getTitle === 'function'
+            ? tab.view.webContents.getTitle()
+            : ''
+        }
+        case 'tabs.list':
+          return targetList()
+        case 'tabs.switch': {
+          const id = asText(args[0])
+          const target = targetList().find((t) => t.id === id)
+          if (!target) return `not found: no tab or popup with id ${id}`
+          focusTargetOf(ctx.tabs, id)
+          return `ok: now working in ${target.kind} ${id}`
+        }
+        case 'tabs.close': {
+          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+          const id = asText(args[0])
+          const target = targetList().find((t) => t.id === id)
+          if (!target) return `not found: no tab or popup with id ${id}`
+          closeTargetOf(ctx.tabs, id)
+          return `ok: closed ${target.kind} ${id}`
+        }
+        default:
+          return RUN_JS_NO_SECRET_TOOLS
+      }
+    }
+  }
+
+  const runJs = tool(
+    'run_js',
+    'Run a short async script that drives the page through several steps in ONE turn. ' +
+      'The code runs in a sandbox in the browser process, not in the page - only these APIs exist: ' +
+      'page.get({query,selector,interactive}) -> {tree,diff,total,elements}, page.click(id), ' +
+      'page.type(id,text,submit), page.select(id,value), page.scroll(dir,id), page.text(id), ' +
+      'page.find(query), page.dismissOverlay(), page.url(), page.title(), ' +
+      'tabs.list()/switch(id)/close(id), sleep(ms), log(...). ' +
+      'Use log() and return a value; both come back to you. ' +
+      'fill_secret, login and the phone tools are NOT available here - call those tools directly.',
+    { code: z.string().describe(`JavaScript, ${RUN_JS_MAX_CODE} characters or fewer`) },
+    ({ code }) => guard(runJsLabel(code), () => runSandbox(code, makeRunJsBridge()))
   )
 
   const wait = tool(
@@ -1118,6 +1313,7 @@ overlays left: ${after.length}${kept}`
       select,
       scroll,
       dismissOverlay,
+      runJs,
       wait,
       newTab,
       listTabs,
@@ -1145,6 +1341,7 @@ export const SAMBA_TOOL_NAMES = [
   'select',
   'scroll',
   'dismiss_overlay',
+  'run_js',
   'wait',
   'new_tab',
   'list_tabs',

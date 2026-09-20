@@ -235,6 +235,25 @@ function collectCursorClickable(base: HTMLElement[]): HTMLElement[] {
 export interface SnapshotOptions {
   /** 주면 라벨·name·href·placeholder 가 부분일치하는 요소만 나열한다(id 는 그대로) */
   query?: string
+  /** 주면 이 CSS 선택자에 걸린 요소(와 그 안쪽)만 나열한다. registry·id 는 그대로 */
+  selector?: string
+}
+
+/**
+ * selector 로 나열 범위를 좁힐 때 쓰는 뿌리 요소들.
+ * 선택자가 문법에 맞지 않으면 null(호출부가 오류로 돌려준다)
+ */
+function selectorRoots(selector: string): HTMLElement[] | null {
+  try {
+    return Array.from(document.querySelectorAll<HTMLElement>(selector))
+  } catch {
+    return null
+  }
+}
+
+/** el 이 뿌리들 중 하나이거나 그 안쪽에 있는가 */
+function insideRoots(roots: readonly HTMLElement[], el: HTMLElement): boolean {
+  return roots.some((root) => root === el || root.contains(el))
 }
 
 /**
@@ -257,25 +276,46 @@ export function buildSnapshot(options: SnapshotOptions = {}): PageSnapshot {
   // id 는 문서 순서로 매기고 registry 에는 전부 남긴다(나열 순서가 바뀌어도 id 는 안정적이다)
   registry = all
   const described = all.map((el, i) => describeElement(el, i + 1, clickableSet.has(el)))
+  // selector 는 registry 를 건드리지 않는다 — 나열 범위만 좁힌다(id 는 언제나 문서 순서)
+  const selector = options.selector?.trim()
+  const roots = selector ? selectorRoots(selector) : null
+  if (selector && roots === null) {
+    return {
+      url: location.href,
+      title: document.title,
+      text: '',
+      elements: [],
+      total: 0,
+      selectorError: `invalid selector: ${selector.slice(0, 80)}`
+    }
+  }
+  const inScope = (el: HTMLElement): boolean => roots === null || insideRoots(roots, el)
+  const scoped = described.filter((_, i) => inScope(all[i]))
+  const scopedNodes = all.filter((el) => inScope(el))
   const query = options.query?.trim().toLowerCase()
   let picked: PageElement[]
   let total: number
   if (query) {
-    const hits = described.filter((item, i) => matchesQuery(all[i], item, query))
+    const hits = scoped.filter((item, i) => matchesQuery(scopedNodes[i], item, query))
     total = hits.length
     picked = hits.slice(0, MAX_ELEMENTS)
   } else {
     // 지금 화면에 보이는 것부터 — 모델이 필요한 버튼을 먼저 만나게 한다
     const inView: PageElement[] = []
     const rest: PageElement[] = []
-    described.forEach((item, i) => (isInViewport(all[i]) ? inView : rest).push(item))
-    total = described.length
+    scoped.forEach((item, i) => (isInViewport(scopedNodes[i]) ? inView : rest).push(item))
+    total = scoped.length
     picked = inView.concat(rest).slice(0, MAX_ELEMENTS)
   }
+  // selector 를 주면 본문 텍스트도 그 범위 안만 모은다(전체 페이지 텍스트를 다시 보내지 않게)
+  const body =
+    roots === null
+      ? document.body.innerText || document.body.textContent || ''
+      : roots.map((root) => root.innerText || root.textContent || '').join('\n')
   return {
     url: location.href,
     title: document.title,
-    text: (document.body.innerText || document.body.textContent || '').replace(/\s+/g, ' ').trim(),
+    text: body.replace(/\s+/g, ' ').trim(),
     elements: picked,
     total
   }
@@ -930,6 +970,7 @@ export function runAgentOp(raw: unknown): unknown {
     text?: unknown
     value?: unknown
     query?: unknown
+    selector?: unknown
     submit?: unknown
     dir?: unknown
   }
@@ -938,7 +979,10 @@ export function runAgentOp(raw: unknown): unknown {
   const value = typeof r.value === 'string' ? r.value : ''
   switch (r.op) {
     case 'snapshot':
-      return buildSnapshot(typeof r.query === 'string' ? { query: r.query } : {})
+      return buildSnapshot({
+        ...(typeof r.query === 'string' ? { query: r.query } : {}),
+        ...(typeof r.selector === 'string' ? { selector: r.selector } : {})
+      })
     case 'textOf':
       return textOf(id)
     case 'click':
