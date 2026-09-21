@@ -25,6 +25,8 @@ import {
 import { resolveModel } from '../ai/models'
 import type { CodexInput } from './provider-codex'
 import { makeCounter } from './counter'
+import type { SiteScriptStore } from './site-scripts-store'
+import { buildScriptsBlock } from '../../shared/site-scripts'
 import { createTextDeduper } from './dedupe'
 import {
   watchHandoff,
@@ -97,6 +99,7 @@ export class AgentRunner {
   private playbookEditor: PlaybookEditor | null = null
   // 사이트 기억. 없으면 기억을 붙이지도 남기지도 않는다(기존 호출부·테스트)
   private siteMemory: SiteMemoryService | null = null
+  private siteScripts: SiteScriptStore | null = null
   // 실행 중인 작업이 쥔 금고 자동 잠금 보류 해제 함수. stop() 과 run() 의 finally 가
   // 겹쳐 불러도 되도록 해제 함수 자체가 여러 번 호출에 안전하다
   private releaseVaultHold: (() => void) | null = null
@@ -127,6 +130,11 @@ export class AgentRunner {
   /** 플레이북 수정기를 붙인다. null 이면 list_playbooks·update_playbook 도구를 내보내지 않는다 */
   setPlaybookEditor(editor: PlaybookEditor | null): void {
     this.playbookEditor = editor
+  }
+
+  /** 저장된 사이트 스크립트를 붙인다. null 이면 목록 주입과 save_script·run_script 가 꺼진다 */
+  setSiteScripts(store: SiteScriptStore | null): void {
+    this.siteScripts = store
   }
 
   /** 사이트 기억을 붙인다. null 이면 기억 주입·학습·remember_site 가 모두 꺼진다 */
@@ -384,6 +392,8 @@ export class AgentRunner {
     const playbooks = this.matchedPlaybooks(prompt)
     // 이번 실행에 붙일 사이트 기억 블록(지시문·플레이북 본문·현재 탭 URL 에서 호스트를 뽑는다)
     const memory = this.siteMemoryBlock(prompt, playbooks)
+    const scripts = s.siteMemoryEnabled ? this.siteScripts : null
+    const scriptsBlock = scripts ? buildScriptsBlock(scripts.list()) : ''
     // 이 실행이 최신 세대일 때만 UI 로 이벤트를 보낸다
     const emit = (e: AgentEvent): void => {
       if (gen !== this.generation) return
@@ -422,7 +432,9 @@ export class AgentRunner {
             : buildSystemPrompt(s.language, mode, effort, phoneAvailable),
           playbooks
         ),
-        memory.text
+        // 저장된 스크립트 목록은 실행마다 다시 읽는다(직전 실행에서 저장한 것이 바로 보이게).
+        // 사이트 기억을 끈 실행에서는 스크립트도 끈다 — 같은 "학습" 스위치다
+        [memory.text, scriptsBlock].filter((part) => part !== '').join('\n\n')
       )
     const counter = makeCounter(s.maxToolCalls)
     const deduper = createTextDeduper()
@@ -466,6 +478,13 @@ export class AgentRunner {
       onCall: (call) => calls.push(call),
       siteMemory: this.siteMemory
         ? { remember: (host, note) => this.siteMemory?.remember(host, note) ?? '' }
+        : undefined,
+      scripts: scripts
+        ? {
+            find: (name) => scripts.find(name),
+            save: (input) => scripts.save(input),
+            ran: (name, ok) => scripts.ran(name, ok)
+          }
         : undefined,
       playbooks: this.playbookEditor
         ? {

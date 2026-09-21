@@ -6,7 +6,14 @@ import type { LoginFieldsResult } from '../browser/page-bridge'
 import { serializeSnapshot } from '../../shared/snapshot'
 import type { PageOverlay, PageSnapshot } from '../../shared/snapshot'
 import { diffLines } from '../../shared/snapshot-diff'
-import { runJsLabel, runSandbox, RUN_JS_MAX_CODE, type RunJsBridge } from './run-js'
+import {
+  runJsLabel,
+  runSandbox,
+  RUN_JS_MAX_CODE,
+  RUN_SCRIPT_TOTAL_TIMEOUT_MS,
+  type RunJsBridge
+} from './run-js'
+import { isScriptFailure, type SiteScript, type SiteScriptInput } from '../../shared/site-scripts'
 import { isDangerous } from '../../shared/danger'
 import type { PermissionMode, VaultAccessPolicy } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
@@ -307,6 +314,12 @@ export interface ToolContext {
   onCall?: (call: AgentToolCall) => void
   // 사이트 기억. 주입되지 않으면 remember_site 도구를 등록하지 않는다
   siteMemory?: { remember: (host: string, note: string) => string }
+  // 저장된 사이트 스크립트. 주입되지 않으면 save_script·run_script 도구를 등록하지 않는다
+  scripts?: {
+    find: (name: string) => SiteScript | undefined
+    save: (input: SiteScriptInput) => string
+    ran: (name: string, ok: boolean) => void
+  }
   // 플레이북 읽기·절차 수정. 주입되지 않으면 list_playbooks·update_playbook 도구를 등록하지 않는다
   playbooks?: {
     list: () => PlaybookDto[]
@@ -1616,6 +1629,59 @@ overlays left: ${after.length}${kept}`
       )
   )
 
+  // 한 번 통한 run_js 코드를 매개변수째 저장한다. 다음 실행은 run_script 한 번으로 같은 손놀림을 재생한다
+  const saveScript = tool(
+    'save_script',
+    'Save a run_js snippet that just WORKED so later runs can replay it with one run_script call ' +
+      '(no code tokens, fewer tool calls). Save steps you will need again for other orders/items: ' +
+      'searching a list, reading a row, filling a record form, reading totals. Take everything that ' +
+      'changes between runs from the global `args` object (args.orderNo, args.cost …) — never hardcode ' +
+      'order numbers, amounts or element ids that change; find elements by text inside the code. ' +
+      'Return a small JSON result the caller can verify. Saving under an existing name replaces it.',
+    {
+      name: z.string().describe('snake_case, e.g. samba_find_order'),
+      host: z.string().optional().describe('main site host, e.g. samba-wave.vercel.app'),
+      description: z.string().describe('what it does and what it returns, one or two sentences'),
+      params: z
+        .array(z.string())
+        .optional()
+        .describe('args it reads, e.g. ["orderNo — 상품주문번호", "cost — 실구매가 숫자"]'),
+      code: z.string().max(RUN_JS_MAX_CODE).describe('the run_js body; reads inputs from args')
+    },
+    (input) =>
+      guard(`스크립트 저장: ${input.name}`, async () =>
+        ctx.scripts ? ctx.scripts.save(input) : 'refused: saved scripts are off'
+      )
+  )
+
+  // 저장된 스크립트를 인자와 함께 실행한다. run_js 와 같은 샌드박스·같은 다리를 쓴다
+  const runScript = tool(
+    'run_script',
+    'Run a saved script by name with args (see "Saved scripts" in the system prompt). Same sandbox and ' +
+      'page/tabs API as run_js, up to 75s. Check the returned result against the page before relying on it.',
+    {
+      name: z.string(),
+      args: z.record(z.string(), z.unknown()).optional().describe('values the script reads from args')
+    },
+    ({ name, args }) =>
+      guard(
+        `스크립트 실행: ${name}`,
+        async () => {
+          if (!ctx.scripts) return 'refused: saved scripts are off'
+          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+          const script = ctx.scripts.find(name)
+          if (!script) return `refused: no saved script named "${name}"`
+          const result = await runSandbox(script.code, makeRunJsBridge(), {
+            args: args ?? {},
+            totalTimeoutMs: RUN_SCRIPT_TOTAL_TIMEOUT_MS
+          })
+          ctx.scripts.ran(name, !isScriptFailure(result))
+          return result
+        },
+        'run_js'
+      )
+  )
+
   // 저장된 플레이북을 읽는다. id 를 주면 절차 본문까지, 아니면 이름·트리거 목록만 준다.
   // 본문이 길어 목록에 다 싣지 않는다(9,000자 넘는 절차가 있다)
   const listPlaybooks = tool(
@@ -1739,6 +1805,7 @@ overlays left: ${after.length}${kept}`
       login,
       progress,
       ...(ctx.siteMemory ? [rememberSite] : []),
+      ...(ctx.scripts ? [saveScript, runScript] : []),
       ...(ctx.playbooks ? [listPlaybooks, updatePlaybook] : []),
       done,
       // 폰이 한 대도 붙어 있지 않으면 폰 도구를 아예 내보내지 않는다 —
@@ -1772,6 +1839,9 @@ export const SAMBA_TOOL_NAMES = [
   'progress',
   // 사이트 기억이 붙지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
   'remember_site',
+  // 스크립트 저장소가 붙지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
+  'save_script',
+  'run_script',
   // 플레이북이 붙지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
   'list_playbooks',
   'update_playbook',

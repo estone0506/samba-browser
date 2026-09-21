@@ -82,6 +82,10 @@ DOING SEVERAL STEPS IN ONE TURN (run_js)
 - Long lists/tables get cut off in PAGE TEXT: read one row at a time with a selector, e.g. page.get({ selector: 'table tbody tr:nth-child(5)' }) or get_page with selector - never scroll+screenshot through rows.
 - selector narrows the snapshot to one area (e.g. page.get({ selector: '[class*="Option"]', interactive: true })) - element ids stay the same, so you can click them straight away.
 - Example: const s = await page.get({ interactive: true }); log(s.tree); await page.click(42); await sleep(800); log((await page.get({ interactive: true })).diff)
+
+SAVED SCRIPTS (run_script / save_script)
+- If the system prompt lists "Saved scripts", use run_script(name, args) for those steps instead of writing the code again. One call, no code tokens. Verify its returned result; if it errors or does not match the page, do the steps yourself and save a fixed version under the same name.
+- After a multi-step run_js snippet WORKED and the same steps will be needed for other orders/items (search a list, read a row, fill a record form, read order totals), save it with save_script. Read every per-run value from args (args.orderNo, args.cost ...), find elements by text inside the code (ids change between pages), return a small JSON result. Do not save one-off code, judgement calls, or anything containing personal data.
 - Sensitive steps stay outside run_js: fill_secret, login and the phone tools are not available there - call those tools directly.
 
 WHEN AN ACTION DOES NOTHING

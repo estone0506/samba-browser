@@ -33,6 +33,7 @@ import { ScheduleRunStore } from '../schedule/runs'
 import { PlaybookScheduler } from '../schedule/scheduler'
 import { ActivityStore } from '../activity/store'
 import { SiteMemoryStore } from '../agent/site-memory-store'
+import { SiteScriptStore } from '../agent/site-scripts-store'
 import { SiteMemoryService } from '../agent/site-memory'
 import { ActivityRecorder } from '../activity/recorder'
 import { RecommendService } from '../activity/recommend'
@@ -225,6 +226,8 @@ export function registerIpc(
   const siteMemoryStore = new SiteMemoryStore(join(app.getPath('userData'), 'site-memory.json'))
   const siteMemory = new SiteMemoryService(siteMemoryStore, () => settings.get().siteMemoryEnabled)
   agent.setSiteMemory(siteMemory)
+  // 한 번 통한 run_js 코드를 저장해 두고 재생한다(기기 로컬). 사이트 기억과 같은 스위치로 켜고 끈다
+  agent.setSiteScripts(new SiteScriptStore(join(app.getPath('userData'), 'site-scripts.json')))
   // 예약 실행. 실행 기록은 이 PC 의 파일에만 남는다(동기화 대상이 아니다)
   const scheduleRuns = new ScheduleRunStore(join(app.getPath('userData'), 'schedule-runs.json'))
   const scheduler = new PlaybookScheduler({
