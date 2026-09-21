@@ -278,6 +278,49 @@ export function isToolResultOk(raw: string, content = false): boolean {
   return !FAILURE_HEAD_RE.test(raw) && !/^(Error:|refused:)/m.test(raw)
 }
 
+/** 결제창 호스트 → 결제 수단. 결제창이 묻는 휴대폰·생년월일을 어느 결제 항목에서 찾을지 정한다 */
+const PAY_HOST_PROVIDERS: ReadonlyArray<[RegExp, PaymentProvider]> = [
+  [/(^|\.)toss\.im$|(^|\.)tosspayments\.com$/, 'toss'],
+  [/(^|\.)payco\.com$/, 'payco'],
+  [/(^|\.)kakaopay\.com$|(^|\.)kakao\.com$/, 'kakao'],
+  [/(^|\.)pay\.naver\.com$/, 'naver']
+]
+
+export function payProviderOfUrl(url: string): PaymentProvider | null {
+  let host = ''
+  try {
+    host = new URL(url).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+  return PAY_HOST_PROVIDERS.find(([re]) => re.test(host))?.[1] ?? null
+}
+
+/**
+ * 신원정보에서 못 찾은 휴대폰·생년월일을, 지금 결제창의 결제 수단 항목(payment.phone·payment.birth)에서 찾는다.
+ * 결제창이 아니거나 다른 필드면 null
+ */
+function paymentIdentityFallback(
+  vault: VaultService,
+  accountId: number,
+  itemType: VaultItemType,
+  fieldKey: string,
+  url: string,
+  jobId: string | undefined
+): string | null {
+  if (itemType !== 'identity') return null
+  const short = fieldKey.split('.').pop() ?? ''
+  if (short !== 'phone' && short !== 'birth') return null
+  const provider = payProviderOfUrl(url)
+  if (!provider) return null
+  return vault.getPaymentSecretForFill({
+    accountId,
+    provider,
+    fieldKey: `payment.${short}`,
+    ...(jobId === undefined ? {} : { jobId })
+  }).value
+}
+
 /** run_script 의 args(JSON 문자열)를 객체로 바꾼다. 비어 있으면 빈 객체, 객체가 아니면 null */
 export function parseScriptArgs(raw: string | undefined): Record<string, unknown> | null {
   if (raw === undefined || raw.trim() === '') return {}
@@ -1423,7 +1466,11 @@ overlays left: ${after.length}${kept}`
       'For itemType "password" (a payment password) pass provider to say which checkout it is: ' +
       'site when the site pays with its own money such as 무신사머니 or SSG머니, ' +
       'musinsapay for 무신사페이 when the user saved a separate password for it (otherwise follow the playbook - many users share one password with site), ' +
-      'toss for 토스페이, kakao for 카카오페이, naver for 네이버페이, payco for 페이코.',
+      'toss for 토스페이, kakao for 카카오페이, naver for 네이버페이, payco for 페이코. ' +
+      'When a pay popup (pay.toss.im, PAYCO ...) asks for the phone number or birth date, those are saved on ' +
+      'that payment item: itemType "password", the provider, field "payment.phone" or "payment.birth" ' +
+      '(format "digits" / "yymmdd"). The user’s own contact number for other forms (e.g. a shipping ' +
+      'address) is itemType "identity", field "identity.phone" - it may be saved once as a global item.',
     {
       elementId: z.number().int(),
       itemType: z.enum(ITEM_TYPES),
@@ -1511,7 +1558,11 @@ overlays left: ${after.length}${kept}`
           if (movedPay) return movedPay
           return await pageBridge.fillValue(tab, elementId, shaped)
         }
-        const raw = v.getSecretForFill(account.id, itemType, fieldKey, ctx.jobId)
+        const raw =
+          v.getSecretForFill(account.id, itemType, fieldKey, ctx.jobId) ??
+          // 결제창(토스·페이코…)이 묻는 휴대폰·생년월일은 그 결제 수단 항목에 적어 두는 값이다.
+          // 모델이 신원정보(identity)로만 찾다 멈추지 않게, 결제창 호스트로 수단을 짐작해 거기서도 찾는다
+          paymentIdentityFallback(v, account.id, itemType, fieldKey, currentUrl(tab), ctx.jobId)
         if (raw === null) return `not found: no ${itemType}.${fieldKey} saved for this account`
         const value = formatFillValue(raw, format)
         if (value === null)

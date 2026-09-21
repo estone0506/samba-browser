@@ -354,6 +354,23 @@ export class VaultRepo {
     return row ? toItemRow(row) : null
   }
 
+  /** 전역 항목(accountId = null) 가운데 이 종류인 것 전부(만든 순서) */
+  findGlobalItemRowsByType(type: VaultItemType): VaultItemRow[] {
+    return this.d
+      .select()
+      .from(vaultItems)
+      .where(
+        and(
+          isNull(vaultItems.accountId),
+          eq(vaultItems.type, type),
+          isNull(vaultItems.deletedAt),
+          this.scopeWhere(vaultItems.workspaceId)
+        )
+      )
+      .all()
+      .map(toItemRow)
+  }
+
   // 전역 항목(accountId = null)은 (type, label) 조합으로 찾는다 — 같은 type 이라도
   // 라벨이 다르면 별개 항목이다(예: '메모' 항목 여러 개)
   findGlobalItemRow(type: VaultItemType, label: string): VaultItemRow | null {

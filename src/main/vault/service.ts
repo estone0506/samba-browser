@@ -1094,8 +1094,16 @@ export class VaultService {
     }
     if (!this.key) return null
     const row = this.repo.findItemRow(accountId, type)
-    if (!row) return null
-    return this.decryptForFill(row, fieldKey, jobId, source)
+    const own = row ? this.decryptForFill(row, fieldKey, jobId, source) : null
+    if (own !== null) return own
+    // 신원정보는 "나"의 것이라 계정마다 같다 — 계정에 없으면 전역 신원정보에서 찾는다.
+    // (직배 배송지의 CS 연락처를 구매 계정마다 다시 적지 않게. 카드·로그인은 계정에 묶인 값이라 넘겨 쓰지 않는다)
+    if (type !== 'identity') return null
+    for (const shared of this.repo.findGlobalItemRowsByType(type)) {
+      const value = this.decryptForFill(shared, fieldKey, jobId, source)
+      if (value !== null) return value
+    }
+    return null
   }
 
   /**

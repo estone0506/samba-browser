@@ -35,3 +35,20 @@ describe('isToolResultOk', () => {
     expect(isToolResultOk('{"status":"error shown on page","rows":3}', true)).toBe(true)
   })
 })
+
+describe('payProviderOfUrl — 결제창 호스트로 결제 수단을 짐작한다', () => {
+  it('토스·페이코·카카오·네이버 결제창을 알아본다', async () => {
+    const { payProviderOfUrl } = await import('../src/main/agent/tools')
+    expect(payProviderOfUrl('https://pay.toss.im/payfront/auth')).toBe('toss')
+    expect(payProviderOfUrl('https://id.payco.com/login')).toBe('payco')
+    expect(payProviderOfUrl('https://online-pay.kakaopay.com/pay')).toBe('kakao')
+    expect(payProviderOfUrl('https://pay.naver.com/checkout')).toBe('naver')
+  })
+
+  it('결제창이 아니거나 주소가 깨졌으면 null', async () => {
+    const { payProviderOfUrl } = await import('../src/main/agent/tools')
+    expect(payProviderOfUrl('https://www.musinsa.com/order/order-form')).toBeNull()
+    expect(payProviderOfUrl('https://nottoss.im.example.com/')).toBeNull()
+    expect(payProviderOfUrl('not a url')).toBeNull()
+  })
+})

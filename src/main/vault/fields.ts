@@ -96,7 +96,11 @@ export function findField(sections: StoredSection[], key: string): StoredField |
     const found = section.fields.find((f) => f.key === key)
     if (found) return found
   }
-  return null
+  // 필드 키는 'identity.phone'·'card.number' 처럼 종류가 앞에 붙는다. AI 가 뒤쪽만('phone') 넘겨도
+  // 그 뜻이 하나로 정해지면 받아 준다(실기: identity 의 field 를 'phone' 으로 불러 값이 있어도 못 찾았다)
+  const tail = `.${key}`
+  const loose = sections.flatMap((s) => s.fields).filter((f) => f.key.endsWith(tail))
+  return loose.length === 1 ? loose[0] : null
 }
 
 /** 이 필드의 암호문에 쓸 AAD. 저장된 aad 가 있으면 그것을(v1 이월분) 그대로 쓴다 */
