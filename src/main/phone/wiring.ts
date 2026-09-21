@@ -415,6 +415,15 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     const runDeps: PayRunDeps = {
       phones: { screen, tap: deps.ops.tap, screenshot: deps.ops.screenshot },
       launchApp: createLaunchApp(deps.adb),
+      notifications: {
+        open: async (serial) =>
+          void (await deps.adb.run(
+            shellArgs(serial, ['cmd', 'statusbar', 'expand-notifications']),
+            10000
+          )),
+        close: async (serial) =>
+          void (await deps.adb.run(shellArgs(serial, ['cmd', 'statusbar', 'collapse']), 10000))
+      },
       confirm: (action) => ctx.confirm(action, 'danger'),
       vault: deps.vault,
       vaultUnlocked: () => deps.vault.state() === 'unlocked',

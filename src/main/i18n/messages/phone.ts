@@ -44,6 +44,7 @@ export const phoneMessages = defineMessages({
     'phone.payKeypadHandoff': '결제 비밀번호 키패드',
     'phone.payDoneByUser': '결제 완료(사용자 확인)',
     'phone.payDone': '결제 완료',
+    'phone.payNotificationOpened': '폰 알림창에서 결제 요청 알림을 열었습니다',
     'phone.payPasswordEntered': '결제 비밀번호 입력({digits}자리)',
     'phone.arsNotice': '전화 인증 수신 감지: 폰 화면을 확인하세요'
   },
@@ -86,6 +87,7 @@ export const phoneMessages = defineMessages({
     'phone.payKeypadHandoff': 'Payment password keypad',
     'phone.payDoneByUser': 'Payment complete (confirmed by user)',
     'phone.payDone': 'Payment complete',
+    'phone.payNotificationOpened': 'Opened the payment request from the phone’s notifications',
     'phone.payPasswordEntered': 'Payment password entered ({digits} digits)',
     'phone.arsNotice': 'Incoming verification call detected: check the phone screen'
   }

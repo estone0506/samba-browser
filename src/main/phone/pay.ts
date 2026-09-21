@@ -38,7 +38,14 @@ export interface PayProviderSpec {
   // 비밀번호 화면임을 알리는 표식
   passwordHint: RegExp
   successHint: RegExp
+  /** 알림창에서 이 앱의 알림임을 알아보는 이름(알림 머리글) */
+  notificationLabel: RegExp
 }
+
+/** 결제 요청 알림의 본문으로 볼 문구 — 앱 이름과 가까이 있을 때만 누른다 */
+const PAY_NOTIFICATION_TEXT = /결제|승인|인증/
+/** 알림 머리글(앱 이름)과 본문이 이 개수 안에 붙어 있어야 같은 알림으로 본다 */
+const NOTIFICATION_SPAN = 5
 
 export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
   toss: {
@@ -47,7 +54,8 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     deepLink: 'supertoss://',
     confirmText: /결제하기|확인|다음|동의하고 결제/,
     passwordHint: /비밀번호|간편비밀번호|PIN/,
-    successHint: /결제(가)?\s?완료|송금 완료|완료되었습니다/
+    successHint: /결제(가)?\s?완료|송금 완료|완료되었습니다/,
+    notificationLabel: /토스|toss/i
   },
   payco: {
     id: 'payco',
@@ -55,7 +63,8 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     deepLink: 'payco://',
     confirmText: /결제하기|확인|다음/,
     passwordHint: /결제 ?비밀번호|PAYCO 비밀번호|비밀번호/,
-    successHint: /결제 ?완료|완료되었습니다/
+    successHint: /결제 ?완료|완료되었습니다/,
+    notificationLabel: /페이코|payco/i
   },
   kakaopay: {
     id: 'kakaopay',
@@ -63,7 +72,8 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     deepLink: 'kakaotalk://',
     confirmText: /결제하기|확인|다음|동의하고 결제/,
     passwordHint: /결제 ?비밀번호|카카오페이 비밀번호|비밀번호/,
-    successHint: /결제 ?완료|완료되었습니다/
+    successHint: /결제 ?완료|완료되었습니다/,
+    notificationLabel: /카카오페이|카카오톡|kakao/i
   },
   naverpay: {
     id: 'naverpay',
@@ -71,7 +81,8 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     deepLink: 'naversearchapp://',
     confirmText: /결제하기|확인|다음/,
     passwordHint: /결제 ?비밀번호|네이버페이 비밀번호|비밀번호/,
-    successHint: /결제 ?완료|완료되었습니다/
+    successHint: /결제 ?완료|완료되었습니다/,
+    notificationLabel: /네이버페이|네이버|naver/i
   }
 }
 
@@ -87,7 +98,7 @@ export const PAY_APP_TO_PAYMENT_PROVIDER: Record<PayProvider, PaymentProvider> =
 }
 
 /** 앱 화면을 더듬는 최대 스텝(무한 루프 방지) */
-export const MAX_PAY_STEPS = 20
+export const MAX_PAY_STEPS = 30
 /** 화면이 그대로일 때 다음 확인까지 기다리는 시간 */
 export const PAY_POLL_MS = 1000
 
@@ -119,6 +130,27 @@ function findConfirm(screen: PhoneScreen, re: RegExp): number | undefined {
   return screen.elements.find(
     (e) => e.clickable && (re.test(e.text) || re.test(e.contentDesc ?? ''))
   )?.id
+}
+
+/**
+ * 알림창(내려진 상태)에서 이 결제 앱의 결제 요청 알림을 찾는다. 누를 요소의 id, 없으면 undefined.
+ * 알림은 [앱 이름] [제목] [본문] 이 잇달아 나오는 납작한 목록으로 읽힌다 — 앱 이름과 몇 칸 안에 붙어 있는
+ * 결제 문구만 고른다(다른 앱의 "결제" 알림을 누르지 않게). 한 줄에 둘 다 있으면 그 줄이다
+ */
+export function findPayNotification(
+  screen: PhoneScreen,
+  spec: PayProviderSpec
+): number | undefined {
+  const textOf = (e: PhoneScreen['elements'][number]): string => `${e.text} ${e.contentDesc ?? ''}`
+  let labelAt = -Infinity
+  for (let i = 0; i < screen.elements.length; i += 1) {
+    const text = textOf(screen.elements[i])
+    if (spec.notificationLabel.test(text)) labelAt = i
+    if (i - labelAt <= NOTIFICATION_SPAN && PAY_NOTIFICATION_TEXT.test(text)) {
+      return screen.elements[i].id
+    }
+  }
+  return undefined
 }
 
 /** 지금 화면이 비밀번호(보안 키패드) 화면인가. 스크린샷 저장·전송 판정에도 쓴다 */
@@ -209,6 +241,14 @@ export interface PayRunDeps {
   }
   /** 딥링크로 결제 앱을 앞으로 부른다(배선부가 am start 로 채운다) */
   launchApp: (serial: string, deepLink: string) => Promise<void>
+  /**
+   * 알림창을 내리고/올린다. 결제 앱을 열어도 결제 요청 화면이 안 나올 때(요청이 푸시 알림으로만 와 있을 때)
+   * 알림을 눌러 여는 데 쓴다. 주입되지 않으면 그 경로는 건너뛴다
+   */
+  notifications?: {
+    open: (serial: string) => Promise<void>
+    close: (serial: string) => Promise<void>
+  }
   /** 결제 확인 카드. 권한 모드와 무관하게 정확히 1회 부른다 */
   confirm: (action: string) => Promise<boolean>
   /** 비밀번호를 읽을 금고. 값은 tapPaymentPassword 안에서만 복호화된다 */
@@ -356,6 +396,9 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
   let lastTapped: number | null = null
   let passwordTried = false
   let screen: PhoneScreen | null = null
+  // 누를 것이 없던 횟수. 몇 번 이어지면 알림창의 결제 요청 알림을 눌러 본다(실행당 한 번)
+  let idlePolls = 0
+  let notificationTried = false
 
   for (let i = 0; i < MAX_PAY_STEPS && state !== 'done'; i++) {
     screen = await deps.phones.screen(req.serial)
@@ -389,9 +432,22 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
       const el = findElement(screen, next.tapElementId)
       if (el) {
         lastTapped = next.tapElementId
+        idlePolls = 0
         await deps.phones.tap(req.serial, el.center.x, el.center.y)
         continue
       }
+    }
+    idlePolls += 1
+    const waiting = state === 'await_app' || state === 'app_steps'
+    if (
+      waiting &&
+      !notificationTried &&
+      idlePolls >= NOTIFICATION_AFTER_POLLS &&
+      deps.notifications
+    ) {
+      notificationTried = true
+      idlePolls = 0
+      if (await openPayNotification(deps, req.serial, spec)) continue
     }
     await sleep(PAY_POLL_MS)
   }
@@ -401,6 +457,37 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
   if (!(await deps.webSuccess())) return fail('verify-failed', screen)
   deps.onStep(tr('phone.payDone'), true)
   return finish(true)
+}
+
+/** 누를 것이 없는 화면이 이만큼 이어지면 알림창을 열어 본다 */
+export const NOTIFICATION_AFTER_POLLS = 3
+
+/** 알림창을 내려 이 결제 앱의 결제 요청 알림을 누른다. 눌렀으면 true. 못 찾으면 알림창을 도로 올린다 */
+async function openPayNotification(
+  deps: PayRunDeps,
+  serial: string,
+  spec: PayProviderSpec
+): Promise<boolean> {
+  const shade = deps.notifications
+  const sleep = deps.sleep ?? defaultSleep
+  if (!shade) return false
+  try {
+    await shade.open(serial)
+    await sleep(PAY_POLL_MS)
+    const screen = await deps.phones.screen(serial)
+    const id = findPayNotification(screen, spec)
+    const el = id === undefined ? undefined : findElement(screen, id)
+    if (!el) {
+      await shade.close(serial)
+      return false
+    }
+    deps.onStep(tr('phone.payNotificationOpened'), true)
+    await deps.phones.tap(serial, el.center.x, el.center.y)
+    await sleep(PAY_POLL_MS)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** 키패드 배치: UI 트리 우선, 실패하면 Visual 에게 위치만 묻는다 */

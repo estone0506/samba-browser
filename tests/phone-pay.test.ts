@@ -16,6 +16,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 import {
   PAY_APP_TO_PAYMENT_PROVIDER,
   PAY_PROVIDERS,
+  findPayNotification,
   checkPaymentGate,
   nextPayState,
   runPayApproval,
@@ -428,5 +429,77 @@ describe('phone_approve_payment 도구', () => {
     type PayCtxKeys = keyof import('../src/main/agent/tools-phone').PayToolContext
     const hasVault: Extract<PayCtxKeys, 'vault'> extends never ? true : false = true
     expect(hasVault).toBe(true)
+  })
+})
+
+describe('결제 요청이 푸시 알림으로만 와 있을 때 — 알림창에서 연다', () => {
+  const shade = (elements: PhoneElement[]): PhoneScreen => screen('com.android.systemui', elements)
+  const tossHome = screen(TOSS.packageName, [el(1, '홈', { clickable: true })])
+  const payAsk = screen(TOSS.packageName, [el(2, '결제하기')])
+  const keypad = screen(TOSS.packageName, [el(3, '비밀번호를 눌러주세요', { clickable: false })])
+  const done = screen(TOSS.packageName, [el(4, '결제가 완료되었습니다', { clickable: false })])
+
+  it('findPayNotification: 앱 이름과 가까이 붙은 결제 문구만 고른다', () => {
+    const s = shade([
+      el(1, '쿠팡', { clickable: false }),
+      el(2, '결제가 완료되었습니다', { clickable: false }),
+      el(3, '문자', { clickable: false }),
+      el(4, '택배가 도착했어요', { clickable: false }),
+      el(5, '오늘의 날씨', { clickable: false }),
+      el(6, '미세먼지 보통', { clickable: false }),
+      el(7, '일정', { clickable: false }),
+      el(8, '회의 10분 전', { clickable: false }),
+      el(9, '토스', { clickable: false }),
+      el(10, '무신사 29,960원', { clickable: false }),
+      el(11, '결제를 완료해주세요', { clickable: false })
+    ])
+    // 쿠팡의 "결제" 알림(2)이 아니라 토스 머리글 아래의 결제 알림(11)
+    expect(findPayNotification(s, TOSS)).toBe(11)
+    expect(
+      findPayNotification(shade([el(1, '쿠팡'), el(2, '결제가 완료되었습니다')]), TOSS)
+    ).toBeUndefined()
+  })
+
+  it('앱을 열어도 누를 것이 없으면 알림창을 내려 결제 알림을 누르고 이어간다', async () => {
+    const screens = [
+      tossHome,
+      tossHome,
+      tossHome,
+      shade([
+        el(9, '토스', { clickable: false }),
+        el(11, '결제를 완료해주세요', { clickable: false })
+      ]),
+      payAsk,
+      keypad,
+      done,
+      done
+    ]
+    const h = harness({ screens })
+    const opened: string[] = []
+    h.deps.notifications = {
+      open: async () => void opened.push('open'),
+      close: async () => void opened.push('close')
+    }
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: true })
+    expect(opened).toEqual(['open'])
+    // 알림(11) → 결제하기(2) 순서로 눌렀다
+    expect(h.taps.map((t) => t[2])).toEqual([11 * 100 + 30, 2 * 100 + 30])
+    expect(h.steps.some((s) => s.label.includes('알림'))).toBe(true)
+  })
+
+  it('알림창에 그 앱의 결제 알림이 없으면 아무것도 누르지 않고 알림창을 도로 올린다', async () => {
+    const h = harness({
+      screens: [tossHome, tossHome, tossHome, shade([el(1, '쿠팡'), el(2, '결제 완료')]), tossHome]
+    })
+    const opened: string[] = []
+    h.deps.notifications = {
+      open: async () => void opened.push('open'),
+      close: async () => void opened.push('close')
+    }
+    const r = await runPayApproval(h.deps, request())
+    expect(r.ok).toBe(false)
+    expect(opened).toEqual(['open', 'close'])
+    expect(h.taps).toEqual([])
   })
 })
