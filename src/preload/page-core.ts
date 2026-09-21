@@ -520,6 +520,11 @@ export interface ClickBaseline {
   expanded: string
   /** 대상 요소의 class(선택 상태를 클래스로 표시하는 UI 대응) */
   className: string
+  /**
+   * 대상 요소의 inline style·aria 상태. 켜짐/꺼짐을 색(style)이나 aria-pressed 로만 표시하는
+   * 토글 버튼(SAMBA-WAVE 까대기)은 이것 말고는 변화가 없다 — 놓치면 폴백이 다시 눌러 도로 꺼진다
+   */
+  state: string
 }
 
 /** 최대 이만큼 지켜본 뒤에도 변화가 없으면 실패로 본다 */
@@ -532,6 +537,9 @@ const COVER_LABEL_MAX = 60
 export const CLICK_NO_CHANGE_NOTE =
   'clicked but nothing changed (an overlay may be covering it; call dismiss_overlay or check get_page)'
 
+/** 토글 상태가 드러나는 속성들 */
+const TOGGLE_STATE_ATTRS = ['style', 'aria-pressed', 'aria-checked', 'aria-selected', 'disabled']
+
 /** 지금 화면 상태를 기준값으로 찍는다 */
 export function readClickBaseline(el: HTMLElement): ClickBaseline {
   const body = document.body
@@ -542,7 +550,8 @@ export function readClickBaseline(el: HTMLElement): ClickBaseline {
     textLength: text.length,
     active: document.activeElement,
     expanded: el.getAttribute('aria-expanded') ?? '',
-    className: el.getAttribute('class') ?? ''
+    className: el.getAttribute('class') ?? '',
+    state: TOGGLE_STATE_ATTRS.map((a) => el.getAttribute(a) ?? '').join('|')
   }
 }
 
@@ -554,7 +563,8 @@ export function baselineChanged(before: ClickBaseline, after: ClickBaseline): bo
     before.textLength !== after.textLength ||
     before.active !== after.active ||
     before.expanded !== after.expanded ||
-    before.className !== after.className
+    before.className !== after.className ||
+    before.state !== after.state
   )
 }
 

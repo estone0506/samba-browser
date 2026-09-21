@@ -286,6 +286,23 @@ describe('클릭 기준값 비교', () => {
     el.setAttribute('class', 'selected')
     expect(baselineChanged(before, readClickBaseline(el))).toBe(true)
   })
+
+  it('색(style)만 바뀌는 토글 버튼은 한 번만 눌린다 — 폴백이 다시 눌러 끄지 않는다', async () => {
+    // SAMBA-WAVE 까대기 버튼: 켜지면 background 색만 바뀐다(class·텍스트·포커스 그대로)
+    document.body.innerHTML = '<button id="t" style="background:#5a5a5a">까대기</button>'
+    buildSnapshot()
+    const el = document.getElementById('t') as HTMLElement
+    let on = false
+    let presses = 0
+    el.addEventListener('click', () => {
+      presses += 1
+      on = !on
+      el.style.background = on ? 'orange' : '#5a5a5a'
+    })
+    expect(await performClick(1)).toBe('ok')
+    expect(presses).toBe(1)
+    expect(on).toBe(true)
+  })
 })
 
 describe('performClick 폴백 — 첫 클릭이 먹지 않으면 Enter', () => {
