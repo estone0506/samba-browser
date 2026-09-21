@@ -50,6 +50,11 @@ export type TranscriptSink = (chatId: number, entry: TranscriptEntry) => void
 
 /** 플레이북 목록 공급자. 주입하지 않으면 플레이북이 전혀 적용되지 않는다 */
 export type PlaybookProvider = () => PlaybookDto[]
+/** 플레이북 절차 수정기(AI 의 update_playbook 도구가 쓴다). 없으면 도구를 등록하지 않는다 */
+export interface PlaybookEditor {
+  list: () => PlaybookDto[]
+  setInstructions: (id: string, instructions: string) => PlaybookDto | null
+}
 
 /**
  * 폰 도구 배선. 권한 모드·호출 상한·확인 카드는 웹 도구 것을 그대로 쓰므로
@@ -85,6 +90,7 @@ export class AgentRunner {
   private phones: PhoneBridge | null = null
   // 자동화 플레이북 목록 공급자. 없으면 시스템 프롬프트에 아무것도 덧붙이지 않는다
   private playbooks: PlaybookProvider | null = null
+  private playbookEditor: PlaybookEditor | null = null
   // 사이트 기억. 없으면 기억을 붙이지도 남기지도 않는다(기존 호출부·테스트)
   private siteMemory: SiteMemoryService | null = null
   // 실행 중인 작업이 쥔 금고 자동 잠금 보류 해제 함수. stop() 과 run() 의 finally 가
@@ -112,6 +118,11 @@ export class AgentRunner {
   /** 플레이북 목록 공급자를 붙인다. null 이면 플레이북을 적용하지 않는다 */
   setPlaybooks(provider: PlaybookProvider | null): void {
     this.playbooks = provider
+  }
+
+  /** 플레이북 수정기를 붙인다. null 이면 list_playbooks·update_playbook 도구를 내보내지 않는다 */
+  setPlaybookEditor(editor: PlaybookEditor | null): void {
+    this.playbookEditor = editor
   }
 
   /** 사이트 기억을 붙인다. null 이면 기억 주입·학습·remember_site 가 모두 꺼진다 */
@@ -425,6 +436,13 @@ export class AgentRunner {
       onCall: (call) => calls.push(call),
       siteMemory: this.siteMemory
         ? { remember: (host, note) => this.siteMemory?.remember(host, note) ?? '' }
+        : undefined,
+      playbooks: this.playbookEditor
+        ? {
+            list: () => this.playbookEditor?.list() ?? [],
+            update: (id, instructions) =>
+              this.playbookEditor?.setInstructions(id, instructions) ?? null
+          }
         : undefined,
       onProgress: ({ done, total, label }) =>
         emit(

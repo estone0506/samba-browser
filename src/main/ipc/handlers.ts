@@ -216,6 +216,8 @@ export function registerIpc(
   // 자동화 플레이북. 사용자 문장에 트리거가 들어 있으면 러너가 절차를 시스템 프롬프트에 덧붙인다
   const playbooks = new PlaybookStore(settings)
   agent.setPlaybooks(() => playbooks.list())
+  // AI 가 배운 절차를 플레이북에 덧붙일 수 있게 한다(저장 전 확인 카드는 도구가 띄운다)
+  agent.setPlaybookEditor(playbooks)
   // 사이트 기억. 파일은 이 PC 의 userData 안에만 있고 동기화 대상이 아니다.
   // 켬/끔은 설정 한 칸(siteMemoryEnabled)으로 매번 다시 읽는다 — 끄면 곧바로 멈춘다
   const siteMemoryStore = new SiteMemoryStore(join(app.getPath('userData'), 'site-memory.json'))

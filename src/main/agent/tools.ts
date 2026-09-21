@@ -46,6 +46,7 @@ import {
 } from './target'
 import type { AgentTarget } from '../browser/targets'
 import type { AgentToolCall, SiteActionTool } from '../../shared/site-memory'
+import { PLAYBOOK_INSTRUCTIONS_MAX, type PlaybookDto } from '../../shared/playbook'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -107,6 +108,8 @@ const KEYPAD_HANDOFF_MATCHED = '결제 비밀번호 키패드'
 export const PROGRESS_INVALID = 'refused: progress needs 0 <= done <= total and total >= 1'
 // 진행 라벨 표시 상한(상품명이 길어도 진행 배지가 무너지지 않게)
 const PROGRESS_LABEL_MAX = 80
+// 플레이북 수정 확인 카드에 보여 줄 덧붙일 글의 상한(카드가 무너지지 않게)
+const PLAYBOOK_PREVIEW_MAX = 400
 // diff 를 부탁했는데 직전 읽기와 똑같을 때 돌려주는 문자열
 const NO_CHANGE = 'no change since the last get_page'
 // 직전 스냅샷 문자열을 기억해 둘 탭 개수(diff 용)
@@ -248,6 +251,11 @@ export interface ToolContext {
   onCall?: (call: AgentToolCall) => void
   // 사이트 기억. 주입되지 않으면 remember_site 도구를 등록하지 않는다
   siteMemory?: { remember: (host: string, note: string) => string }
+  // 플레이북 읽기·절차 수정. 주입되지 않으면 list_playbooks·update_playbook 도구를 등록하지 않는다
+  playbooks?: {
+    list: () => PlaybookDto[]
+    update: (id: string, instructions: string) => PlaybookDto | null
+  }
   // 키마스터. 주입되지 않은 실행(구버전 호출부·테스트)에서는 금고 도구가 잠금으로 동작한다
   vault?: VaultService
   // 감사 로그에 남길 작업 식별자(실행 1건 = jobId 1개)
@@ -1372,6 +1380,85 @@ overlays left: ${after.length}${kept}`
       )
   )
 
+  // 저장된 플레이북을 읽는다. id 를 주면 절차 본문까지, 아니면 이름·트리거 목록만 준다.
+  // 본문이 길어 목록에 다 싣지 않는다(9,000자 넘는 절차가 있다)
+  const listPlaybooks = tool(
+    'list_playbooks',
+    'List the saved playbooks (name, triggers, size). Pass an id to read that playbook’s full ' +
+      'instructions — do that before replacing them.',
+    { id: z.string().optional().describe('playbook id from a previous list_playbooks call') },
+    ({ id }) =>
+      guard('플레이북 읽기', async () => {
+        if (!ctx.playbooks) return 'refused: playbooks are off'
+        const rows = ctx.playbooks.list()
+        if (id === undefined) {
+          return JSON.stringify(
+            rows.map((p) => ({
+              id: p.id,
+              name: p.name,
+              triggers: p.triggers,
+              enabled: p.enabled,
+              chars: p.instructions.length
+            }))
+          )
+        }
+        const found = rows.find((p) => p.id === id)
+        if (!found) return 'refused: no playbook with that id'
+        return JSON.stringify({
+          id: found.id,
+          name: found.name,
+          triggers: found.triggers,
+          instructions: found.instructions
+        })
+      })
+  )
+
+  // 절차 본문만 바꾼다. 트리거·이름은 도구로 열지 않는다 —
+  // 트리거가 바뀌면 이 플레이북이 다른 요청까지 끌어오고, 그 변화는 사용자 눈에 잘 띄지 않는다.
+  // 저장 전에는 권한 모드와 무관하게 확인 카드를 1회 띄운다(페이지 글이 절차를 심는 것을 막는다)
+  const updatePlaybook = tool(
+    'update_playbook',
+    'Change a saved playbook’s instructions. Use append to add a step you just learned, or ' +
+      'instructions to replace the whole text (read it with list_playbooks first). The user has ' +
+      'to approve the change on a card before it is saved. Name and triggers cannot be changed here.',
+    {
+      id: z.string().describe('playbook id from list_playbooks'),
+      append: z.string().optional().describe('text to add at the end, e.g. one new step'),
+      instructions: z.string().optional().describe('full replacement text')
+    },
+    ({ id, append, instructions }) =>
+      guard('플레이북 수정', async () => {
+        if (!ctx.playbooks) return 'refused: playbooks are off'
+        if ((append === undefined) === (instructions === undefined)) {
+          return 'refused: pass exactly one of append or instructions'
+        }
+        const found = ctx.playbooks.list().find((p) => p.id === id)
+        if (!found) return 'refused: no playbook with that id'
+        const addition = append?.trim()
+        if (append !== undefined && (addition === undefined || addition === '')) {
+          return 'refused: append is empty'
+        }
+        const next =
+          addition === undefined
+            ? (instructions as string)
+            : `${found.instructions.trimEnd()}\n\n${addition}`
+        if (next.trim() === '') return 'refused: instructions are empty'
+        if (next.length > PLAYBOOK_INSTRUCTIONS_MAX) {
+          return `refused: playbook would be ${next.length} chars (max ${PLAYBOOK_INSTRUCTIONS_MAX})`
+        }
+        if (next === found.instructions) return 'ok: no change'
+        // 확인 카드에는 바뀌는 대목만 싣는다 — 덧붙이기는 덧붙일 글, 통째 교체는 길이 변화
+        const preview =
+          addition === undefined
+            ? `전체 교체 (${found.instructions.length}자 → ${next.length}자)`
+            : addition.slice(0, PLAYBOOK_PREVIEW_MAX)
+        const ok = await ctx.confirm(`플레이북 수정: ${found.name}\n${preview}`, 'danger')
+        if (!ok) return 'denied by user'
+        const saved = ctx.playbooks.update(id, next)
+        return saved ? `ok: updated (${next.length} chars)` : 'error: could not save the playbook'
+      })
+  )
+
   // done 은 guard 를 거치지 않으므로 도구 호출 상한(tick)에 계산되지 않는다.
   // 상한에 도달했을 때 "done 으로 마무리하라"고 안내하기 때문에, 마무리 호출까지 막으면 안 된다
   const done = tool(
@@ -1416,6 +1503,7 @@ overlays left: ${after.length}${kept}`
       login,
       progress,
       ...(ctx.siteMemory ? [rememberSite] : []),
+      ...(ctx.playbooks ? [listPlaybooks, updatePlaybook] : []),
       done,
       // 폰이 한 대도 붙어 있지 않으면 폰 도구를 아예 내보내지 않는다 —
       // 목록에 있으면 모델이 웹 작업 중에도 phone_tap 을 부른다(실기에서 관찰)
@@ -1448,6 +1536,9 @@ export const SAMBA_TOOL_NAMES = [
   'progress',
   // 사이트 기억이 붙지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
   'remember_site',
+  // 플레이북이 붙지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
+  'list_playbooks',
+  'update_playbook',
   'done',
   // 폰 도구가 주입되지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
   ...PHONE_TOOL_NAMES,
