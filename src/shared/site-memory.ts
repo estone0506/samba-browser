@@ -109,7 +109,17 @@ const recipeSchema = z.object({
 /** 호스트 한 칸의 스키마. 깨진 칸은 호출부가 통째로 버린다(부분 복구는 하지 않는다) */
 export const siteMemoryEntrySchema = z.object({
   recipes: z.array(recipeSchema).max(SITE_RECIPE_MAX).catch([]),
-  notes: z.array(z.string().max(SITE_NOTE_LENGTH_MAX)).max(SITE_NOTE_MAX).catch([])
+  // 메모 하나가 길이 상한을 넘었다고 그 사이트의 메모 전부를 버리지 않는다 — 긴 것은 잘라서 살리고,
+  // 개수 상한은 최근 것부터 남긴다(실기: 손으로 고친 긴 메모 하나 때문에 "기간은 올해" 메모까지 사라짐)
+  notes: z
+    .array(z.unknown())
+    .transform((list) =>
+      list
+        .filter((n): n is string => typeof n === 'string' && n.trim() !== '')
+        .map((n) => n.slice(0, SITE_NOTE_LENGTH_MAX))
+        .slice(-SITE_NOTE_MAX)
+    )
+    .catch([])
 })
 
 export const siteMemoryFileSchema = z.record(z.string(), siteMemoryEntrySchema)
