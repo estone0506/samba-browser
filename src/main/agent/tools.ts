@@ -261,6 +261,23 @@ export function resolveAccount(
 // 도구 하나의 상한 시간. run_js 는 자체 30초 상한이 있으므로 그보다 넉넉히 둔다
 const TOOL_TIMEOUT_MS = 90_000
 
+// 도구가 실패를 알릴 때 쓰는 말. 결과 어디에 있든 실패로 보던 예전 판정은, 페이지 본문·플레이북 절차처럼
+// 남의 글을 그대로 돌려주는 도구에서 오탐을 냈다(실기: 플레이북 본문의 "error"·"locked" 때문에 읽기 성공이 ✗)
+const FAILURE_WORDS_RE = /not found|not set up|host unknown|refused|denied|error|locked|fail/i
+/** 본문을 돌려주는 도구의 실패 표식 — 우리 도구는 실패를 결과 맨 앞에 적는다 */
+const FAILURE_HEAD_RE =
+  /^\s*(refused|error|denied|locked|handoff|needs_user|no active tab|no element matches)\b|^\s*Error:/i
+
+/**
+ * 도구 결과가 성공인가(진행 로그의 ✓/✗ 와 사이트 기억의 성공 경로 판정에 쓴다).
+ * content 도구(페이지 읽기·요소 찾기·탭 목록·플레이북 읽기·run_js)는 결과에 남의 글이 섞이므로 앞머리만 본다.
+ * run_js 는 log() 출력 뒤에 `Error:` 줄이 올 수 있어 줄 머리도 본다
+ */
+export function isToolResultOk(raw: string, content = false): boolean {
+  if (!content) return !FAILURE_WORDS_RE.test(raw)
+  return !FAILURE_HEAD_RE.test(raw) && !/^(Error:|refused:)/m.test(raw)
+}
+
 /** run_script 의 args(JSON 문자열)를 객체로 바꾼다. 비어 있으면 빈 객체, 객체가 아니면 null */
 export function parseScriptArgs(raw: string | undefined): Record<string, unknown> | null {
   if (raw === undefined || raw.trim() === '') return {}
@@ -459,7 +476,9 @@ export function createSambaTools(baseCtx: ToolContext): ReturnType<typeof create
   const guard = async <T>(
     label: string | (() => string),
     fn: () => Promise<T>,
-    action?: SiteActionTool
+    action?: SiteActionTool,
+    // 결과에 페이지·문서 본문이 실리는 도구(앞머리만 보고 성공/실패를 가린다)
+    content = false
   ): Promise<ReturnType<typeof text>> => {
     const resolveLabel = (): string => (typeof label === 'string' ? label : label())
     // 호출 1건을 사이트 기억으로 넘긴다. 기억이 붙어 있지 않으면 아무 일도 하지 않는다
@@ -480,7 +499,7 @@ export function createSambaTools(baseCtx: ToolContext): ReturnType<typeof create
       // 도구 하나는 이 시간 안에 끝나야 하고, 넘기면 문구로 돌려줘 모델이 다른 길을 찾게 한다
       const r = await withToolTimeout(fn(), TOOL_TIMEOUT_MS, () => humanWaits > 0)
       const raw = typeof r === 'string' ? r : JSON.stringify(r)
-      const ok = !/not found|not set up|host unknown|refused|denied|error|locked|fail/i.test(raw)
+      const ok = isToolResultOk(raw, content)
       ctx.onStep(resolveLabel(), ok)
       note(ok, raw)
       // 실행 중 자동으로 닫은 페이지 대화상자가 있으면 그 문구를 결과 앞에 알려 준다
@@ -932,20 +951,26 @@ ${handoffToolResult(result)}`
       'Pass diff=true to get only the lines that changed since your last get_page on this tab.',
     { query: z.string().optional(), selector: z.string().optional(), diff: z.boolean().optional() },
     ({ query, selector, diff }) =>
-      guard(query ? `페이지 읽기: ${query}` : '페이지 읽기', async () => {
-        const read = await readSnapshot({ query, selector })
-        if (typeof read === 'string') return read
-        const { tab, tree } = read
-        const prev = rememberSnapshot(snapshotCache, tab.id, tree)
-        // 사람의 추가 확인이 필요하면 **알리기만** 한다 — 읽기 도구가 최장 10분 막히면
-        // 모델이 다음 수를 두지 못한다. 실제 넘김·대기는 login 같은 행동 도구가 건다
-        const notice = await captchaNotice(tab)
-        // 화면을 덮는 레이어는 맨 앞에 알린다 — 뒤에 있는 버튼을 누르려다 실패하지 않게
-        const overlay = await overlayNotice(tab)
-        // diff 는 직전 읽기가 있을 때만 뜻이 있다 — 처음이면 트리 전체를 준다
-        const body = diff === true && prev !== undefined ? diffLines(prev, tree) || NO_CHANGE : tree
-        return [overlay, notice, body].filter((line) => line !== null).join('\n')
-      })
+      guard(
+        query ? `페이지 읽기: ${query}` : '페이지 읽기',
+        async () => {
+          const read = await readSnapshot({ query, selector })
+          if (typeof read === 'string') return read
+          const { tab, tree } = read
+          const prev = rememberSnapshot(snapshotCache, tab.id, tree)
+          // 사람의 추가 확인이 필요하면 **알리기만** 한다 — 읽기 도구가 최장 10분 막히면
+          // 모델이 다음 수를 두지 못한다. 실제 넘김·대기는 login 같은 행동 도구가 건다
+          const notice = await captchaNotice(tab)
+          // 화면을 덮는 레이어는 맨 앞에 알린다 — 뒤에 있는 버튼을 누르려다 실패하지 않게
+          const overlay = await overlayNotice(tab)
+          // diff 는 직전 읽기가 있을 때만 뜻이 있다 — 처음이면 트리 전체를 준다
+          const body =
+            diff === true && prev !== undefined ? diffLines(prev, tree) || NO_CHANGE : tree
+          return [overlay, notice, body].filter((line) => line !== null).join('\n')
+        },
+        undefined,
+        true
+      )
   )
 
   // 나열 상한(150개) 때문에 필요한 버튼이 목록에서 빠졌을 때 되찾는 통로.
@@ -955,18 +980,23 @@ ${handoffToolResult(result)}`
     "Search interactive elements by visible text/name/href when read_page's list is truncated; returns matching element ids to use with click/type",
     { query: z.string() },
     ({ query }) =>
-      guard(`요소 찾기: ${query}`, async () => {
-        const tab = activeOr(ctx)
-        if (!tab) return 'no active tab'
-        const snapshot = await pageBridge.snapshot(tab, query)
-        const overlay = await overlayNotice(tab)
-        if (snapshot.elements.length === 0) {
-          const miss = `no element matches "${query}"`
-          return overlay === null ? miss : `${overlay}\n${miss}`
-        }
-        const listed = serializeSnapshot({ ...snapshot, text: '' })
-        return overlay === null ? listed : `${overlay}\n${listed}`
-      })
+      guard(
+        `요소 찾기: ${query}`,
+        async () => {
+          const tab = activeOr(ctx)
+          if (!tab) return 'no active tab'
+          const snapshot = await pageBridge.snapshot(tab, query)
+          const overlay = await overlayNotice(tab)
+          if (snapshot.elements.length === 0) {
+            const miss = `no element matches "${query}"`
+            return overlay === null ? miss : `${overlay}\n${miss}`
+          }
+          const listed = serializeSnapshot({ ...snapshot, text: '' })
+          return overlay === null ? listed : `${overlay}\n${listed}`
+        },
+        undefined,
+        true
+      )
   )
 
   // 화면 캡처: get_page 텍스트로는 알 수 없는 정보(이미지 캡차·그래프·레이아웃)가 필요할 때 사용.
@@ -1275,7 +1305,7 @@ overlays left: ${after.length}${kept}`
       'Use log() and return a value; both come back to you. ' +
       'fill_secret, login and the phone tools are NOT available here - call those tools directly.',
     { code: z.string().describe(`JavaScript, ${RUN_JS_MAX_CODE} characters or fewer`) },
-    ({ code }) => guard(runJsLabel(code), () => runSandbox(code, makeRunJsBridge()), 'run_js')
+    ({ code }) => guard(runJsLabel(code), () => runSandbox(code, makeRunJsBridge()), 'run_js', true)
   )
 
   const wait = tool(
@@ -1310,7 +1340,7 @@ overlays left: ${after.length}${kept}`
       '(address search, payment); openerId says which tab opened it. ' +
       'Call switch_tab with its id to work inside a popup.',
     {},
-    () => guard('탭 목록', async () => JSON.stringify(targetList()))
+    () => guard('탭 목록', async () => JSON.stringify(targetList()), undefined, true)
   )
 
   const switchTab = tool(
@@ -1697,7 +1727,8 @@ overlays left: ${after.length}${kept}`
           ctx.scripts.ran(name, !isScriptFailure(result))
           return result
         },
-        'run_js'
+        'run_js',
+        true
       )
   )
 
@@ -1709,29 +1740,34 @@ overlays left: ${after.length}${kept}`
       'instructions — do that before replacing them.',
     { id: z.string().optional().describe('playbook id from a previous list_playbooks call') },
     ({ id }) =>
-      guard('플레이북 읽기', async () => {
-        if (!ctx.playbooks) return 'refused: playbooks are off'
-        const rows = ctx.playbooks.list()
-        if (id === undefined) {
-          return JSON.stringify(
-            rows.map((p) => ({
-              id: p.id,
-              name: p.name,
-              triggers: p.triggers,
-              enabled: p.enabled,
-              chars: p.instructions.length
-            }))
-          )
-        }
-        const found = rows.find((p) => p.id === id)
-        if (!found) return 'refused: no playbook with that id'
-        return JSON.stringify({
-          id: found.id,
-          name: found.name,
-          triggers: found.triggers,
-          instructions: found.instructions
-        })
-      })
+      guard(
+        '플레이북 읽기',
+        async () => {
+          if (!ctx.playbooks) return 'refused: playbooks are off'
+          const rows = ctx.playbooks.list()
+          if (id === undefined) {
+            return JSON.stringify(
+              rows.map((p) => ({
+                id: p.id,
+                name: p.name,
+                triggers: p.triggers,
+                enabled: p.enabled,
+                chars: p.instructions.length
+              }))
+            )
+          }
+          const found = rows.find((p) => p.id === id)
+          if (!found) return 'refused: no playbook with that id'
+          return JSON.stringify({
+            id: found.id,
+            name: found.name,
+            triggers: found.triggers,
+            instructions: found.instructions
+          })
+        },
+        undefined,
+        true
+      )
   )
 
   // 절차 본문만 바꾼다. 트리거·이름은 도구로 열지 않는다 —
