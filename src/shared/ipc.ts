@@ -210,10 +210,10 @@ export const IPC = {
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
-// agent:run 의 즉시 응답. 작업 완료 여부가 아니라 "시작을 받았다"는 뜻만 담는다
 /** 넘김 카드 종류. captcha = 캡차·2FA, keypad = 결제 비밀번호 키패드(사용자가 직접 누른다) */
 export type HandoffKind = 'captcha' | 'keypad'
 
+// agent:run 의 즉시 응답. 작업 완료 여부가 아니라 "시작을 받았다"는 뜻만 담는다
 export interface AgentRunAck {
   started: boolean
 }

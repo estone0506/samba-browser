@@ -26,6 +26,7 @@ import { exportVault, writeOwnerOnlyFile, type ExportRequest } from '../vault/ex
 import { ImportService, type ImportDialogs } from '../import/service'
 import { ChatRepo } from '../chat/repo'
 import { PlaybookStore } from '../playbooks/store'
+import { parseAgentImages } from '../../shared/agent-image'
 import type { PlaybookInput } from '../../shared/playbook'
 import { ScheduleRunStore } from '../schedule/runs'
 import { PlaybookScheduler } from '../schedule/scheduler'
@@ -332,17 +333,23 @@ export function registerIpc(
   // 실행 시작만 즉시 확인해 주고, 완료·실패는 status 이벤트로만 알린다.
   // (예전처럼 완료까지 기다리면 늦게 끝난 이전 작업의 응답이 새 작업 UI 를 덮어썼다)
   // scheduleToken 은 예약이 보낸 실행임을 잇는 표식이다. 모르는 토큰이면 평소대로 돈다
-  handleFromRenderer(IPC.agentRun, (prompt: string, chatId?: number, scheduleToken?: string) => {
-    // 알림 요약의 "작업:" 줄에 쓸 사용자 지시(비밀값 마스킹은 메시지 조립 때 한다)
-    notifier.setPrompt(prompt)
-    // 활동 기록도 같은 자리에서 지시를 받아 둔다(마스킹은 저장 직전에 한다)
-    activity.notePrompt(prompt)
-    const overrides = scheduler.claimOverrides(scheduleToken)
-    void agent
-      .run(prompt, chatId, overrides)
-      .catch((e: unknown) => console.error('작업 실행 실패', e))
-    return { started: true }
-  })
+  handleFromRenderer(
+    IPC.agentRun,
+    (prompt: string, chatId?: number, scheduleToken?: string, rawImages?: unknown) => {
+      // 붙여 넣은 이미지는 형식·크기·장수를 검증하고, 하나라도 어긋나면 실행하지 않는다
+      const images = parseAgentImages(rawImages)
+      if (images === null) throw new Error(tr('ipc.imagesInvalid'))
+      // 알림 요약의 "작업:" 줄에 쓸 사용자 지시(비밀값 마스킹은 메시지 조립 때 한다)
+      notifier.setPrompt(prompt)
+      // 활동 기록도 같은 자리에서 지시를 받아 둔다(마스킹은 저장 직전에 한다)
+      activity.notePrompt(prompt)
+      const overrides = scheduler.claimOverrides(scheduleToken)
+      void agent
+        .run(prompt, chatId, overrides, images)
+        .catch((e: unknown) => console.error('작업 실행 실패', e))
+      return { started: true }
+    }
+  )
 
   // 설정 화면의 [테스트 보내기] — 지금 입력된 값으로 한 줄 보내 본다
   handleFromRenderer(IPC.notifyTest, (channel: NotifyChannel) => notifier.test(channel))

@@ -65,6 +65,7 @@ import {
   type NotifyChannel,
   type NotifySendResult
 } from '../shared/ipc'
+import type { AgentImage } from '../shared/agent-image'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
 
@@ -153,11 +154,16 @@ const api = {
     // 반환은 "시작 접수" ack 뿐. 완료·실패는 onEvent 의 status 이벤트로 온다
     // chatId 를 주면 메인이 완료 시점에 그 대화에 기록을 남긴다
     // scheduleToken 은 예약이 보낸 실행을 잇는 표식이다(사용자가 직접 칠 때는 없다)
+    // images 는 AI 창에 붙여 넣은 그림(base64). 없으면 인자를 덧붙이지 않는다
     run: (
       prompt: string,
       chatId?: number,
-      scheduleToken?: string
-    ): Promise<IpcResult<AgentRunAck>> => invoke(IPC.agentRun, prompt, chatId, scheduleToken),
+      scheduleToken?: string,
+      images?: AgentImage[]
+    ): Promise<IpcResult<AgentRunAck>> =>
+      images === undefined
+        ? invoke(IPC.agentRun, prompt, chatId, scheduleToken)
+        : invoke(IPC.agentRun, prompt, chatId, scheduleToken, images),
     stop: (): Promise<IpcResult<void>> => invoke(IPC.agentStop),
     confirmReply: (requestId: string, approved: boolean): void => {
       ipcRenderer.send(IPC.agentConfirmReply, requestId, approved)

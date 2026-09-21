@@ -13,6 +13,7 @@ import { appendPlaybooks, matchPlaybooks, type PlaybookDto } from '../../shared/
 import type { AgentToolCall } from '../../shared/site-memory'
 import type { SiteMemoryBlock, SiteMemoryService } from './site-memory'
 import type { ScheduleRunOverrides } from '../../shared/schedule'
+import type { AgentImage } from '../../shared/agent-image'
 import {
   runQuery,
   runCodexQuery,
@@ -50,6 +51,9 @@ export type TranscriptSink = (chatId: number, entry: TranscriptEntry) => void
 
 /** 플레이북 목록 공급자. 주입하지 않으면 플레이북이 전혀 적용되지 않는다 */
 export type PlaybookProvider = () => PlaybookDto[]
+// Codex 백엔드로 이미지가 함께 왔을 때 지시문 끝에 붙이는 안내
+export const CODEX_NO_IMAGE_NOTE =
+  '(The user attached an image, but this AI connection cannot see images. Say so briefly and ask them to describe it.)'
 /** 플레이북 절차 수정기(AI 의 update_playbook 도구가 쓴다). 없으면 도구를 등록하지 않는다 */
 export interface PlaybookEditor {
   list: () => PlaybookDto[]
@@ -329,7 +333,13 @@ export class AgentRunner {
    * overrides 는 예약 실행이 넘기는 이번 실행만의 모델·권한 모드다 —
    * 주지 않으면(사용자가 직접 친 문장) 전역 설정을 그대로 쓴다
    */
-  async run(prompt: string, chatId?: number, overrides?: ScheduleRunOverrides): Promise<void> {
+  async run(
+    prompt: string,
+    chatId?: number,
+    overrides?: ScheduleRunOverrides,
+    // AI 창에 붙여 넣은 이미지. 모델에만 실어 주고 대화 기록에는 남기지 않는다
+    images?: AgentImage[]
+  ): Promise<void> {
     // 이미 실행 중이면 세대 가드 없이 status 를 emit 하면 진행 중인 실행의 UI 를 덮어쓸 수 있다.
     // 핸들러가 throw 를 { ok: false, error } 로 ack 하므로 에러만 던진다.
     if (this.abort) {
@@ -497,9 +507,14 @@ export class AgentRunner {
       }
       // Codex 구독 경로: Codex CLI 를 백엔드로 텍스트 응답을 받는다(samba 도구는 붙지 않는다)
       if (backend === 'codex') {
+        // Codex 경로는 이미지를 받지 않는다 — 조용히 빼지 않고 모델에게 그 사실을 알린다
         settled = await this.runOnCodex(
           {
-            prompt,
+            prompt:
+              images && images.length > 0
+                ? `${prompt}
+${CODEX_NO_IMAGE_NOTE}`
+                : prompt,
             systemPrompt: systemPrompt(s.permissionMode),
             model: runModel,
             abort
@@ -511,6 +526,7 @@ export class AgentRunner {
       }
       const stream = runQuery({
         prompt,
+        ...(images && images.length > 0 ? { images } : {}),
         systemPrompt: systemPrompt(s.permissionMode, s.agentEffort),
         model: runModel,
         // 채팅 입력줄에서 고른 추론 강도

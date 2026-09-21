@@ -181,6 +181,10 @@
   "chat": {
     "title": "AI",
     "placeholder": "지시를 입력하세요…",
+    "imagePasted": "이미지 {{n}}장 첨부됨",
+    "imageRemove": "이미지 제거",
+    "imageTooLarge": "5MB 를 넘는 이미지는 붙일 수 없어요",
+    "imageTooMany": "이미지는 한 번에 {{max}}장까지 붙일 수 있어요",
     "send": "전송",
     "stop": "중단",
     "thinking": "생각 중…",

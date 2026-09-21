@@ -181,6 +181,10 @@
   "chat": {
     "title": "AI",
     "placeholder": "Type an instruction…",
+    "imagePasted": "{{n}} image(s) attached",
+    "imageRemove": "Remove image",
+    "imageTooLarge": "Images over 5MB cannot be attached",
+    "imageTooMany": "You can attach up to {{max}} images at once",
     "send": "Send",
     "stop": "Stop",
     "thinking": "Thinking…",

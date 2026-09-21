@@ -3,6 +3,7 @@ import { defineMessages } from '../define'
 
 export const ipcMessages = defineMessages({
   ko: {
+    'ipc.imagesInvalid': '붙여 넣은 이미지를 보낼 수 없어요 (PNG·JPEG·WebP·GIF, 한 장 5MB, 최대 4장)',
     'ipc.pageConfirm': '페이지 확인: {message}',
     'ipc.saveFolderOutsideHome': '저장 폴더는 홈 폴더 안에서만 지정할 수 있어요',
     'ipc.unknownSubscriptionProvider': '알 수 없는 구독 경로',
@@ -18,6 +19,7 @@ export const ipcMessages = defineMessages({
     'ipc.extensionSessionNotFound': '확장이 올라간 세션을 찾지 못했어요'
   },
   en: {
+    'ipc.imagesInvalid': 'The pasted image cannot be sent (PNG, JPEG, WebP or GIF, 5MB each, up to 4)',
     'ipc.pageConfirm': 'Page confirmation: {message}',
     'ipc.saveFolderOutsideHome': 'The save folder must be inside your home folder',
     'ipc.unknownSubscriptionProvider': 'Unknown subscription provider',

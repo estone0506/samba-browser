@@ -1,10 +1,19 @@
-import { query, startup, type Options, type Query } from '@anthropic-ai/claude-agent-sdk'
+import {
+  query,
+  startup,
+  type Options,
+  type Query,
+  type SDKUserMessage
+} from '@anthropic-ai/claude-agent-sdk'
+import type { AgentImage } from '../../shared/agent-image'
 import type { AgentEffort } from '../../shared/settings'
 import type { AgentAuth } from '../ai/auth-route'
 import { runCodex, type CodexEvent, type CodexInput } from './provider-codex'
 
 export interface ProviderInput {
   prompt: string
+  // 지시문과 함께 보낼 이미지(AI 창에 붙여 넣은 스크린샷). 없으면 문자열 프롬프트 그대로
+  images?: AgentImage[]
   systemPrompt: string
   model: string
   mcpServers: Options['mcpServers']
@@ -153,6 +162,34 @@ export async function askText(input: AskTextInput): Promise<string | null> {
 }
 
 // Claude Agent SDK 호출. 연결된 Claude 구독 또는 내 API 키(ANTHROPIC_API_KEY)를 쓴다
+/**
+ * 이미지가 붙었으면 SDK 가 받는 사용자 메시지 스트림(텍스트 + 이미지 블록)으로 만든다.
+ * 이미지가 없으면 문자열 그대로 — 기존 경로를 건드리지 않는다
+ */
+export function promptInputOf(
+  prompt: string,
+  images?: AgentImage[]
+): string | AsyncIterable<SDKUserMessage> {
+  if (!images || images.length === 0) return prompt
+  const message: SDKUserMessage = {
+    type: 'user',
+    parent_tool_use_id: null,
+    message: {
+      role: 'user',
+      content: [
+        ...images.map((img) => ({
+          type: 'image' as const,
+          source: { type: 'base64' as const, media_type: img.mediaType, data: img.data }
+        })),
+        { type: 'text' as const, text: prompt }
+      ]
+    }
+  }
+  return (async function* () {
+    yield message
+  })()
+}
+
 export function runQuery(input: ProviderInput): Query {
   const auth = currentAuth()
   // 연결된 경로가 없으면 SDK 를 아예 부르지 않는다 —
@@ -162,7 +199,7 @@ export function runQuery(input: ProviderInput): Query {
   // 키 경로인데 키가 사라졌으면 구독 자격으로 조용히 넘어가지 않고 멈춘다
   if (auth.mode === 'api_key' && !env) throw new Error(NOT_CONNECTED_ERROR)
   return query({
-    prompt: input.prompt,
+    prompt: promptInputOf(input.prompt, input.images),
     options: buildQueryOptions(input, env)
   })
 }
