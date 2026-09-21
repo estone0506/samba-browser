@@ -30,6 +30,51 @@ export function codecFromAnnexB(data: Uint8Array): string | null {
   return null
 }
 
+/** Annex-B 바이트에 들어 있는 NAL 종류(nal_unit_type)를 순서대로 뽑는다 */
+export function nalTypesOf(data: Uint8Array): number[] {
+  const types: number[] = []
+  for (let i = 0; i + 3 < data.length; i += 1) {
+    if (data[i] !== 0 || data[i + 1] !== 0) continue
+    const start = data[i + 2] === 1 ? i + 3 : data[i + 2] === 0 && data[i + 3] === 1 ? i + 4 : -1
+    if (start < 0 || start >= data.length) continue
+    types.push(data[start] & 0x1f)
+    i = start
+  }
+  return types
+}
+
+const NAL_IDR = 5
+const NAL_SLICE = 1
+
+/**
+ * 디코더에 넣을 조각을 고른다.
+ * screenrecord 는 SPS/PPS(설정)와 IDR(첫 화면)을 따로 보낼 때가 많다. 설정만 든 조각을 키프레임이라고
+ * 넣으면 VideoDecoder 가 "A key frame is required" 로 죽는다(실기: 그래서 간이 화면으로 떨어지곤 했다).
+ * 화면 데이터가 없는 조각은 모아 두었다가 다음 조각 앞에 붙이고, IDR 이 든 조각만 key 로 넘긴다
+ */
+export function nextDecodable(
+  pending: Uint8Array | null,
+  bytes: Uint8Array,
+  started: boolean
+): { pending: Uint8Array | null; chunk: { type: 'key' | 'delta'; data: Uint8Array } | null } {
+  const types = nalTypesOf(bytes)
+  const hasIdr = types.includes(NAL_IDR)
+  const hasPicture = hasIdr || types.includes(NAL_SLICE)
+  const joined = pending ? concatBytes(pending, bytes) : bytes
+  // 화면 데이터가 없다(SPS·PPS·SEI 뿐) — 다음 조각에 붙인다
+  if (!hasPicture) return { pending: joined, chunk: null }
+  // 아직 첫 IDR 을 못 받았으면 그 전의 조각은 풀 수 없다
+  if (!started && !hasIdr) return { pending, chunk: null }
+  return { pending: null, chunk: { type: hasIdr ? 'key' : 'delta', data: joined } }
+}
+
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length)
+  out.set(a, 0)
+  out.set(b, a.length)
+  return out
+}
+
 export type ScreenStatus = 'unavailable' | 'starting' | 'playing' | 'failed'
 
 interface Options {
@@ -136,6 +181,7 @@ export function useH264Player(
       useFallbackCodec = true
       decoder = null
       sawKeyframeRef.current = false
+      pendingConfig = null
       // 새 키프레임을 받으려면 세그먼트를 다시 열어야 한다
       void api.screenStop?.(serial).then(() => {
         if (!disposed) void api.screenStart?.(serial)
@@ -161,18 +207,23 @@ export function useH264Player(
       }
     }
 
+    // 설정(SPS/PPS)만 든 조각을 모아 두는 곳 — 다음 IDR 앞에 붙인다
+    let pendingConfig: Uint8Array | null = null
+    // 스트림이 알려 준 코덱. 설정 조각에서 읽어 둔다(IDR 조각에는 SPS 가 없을 수 있다)
+    let streamCodec: string | null = null
+
     const handleVideoChunk = (chunk: PhoneScreenChunk): void => {
       if (!chunk.data) return
-      if (!sawKeyframeRef.current) {
-        if (!chunk.keyframe) return
-        sawKeyframeRef.current = true
-      }
+      const bytes = new Uint8Array(chunk.data)
+      streamCodec = codecFromAnnexB(bytes) ?? streamCodec
+      const next = nextDecodable(pendingConfig, bytes, sawKeyframeRef.current)
+      pendingConfig = next.pending
+      if (!next.chunk) return
+      if (next.chunk.type === 'key') sawKeyframeRef.current = true
       if (!decoder) {
         // 첫 키프레임에는 SPS 가 실려 온다 — 거기 적힌 프로파일·레벨로 디코더를 연다
         decoder = makeDecoder(
-          useFallbackCodec
-            ? H264_FALLBACK_CODEC
-            : (codecFromAnnexB(new Uint8Array(chunk.data)) ?? H264_FALLBACK_CODEC)
+          useFallbackCodec ? H264_FALLBACK_CODEC : (streamCodec ?? H264_FALLBACK_CODEC)
         )
         if (!decoder) {
           fallbackToStill()
@@ -182,9 +233,9 @@ export function useH264Player(
       try {
         decoder.decode(
           new EncodedVideoChunk({
-            type: chunk.keyframe ? 'key' : 'delta',
+            type: next.chunk.type,
             timestamp: performance.now() * 1000,
-            data: chunk.data
+            data: next.chunk.data
           })
         )
       } catch {
