@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import { parseSettings, type Settings } from '../../shared/settings'
 import { SYNCED_SETTING_KEYS, type OutboxRecorder } from '../../shared/sync'
+import { setMainLanguage } from '../i18n'
 
 // %APPDATA%/samba-browser/config.json
 export class SettingsStore {
@@ -13,6 +14,8 @@ export class SettingsStore {
 
   constructor() {
     this.cache = this.load()
+    // 메인이 만드는 문구(오류·알림)도 앱 언어를 따른다
+    setMainLanguage(this.cache.language)
   }
 
   /** 변경 로그 훅을 붙인다(로그인 상태에서만) */
@@ -50,6 +53,7 @@ export class SettingsStore {
   private apply(patch: Partial<Settings>, record: boolean): Settings {
     const before = this.cache
     this.cache = parseSettings({ ...this.cache, ...patch })
+    setMainLanguage(this.cache.language)
     // 동기화 대상 키가 실제로 바뀐 것만 변경 로그에 남긴다(기기 전용 값은 목록에 없다)
     if (record) {
       for (const key of SYNCED_SETTING_KEYS) {
