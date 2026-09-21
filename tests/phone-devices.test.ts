@@ -454,3 +454,29 @@ describe('와이파이 폰 자동 발견(adb mdns services)', () => {
     expect(connects(h.adb)).toHaveLength(1)
   })
 })
+
+describe('무선 디버깅 페어링(adb pair)', () => {
+  it('주소와 6자리 코드로 adb pair 를 부르고, 성공하면 목록을 다시 읽는다', async () => {
+    const h = makeHarness()
+    h.adb.reply('pair 192.168.45.212:37123', 'Successfully paired to 192.168.45.212:37123 [guid=adb-X]')
+    h.adb.reply('devices -l', 'List of devices attached\n')
+    const r = await h.manager.pairWifi(' 192.168.45.212:37123 ', '123 456')
+    expect(r.ok).toBe(true)
+    expect(h.adb.calls.find((c) => c[0] === 'pair')).toEqual(['pair', '192.168.45.212:37123', '123456'])
+    expect(deviceCalls(h.adb).length).toBeGreaterThan(0)
+  })
+
+  it('주소·코드 형식이 틀리면 adb 를 부르지 않는다', async () => {
+    const h = makeHarness()
+    expect((await h.manager.pairWifi('192.168.45.212', '123456')).ok).toBe(false)
+    expect((await h.manager.pairWifi('192.168.45.212:37123', '12345')).ok).toBe(false)
+    expect(h.adb.calls.some((c) => c[0] === 'pair')).toBe(false)
+  })
+
+  it('코드가 틀리면 실패와 adb 문구를 돌려준다', async () => {
+    const h = makeHarness()
+    h.adb.reply('pair 192.168.45.212:37123', 'Failed: Wrong password or connection was dropped.')
+    const r = await h.manager.pairWifi('192.168.45.212:37123', '000000')
+    expect(r).toEqual({ ok: false, message: 'Failed: Wrong password or connection was dropped.' })
+  })
+})

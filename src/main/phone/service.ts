@@ -90,6 +90,10 @@ export class PhoneService {
     return this.devices.connectWifi(address)
   }
 
+  pairWifi(address: string, code: string): Promise<{ ok: boolean; message: string }> {
+    return this.devices.pairWifi(address, code)
+  }
+
   disconnect(serial: string): Promise<void> {
     return this.devices.disconnect(serial)
   }

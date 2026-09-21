@@ -20,6 +20,8 @@ import {
 import { tr } from '../i18n'
 
 const WIFI_DEFAULT_PORT = 5555
+/** 무선 디버깅 페어링 코드 자리수 */
+const PAIR_CODE_LENGTH = 6
 /** 발견된 와이파이 접속점에 다시 connect 를 시도하기까지 쉬는 시간 */
 const WIFI_CONNECT_COOLDOWN_MS = 30_000
 
@@ -244,6 +246,26 @@ export class DeviceManager {
     const res = await this.deps.adb.run(['connect', target], 10_000)
     const ok = /connected to/i.test(res.stdout) && !/failed|cannot|unable/i.test(res.stdout)
     if (ok) await this.refresh()
+    return { ok, message: res.stdout.trim() || res.stderr.trim() }
+  }
+
+  /**
+   * 무선 디버깅 페어링(안드로이드 11+). 폰의 "페어링 코드로 기기 페어링" 화면에 뜬 주소와 6자리 코드로
+   * 이 PC 의 키를 폰에 등록한다 — USB 를 한 번도 꽂지 않은 폰은 이 길뿐이다.
+   * 코드는 폰이 그때그때 만드는 1회용이라 저장하지 않고 로그에도 남기지 않는다
+   */
+  async pairWifi(address: string, code: string): Promise<{ ok: boolean; message: string }> {
+    const target = address.trim()
+    const digits = code.replace(/\D/g, '')
+    if (!isWifiSerial(target)) return { ok: false, message: tr('phone.pairBadAddress') }
+    if (digits.length !== PAIR_CODE_LENGTH) return { ok: false, message: tr('phone.pairBadCode') }
+    const res = await this.deps.adb.run(['pair', target, digits], 15_000)
+    const ok = /successfully paired/i.test(res.stdout)
+    if (ok) {
+      // 페어링이 끝나면 접속점(_adb-tls-connect)이 곧 발견된다 — 쉬는 시간을 지우고 바로 찾는다
+      this.wifiRetryAt.clear()
+      await this.refresh()
+    }
     return { ok, message: res.stdout.trim() || res.stderr.trim() }
   }
 

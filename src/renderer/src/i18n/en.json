@@ -1087,7 +1087,14 @@
       "currentNone": "Not chosen — all connected phones are watched"
     },
     "showScreen": "Show screen",
-    "hideScreen": "Hide screen"
+    "hideScreen": "Hide screen",
+    "pairTitle": "Register over Wi-Fi without USB (wireless debugging pairing)",
+    "pairHelp": "On the phone open Settings → Developer options → Wireless debugging → \"Pair device with pairing code\". Keep that dialog open and enter its address and 6-digit code below",
+    "pairAddressPlaceholder": "Pairing address (e.g. 192.168.0.5:37123)",
+    "pairCodePlaceholder": "6-digit code",
+    "pairButton": "Pair",
+    "pairDone": "Paired. The phone will connect automatically in a moment",
+    "pairFailed": "Could not pair: {{message}}"
   },
   "extensions": {
     "title": "Extensions",

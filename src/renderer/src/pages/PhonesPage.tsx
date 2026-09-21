@@ -27,12 +27,16 @@ export function PhonesPage(): React.JSX.Element {
     refresh,
     subscribe,
     connectWifi,
+    pairWifi,
     toggleExpand,
     clearWarning,
     clearError
   } = usePhoneStore()
   const [address, setAddress] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
+  const [pairAddress, setPairAddress] = useState('')
+  const [pairCode, setPairCode] = useState('')
+  const [pairing, setPairing] = useState(false)
   // 도구 설치 여부(카드가 알려 준다). null 은 아직 확인 전이다
   const [toolsInstalled, setToolsInstalled] = useState<boolean | null>(null)
   const onToolsStatus = useCallback(
@@ -66,6 +70,17 @@ export function PhonesPage(): React.JSX.Element {
 
   // 폰이 하나도 안 잡히고 도구도 없을 때만 설치 카드를 맨 위로 올린다
   const needsTools = list.length === 0 && toolsInstalled === false
+
+  const onPair = async (): Promise<void> => {
+    setPairing(true)
+    const r = await pairWifi(pairAddress.trim(), pairCode.trim())
+    setPairing(false)
+    // 코드는 1회용이다 — 성공하든 실패하든 칸에 남기지 않는다
+    setPairCode('')
+    if (r === null) return
+    if (r.ok) setPairAddress('')
+    setNotice(r.ok ? t('phone.pairDone') : t('phone.pairFailed', { message: r.message }))
+  }
 
   const onConnect = async (): Promise<void> => {
     const value = address.trim()
@@ -130,6 +145,37 @@ export function PhonesPage(): React.JSX.Element {
             {t('phone.settings.settingsOpen')}
           </button>
         </div>
+
+        {/* USB 를 한 번도 꽂지 않은 폰은 페어링 코드로 이 PC 를 등록한다(안드로이드 11+ 무선 디버깅) */}
+        <details className="rounded-2xl border border-[var(--line)] bg-white p-3">
+          <summary className="cursor-pointer text-[12.5px] font-medium text-[var(--text)]">
+            {t('phone.pairTitle')}
+          </summary>
+          <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--text2)]">
+            {t('phone.pairHelp')}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <TextInput
+              value={pairAddress}
+              onChange={setPairAddress}
+              placeholder={t('phone.pairAddressPlaceholder')}
+              className="h-[30px] min-w-[220px] flex-1"
+            />
+            <TextInput
+              value={pairCode}
+              onChange={setPairCode}
+              placeholder={t('phone.pairCodePlaceholder')}
+              className="h-[30px] w-[120px]"
+            />
+            <SecondaryButton
+              className="h-[30px]"
+              disabled={pairing || !pairAddress.trim() || !pairCode.trim()}
+              onClick={() => void onPair()}
+            >
+              {t('phone.pairButton')}
+            </SecondaryButton>
+          </div>
+        </details>
 
         {/* 폰 설정 — 열었을 때만 그린다 */}
         {settingsOpen && settings && (

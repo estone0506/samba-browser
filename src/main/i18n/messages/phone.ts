@@ -29,6 +29,8 @@ export const phoneMessages = defineMessages({
     'phone.unknownKey': '알 수 없는 키: {key}',
     // 기기 감시
     'phone.overLimit': '연결 상한({limit}대)을 넘어 {over}대를 쓰지 않습니다',
+    'phone.pairBadAddress': '페어링 주소는 192.168.0.5:37123 처럼 IP:포트로 적어 주세요',
+    'phone.pairBadCode': '페어링 코드는 숫자 6자리예요',
     // 결제 승인(확인 카드·진행 로그)
     'phone.payConfirm': '결제 승인: {amount}원 · {merchant} · {method} · {phone}',
     'phone.payRejected': '결제 거부: {reason}',
@@ -70,6 +72,8 @@ export const phoneMessages = defineMessages({
     'phone.invalidSwipeDuration': 'Invalid swipe duration',
     'phone.unknownKey': 'Unknown key: {key}',
     'phone.overLimit': 'Over the connection limit ({limit} phones); {over} will not be used',
+    'phone.pairBadAddress': 'Enter the pairing address as IP:port, e.g. 192.168.0.5:37123',
+    'phone.pairBadCode': 'The pairing code is 6 digits',
     'phone.payConfirm': 'Approve payment: KRW {amount} · {merchant} · {method} · {phone}',
     'phone.payRejected': 'Payment refused: {reason}',
     'phone.gateOverLimit': 'over the payment limit',

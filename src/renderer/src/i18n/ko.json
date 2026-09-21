@@ -1087,7 +1087,14 @@
       "currentNone": "고르지 않음 — 연결된 폰을 동시에 감시해요"
     },
     "showScreen": "화면 보기",
-    "hideScreen": "화면 닫기"
+    "hideScreen": "화면 닫기",
+    "pairTitle": "USB 없이 와이파이로 등록(무선 디버깅 페어링)",
+    "pairHelp": "폰에서 설정 → 개발자 옵션 → 무선 디버깅 → \"페어링 코드로 기기 페어링\"을 누르면 주소와 6자리 코드가 떠요. 그 창을 띄운 채로 아래에 적어 주세요",
+    "pairAddressPlaceholder": "페어링 주소 (예: 192.168.0.5:37123)",
+    "pairCodePlaceholder": "6자리 코드",
+    "pairButton": "페어링",
+    "pairDone": "페어링됐어요. 잠시 뒤 폰이 자동으로 연결돼요",
+    "pairFailed": "페어링하지 못했어요: {{message}}"
   },
   "extensions": {
     "title": "확장",
