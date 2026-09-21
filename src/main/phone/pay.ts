@@ -43,6 +43,9 @@ export interface PayProviderSpec {
    * 이 화면은 결제 비밀번호 입력과 따로 센다(잠금 1회 + 결제 1회)
    */
   unlockHint?: RegExp
+  /** 결제 화면에서 결제수단(카드)을 바꾸는 버튼 문구와, 열린 선택 목록의 제목. 둘 다 있어야 카드 지정을 지원한다 */
+  changeMethodText?: RegExp
+  methodSheetTitle?: RegExp
 }
 
 export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
@@ -54,7 +57,9 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     passwordHint: /비밀번호|간편비밀번호|PIN/,
     successHint: /결제(가)?\s?완료|송금 완료|완료되었습니다/,
     // "앱을 켜려면 비밀번호를 눌러주세요" — 토스는 앱 잠금과 결제에 같은 비밀번호를 쓴다
-    unlockHint: /앱을 켜려면/
+    unlockHint: /앱을 켜려면/,
+    changeMethodText: /결제수단 변경/,
+    methodSheetTitle: /결제수단 선택/
   },
   payco: {
     id: 'payco',
@@ -122,14 +127,24 @@ export function checkPaymentGate(input: {
   return 'ok'
 }
 
+/** 글자를 정규식에 그대로 넣을 수 있게 특수문자를 막는다 */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, (ch) => '\\' + ch)
+}
+
 function hasText(screen: PhoneScreen, re: RegExp): boolean {
   return screen.elements.some((e) => re.test(e.text) || re.test(e.contentDesc ?? ''))
 }
 
 function findConfirm(screen: PhoneScreen, re: RegExp): number | undefined {
-  return screen.elements.find(
+  const clickable = screen.elements.find(
     (e) => e.clickable && (re.test(e.text) || re.test(e.contentDesc ?? ''))
-  )?.id
+  )
+  if (clickable) return clickable.id
+  // 글자(TextView)와 눌리는 영역(빈 View)이 따로인 버튼이 있다(실기: 토스 결제 화면의 [결제하기]).
+  // 글자 자리를 누르면 그 아래 버튼이 받는다. 본문 문장을 누르지 않도록 글자 전체가 버튼 문구와 같을 때만 고른다
+  const whole = new RegExp(`^(?:${re.source})$`)
+  return screen.elements.find((e) => whole.test(e.text.trim()))?.id
 }
 
 /** 결제 앱이 올린 알림 한 건(dumpsys notification 에서 읽는다). 발신 앱이 그 결제 앱인 것만 담는다 */
@@ -192,6 +207,36 @@ export function isSecretScreen(screen: PhoneScreen, spec: PayProviderSpec): bool
   return hasText(screen, spec.passwordHint)
 }
 
+/** 카드 맞추기에서 누르는 최대 횟수(변경 버튼 1 + 카드 1, 여유 포함) */
+const MAX_CARD_TAPS = 4
+
+type CardStep =
+  { kind: 'ready' } | { kind: 'wait' } | { kind: 'missing' } | { kind: 'tap'; x: number; y: number }
+
+/**
+ * 결제 화면에서 지정한 카드를 고르기 위한 다음 한 수.
+ *  - 카드 선택 목록이 열려 있으면: 이름이 맞는 카드를 누른다(없으면 missing — 다른 카드로 결제하지 않는다)
+ *  - 결제 화면이면: 지정 카드가 이미 보이면 ready, 아니면 [결제수단 변경]을 누른다
+ *  - 둘 다 아니면(화면 전환 중) wait
+ */
+export function cardStep(screen: PhoneScreen, spec: PayProviderSpec, card: RegExp): CardStep {
+  const at = (e: PhoneScreen['elements'][number]): CardStep => ({
+    kind: 'tap',
+    x: e.center.x,
+    y: e.center.y
+  })
+  if (spec.methodSheetTitle && hasText(screen, spec.methodSheetTitle)) {
+    const match = screen.elements.find((e) => card.test(e.text))
+    return match ? at(match) : { kind: 'missing' }
+  }
+  if (findConfirm(screen, spec.confirmText) === undefined) return { kind: 'wait' }
+  if (screen.elements.some((e) => card.test(e.text))) return { kind: 'ready' }
+  const change = spec.changeMethodText
+    ? screen.elements.find((e) => spec.changeMethodText?.test(e.text))
+    : undefined
+  return change ? at(change) : { kind: 'missing' }
+}
+
 /** 앱 안에서 화면을 보고 다음 할 일을 정한다 */
 function stepInApp(
   screen: PhoneScreen,
@@ -236,6 +281,8 @@ export type PayFailReason =
   | 'layout-incomplete'
   | 'verify-failed'
   | 'stuck'
+  // 지정한 카드가 결제 앱의 카드 목록에 없다(다른 카드로 결제하지 않고 멈춘다)
+  | 'card-not-found'
   // 배선부가 실행기에 닿기도 전에 막는 두 가지(계정 특정 실패·연결된 폰 없음)
   | 'no-account'
   | 'no-phone'
@@ -261,6 +308,8 @@ export interface PayRequest {
   isFirstRunForCombo: boolean
   /** 첫 결제 소액 상한(설정값). 0 이면 끈다 */
   firstRunLimitKrw?: number
+  /** 결제 앱 안에서 고를 카드 이름의 일부(예: "현대"). 지금 선택된 카드가 이와 다르면 바꾼 뒤 결제한다 */
+  cardHint?: string
   /** 결제 전에 확인 카드를 띄울지. 생략하면 띄운다(guard). 자동 모드에서는 false */
   confirmFirst?: boolean
   /** 설정에서 바꾼 상한. 없으면 기본 50만원 */
@@ -451,6 +500,13 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
   let screen: PhoneScreen | null = null
   // 누를 것이 없던 횟수. 몇 번 이어지면 알림창의 결제 요청 알림을 눌러 본다(실행당 한 번)
   let idlePolls = 0
+  // 결제 앱 안에서 고를 카드(이름 일부). 지정이 없거나 그 앱이 카드 바꾸기를 지원하지 않으면 건드리지 않는다
+  const cardPattern =
+    req.cardHint && req.cardHint.trim() !== '' && spec.changeMethodText && spec.methodSheetTitle
+      ? new RegExp(escapeRegExp(req.cardHint.trim()), 'i')
+      : null
+  let cardReady = false
+  let cardTaps = 0
 
   for (let i = 0; i < MAX_PAY_STEPS && state !== 'done'; i++) {
     screen = await deps.phones.screen(req.serial)
@@ -488,6 +544,21 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
       lastTapped = null
       await sleep(PAY_POLL_MS)
       continue
+    }
+
+    // 카드 지정: 결제하기를 누르기 전에 선택된 카드를 맞춘다
+    if (cardPattern && !cardReady && state === 'app_steps') {
+      const step = cardStep(screen, spec, cardPattern)
+      if (step.kind === 'ready') cardReady = true
+      else if (step.kind === 'missing') return fail('card-not-found', screen)
+      else if (step.kind === 'tap' && cardTaps < MAX_CARD_TAPS) {
+        cardTaps += 1
+        idlePolls = 0
+        lastTapped = null
+        await deps.phones.tap(req.serial, step.x, step.y)
+        await sleep(PAY_POLL_MS)
+        continue
+      } else if (step.kind === 'tap') return fail('card-not-found', screen)
     }
 
     // 같은 요소를 두 번 연속 누르지 않는다(무한 탭 방지)

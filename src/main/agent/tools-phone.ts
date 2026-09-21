@@ -412,6 +412,8 @@ export interface PayToolRequest {
   amountKrw: number
   merchant: string
   methodLabel: string
+  /** 결제 앱 안에서 고를 카드 이름의 일부(예: "현대") */
+  card?: string
 }
 
 export interface PayToolContext {
@@ -433,7 +435,14 @@ export function createPayTool(ctx: PayToolContext): PhoneTool {
       provider: z.enum(PAY_PROVIDER_NAMES),
       amountKrw: z.number().int().positive(),
       merchant: z.string(),
-      methodLabel: z.string().describe('payment method shown to the user, e.g. 토스페이')
+      methodLabel: z.string().describe('payment method shown to the user, e.g. 토스페이'),
+      card: z
+        .string()
+        .optional()
+        .describe(
+          'part of the card name to pay with inside the pay app, e.g. "현대" for 현대카드 or "LOCA" for 롯데카드. ' +
+            'The tool switches the selected card to it before paying and refuses (card-not-found) if the app has no such card.'
+        )
     },
     async (args): Promise<{ content: TextBlock[] }> => {
       const label = '폰 결제 승인'
@@ -445,7 +454,8 @@ export function createPayTool(ctx: PayToolContext): PhoneTool {
           provider: args.provider,
           amountKrw: args.amountKrw,
           merchant: args.merchant,
-          methodLabel: args.methodLabel
+          methodLabel: args.methodLabel,
+          ...(args.card === undefined ? {} : { card: args.card })
         })
         // 사유는 상태 이름뿐이다 — 화면 값은 담지 않는다(진행 로그는 실행기가 남긴다)
         return text(r.ok ? 'ok' : `refused: ${r.reason ?? 'failed'}`)

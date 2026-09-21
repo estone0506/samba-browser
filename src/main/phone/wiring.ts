@@ -454,6 +454,7 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
         amountKrw: req.amountKrw,
         merchant: req.merchant,
         methodLabel: req.methodLabel,
+        ...(req.card === undefined ? {} : { cardHint: req.card }),
         phoneLabel: deps.phones.list().find((p) => p.serial === serial)?.label ?? serial,
         accountId: account.id,
         phoneId: phoneIdOf(serial),

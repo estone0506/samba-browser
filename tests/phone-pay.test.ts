@@ -646,3 +646,66 @@ describe('토스 앱 잠금 — 앱을 켤 때도 비밀번호를 묻는다', ()
     expect(h.tapPassword).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('토스 결제 화면(실기 구조) — 글자와 눌리는 영역이 따로인 [결제하기], 카드 바꾸기', () => {
+  // 실기: 글자는 클릭 불가 TextView, 눌리는 영역은 글자 없는 View 다
+  const payScreen = (card: string): PhoneScreen =>
+    screen(TOSS.packageName, [
+      el(1, '무신사', { clickable: false }),
+      el(2, '', { clickable: true }),
+      el(3, card, { clickable: false }),
+      el(4, '일시불 결제', { clickable: false }),
+      el(5, '결제수단 변경 ・ 설정', { clickable: false }),
+      el(6, '개인(신용)정보 제3자 제공 동의 필수 항목에 동의합니다', { clickable: false }),
+      el(7, '', { clickable: true }),
+      el(8, '결제하기', { clickable: false })
+    ])
+  const sheet = screen(TOSS.packageName, [
+    el(1, '닫기', { clickable: true }),
+    el(2, '결제수단 선택', { clickable: false }),
+    el(3, 'LOCA Professional', { clickable: false }),
+    el(4, '넥슨현대UNLIMITED', { clickable: false }),
+    el(5, 'zgm.streaming카드', { clickable: false })
+  ])
+  const pw = screen(TOSS.packageName, [el(9, '비밀번호를 눌러주세요', { clickable: false })])
+  const done = screen(TOSS.packageName, [el(10, '결제가 완료되었습니다', { clickable: false })])
+
+  it('클릭 불가 TextView 인 [결제하기]도 누른다 — 동의 문장 같은 본문은 누르지 않는다', async () => {
+    const h = harness({ screens: [payScreen('LOCA Professional'), pw, done, done] })
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: true })
+    expect(h.taps.map((t) => t[2])).toEqual([8 * 100 + 30])
+  })
+
+  it('카드를 지정하면 결제하기 전에 [결제수단 변경] → 그 카드 → 결제하기 순서로 누른다', async () => {
+    const h = harness({
+      screens: [
+        payScreen('LOCA Professional'),
+        sheet,
+        payScreen('넥슨현대UNLIMITED'),
+        pw,
+        done,
+        done
+      ]
+    })
+    const r = await runPayApproval(h.deps, request({ cardHint: '현대' }))
+    expect(r).toEqual({ ok: true })
+    expect(h.taps.map((t) => t[2])).toEqual([5 * 100 + 30, 4 * 100 + 30, 8 * 100 + 30])
+  })
+
+  it('지정한 카드가 이미 선택돼 있으면 바꾸지 않고 바로 결제한다', async () => {
+    const h = harness({ screens: [payScreen('넥슨현대UNLIMITED'), pw, done, done] })
+    const r = await runPayApproval(h.deps, request({ cardHint: '현대' }))
+    expect(r).toEqual({ ok: true })
+    expect(h.taps.map((t) => t[2])).toEqual([8 * 100 + 30])
+  })
+
+  it('카드 목록에 그 카드가 없으면 다른 카드로 결제하지 않고 멈춘다', async () => {
+    const h = harness({ screens: [payScreen('LOCA Professional'), sheet] })
+    const r = await runPayApproval(h.deps, request({ cardHint: '삼성' }))
+    expect(r).toEqual({ ok: false, reason: 'card-not-found' })
+    expect(h.tapPassword).not.toHaveBeenCalled()
+    // [결제수단 변경]만 눌렀고 결제하기는 누르지 않았다
+    expect(h.taps.map((t) => t[2])).toEqual([5 * 100 + 30])
+  })
+})
