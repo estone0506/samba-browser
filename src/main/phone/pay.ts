@@ -114,7 +114,8 @@ export function checkPaymentGate(input: {
   firstRunLimitKrw?: number
 }): PayGate {
   if (!(input.amountKrw > 0)) return 'over-limit'
-  if (input.amountKrw > input.limitKrw) return 'over-limit'
+  // 상한은 사용자가 설정에 적었을 때만 건다(0 = 없음). 앱이 임의로 금액을 막지 않는다
+  if (input.limitKrw > 0 && input.amountKrw > input.limitKrw) return 'over-limit'
   // 새 (사이트 × 결제수단) 조합의 첫 자동 결제는 소액만 허용한다
   const firstLimit = input.firstRunLimitKrw ?? FIRST_RUN_LIMIT_KRW
   if (input.isFirstRunForCombo && firstLimit > 0 && input.amountKrw > firstLimit) {
@@ -231,6 +232,8 @@ export interface PayRequest {
   isFirstRunForCombo: boolean
   /** 첫 결제 소액 상한(설정값). 0 이면 끈다 */
   firstRunLimitKrw?: number
+  /** 결제 전에 확인 카드를 띄울지. 생략하면 띄운다(guard). 자동 모드에서는 false */
+  confirmFirst?: boolean
   /** 설정에서 바꾼 상한. 없으면 기본 50만원 */
   limitKrw?: number
 }
@@ -390,8 +393,8 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
     return finish(false, gate)
   }
 
-  // 권한 모드와 무관하게 확인 카드 1회
-  if (!(await deps.confirm(payConfirmText(req)))) {
+  // 확인 카드는 앱의 권한 모드를 따른다 — guard 에서만 묻고, 자동(full)에서는 묻지 않는다
+  if (req.confirmFirst !== false && !(await deps.confirm(payConfirmText(req)))) {
     deps.onStep(tr('phone.payConfirmDeclined'), false)
     return finish(false, 'declined')
   }

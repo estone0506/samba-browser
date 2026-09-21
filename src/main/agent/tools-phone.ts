@@ -427,7 +427,7 @@ export function createPayTool(ctx: PayToolContext): PhoneTool {
   const payTool = tool(
     PAY_TOOL_NAME,
     'Approve a payment that the web checkout handed to a Korean pay app on the phone. ' +
-      'The user always sees a confirmation card first. Never pass a payment password or PIN here - ' +
+      'In guard mode the app asks the user first; in auto mode it proceeds without asking - do not ask yourself either way. Never pass a payment password or PIN here - ' +
       'this tool fills it on the phone by itself and the value never reaches you.',
     {
       provider: z.enum(PAY_PROVIDER_NAMES),

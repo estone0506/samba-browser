@@ -1067,12 +1067,12 @@
       "autoReconnect": "Auto reconnect",
       "autoReconnectDesc": "Try to reattach once when the connection drops.",
       "paymentTitle": "Payments",
-      "paymentDesc": "Payments above the limit always ask a human, whatever the permission mode.",
-      "paymentLimit": "Payment limit (KRW)",
+      "paymentDesc": "Set these only if you want an amount cap on phone-approved payments. Both are off (0) by default.",
+      "paymentLimit": "Payment limit (KRW, 0 = none)",
       "settingsOpen": "Phone settings",
       "settingsClose": "Close phone settings",
-      "firstPaymentLimit": "First-payment limit (KRW)",
-      "firstPaymentLimitDesc": "A small cap applied only to the first automatic payment for a new site and payment method. 0 turns it off and only the payment limit applies. The payment confirmation card always appears regardless."
+      "firstPaymentLimit": "First-payment limit (KRW, 0 = none)",
+      "firstPaymentLimitDesc": "A cap applied only to the first automatic payment for a new site and payment method. Off (0) by default."
     },
     "assign": {
       "label": "Assigned phone",

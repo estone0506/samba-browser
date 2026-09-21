@@ -27,6 +27,10 @@ import {
 import { createPayTool, PAY_TOOL_NAME, PHONE_TOOL_NAMES } from '../src/main/agent/tools-phone'
 import { SAMBA_TOOL_NAMES } from '../src/main/agent/tools'
 import { DEFAULT_PAYMENT_LIMIT_KRW, FIRST_RUN_LIMIT_KRW } from '../src/shared/phone'
+
+// 사용자가 설정에 적어 넣은 상한(테스트용 값). 기본값은 둘 다 없음(0)이다
+const USER_LIMIT_KRW = 500_000
+const USER_FIRST_LIMIT_KRW = 10_000
 import type { PhoneElement, PhoneScreen } from '../src/shared/phone-snapshot'
 import type { KeypadLayout } from '../src/main/ai/visual'
 
@@ -161,7 +165,7 @@ describe('PAY_APP_TO_PAYMENT_PROVIDER', () => {
 describe('checkPaymentGate', () => {
   const base = {
     amountKrw: 10_000,
-    limitKrw: DEFAULT_PAYMENT_LIMIT_KRW,
+    limitKrw: USER_LIMIT_KRW,
     isFirstRunForCombo: false,
     vaultUnlocked: true
   }
@@ -171,23 +175,22 @@ describe('checkPaymentGate', () => {
   })
 
   it('상한을 넘으면 over-limit', () => {
-    expect(checkPaymentGate({ ...base, amountKrw: DEFAULT_PAYMENT_LIMIT_KRW + 1 })).toBe(
-      'over-limit'
-    )
+    expect(checkPaymentGate({ ...base, amountKrw: USER_LIMIT_KRW + 1 })).toBe('over-limit')
   })
 
-  it('새 조합의 첫 결제가 1만원을 넘으면 first-run-too-large', () => {
-    expect(
-      checkPaymentGate({
-        ...base,
-        amountKrw: FIRST_RUN_LIMIT_KRW + 1,
-        isFirstRunForCombo: true
-      })
-    ).toBe('first-run-too-large')
-    // 1만원 이하면 통과한다
-    expect(
-      checkPaymentGate({ ...base, amountKrw: FIRST_RUN_LIMIT_KRW, isFirstRunForCombo: true })
-    ).toBe('ok')
+  it('기본값은 상한 없음 — 앱이 임의로 금액을 막지 않는다', () => {
+    expect(DEFAULT_PAYMENT_LIMIT_KRW).toBe(0)
+    expect(FIRST_RUN_LIMIT_KRW).toBe(0)
+    const free = { ...base, limitKrw: DEFAULT_PAYMENT_LIMIT_KRW, isFirstRunForCombo: true }
+    expect(checkPaymentGate({ ...free, amountKrw: 10_000_000 })).toBe('ok')
+  })
+
+  it('사용자가 첫 결제 상한을 적어 두었을 때만, 새 조합의 첫 결제가 그 값을 넘으면 first-run-too-large', () => {
+    const first = { ...base, isFirstRunForCombo: true, firstRunLimitKrw: USER_FIRST_LIMIT_KRW }
+    expect(checkPaymentGate({ ...first, amountKrw: USER_FIRST_LIMIT_KRW + 1 })).toBe(
+      'first-run-too-large'
+    )
+    expect(checkPaymentGate({ ...first, amountKrw: USER_FIRST_LIMIT_KRW })).toBe('ok')
   })
 
   it('금고가 잠겨 있으면 vault-locked', () => {
@@ -263,9 +266,12 @@ describe('runPayApproval', () => {
     expect(h.deps.launchApp).not.toHaveBeenCalled()
   })
 
-  it('상한을 넘으면 확인 카드도 띄우지 않고 거부한다', async () => {
+  it('사용자가 적은 상한을 넘으면 확인 카드도 띄우지 않고 거부한다', async () => {
     const h = harness({ screens: okScreens })
-    const r = await runPayApproval(h.deps, request({ amountKrw: 900_000 }))
+    const r = await runPayApproval(
+      h.deps,
+      request({ amountKrw: 900_000, limitKrw: USER_LIMIT_KRW })
+    )
 
     expect(r).toEqual({ ok: false, reason: 'over-limit' })
     expect(h.confirm).not.toHaveBeenCalled()
@@ -512,8 +518,9 @@ describe('첫 결제 상한은 설정값이다', () => {
     vaultUnlocked: true
   }
 
-  it('기본값(1만원)이면 3만원 첫 결제는 막힌다', () => {
-    expect(checkPaymentGate(base)).toBe('first-run-too-large')
+  it('기본값은 첫 결제 상한 없음 — 3만원 첫 결제가 그대로 통과한다(실기: 29,960원이 막혔던 건)', () => {
+    expect(checkPaymentGate(base)).toBe('ok')
+    expect(checkPaymentGate({ ...base, firstRunLimitKrw: 10_000 })).toBe('first-run-too-large')
   })
 
   it('설정으로 올리면 통과하고, 0 이면 첫 결제 상한을 끈다(결제 상한은 그대로 본다)', () => {
@@ -528,5 +535,27 @@ describe('첫 결제 상한은 설정값이다', () => {
     expect(checkPaymentGate({ ...base, isFirstRunForCombo: false, firstRunLimitKrw: 1_000 })).toBe(
       'ok'
     )
+  })
+})
+
+describe('결제 확인 카드는 권한 모드를 따른다', () => {
+  const flow = [
+    screen(TOSS.packageName, [el(2, '결제하기')]),
+    screen(TOSS.packageName, [el(3, '비밀번호를 눌러주세요', { clickable: false })]),
+    screen(TOSS.packageName, [el(4, '결제가 완료되었습니다', { clickable: false })]),
+    screen(TOSS.packageName, [el(4, '결제가 완료되었습니다', { clickable: false })])
+  ]
+
+  it('자동(full) 모드에서는 묻지 않고 진행한다', async () => {
+    const h = harness({ screens: flow })
+    const r = await runPayApproval(h.deps, request({ confirmFirst: false }))
+    expect(r).toEqual({ ok: true })
+    expect(h.confirm).not.toHaveBeenCalled()
+  })
+
+  it('guard 모드(기본)에서는 확인 카드를 한 번 띄운다', async () => {
+    const h = harness({ screens: flow })
+    await runPayApproval(h.deps, request())
+    expect(h.confirm).toHaveBeenCalledTimes(1)
   })
 })

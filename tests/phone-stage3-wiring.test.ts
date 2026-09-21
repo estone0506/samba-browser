@@ -501,8 +501,10 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     expect(h.gate.isSecret(SERIAL)).toBe(false)
   })
 
-  it('새 (사이트 × 결제수단) 조합의 첫 결제는 소액만 허용하고, 성공하면 이력이 남는다', async () => {
+  it('첫 결제 상한을 적어 둔 경우: 새 (사이트 × 결제수단) 조합의 첫 결제는 그 값까지만, 성공하면 이력이 남는다', async () => {
     const h = harness(db)
+    const base = h.deps.settings
+    h.deps.settings = () => ({ ...base(), firstPaymentLimitKrw: 10_000 })
     scriptPayScreens(h.adb)
     h.paySuccess.value = true
     const bridge = createPhoneAgentBridge(h.deps)
@@ -591,12 +593,24 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     // 실기: 무신사에 buyer01·buyer02 가 함께 있어 폰 승인이 늘 "계정을 특정할 수 없음"으로 거부됐다
     const many = [
       { ...ACCOUNT, id: 11, label: 'buyer02', username: 'buyer02', isDefault: false },
-      { ...ACCOUNT, id: 12, label: 'buyer01', username: 'buyer01', isDefault: false, itemTypes: ['login'] },
+      {
+        ...ACCOUNT,
+        id: 12,
+        label: 'buyer01',
+        username: 'buyer01',
+        isDefault: false,
+        itemTypes: ['login']
+      },
       { ...ACCOUNT, id: 13, label: 'buyer01', username: 'buyer01', isDefault: false }
     ] as AccountDto[]
     const without = harness(db, { vault: { listAccounts: () => many } })
     scriptPayScreens(without.adb)
-    const req = { provider: 'toss', amountKrw: 9000, merchant: '삼바상회', methodLabel: '토스페이' } as const
+    const req = {
+      provider: 'toss',
+      amountKrw: 9000,
+      merchant: '삼바상회',
+      methodLabel: '토스페이'
+    } as const
     expect(await createPhoneAgentBridge(without.deps).approvePayment(without.ctx, req)).toEqual({
       ok: false,
       reason: 'no-account'

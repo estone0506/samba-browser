@@ -7,11 +7,7 @@
 //  - 비밀번호 화면인 동안에는 화면 프레임을 전송·저장하지 않는다(SecretScreenGate)
 //  - 인증번호·문자 본문은 진행 로그에도 남기지 않는다(자리수만 남긴다)
 
-import {
-  DEFAULT_PAYMENT_LIMIT_KRW,
-  type PhoneAuthWaitingDto,
-  type PhoneDto
-} from '../../shared/phone'
+import { type PhoneAuthWaitingDto, type PhoneDto } from '../../shared/phone'
 import type { AuthEventDto } from '../../shared/phone'
 import type { PageSnapshot } from '../../shared/snapshot'
 import type { PhoneScreen } from '../../shared/phone-snapshot'
@@ -452,7 +448,8 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
         siteHost,
         jobId: ctx.jobId,
         isFirstRunForCombo: !deps.repo.hasPayApproval(siteHost, req.methodLabel),
-        limitKrw: deps.settings().paymentLimitKrw || DEFAULT_PAYMENT_LIMIT_KRW,
+        limitKrw: deps.settings().paymentLimitKrw,
+        confirmFirst: deps.settings().permissionMode !== 'full',
         firstRunLimitKrw: deps.settings().firstPaymentLimitKrw
       })
     } finally {

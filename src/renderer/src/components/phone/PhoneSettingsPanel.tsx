@@ -65,11 +65,12 @@ export function PhoneSettingsPanel({ settings, update }: SectionProps): React.JS
 
   // 결제 상한은 숫자만 받고, 빈 값·음수는 저장하지 않는다
   const commitLimit = (): void => {
-    const n = Number(limit.replace(/[^\d]/g, ''))
-    if (!Number.isFinite(n) || n <= 0) {
+    const digits = limit.replace(/[^\d]/g, '')
+    if (digits === '') {
       setLimit(String(settings.paymentLimitKrw))
       return
     }
+    const n = Number(digits)
     setLimit(String(n))
     update({ paymentLimitKrw: n })
   }

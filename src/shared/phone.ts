@@ -127,9 +127,9 @@ export type ScreenSize = (typeof SCREEN_SIZES)[number]
 export const SCREEN_FPS = [10, 15, 30] as const
 export type ScreenFps = (typeof SCREEN_FPS)[number]
 /** 결제 상한 기본값(원) */
-export const DEFAULT_PAYMENT_LIMIT_KRW = 500_000
+export const DEFAULT_PAYMENT_LIMIT_KRW = 0
 /** 새 (사이트 × 결제수단) 조합의 첫 자동 결제 상한(원) */
-export const FIRST_RUN_LIMIT_KRW = 10_000
+export const FIRST_RUN_LIMIT_KRW = 0
 
 export function isPhoneCountry(v: unknown): v is PhoneCountry {
   return typeof v === 'string' && (PHONE_COUNTRIES as readonly string[]).includes(v)
