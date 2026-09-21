@@ -1070,7 +1070,9 @@
       "paymentDesc": "상한을 넘는 결제는 권한 모드와 상관없이 사람 확인을 받습니다",
       "paymentLimit": "결제 상한 (원)",
       "settingsOpen": "폰 설정",
-      "settingsClose": "폰 설정 닫기"
+      "settingsClose": "폰 설정 닫기",
+      "firstPaymentLimit": "첫 결제 상한 (원)",
+      "firstPaymentLimitDesc": "처음 써 보는 사이트·결제수단 조합의 첫 자동 결제에만 걸리는 소액 상한이에요. 0 이면 끄고 결제 상한만 봐요. 결제 확인 카드는 이 값과 상관없이 매번 떠요"
     },
     "assign": {
       "label": "담당 폰",

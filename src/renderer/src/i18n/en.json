@@ -1070,7 +1070,9 @@
       "paymentDesc": "Payments above the limit always ask a human, whatever the permission mode.",
       "paymentLimit": "Payment limit (KRW)",
       "settingsOpen": "Phone settings",
-      "settingsClose": "Close phone settings"
+      "settingsClose": "Close phone settings",
+      "firstPaymentLimit": "First-payment limit (KRW)",
+      "firstPaymentLimitDesc": "A small cap applied only to the first automatic payment for a new site and payment method. 0 turns it off and only the payment limit applies. The payment confirmation card always appears regardless."
     },
     "assign": {
       "label": "Assigned phone",

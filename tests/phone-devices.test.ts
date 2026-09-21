@@ -210,16 +210,38 @@ describe('DeviceManager 실패 내성', () => {
 })
 
 describe('DeviceManager 끊김 복구', () => {
-  it('recover() 는 kill-server → start-server → devices 를 정확히 1회씩 부르고 재시도하지 않는다', async () => {
+  it('recover(): 붙어 있는 다른 폰이 없을 때만 adb 서버를 껐다 켠다(마지막 수단, 재시도 없음)', async () => {
     const h = makeHarness({ autoReconnect: false })
     h.adb.reply('devices -l', NONE)
     const ok = await h.manager.recover('R3CRA05HY3R')
     expect(ok).toBe(false)
-    expect(h.adb.calls.map((c) => c.join(' '))).toEqual([
-      'kill-server',
-      'start-server',
-      'devices -l'
-    ])
+    const calls = h.adb.calls.map((c) => c.join(' '))
+    expect(calls).toContain('reconnect offline')
+    expect(calls.filter((c) => c === 'kill-server')).toHaveLength(1)
+    expect(calls.indexOf('reconnect offline')).toBeLessThan(calls.indexOf('kill-server'))
+  })
+
+  it('recover(): 다른 폰이 붙어 있으면 서버를 건드리지 않는다 — 그 폰의 연결·화면 전송이 끊기지 않게', async () => {
+    const h = makeHarness({ autoReconnect: false })
+    h.adb.reply('devices -l', 'List of devices attached\nOTHERPHONE device model:SM_F711N\n')
+    expect(await h.manager.recover('RF9X4021NHD')).toBe(false)
+    expect(h.adb.calls.some((c) => c[0] === 'kill-server')).toBe(false)
+  })
+
+  it('recover(): 같은 와이파이에서 발견되면 그 주소로 connect 해서 되살린다', async () => {
+    const h = makeHarness({ autoReconnect: false })
+    h.adb.reply(
+      'mdns services',
+      'List of discovered mdns services\nadb-RF9X4021NHD-iEPG7p\t_adb-tls-connect._tcp\t192.168.45.126:40449\n'
+    )
+    h.adb.reply(
+      'devices -l',
+      'List of devices attached\nadb-RF9X4021NHD-iEPG7p._adb-tls-connect._tcp device model:SM_A155N\n'
+    )
+    expect(await h.manager.recover('RF9X4021NHD')).toBe(true)
+    const calls = h.adb.calls.map((c) => c.join(' '))
+    expect(calls).toContain('connect 192.168.45.126:40449')
+    expect(calls).not.toContain('kill-server')
   })
 
   it('복구 후 폰이 보이면 true 를 돌려준다', async () => {
@@ -457,11 +479,18 @@ describe('와이파이 폰 자동 발견(adb mdns services)', () => {
 describe('무선 디버깅 페어링(adb pair)', () => {
   it('주소와 6자리 코드로 adb pair 를 부르고, 성공하면 목록을 다시 읽는다', async () => {
     const h = makeHarness()
-    h.adb.reply('pair 192.168.45.212:37123', 'Successfully paired to 192.168.45.212:37123 [guid=adb-X]')
+    h.adb.reply(
+      'pair 192.168.45.212:37123',
+      'Successfully paired to 192.168.45.212:37123 [guid=adb-X]'
+    )
     h.adb.reply('devices -l', 'List of devices attached\n')
     const r = await h.manager.pairWifi(' 192.168.45.212:37123 ', '123 456')
     expect(r.ok).toBe(true)
-    expect(h.adb.calls.find((c) => c[0] === 'pair')).toEqual(['pair', '192.168.45.212:37123', '123456'])
+    expect(h.adb.calls.find((c) => c[0] === 'pair')).toEqual([
+      'pair',
+      '192.168.45.212:37123',
+      '123456'
+    ])
     expect(deviceCalls(h.adb).length).toBeGreaterThan(0)
   })
 
@@ -508,7 +537,13 @@ describe('같은 폰의 여러 전송 이름을 한 줄로 합친다', () => {
 
   it('USB 로 등록해 둔 줄(이름 붙인 폰)이 와이파이로 붙어도 그 줄 그대로 쓴다', async () => {
     const h = makeHarness()
-    h.repo.upsertSeen({ serial: 'RF9X4021NHD', model: 'SM A155N', transport: 'usb', state: 'online', at: 1 })
+    h.repo.upsertSeen({
+      serial: 'RF9X4021NHD',
+      model: 'SM A155N',
+      transport: 'usb',
+      state: 'online',
+      at: 1
+    })
     h.repo.rows[0].label = '이가명'
     h.adb.reply('devices -l', DEVICES)
     h.adb.reply('mdns services', MDNS)
@@ -536,8 +571,20 @@ describe('옛 포트로 남은 ip:port 줄 정리', () => {
       const i = h.repo.rows.findIndex((row) => row.serial === a)
       if (i >= 0) h.repo.rows.splice(i, 1)
     }
-    h.repo.upsertSeen({ serial: 'RF9X4021NHD', model: 'SM A155N', transport: 'wifi', state: 'online', at: 1 })
-    h.repo.upsertSeen({ serial: '192.168.45.126:40449', model: 'SM A155N', transport: 'wifi', state: 'online', at: 1 })
+    h.repo.upsertSeen({
+      serial: 'RF9X4021NHD',
+      model: 'SM A155N',
+      transport: 'wifi',
+      state: 'online',
+      at: 1
+    })
+    h.repo.upsertSeen({
+      serial: '192.168.45.126:40449',
+      model: 'SM A155N',
+      transport: 'wifi',
+      state: 'online',
+      at: 1
+    })
     h.adb.reply(
       'devices -l',
       'List of devices attached\nadb-RF9X4021NHD-iEPG7p._adb-tls-connect._tcp device model:SM_A155N\n'

@@ -503,3 +503,30 @@ describe('결제 요청이 푸시 알림으로만 와 있을 때 — 알림창�
     expect(h.taps).toEqual([])
   })
 })
+
+describe('첫 결제 상한은 설정값이다', () => {
+  const base = {
+    amountKrw: 29_960,
+    limitKrw: 500_000,
+    isFirstRunForCombo: true,
+    vaultUnlocked: true
+  }
+
+  it('기본값(1만원)이면 3만원 첫 결제는 막힌다', () => {
+    expect(checkPaymentGate(base)).toBe('first-run-too-large')
+  })
+
+  it('설정으로 올리면 통과하고, 0 이면 첫 결제 상한을 끈다(결제 상한은 그대로 본다)', () => {
+    expect(checkPaymentGate({ ...base, firstRunLimitKrw: 50_000 })).toBe('ok')
+    expect(checkPaymentGate({ ...base, firstRunLimitKrw: 0 })).toBe('ok')
+    expect(checkPaymentGate({ ...base, amountKrw: 600_000, firstRunLimitKrw: 0 })).toBe(
+      'over-limit'
+    )
+  })
+
+  it('첫 결제가 아니면 첫 결제 상한과 무관하다', () => {
+    expect(checkPaymentGate({ ...base, isFirstRunForCombo: false, firstRunLimitKrw: 1_000 })).toBe(
+      'ok'
+    )
+  })
+})

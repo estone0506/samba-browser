@@ -255,10 +255,7 @@ export class DeviceManager {
     }
   }
 
-  private async connectDiscovered(
-    current: RawDevice[],
-    services: MdnsService[]
-  ): Promise<boolean> {
+  private async connectDiscovered(current: RawDevice[], services: MdnsService[]): Promise<boolean> {
     const now = this.deps.now()
     let connected = false
     const ignored = this.deps.ignored?.() ?? []
@@ -279,16 +276,38 @@ export class DeviceManager {
   }
 
   /**
-   * 폰 카드의 "재연결" — kill-server && start-server 를 1회만 시도한다.
-   * 자동 복구는 refresh 안에서 기다리지 않고 부르므로 여기서도 던지지 않는다
+   * 폰 카드의 "재연결"·끊긴 폰 자동 복구. 그 폰만 다시 붙인다:
+   *  1) 같은 와이파이에서 발견되면 그 주소로 adb connect
+   *  2) adb reconnect offline (멈춘 전송만 다시 연다)
+   *  3) 그래도 안 되고 **붙어 있는 다른 폰이 하나도 없을 때만** kill-server → start-server
+   * 예전에는 곧바로 3)을 했는데, 폰이 여러 대면 한 대가 끊길 때마다 나머지 폰의 연결과 화면 전송까지
+   * 함께 끊겼다. 자동 복구는 refresh 안에서 기다리지 않고 부르므로 여기서도 던지지 않는다
    */
   async recover(serial: string): Promise<boolean> {
     if (!this.hasAdb()) return false
+    const isBack = async (): Promise<{ back: boolean; others: number }> => {
+      const services = await this.discover()
+      const live = pickOnePerPhone(
+        parseDevices((await this.deps.adb.run(['devices', '-l'])).stdout),
+        services
+      ).filter((d) => d.state === 'online')
+      const back = live.some((d) => d.realSerial === serial || d.serial === serial)
+      return { back, others: live.filter((d) => d.realSerial !== serial).length }
+    }
     try {
+      const service = (await this.discover()).find((sv) => sv.serial === serial)
+      if (service) {
+        await this.deps.adb.run(['connect', service.address], 10_000)
+        if ((await isBack()).back) return true
+      }
+      await this.deps.adb.run(['reconnect', 'offline'], 10_000)
+      const after = await isBack()
+      if (after.back) return true
+      // 다른 폰이 붙어 있으면 서버를 건드리지 않는다 — 이 폰은 다음 검색에서 다시 본다
+      if (after.others > 0) return false
       await this.deps.adb.run(['kill-server'])
       await this.deps.adb.run(['start-server'])
-      const res = await this.deps.adb.run(['devices', '-l'])
-      return parseDevices(res.stdout).some((d) => d.serial === serial && d.state === 'online')
+      return (await isBack()).back
     } catch {
       return false
     }

@@ -110,11 +110,14 @@ export function checkPaymentGate(input: {
   limitKrw: number
   isFirstRunForCombo: boolean
   vaultUnlocked: boolean
+  /** 첫 결제 소액 상한. 0 이면 첫 결제도 결제 상한만 본다. 생략하면 기본값(1만원) */
+  firstRunLimitKrw?: number
 }): PayGate {
   if (!(input.amountKrw > 0)) return 'over-limit'
   if (input.amountKrw > input.limitKrw) return 'over-limit'
   // 새 (사이트 × 결제수단) 조합의 첫 자동 결제는 소액만 허용한다
-  if (input.isFirstRunForCombo && input.amountKrw > FIRST_RUN_LIMIT_KRW) {
+  const firstLimit = input.firstRunLimitKrw ?? FIRST_RUN_LIMIT_KRW
+  if (input.isFirstRunForCombo && firstLimit > 0 && input.amountKrw > firstLimit) {
     return 'first-run-too-large'
   }
   // 금고가 잠겨 있으면 비밀번호를 만질 수 없으므로 시작조차 하지 않는다
@@ -226,6 +229,8 @@ export interface PayRequest {
   siteHost: string
   jobId?: string
   isFirstRunForCombo: boolean
+  /** 첫 결제 소액 상한(설정값). 0 이면 끈다 */
+  firstRunLimitKrw?: number
   /** 설정에서 바꾼 상한. 없으면 기본 50만원 */
   limitKrw?: number
 }
@@ -376,7 +381,8 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
     amountKrw: req.amountKrw,
     limitKrw: req.limitKrw ?? DEFAULT_PAYMENT_LIMIT_KRW,
     isFirstRunForCombo: req.isFirstRunForCombo,
-    vaultUnlocked: deps.vaultUnlocked()
+    vaultUnlocked: deps.vaultUnlocked(),
+    ...(req.firstRunLimitKrw === undefined ? {} : { firstRunLimitKrw: req.firstRunLimitKrw })
   })
   if (gate !== 'ok') {
     // 앱을 열기 전이라 화면도 없다 — 카드도 띄우지 않고 사유만 남긴다

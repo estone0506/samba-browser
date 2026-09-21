@@ -452,7 +452,8 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
         siteHost,
         jobId: ctx.jobId,
         isFirstRunForCombo: !deps.repo.hasPayApproval(siteHost, req.methodLabel),
-        limitKrw: deps.settings().paymentLimitKrw || DEFAULT_PAYMENT_LIMIT_KRW
+        limitKrw: deps.settings().paymentLimitKrw || DEFAULT_PAYMENT_LIMIT_KRW,
+        firstRunLimitKrw: deps.settings().firstPaymentLimitKrw
       })
     } finally {
       // 결제가 끝나면 화면 전송을 곧바로 되살린다(만료를 기다리지 않는다)
