@@ -261,6 +261,18 @@ export function resolveAccount(
 // 도구 하나의 상한 시간. run_js 는 자체 30초 상한이 있으므로 그보다 넉넉히 둔다
 const TOOL_TIMEOUT_MS = 90_000
 
+/** run_script 의 args(JSON 문자열)를 객체로 바꾼다. 비어 있으면 빈 객체, 객체가 아니면 null */
+export function parseScriptArgs(raw: string | undefined): Record<string, unknown> | null {
+  if (raw === undefined || raw.trim() === '') return {}
+  try {
+    const value: unknown = JSON.parse(raw)
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+    return value as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
 /** 제한 시간을 잴 때 시계를 확인하는 간격 */
 const TOOL_TIMEOUT_POLL_MS = 1_000
 
@@ -1661,7 +1673,12 @@ overlays left: ${after.length}${kept}`
       'page/tabs API as run_js, up to 75s. Check the returned result against the page before relying on it.',
     {
       name: z.string(),
-      args: z.record(z.string(), z.unknown()).optional().describe('values the script reads from args')
+      // 객체 스키마(z.record·z.unknown)는 SDK 의 도구 목록 변환에서 실패해 도구 전체가 빠진다(실기) —
+      // 다른 도구처럼 문자열만 받는다
+      args: z
+        .string()
+        .optional()
+        .describe('JSON object string with the values the script reads, e.g. {"orderNo":"…"}')
     },
     ({ name, args }) =>
       guard(
@@ -1671,8 +1688,10 @@ overlays left: ${after.length}${kept}`
           if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
           const script = ctx.scripts.find(name)
           if (!script) return `refused: no saved script named "${name}"`
+          const parsedArgs = parseScriptArgs(args)
+          if (parsedArgs === null) return 'refused: args must be a JSON object string'
           const result = await runSandbox(script.code, makeRunJsBridge(), {
-            args: args ?? {},
+            args: parsedArgs,
             totalTimeoutMs: RUN_SCRIPT_TOTAL_TIMEOUT_MS
           })
           ctx.scripts.ran(name, !isScriptFailure(result))
