@@ -188,6 +188,8 @@ export class DeviceManager {
       const realSerial = realSerialOf(d.serial, services)
       if (realSerial !== d.serial) this.deps.repo.mergeAlias?.(d.serial, realSerial)
     }
+    // 지금은 안 보이지만 예전에 ip:port 로 저장된 줄도, 그 주소의 주인을 알면 합친다
+    for (const service of services) this.deps.repo.mergeAlias?.(service.address, service.serial)
     const raw = pickOnePerPhone(seen, services)
     const now = this.deps.now()
     for (const d of raw) {
