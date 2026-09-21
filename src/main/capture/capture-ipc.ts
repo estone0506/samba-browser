@@ -50,6 +50,7 @@ import { captureShortcutMode } from '../../shared/capture'
 import { resolveCaptureDir, samePath, uniqueCaptureFile } from './paths'
 import { blitRows, createCanvas, decodePng, encodePng, toDeviceStep } from './stitch'
 import type { TabManager } from '../browser/tab-manager'
+import { tr } from '../i18n'
 
 // 미리보기 토스트에 넣을 썸네일 가로 크기(px). IPC 로 큰 이미지를 보내지 않기 위한 값
 const PREVIEW_WIDTH = 280
@@ -84,14 +85,14 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
 
   const activeWebContents = (): WebContents => {
     const tab = deps.tabs.active()
-    if (!tab || tab.view.webContents.isDestroyed()) throw new Error('활성 탭이 없습니다')
+    if (!tab || tab.view.webContents.isDestroyed()) throw new Error(tr('capture.noActiveTab'))
     return tab.view.webContents
   }
 
   /** 렌더러 뷰포트(=창 콘텐츠) 좌표계에서의 웹뷰 영역 */
   const webviewRect = (): CaptureRect => {
     const tab = deps.tabs.active()
-    if (!tab) throw new Error('활성 탭이 없습니다')
+    if (!tab) throw new Error(tr('capture.noActiveTab'))
     const b = tab.view.getBounds()
     return { x: b.x, y: b.y, width: b.width, height: b.height }
   }
@@ -118,7 +119,7 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   /** 이미지를 저장하고 완료 이벤트를 쏜다. 설정에 따라 클립보드에도 복사한다 */
   const saveImage = (mode: CaptureMode, image: NativeImage): CaptureResultDto => {
     const size = image.getSize()
-    if (size.width <= 0 || size.height <= 0) throw new Error('빈 이미지는 저장하지 않습니다')
+    if (size.width <= 0 || size.height <= 0) throw new Error(tr('capture.emptyImage'))
     const settings = deps.settings()
     const dir = targetDir()
     const target = uniqueCaptureFile(
@@ -177,7 +178,7 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
       ...metrics,
       maxHeight: maxFullPageCssHeight(metrics.viewportWidth, metrics.deviceScale)
     })
-    if (steps.length === 0) throw new Error('페이지 크기를 읽지 못했습니다')
+    if (steps.length === 0) throw new Error(tr('capture.pageSizeUnreadable'))
 
     // 첫 장으로 배율을 잰다(고해상도 화면에서 이미지 픽셀 ≠ CSS 픽셀)
     let canvas: ReturnType<typeof createCanvas> | null = null
@@ -195,7 +196,7 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
     }
     // 원래 스크롤 위치로 돌려 놓는다
     await wc.executeJavaScript(`window.scrollTo(0, ${metrics.scrollY})`, true)
-    if (!canvas) throw new Error('전체 페이지 캡처에 실패했습니다')
+    if (!canvas) throw new Error(tr('capture.fullPageFailed'))
     return saveImage('fullPage', nativeImage.createFromBuffer(encodePng(canvas)))
   }
 
@@ -216,7 +217,7 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
       }
     })
     const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0]
-    if (!source) throw new Error('화면 소스를 찾지 못했습니다')
+    if (!source) throw new Error(tr('capture.sourceNotFound'))
     return { id: source.id, image: source.thumbnail, bounds: display.bounds, scaleFactor }
   }
 
@@ -240,7 +241,7 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   })
 
   deps.handle(IPC.captureRun, async (rawMode: unknown): Promise<boolean> => {
-    if (!isCaptureMode(rawMode)) throw new Error('알 수 없는 캡처 방식')
+    if (!isCaptureMode(rawMode)) throw new Error(tr('capture.unknownMode'))
     if (rawMode === 'region') {
       startRegionMode()
       return true
@@ -260,16 +261,16 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   // 렌더러가 잘라낸 이미지(직접 지정). data URL 외의 값은 받지 않는다
   deps.handle(IPC.captureSaveImage, (rawDataUrl: unknown): void => {
     if (typeof rawDataUrl !== 'string' || !rawDataUrl.startsWith('data:image/')) {
-      throw new Error('이미지 데이터가 올바르지 않습니다')
+      throw new Error(tr('capture.invalidImageData'))
     }
     const image = nativeImage.createFromDataURL(rawDataUrl)
-    if (image.isEmpty()) throw new Error('이미지를 읽지 못했습니다')
+    if (image.isEmpty()) throw new Error(tr('capture.imageUnreadable'))
     saveImage('direct', image)
   })
 
   // 녹화용 화면 소스. videoDirect 면 웹뷰 영역을 화면 좌표로 환산해 크롭 정보를 함께 준다
   deps.handle(IPC.captureVideoSource, async (rawMode: unknown): Promise<CaptureVideoSourceDto> => {
-    if (!isCaptureMode(rawMode)) throw new Error('알 수 없는 캡처 방식')
+    if (!isCaptureMode(rawMode)) throw new Error(tr('capture.unknownMode'))
     const source = await primaryScreenSource()
     const size = source.image.getSize()
     if (rawMode !== 'videoDirect') {
@@ -393,7 +394,7 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
     if (writeFailure && writeFailure.token === rawToken) {
       const { message } = writeFailure
       writeFailure = null
-      throw new Error(`녹화를 파일에 다 쓰지 못했어요: ${message}`)
+      throw new Error(tr('capture.recordingWriteFailed', { message }))
     }
     if (!currentStreaming(rawToken)) return
     const closed = closeStreaming()
@@ -423,10 +424,10 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
 
   // 저장이 끝난 파일만 다룬다 — 임의 경로 열기를 막기 위해 저장 폴더 밖이면 거절한다
   const assertInCaptureDir = (rawPath: unknown): string => {
-    if (typeof rawPath !== 'string' || !rawPath) throw new Error('경로가 비어 있습니다')
+    if (typeof rawPath !== 'string' || !rawPath) throw new Error(tr('capture.emptyPath'))
     // 구분자·끝 구분자·대소문자 차이로 자기 폴더를 밖으로 오인하지 않게 정규화해 견준다
-    if (!samePath(dirname(rawPath), targetDir())) throw new Error('캡처 폴더 밖의 파일입니다')
-    if (!existsSync(rawPath)) throw new Error('파일을 찾을 수 없습니다')
+    if (!samePath(dirname(rawPath), targetDir())) throw new Error(tr('capture.outsideFolder'))
+    if (!existsSync(rawPath)) throw new Error(tr('capture.fileNotFound'))
     return rawPath
   }
 
@@ -446,7 +447,7 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   deps.handle(IPC.captureDir, (): string => targetDir())
   deps.handle(IPC.captureCopyImage, (rawPath: unknown) => {
     const image = nativeImage.createFromPath(assertInCaptureDir(rawPath))
-    if (image.isEmpty()) throw new Error('이미지를 읽지 못했습니다')
+    if (image.isEmpty()) throw new Error(tr('capture.imageUnreadable'))
     clipboard.writeImage(image)
   })
 

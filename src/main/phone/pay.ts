@@ -23,6 +23,7 @@ import {
   type PaySecretResult,
   type PaySecretVault
 } from './pay-secret'
+import { tr, type MessageKey } from '../i18n'
 
 export type PayState =
   'idle' | 'await_app' | 'app_steps' | 'password' | 'verify' | 'done' | 'failed'
@@ -245,13 +246,19 @@ export function formatKrw(amount: number): string {
 
 /** 확인 카드 문구 — 금액·가맹점·결제수단·폰 별칭을 모두 보여 준다 */
 export function payConfirmText(req: PayRequest): string {
-  return `결제 승인: ${formatKrw(req.amountKrw)}원 · ${req.merchant} · ${req.methodLabel} · ${req.phoneLabel}`
+  return tr('phone.payConfirm', {
+    amount: formatKrw(req.amountKrw),
+    merchant: req.merchant,
+    method: req.methodLabel,
+    phone: req.phoneLabel
+  })
 }
 
-const GATE_LABEL: Record<Exclude<PayGate, 'ok'>, string> = {
-  'over-limit': '결제 상한 초과',
-  'first-run-too-large': '첫 결제 금액 초과',
-  'vault-locked': '키마스터 잠김'
+// 문구는 앱 언어를 따라야 하므로 키만 두고 쓰는 시점에 번역한다
+const GATE_LABEL: Record<Exclude<PayGate, 'ok'>, MessageKey> = {
+  'over-limit': 'phone.gateOverLimit',
+  'first-run-too-large': 'phone.gateFirstRunTooLarge',
+  'vault-locked': 'phone.gateVaultLocked'
 }
 
 const SECRET_FAIL: Record<Exclude<PaySecretResult, 'ok'>, PayFailReason> = {
@@ -289,8 +296,8 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
 
   /** 실패 통지 + 기록. 비밀번호 화면이면 이미지를 아예 만들지 않는다 */
   const fail = async (reason: PayFailReason, screen: PhoneScreen | null): Promise<PayResult> => {
-    deps.onStep(`결제 실패: ${reason}`, false)
-    const message = `결제를 끝내지 못했습니다(${reason}). 폰에서 직접 확인해 주세요.`
+    deps.onStep(tr('phone.payFailedStep', { reason }), false)
+    const message = tr('phone.payFailedNotice', { reason })
     if (screen && isSecretScreen(screen, spec)) {
       deps.notify(message)
       return finish(false, reason)
@@ -310,13 +317,13 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
   const handOff = async (screen: PhoneScreen): Promise<PayResult> => {
     if (deps.handoff) {
       const result = await deps.handoff({
-        matched: '결제 비밀번호 키패드',
+        matched: tr('phone.payKeypadHandoff'),
         currentUrl: () => req.siteHost,
         // 비밀번호 화면이 사라지면 사용자가 직접 끝낸 것으로 본다
         stillBlocked: async () => isSecretScreen(await deps.phones.screen(req.serial), spec)
       })
       if (result.outcome === 'resumed' && (await deps.webSuccess())) {
-        deps.onStep('결제 완료(사용자 확인)', true)
+        deps.onStep(tr('phone.payDoneByUser'), true)
         return finish(true)
       }
     }
@@ -331,13 +338,13 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
   })
   if (gate !== 'ok') {
     // 앱을 열기 전이라 화면도 없다 — 카드도 띄우지 않고 사유만 남긴다
-    deps.onStep(`결제 거부: ${GATE_LABEL[gate]}`, false)
+    deps.onStep(tr('phone.payRejected', { reason: tr(GATE_LABEL[gate]) }), false)
     return finish(false, gate)
   }
 
   // 권한 모드와 무관하게 확인 카드 1회
   if (!(await deps.confirm(payConfirmText(req)))) {
-    deps.onStep('결제 확인 거부', false)
+    deps.onStep(tr('phone.payConfirmDeclined'), false)
     return finish(false, 'declined')
   }
 
@@ -390,7 +397,7 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
   if (state !== 'done') return fail(passwordTried ? 'verify-failed' : 'stuck', screen)
   // 앱 완료 화면만으로는 부족하다 — 웹 팝업이 성공 주소로 넘어갔는지도 확인한다
   if (!(await deps.webSuccess())) return fail('verify-failed', screen)
-  deps.onStep('결제 완료', true)
+  deps.onStep(tr('phone.payDone'), true)
   return finish(true)
 }
 

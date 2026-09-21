@@ -111,6 +111,7 @@ import { registerTranslate } from '../translate/register'
 import { registerCaptureIpc } from '../capture/capture-ipc'
 import { isAllowedCaptureDir } from '../capture/paths'
 import type { CaptureShortcutInput } from '../../shared/capture'
+import { tr } from '../i18n'
 
 /**
  * 렌더러가 보낸 툴바 버튼 좌표를 숫자만 남긴 형태로 받는다.
@@ -243,7 +244,7 @@ export function registerIpc(
   // guard 모드에서 confirm/beforeunload 는 사용자 확인 카드를 거쳐야 '예' 가 된다
   tabs.setDialogPolicy({
     mode: () => settings.get().permissionMode,
-    confirm: (message) => agent.requestConfirm(`페이지 확인: ${message}`, 'danger')
+    confirm: (message) => agent.requestConfirm(tr('ipc.pageConfirm', { message }), 'danger')
   })
   vault.onStateChanged((state) => send(IPC.vaultStateChanged, state))
   // 저장 제안 카드에는 host/username/isNew 만 간다(비밀번호는 메인에 남는다)
@@ -395,7 +396,7 @@ export function registerIpc(
       typeof patch.captureDir === 'string' &&
       !isAllowedCaptureDir(patch.captureDir, app.getPath('home'))
     ) {
-      throw new Error('저장 폴더는 홈 폴더 안에서만 지정할 수 있어요')
+      throw new Error(tr('ipc.saveFolderOutsideHome'))
     }
     const s = settings.set(patch)
     // 홈 주소·새 탭 주소·검색엔진이 바뀌면 tab-manager 도 즉시 반영한다
@@ -759,7 +760,7 @@ export function registerIpc(
   )
   // 연결: 자격이 있으면 연결 기록을 남기고, 없으면 이유만 돌려준다(화면이 안내를 띄운다)
   handleFromRenderer(IPC.aiConnect, async (raw: unknown, rawOpenTerminal: unknown) => {
-    if (!isSubscriptionProviderId(raw)) throw new Error('알 수 없는 구독 경로')
+    if (!isSubscriptionProviderId(raw)) throw new Error(tr('ipc.unknownSubscriptionProvider'))
     if (rawOpenTerminal === true) {
       // 새 터미널 창에서 로그인 명령을 띄운다(자격은 그 창에서 사용자가 직접 만든다)
       openLoginTerminal(raw)
@@ -775,14 +776,14 @@ export function registerIpc(
   })
   // 해지: 진행 중 작업이 없을 때만. 앱의 연결 기록만 지우고 CLI 로그인 파일은 두 손 대지 않는다
   handleFromRenderer(IPC.aiDisconnect, (raw: unknown) => {
-    if (!isSubscriptionProviderId(raw)) throw new Error('알 수 없는 구독 경로')
-    if (agent.isRunning()) throw new Error('작업이 끝난 뒤에 연결을 해지할 수 있어요')
+    if (!isSubscriptionProviderId(raw)) throw new Error(tr('ipc.unknownSubscriptionProvider'))
+    if (agent.isRunning()) throw new Error(tr('ipc.disconnectWhileRunning'))
     const next = withConnection(settings.get().aiConnections, raw, disconnectedRecord())
     settings.set({ aiConnections: next })
     return { ok: true, connection: next[connectionKeyOf(raw)] }
   })
   handleFromRenderer(IPC.aiSetProvider, (raw: unknown) => {
-    if (!isAiProviderId(raw)) throw new Error('알 수 없는 AI 연결 경로')
+    if (!isAiProviderId(raw)) throw new Error(tr('ipc.unknownAiProvider'))
     const before = settings.get()
     const { models, changed } = remapOnProviderChange(
       before.taskModels,
@@ -794,7 +795,7 @@ export function registerIpc(
   })
   // 평문 키는 렌더러 → 메인 한 방향으로만 흐른다. 응답은 마스킹뿐이다
   handleFromRenderer(IPC.aiSetApiKey, (rawVendor: unknown, rawKey: unknown) => {
-    if (!isApiKeyVendor(rawVendor)) throw new Error('알 수 없는 API 키 제공자')
+    if (!isApiKeyVendor(rawVendor)) throw new Error(tr('ipc.unknownApiKeyVendor'))
     const key = typeof rawKey === 'string' ? rawKey : ''
     if (key.trim()) apiKeys.set(rawVendor as ApiKeyVendor, key)
     else apiKeys.remove(rawVendor as ApiKeyVendor)
@@ -802,7 +803,7 @@ export function registerIpc(
   })
   // 확인은 모델 목록 1회 호출. 응답 본문은 읽지도 로그에 남기지도 않는다
   handleFromRenderer(IPC.aiTestKey, async (rawVendor: unknown, rawKey: unknown) => {
-    if (!isApiKeyVendor(rawVendor)) throw new Error('알 수 없는 API 키 제공자')
+    if (!isApiKeyVendor(rawVendor)) throw new Error(tr('ipc.unknownApiKeyVendor'))
     const key = typeof rawKey === 'string' ? rawKey : ''
     return testApiKey(rawVendor as ApiKeyVendor, key)
   })
@@ -815,8 +816,8 @@ export function registerIpc(
     }
   })
   handleFromRenderer(IPC.aiSetTaskModel, (rawKey: unknown, rawModel: unknown) => {
-    if (!isTaskModelKey(rawKey)) throw new Error('알 수 없는 작업 등급')
-    if (typeof rawModel !== 'string' || !rawModel.trim()) throw new Error('모델 이름이 비어 있음')
+    if (!isTaskModelKey(rawKey)) throw new Error(tr('ipc.unknownTaskModel'))
+    if (typeof rawModel !== 'string' || !rawModel.trim()) throw new Error(tr('ipc.emptyModelName'))
     const key = rawKey as TaskModelKey
     const next = { ...settings.get().taskModels, [key]: rawModel.trim() }
     return settings.set({ taskModels: next }).taskModels
@@ -950,7 +951,7 @@ export function registerIpc(
 
   const requireDevices = (): DeviceService => {
     const devices = connection.devices()
-    if (!devices) throw new Error('로그인이 필요합니다')
+    if (!devices) throw new Error(tr('ipc.loginRequired'))
     return devices
   }
   handleFromRenderer(IPC.devicesList, () => requireDevices().list())
@@ -1008,17 +1009,17 @@ export function registerIpc(
   // Electron 39 에는 chrome.action 이 없어 확장이 팝업을 띄워 달라고 할 수 없으므로,
   // manifest 의 default_popup 을 우리가 읽어 같은 자리에 같은 문서를 띄운다
   handleFromRenderer(IPC.extAction, (id: unknown, rawAnchor: unknown): ExtensionActionResult => {
-    if (typeof id !== 'string') throw new Error('확장 id 가 올바르지 않아요')
+    if (typeof id !== 'string') throw new Error(tr('ipc.invalidExtensionId'))
     const item = extensions.find(id)
-    if (!item) throw new Error('목록에 없는 확장이에요')
-    if (!item.enabled) throw new Error('꺼져 있는 확장이에요')
+    if (!item) throw new Error(tr('ipc.extensionNotListed'))
+    if (!item.enabled) throw new Error(tr('ipc.extensionDisabled'))
     const anchor = toExtensionAnchor(rawAnchor)
     if (item.popup) {
       // 팝업은 그 확장이 로드된 세션에서 열어야 chrome.* 이 동작한다.
       // 보통은 지금 보고 있는 탭의 파티션 세션이고, 거기에 없으면 기본 세션으로 내려간다
       const active = tabs.active()?.view.webContents.session
       const ses = sessionWithExtension(id, [...(active ? [active] : []), session.defaultSession])
-      if (!ses) throw new Error('확장이 올라간 세션을 찾지 못했어요')
+      if (!ses) throw new Error(tr('ipc.extensionSessionNotFound'))
       const open = extensionPopup.toggle({
         id,
         url: extensionPopupUrl(id, item.popup),

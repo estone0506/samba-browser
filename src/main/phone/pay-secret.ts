@@ -12,6 +12,7 @@ import type { PhoneScreen } from '../../shared/phone-snapshot'
 import type { PaymentProvider, VaultState } from '../../shared/vault'
 import type { PaymentSecretResult } from '../vault/service'
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
+import { tr } from '../i18n'
 
 /** 이 모듈이 금고에서 쓰는 최소 능력(VaultService 가 그대로 만족한다) */
 export interface PaySecretVault {
@@ -69,7 +70,7 @@ export async function tapPaymentPassword(deps: {
     await deps.tap(deps.serial, point.x, point.y)
   }
   // 라벨에는 자리수만 남긴다
-  deps.onStep(`결제 비밀번호 입력(${digits.length}자리)`, true)
+  deps.onStep(tr('phone.payPasswordEntered', { digits: digits.length }), true)
   return 'ok'
 }
 

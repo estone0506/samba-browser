@@ -33,6 +33,7 @@ import {
   type PayResult,
   type PayRunDeps
 } from './pay'
+import { tr } from '../i18n'
 
 // --- 비밀 화면 차단(T5 ScreenStream 훅) ---------------------------------------
 
@@ -364,12 +365,12 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     const siteHost = deps.page.host()
     const account = accountFor(siteHost)
     if (!account) {
-      ctx.onStep('결제 거부: 이 사이트의 계정을 특정할 수 없음', false)
+      ctx.onStep(tr('phone.payRejected', { reason: tr('phone.gateNoAccount') }), false)
       return { ok: false, reason: 'no-account' }
     }
     const serial = serialsFor(account.id)[0]
     if (!serial) {
-      ctx.onStep('결제 거부: 연결된 폰 없음', false)
+      ctx.onStep(tr('phone.payRejected', { reason: tr('phone.gateNoPhone') }), false)
       return { ok: false, reason: 'no-phone' }
     }
     const spec = PAY_PROVIDERS[req.provider]

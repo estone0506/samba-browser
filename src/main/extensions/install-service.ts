@@ -11,6 +11,7 @@ import type {
 import { collectImportSources, copyExtensionFolder } from './import-sources'
 import { installFromWebstore, type CrxFetcher } from './webstore'
 import type { ExtensionManager } from './manager'
+import { tr } from '../i18n'
 
 export interface ExtensionInstallerDeps {
   manager: ExtensionManager
@@ -50,7 +51,7 @@ export function createExtensionInstaller(deps: ExtensionInstallerDeps): Extensio
       for (const id of wanted) {
         try {
           const item = found.find((s) => s.id === id)
-          if (!item) throw new Error('브라우저에서 그 확장을 더 이상 찾을 수 없어요')
+          if (!item) throw new Error(tr('ext.browserItemGone'))
           const dest = copyExtensionFolder(item.path, deps.extensionsRoot, id)
           // 같은 경로를 다시 로드하기 전에 이전 버전을 세션에서 걷어낸다
           deps.manager.removeByPath(dest)

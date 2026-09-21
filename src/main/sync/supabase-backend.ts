@@ -14,6 +14,7 @@ import {
 } from './backend'
 import type { SessionStorageAdapter } from './session-store'
 import { readSupabaseEnv } from './env'
+import { tr } from '../i18n'
 
 // 인증 만료로 볼 응답 코드/문구
 const AUTH_EXPIRED = ['PGRST301', '401', 'jwt expired', 'invalid refresh token']
@@ -86,7 +87,7 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
   const identity = (
     user: { id: string; email?: string } | null
   ): { userId: string; email: string } => {
-    if (!user) raise('사용자 정보를 받지 못했습니다')
+    if (!user) raise(tr('auth.userMissing'))
     return { userId: user.id, email: user.email ?? '' }
   }
 
@@ -107,7 +108,7 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
         options: { redirectTo, skipBrowserRedirect: true }
       })
       if (error) raise(error.message)
-      if (!data.url) raise('구글 로그인 주소를 받지 못했습니다')
+      if (!data.url) raise(tr('auth.googleUrlMissing'))
       return data.url
     },
     async exchangeCode(code) {

@@ -11,6 +11,7 @@ import type { Settings } from '../../shared/settings'
 import type { ExtensionDto, ExtensionError, ExtensionSource } from '../../shared/extensions'
 import { pickIconPath, readIconDataUrl, resolveExtensionName } from './import-sources'
 import { resolveActionIconPath, resolveOptionsPath, resolvePopupPath } from './action'
+import { tr } from '../i18n'
 
 export type { ExtensionDto, ExtensionError, ExtensionSource }
 
@@ -68,16 +69,16 @@ const SUPPORTED_MANIFEST_VERSIONS = [2, 3]
  */
 export function parseManifest(raw: unknown): ExtensionManifest {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    throw new Error('manifest.json 형식이 올바르지 않아요')
+    throw new Error(tr('ext.manifestInvalid'))
   }
   const o = raw as Record<string, unknown>
   const name = typeof o.name === 'string' ? o.name.trim() : ''
   const version = typeof o.version === 'string' ? o.version.trim() : ''
   const manifestVersion = typeof o.manifest_version === 'number' ? o.manifest_version : 0
-  if (!name) throw new Error('manifest.json 에 name 이 없어요')
-  if (!version) throw new Error('manifest.json 에 version 이 없어요')
+  if (!name) throw new Error(tr('ext.manifestNoName'))
+  if (!version) throw new Error(tr('ext.manifestNoVersion'))
   if (!SUPPORTED_MANIFEST_VERSIONS.includes(manifestVersion)) {
-    throw new Error('지원하지 않는 manifest_version 이에요 (2 또는 3만 지원)')
+    throw new Error(tr('ext.manifestVersionUnsupported'))
   }
   // 권한은 화면에 보여 주기만 하는 값이라, 형식이 틀려도 거부하지 않고 걸러 낸다
   const permissions = [...stringArray(o.permissions), ...stringArray(o.host_permissions)]
@@ -112,21 +113,21 @@ export function parseManifest(raw: unknown): ExtensionManifest {
  * 확장 디렉터리 안" 이라는 제한은 아직 없다 — 확장 설치 UX 를 다듬을 때 함께 좁힌다
  */
 export function resolveExtensionFolder(folder: string): string {
-  if (!folder.trim()) throw new Error('확장 폴더 경로가 비어 있어요')
-  if (!existsSync(folder)) throw new Error('확장 폴더를 찾을 수 없어요')
+  if (!folder.trim()) throw new Error(tr('ext.folderPathEmpty'))
+  if (!existsSync(folder)) throw new Error(tr('ext.folderNotFound'))
   const resolved = realpathSync(folder)
   if (!statSync(resolved).isDirectory()) {
-    throw new Error('압축 해제된 확장 폴더를 선택해 주세요 (.crx 파일은 지원하지 않아요)')
+    throw new Error(tr('ext.selectUnpackedFolder'))
   }
   const manifestPath = join(resolved, 'manifest.json')
-  if (!existsSync(manifestPath)) throw new Error('폴더 안에 manifest.json 이 없어요')
+  if (!existsSync(manifestPath)) throw new Error(tr('ext.folderNoManifest'))
   // 링크를 푼 뒤에도 폴더 안이어야 한다 — 밖을 가리키는 manifest 는 받지 않는다
   const realManifest = realpathSync(manifestPath)
   if (
     realManifest !== join(resolved, 'manifest.json') &&
     !realManifest.startsWith(resolved + sep)
   ) {
-    throw new Error('manifest.json 이 확장 폴더 밖을 가리켜요')
+    throw new Error(tr('ext.manifestOutsideFolder'))
   }
   return resolved
 }
@@ -141,7 +142,7 @@ export function readExtensionFolder(folder: string): ExtensionManifest {
   try {
     raw = JSON.parse(readFileSync(join(resolved, 'manifest.json'), 'utf8'))
   } catch {
-    throw new Error('manifest.json 을 읽을 수 없어요 (JSON 형식 오류)')
+    throw new Error(tr('ext.manifestUnreadable'))
   }
   return parseManifest(raw)
 }
@@ -175,7 +176,7 @@ export function createSessionExtensionHost(session: SessionLike): ExtensionHost 
     : session.loadExtension && session.removeExtension
       ? { loadExtension: session.loadExtension, removeExtension: session.removeExtension }
       : null
-  if (!api) throw new Error('이 Electron 버전은 확장 로드를 지원하지 않아요')
+  if (!api) throw new Error(tr('ext.loadUnsupported'))
   return {
     loadExtension: (path: string) => api.loadExtension(path, { allowFileAccess: false }),
     removeExtension: (id: string) => api.removeExtension(id)
@@ -323,7 +324,7 @@ export class ExtensionManager {
    */
   async setEnabled(id: string, enabled: boolean): Promise<ExtensionDto> {
     const entry = this.entries.find((e) => e.id === id)
-    if (!entry) throw new Error('목록에 없는 확장이에요')
+    if (!entry) throw new Error(tr('ext.notInList'))
     if (entry.enabled === enabled) return { ...entry }
     if (enabled) {
       // 첫 세션이 실패하면 아무것도 바꾸지 않는다
@@ -379,7 +380,7 @@ export class ExtensionManager {
   /** 목록·설정·모든 세션에서 확장을 걷어낸다 */
   remove(id: string): void {
     const index = this.entries.findIndex((e) => e.id === id)
-    if (index < 0) throw new Error('목록에 없는 확장이에요')
+    if (index < 0) throw new Error(tr('ext.notInList'))
     const [removed] = this.entries.splice(index, 1)
     // 꺼 둔 확장은 이미 세션에 없으므로 다시 걷어낼 것이 없다
     if (removed.enabled) this.removeFromHosts(id)

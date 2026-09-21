@@ -12,6 +12,7 @@ import type { Db } from '../db/client'
 import { workspaces } from '../db/schema'
 import type { Settings } from '../../shared/settings'
 import type { WorkspaceDto, WorkspaceScope } from '../../shared/sync'
+import { tr } from '../i18n'
 
 /** Ctrl+Alt+1~9 로 고를 수 있는 최대 개수 */
 export const MAX_WORKSPACES = 9
@@ -156,10 +157,10 @@ export class WorkspaceService {
 
   create(name: string, color?: string): WorkspaceDto {
     const trimmed = name.trim()
-    if (!trimmed) throw new Error('작업공간 이름이 비어 있습니다')
+    if (!trimmed) throw new Error(tr('workspace.emptyName'))
     const rows = this.rows()
     if (rows.length >= MAX_WORKSPACES)
-      throw new Error(`작업공간은 최대 ${MAX_WORKSPACES}개까지 만들 수 있습니다`)
+      throw new Error(tr('workspace.limitReached', { max: MAX_WORKSPACES }))
     const position = rows.length === 0 ? 0 : Math.max(...rows.map((r) => r.position)) + 1
     const created = this.insert(trimmed, color ?? null, position)
     return this.toDto(created, this.resolveActiveId([...rows, created]))
@@ -167,10 +168,10 @@ export class WorkspaceService {
 
   rename(id: number, name: string): WorkspaceDto {
     const trimmed = name.trim()
-    if (!trimmed) throw new Error('작업공간 이름이 비어 있습니다')
+    if (!trimmed) throw new Error(tr('workspace.emptyName'))
     const rows = this.rows()
     const row = rows.find((r) => r.id === id)
-    if (!row) throw new Error('작업공간을 찾을 수 없습니다')
+    if (!row) throw new Error(tr('workspace.notFound'))
     this.d.update(workspaces).set({ name: trimmed, updatedAt: Date.now() }).where(eqId(id)).run()
     this.db.scheduleSave()
     const next = { ...row, name: trimmed }
@@ -184,8 +185,8 @@ export class WorkspaceService {
   remove(id: number): void {
     const rows = this.rows()
     const row = rows.find((r) => r.id === id)
-    if (!row) throw new Error('작업공간을 찾을 수 없습니다')
-    if (rows.length <= 1) throw new Error('마지막 작업공간은 삭제할 수 없습니다')
+    if (!row) throw new Error(tr('workspace.notFound'))
+    if (rows.length <= 1) throw new Error(tr('workspace.cannotDeleteLast'))
     const now = Date.now()
     this.d.update(workspaces).set({ deletedAt: now, updatedAt: now }).where(eqId(id)).run()
     this.db.scheduleSave()
@@ -201,7 +202,7 @@ export class WorkspaceService {
   switchTo(id: number): WorkspaceDto {
     const rows = this.rows()
     const row = rows.find((r) => r.id === id)
-    if (!row) throw new Error('작업공간을 찾을 수 없습니다')
+    if (!row) throw new Error(tr('workspace.notFound'))
     const changed = this.settings.get().activeWorkspaceId !== id
     this.settings.set({ activeWorkspaceId: id })
     const dto = this.toDto(row, id)

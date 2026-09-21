@@ -13,6 +13,7 @@
 
 import { timingSafeEqual } from 'node:crypto'
 import type { Db } from '../db/client'
+import { tr } from '../i18n'
 import {
   VaultRepo,
   type AuditRow,
@@ -355,8 +356,8 @@ export class VaultService {
   // --- 설정/해제 ---------------------------------------------------------
 
   async setup(master: string): Promise<void> {
-    if (this.isInitialized()) throw new Error('금고가 이미 설정되어 있습니다')
-    if (master.length === 0) throw new Error('마스터 비밀번호가 비어 있습니다')
+    if (this.isInitialized()) throw new Error(tr('vault.alreadyInitialized'))
+    if (master.length === 0) throw new Error(tr('vault.emptyMaster'))
 
     const salt = randomBytes(SALT_BYTES)
     // 환경변수 게이트는 crypto.resolveDefaultKdfParams() 안에만 있다 — 여기서 process.env 를
@@ -380,11 +381,11 @@ export class VaultService {
   }
 
   async unlock(master: string): Promise<boolean> {
-    if (!this.isInitialized()) throw new Error('금고가 아직 설정되지 않았습니다')
+    if (!this.isInitialized()) throw new Error(tr('vault.notInitialized'))
     const salt = this.repo.getMeta(META_SALT)
     const ct = this.repo.getMeta(META_VERIFIER_CT)
     const iv = this.repo.getMeta(META_VERIFIER_IV)
-    if (!salt || !ct || !iv) throw new Error('금고 메타데이터가 손상되었습니다')
+    if (!salt || !ct || !iv) throw new Error(tr('vault.metaCorrupted'))
 
     const params = this.readKdfParams()
     const key = await deriveKey(master, salt, {
@@ -637,7 +638,7 @@ export class VaultService {
    * 발급 값은 메모리에만 10분 머문다
    */
   createRecoveryKey(): string {
-    if (!this.key) throw new Error('금고가 잠겨 있습니다')
+    if (!this.key) throw new Error(tr('vault.locked'))
     const key = generateRecoveryKey()
     this.pendingRecovery = {
       compact: normalizeRecoveryKey(key),
@@ -850,7 +851,7 @@ export class VaultService {
       })
       return this.repo.itemMeta(id)
     })
-    if (!meta) throw new Error('항목을 저장하지 못했습니다')
+    if (!meta) throw new Error(tr('vault.itemSaveFailed'))
     this.record('vault_items', meta.id, 'upsert')
     this.touch()
     return meta
@@ -923,7 +924,7 @@ export class VaultService {
   private findExistingItem(input: PutItemInput): { id: number; sections: StoredSection[] } | null {
     if (input.id !== undefined) {
       const row = this.repo.getItemRow(input.id)
-      if (!row) throw new Error('항목을 찾을 수 없습니다')
+      if (!row) throw new Error(tr('vault.itemNotFound'))
       return row
     }
     if (input.accountId === null) return this.repo.findGlobalItemRow(input.type, input.label)
@@ -1004,9 +1005,9 @@ export class VaultService {
   reveal(id: number, fieldKey: string = DEFAULT_FIELD_KEY): string {
     const key = this.requireKey()
     const row = this.repo.getItemRow(id)
-    if (!row) throw new Error('항목을 찾을 수 없습니다')
+    if (!row) throw new Error(tr('vault.itemNotFound'))
     const field = findField(row.sections, fieldKey)
-    if (!field || !isSecretField(field)) throw new Error('비밀 필드를 찾을 수 없습니다')
+    if (!field || !isSecretField(field)) throw new Error(tr('vault.secretFieldNotFound'))
     const plain = decrypt(
       key,
       Buffer.from(field.ciphertext, 'base64'),
@@ -1213,7 +1214,7 @@ export class VaultService {
   }
 
   private requireKey(): Buffer {
-    if (!this.key) throw new Error('금고가 잠겨 있습니다')
+    if (!this.key) throw new Error(tr('vault.locked'))
     return this.key
   }
 
@@ -1240,6 +1241,7 @@ export class VaultService {
             aadFor(existing.id, existingField)
           )
         : null
+    // DB 에 저장·동기화되는 항목 이름이라 앱 언어와 무관하게 고정(가져오기·IPC 저장과 같은 값)
     const label =
       (existing ? this.repo.itemMeta(existing.id)?.label : undefined) ?? '로그인 비밀번호'
 

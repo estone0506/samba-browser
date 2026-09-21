@@ -10,6 +10,7 @@ import {
   type PhoneTransport
 } from '../../shared/phone'
 import { isWifiSerial, parseDevices, type AdbRunner, type RawDevice } from './adb'
+import { tr } from '../i18n'
 
 const WIFI_DEFAULT_PORT = 5555
 
@@ -158,8 +159,7 @@ export class DeviceManager {
       )
     )
     const over = next.length - PHONE_LIMIT
-    const warning =
-      over > 0 ? `연결 상한(${PHONE_LIMIT}대)을 넘어 ${over}대를 쓰지 않습니다` : undefined
+    const warning = over > 0 ? tr('phone.overLimit', { limit: PHONE_LIMIT, over }) : undefined
     // 끊긴 폰 자동 복구 1회
     if (this.deps.autoReconnect()) {
       for (const p of next) {

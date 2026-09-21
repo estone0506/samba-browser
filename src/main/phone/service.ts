@@ -8,7 +8,8 @@ import { isPhoneCountry } from '../../shared/phone'
 import { detectAdbPath, shellArgs, toolCandidates } from './adb'
 import type { AdbRunner } from './adb'
 import { DeviceManager, type DeviceRepo, type PhoneRowLike } from './devices'
-import { ARS_NOTICE, watchIncomingCall } from './auth-flow'
+import { watchIncomingCall } from './auth-flow'
+import { tr } from '../i18n'
 
 /**
  * Task 2 의 `PhoneRepo` 를 구조적으로 받는다(파일 import 없음 — devices.ts 와 같은 이유).
@@ -170,7 +171,8 @@ export class PhoneService {
           siteHost,
           phoneId: phone?.id ?? null
         })
-        this.deps.onProgress?.(ARS_NOTICE)
+        // 전화 인증을 감지했을 때 채팅에 남기는 진행 로그(자동 응답은 하지 않는다)
+        this.deps.onProgress?.(tr('phone.arsNotice'))
       }
     })
     return () => {

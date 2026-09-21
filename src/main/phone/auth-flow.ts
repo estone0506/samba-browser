@@ -235,9 +235,6 @@ export async function detectIncomingCall(
 export const ARS_POLL_INTERVAL_MS = 3000
 /** 인증 대기 상한과 같은 3분 */
 export const ARS_WATCH_TIMEOUT_MS = AUTH_TIMEOUT_MS
-/** 전화 인증을 감지했을 때 채팅에 남기는 진행 로그(자동 응답은 하지 않는다) */
-export const ARS_NOTICE = '전화 인증 수신 감지: 폰 화면을 확인하세요'
-
 export interface ArsWatchDeps {
   adb: AdbRunner
   serials: () => string[]
