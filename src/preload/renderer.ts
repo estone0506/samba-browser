@@ -66,6 +66,7 @@ import {
   type NotifySendResult
 } from '../shared/ipc'
 import type { AgentImage } from '../shared/agent-image'
+import type { AiUsage } from '../shared/ai'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
 
@@ -332,6 +333,11 @@ const api = {
     ): Promise<IpcResult<AiConnectResult>> => invoke(IPC.aiConnect, provider, openTerminal),
     disconnect: (provider: SubscriptionProviderId): Promise<IpcResult<AiConnectResult>> =>
       invoke(IPC.aiDisconnect, provider),
+    // 다른 계정으로 바꾸기: 로그아웃 + 로그인 터미널을 연다(로그인은 사용자가 그 창에서 한다)
+    switchAccount: (provider: SubscriptionProviderId): Promise<IpcResult<{ opened: boolean }>> =>
+      invoke(IPC.aiSwitchAccount, provider),
+    // Claude 구독 사용량(비율·재설정 시각). 조회 실패는 null
+    usage: (): Promise<IpcResult<AiUsage | null>> => invoke(IPC.aiUsage),
     setProvider: (
       id: AiProviderId
     ): Promise<

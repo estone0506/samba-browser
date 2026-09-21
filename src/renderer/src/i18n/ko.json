@@ -950,6 +950,13 @@
     "loginNeededTitle": "로그인이 필요해요",
     "loginNeededDetail": "터미널 창에서 로그인한 뒤 [다시 연결] 을 눌러 주세요. 앱은 아이디·비밀번호를 대신 입력하지 않아요",
     "openTerminal": "터미널 열기",
+    "switchAccount": "다른 계정으로 바꾸기",
+    "usage": {
+      "session": "5시간 세션",
+      "weeklyAll": "주간 전체",
+      "weeklyModel": "주간 {{model}}",
+      "nearLimit": "한도에 거의 닿았어요. 작업이 중간에 끊길 수 있으니 다른 계정으로 바꾸거나 모델을 바꿔 주세요"
+    },
     "retryConnect": "다시 연결",
     "close": "닫기",
     "disconnectTitle": "연결을 해지할까요?",

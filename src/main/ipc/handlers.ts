@@ -27,6 +27,7 @@ import { ImportService, type ImportDialogs } from '../import/service'
 import { ChatRepo } from '../chat/repo'
 import { PlaybookStore } from '../playbooks/store'
 import { parseAgentImages } from '../../shared/agent-image'
+import { fetchClaudeUsage } from '../ai/usage'
 import type { PlaybookInput } from '../../shared/playbook'
 import { ScheduleRunStore } from '../schedule/runs'
 import { PlaybookScheduler } from '../schedule/scheduler'
@@ -791,6 +792,18 @@ export function registerIpc(
     settings.set({ aiConnections: next })
     return { ok: true, connection: next[connectionKeyOf(raw)] }
   })
+  // 계정 바꾸기: 앱의 연결 기록을 지우고, 새 터미널에서 'claude auth logout & claude auth login' 을 띄운다.
+  // 로그인은 그 창에서 사용자가 직접 한다 — 끝나면 카드의 [연결]로 다시 붙인다
+  handleFromRenderer(IPC.aiSwitchAccount, (raw: unknown) => {
+    if (!isSubscriptionProviderId(raw)) throw new Error(tr('ipc.unknownSubscriptionProvider'))
+    if (agent.isRunning()) throw new Error(tr('ipc.disconnectWhileRunning'))
+    settings.set({
+      aiConnections: withConnection(settings.get().aiConnections, raw, disconnectedRecord())
+    })
+    return { opened: openLoginTerminal(raw) }
+  })
+  // 사용량: Claude 구독 경로만. 조회가 안 되면 null(화면은 줄을 숨긴다)
+  handleFromRenderer(IPC.aiUsage, () => fetchClaudeUsage())
   handleFromRenderer(IPC.aiSetProvider, (raw: unknown) => {
     if (!isAiProviderId(raw)) throw new Error(tr('ipc.unknownAiProvider'))
     const before = settings.get()

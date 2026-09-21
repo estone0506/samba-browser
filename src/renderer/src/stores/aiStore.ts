@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type {
   AiProviderId,
   AiProviderStatus,
+  AiUsage,
   ApiKeyVendor,
   SubscriptionProviderId,
   TaskModelKey,
@@ -26,7 +27,12 @@ interface AiStoreState {
   busy: SubscriptionProviderId | null
   /** 자격이 없어 안내 다이얼로그를 띄워야 하는 구독 카드와 사유 */
   loginHint: { provider: SubscriptionProviderId; reason: 'not_installed' | 'needs_login' } | null
+  /** Claude 구독 사용량(조회 실패·미연결이면 null) */
+  usage: AiUsage | null
   load: () => Promise<void>
+  loadUsage: () => Promise<void>
+  /** 다른 계정으로: 로그아웃 + 로그인 터미널. 로그인 뒤 [연결]로 다시 붙인다 */
+  switchAccount: (provider: SubscriptionProviderId) => Promise<void>
   connect: (provider: SubscriptionProviderId, openTerminal?: boolean) => Promise<void>
   disconnect: (provider: SubscriptionProviderId) => Promise<void>
   dismissLoginHint: () => void
@@ -48,6 +54,25 @@ export const useAiStore = create<AiStoreState>((set, get) => ({
   testResults: {},
   busy: null,
   loginHint: null,
+  usage: null,
+
+  loadUsage: async () => {
+    const r = await window.samba.ai.usage?.()
+    set({ usage: r?.ok ? r.data : null })
+  },
+
+  switchAccount: async (provider) => {
+    set({ busy: provider, error: null })
+    const r = await window.samba.ai.switchAccount(provider)
+    set({ busy: null })
+    if (!r.ok) {
+      set({ error: r.error })
+      return
+    }
+    // 터미널에서 로그인하는 동안 안내를 띄워 둔다(끝나면 [다시 확인])
+    set({ usage: null, loginHint: { provider, reason: 'needs_login' } })
+    await get().load()
+  },
 
   load: async () => {
     set({ loading: true, error: null })

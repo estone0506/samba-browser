@@ -104,6 +104,8 @@ export const IPC = {
   aiProviders: 'ai:providers', // 제공자 카드 4종 상태(마스킹 문자열만)
   aiConnect: 'ai:connect', // 구독 연결(자격이 없으면 이유만 돌려준다)
   aiDisconnect: 'ai:disconnect', // 구독 연결 해지(PC 의 CLI 로그인 파일은 건드리지 않는다)
+  aiSwitchAccount: 'ai:switchAccount', // 다른 계정으로: CLI 로그아웃 + 로그인 터미널(자격은 사용자가 그 창에서 만든다)
+  aiUsage: 'ai:usage', // Claude 구독 사용량(비율·재설정 시각만. 토큰은 나가지 않는다)
   aiSetProvider: 'ai:setProvider', // 제공자 전환 + 작업별 모델 자동 대체
   aiSetApiKey: 'ai:setApiKey', // 렌더러 → 메인 한 방향으로만 평문 키가 흐른다
   aiTestKey: 'ai:testKey', // 모델 목록 1회 호출로 확인, {ok} 만 반환

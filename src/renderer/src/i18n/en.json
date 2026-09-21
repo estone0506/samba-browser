@@ -950,6 +950,13 @@
     "loginNeededTitle": "Login required",
     "loginNeededDetail": "Log in from the terminal window, then press Reconnect. The app never types your credentials for you",
     "openTerminal": "Open terminal",
+    "switchAccount": "Switch account",
+    "usage": {
+      "session": "5-hour session",
+      "weeklyAll": "Weekly (all)",
+      "weeklyModel": "Weekly {{model}}",
+      "nearLimit": "You are close to the limit. Tasks may stop midway - switch accounts or pick another model"
+    },
     "retryConnect": "Reconnect",
     "close": "Close",
     "disconnectTitle": "Disconnect this subscription?",
