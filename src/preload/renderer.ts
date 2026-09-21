@@ -497,8 +497,9 @@ const api = {
       ipcRenderer.on(IPC.phoneAuthWaiting, h)
       return () => ipcRenderer.off(IPC.phoneAuthWaiting, h)
     },
-    screenStart: (serial: string): Promise<IpcResult<ScreenMode>> =>
-      invoke(IPC.phoneScreenStart, serial),
+    // mode 'still' 을 주면 동영상을 건너뛰고 간이 화면으로 연다(디코더가 못 푸는 폰)
+    screenStart: (serial: string, mode?: 'still'): Promise<IpcResult<ScreenMode>> =>
+      invoke(IPC.phoneScreenStart, serial, mode),
     // 사용자가 화면을 직접 눌렀을 때. 좌표는 0~1 비율
     tap: (serial: string, rx: number, ry: number): Promise<IpcResult<void>> =>
       invoke(IPC.phoneTap, serial, rx, ry),

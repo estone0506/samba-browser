@@ -1093,7 +1093,8 @@
     "pairButton": "페어링",
     "pairDone": "페어링됐어요. 잠시 뒤 폰이 자동으로 연결돼요",
     "pairFailed": "페어링하지 못했어요: {{message}}",
-    "remove": "이 폰 지우기"
+    "remove": "지우기",
+    "removeConfirm": "한 번 더 누르면 지워요"
   },
   "extensions": {
     "title": "확장",

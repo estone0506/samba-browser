@@ -127,6 +127,21 @@ export function useH264Player(
       setScreenMode(serial, 'still')
     }
 
+    // 스트림이 말한 코덱으로 열었다가 디코더가 죽으면, 기본 코덱으로 한 번 더 열어 본다.
+    // 그래도 안 되면 그때 간이 화면으로 내려간다(실기: 폰마다 통하는 쪽이 달랐다)
+    let useFallbackCodec = false
+    const onDecoderError = (): void => {
+      if (disposed) return
+      if (useFallbackCodec) return fallbackToStill()
+      useFallbackCodec = true
+      decoder = null
+      sawKeyframeRef.current = false
+      // 새 키프레임을 받으려면 세그먼트를 다시 열어야 한다
+      void api.screenStop?.(serial).then(() => {
+        if (!disposed) void api.screenStart?.(serial)
+      })
+    }
+
     const makeDecoder = (codec: string): VideoDecoderLike | null => {
       const Ctor = videoDecoderCtor()
       if (!Ctor) return null
@@ -137,7 +152,7 @@ export function useH264Player(
             frame.close()
             if (!disposed) setStatus('playing')
           },
-          error: () => fallbackToStill()
+          error: () => onDecoderError()
         })
         d.configure({ codec, optimizeForLatency: true })
         return d
@@ -155,7 +170,9 @@ export function useH264Player(
       if (!decoder) {
         // 첫 키프레임에는 SPS 가 실려 온다 — 거기 적힌 프로파일·레벨로 디코더를 연다
         decoder = makeDecoder(
-          codecFromAnnexB(new Uint8Array(chunk.data)) ?? H264_FALLBACK_CODEC
+          useFallbackCodec
+            ? H264_FALLBACK_CODEC
+            : (codecFromAnnexB(new Uint8Array(chunk.data)) ?? H264_FALLBACK_CODEC)
         )
         if (!decoder) {
           fallbackToStill()
@@ -171,7 +188,7 @@ export function useH264Player(
           })
         )
       } catch {
-        fallbackToStill()
+        onDecoderError()
       }
     }
 

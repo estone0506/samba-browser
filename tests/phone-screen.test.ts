@@ -355,3 +355,16 @@ describe('간이 화면이 계속 실패하면 포기한다(기기 분리)', () 
     expect(h.adb.calls.length).toBe(before)
   })
 })
+
+describe('간이 화면으로 바로 시작(렌더러 디코더가 이 폰의 동영상을 못 풀 때)', () => {
+  it('start(serial, true) 는 동영상을 열지 않고 스크린샷부터 보낸다', async () => {
+    const h = makeHarness()
+    h.adb.replyBinary('screencap -p', Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    h.stream.start('WIFI1', true)
+    await flush()
+    expect(h.modes.at(-1)).toEqual({ serial: 'WIFI1', mode: 'still' })
+    expect(h.chunks[0]).toMatchObject({ serial: 'WIFI1', mode: 'still' })
+    expect(h.adb.streamArgs.some((a) => a.includes('screenrecord'))).toBe(false)
+    h.stream.stop('WIFI1')
+  })
+})

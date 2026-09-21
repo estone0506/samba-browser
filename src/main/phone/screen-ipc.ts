@@ -96,8 +96,8 @@ export function registerPhoneScreenIpc(deps: PhoneScreenIpcDeps): PhoneScreenIpc
       onClosed: (serial) => deps.send(IPC.phoneScreenMode, { serial, mode: stream.mode(serial) })
     })
 
-  deps.handle(IPC.phoneScreenStart, (serial: string): ScreenMode => {
-    stream.start(serial)
+  deps.handle(IPC.phoneScreenStart, (serial: string, mode?: string): ScreenMode => {
+    stream.start(serial, mode === 'still')
     // 방금 시작했으면 우선 video 로 보고, 폴백이 일어나면 phone:screenMode 로 알려 준다
     return stream.mode(serial) ?? 'video'
   })

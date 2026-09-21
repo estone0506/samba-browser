@@ -1093,7 +1093,8 @@
     "pairButton": "Pair",
     "pairDone": "Paired. The phone will connect automatically in a moment",
     "pairFailed": "Could not pair: {{message}}",
-    "remove": "Remove this phone"
+    "remove": "Remove",
+    "removeConfirm": "Click again to remove"
   },
   "extensions": {
     "title": "Extensions",
