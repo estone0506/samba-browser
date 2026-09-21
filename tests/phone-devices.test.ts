@@ -406,3 +406,51 @@ describe('PhoneService', () => {
     expect(s.repo.rows[0]).toMatchObject({ label: '업무용', country: 'KR' })
   })
 })
+
+describe('와이파이 폰 자동 발견(adb mdns services)', () => {
+  const MDNS =
+    'List of discovered mdns services\n' +
+    'adb-R3CR50QEJJN\t_adb._tcp\t192.168.45.212:5555\n' +
+    'adb-R3CR50QEJJN-abc123\t_adb-tls-pairing._tcp\t192.168.45.212:37001\n'
+  const connects = (adb: FakeAdb): string[][] => adb.calls.filter((c) => c[0] === 'connect')
+
+  it('발견된 접속점이 목록에 없으면 connect 하고 목록을 다시 읽는다', async () => {
+    const h = makeHarness()
+    h.adb.reply('devices -l', 'List of devices attached\n')
+    h.adb.reply('mdns services', MDNS)
+    await h.manager.refresh()
+    expect(connects(h.adb)).toEqual([['connect', '192.168.45.212:5555']])
+    expect(deviceCalls(h.adb)).toHaveLength(2)
+  })
+
+  it('페어링 서비스에는 connect 하지 않는다', async () => {
+    const h = makeHarness()
+    h.adb.reply('devices -l', 'List of devices attached\n')
+    h.adb.reply('mdns services', MDNS)
+    await h.manager.refresh()
+    expect(connects(h.adb).some((c) => c[1].endsWith(':37001'))).toBe(false)
+  })
+
+  it('같은 폰이 USB 로 이미 붙어 있거나 이미 연결된 주소면 건너뛴다', async () => {
+    const usb = makeHarness()
+    usb.adb.reply('devices -l', 'List of devices attached\nR3CR50QEJJN device model:SM_A155N\n')
+    usb.adb.reply('mdns services', MDNS)
+    await usb.manager.refresh()
+    expect(connects(usb.adb)).toEqual([])
+
+    const wifi = makeHarness()
+    wifi.adb.reply('devices -l', 'List of devices attached\n192.168.45.212:5555 unauthorized\n')
+    wifi.adb.reply('mdns services', MDNS)
+    await wifi.manager.refresh()
+    expect(connects(wifi.adb)).toEqual([])
+  })
+
+  it('방금 시도한 주소는 쉬는 시간 동안 다시 두드리지 않는다', async () => {
+    const h = makeHarness()
+    h.adb.reply('devices -l', 'List of devices attached\n')
+    h.adb.reply('mdns services', MDNS)
+    await h.manager.refresh()
+    await h.manager.refresh()
+    expect(connects(h.adb)).toHaveLength(1)
+  })
+})

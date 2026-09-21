@@ -188,3 +188,20 @@ describe('FakeAdb', () => {
     expect(ended).toBe(0)
   })
 })
+
+describe('parseMdnsServices', () => {
+  it('접속할 수 있는 서비스만 시리얼·주소로 뽑는다', async () => {
+    const { parseMdnsServices } = await import('../src/main/phone/adb')
+    const out = parseMdnsServices(
+      'List of discovered mdns services\r\n' +
+        'adb-R3CR50QEJJN\t_adb._tcp\t192.168.45.212:5555\r\n' +
+        'adb-R3CRA05HY3R-xYz12\t_adb-tls-connect._tcp\t192.168.45.10:41234\r\n' +
+        'adb-R3CRA05HY3R-xYz12\t_adb-tls-pairing._tcp\t192.168.45.10:39999\r\n' +
+        'garbage line\r\n'
+    )
+    expect(out).toEqual([
+      { serial: 'R3CR50QEJJN', address: '192.168.45.212:5555' },
+      { serial: 'R3CRA05HY3R', address: '192.168.45.10:41234' }
+    ])
+  })
+})

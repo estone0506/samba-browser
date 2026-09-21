@@ -9,10 +9,19 @@ import {
   type PhoneState,
   type PhoneTransport
 } from '../../shared/phone'
-import { isWifiSerial, parseDevices, type AdbRunner, type RawDevice } from './adb'
+import {
+  isWifiSerial,
+  parseDevices,
+  parseMdnsServices,
+  type AdbRunner,
+  type MdnsService,
+  type RawDevice
+} from './adb'
 import { tr } from '../i18n'
 
 const WIFI_DEFAULT_PORT = 5555
+/** 발견된 와이파이 접속점에 다시 connect 를 시도하기까지 쉬는 시간 */
+const WIFI_CONNECT_COOLDOWN_MS = 30_000
 
 /**
  * 저장소가 돌려주는 폰 한 줄. 표 정의는 `phone/repo.ts`(Task 2) 에 있고
@@ -90,6 +99,8 @@ export class DeviceManager {
   private lastHash = ''
   // 이번 연결 주기에 이미 복구를 시도한 serial(끊겼다 붙으면 비운다)
   private recovered = new Set<string>()
+  // 발견된 와이파이 접속점(ip:port) → 다음 connect 시도 시각
+  private wifiRetryAt = new Map<string, number>()
 
   constructor(private deps: DeviceManagerDeps) {}
 
@@ -135,7 +146,10 @@ export class DeviceManager {
   private async scan(): Promise<PhoneDto[]> {
     // 경로가 비어 있으면 adb 를 부르지 않는다(부르면 곧바로 던진다)
     if (!this.hasAdb()) return this.phones
-    const res = await this.deps.adb.run(['devices', '-l'])
+    const first = await this.deps.adb.run(['devices', '-l'])
+    // 같은 와이파이에서 발견된 폰은 주소를 몰라도 알아서 붙인다. 새로 붙인 게 있으면 목록을 다시 읽는다
+    const connected = await this.connectDiscovered(parseDevices(first.stdout))
+    const res = connected ? await this.deps.adb.run(['devices', '-l']) : first
     const raw = parseDevices(res.stdout)
     const now = this.deps.now()
     for (const d of raw) {
@@ -175,6 +189,38 @@ export class DeviceManager {
       this.deps.onChange(next, warning)
     }
     return next
+  }
+
+  /**
+   * `adb mdns services` 로 발견된 접속점 가운데 아직 목록에 없는 것을 `adb connect` 한다.
+   * 예전에는 `adb devices` 만 봐서, 와이파이 폰은 사용자가 IP 를 직접 적어야 했고
+   * "지금 찾기"로는 영영 안 나왔다(실기: 같은 와이파이의 폰이 "끊김"으로만 보임).
+   *  - 같은 폰이 USB 로 이미 붙어 있으면 건너뛴다(한 폰이 두 줄로 보이지 않게)
+   *  - 실패한 주소는 잠시 쉬었다가 다시 시도한다(5초 폴링마다 두드리지 않는다)
+   * 새로 붙인 것이 있으면 true
+   */
+  private async connectDiscovered(current: RawDevice[]): Promise<boolean> {
+    let services: MdnsService[]
+    try {
+      services = parseMdnsServices((await this.deps.adb.run(['mdns', 'services'])).stdout)
+    } catch {
+      // mdns 를 지원하지 않는 adb·방화벽 — 발견 없이 기존 동작 그대로 간다
+      return false
+    }
+    const now = this.deps.now()
+    let connected = false
+    for (const service of services) {
+      if (current.some((d) => d.serial === service.address || d.serial === service.serial)) continue
+      if ((this.wifiRetryAt.get(service.address) ?? 0) > now) continue
+      this.wifiRetryAt.set(service.address, now + WIFI_CONNECT_COOLDOWN_MS)
+      try {
+        await this.deps.adb.run(['connect', service.address], 10_000)
+        connected = true
+      } catch {
+        // 연결 실패는 다음 주기에 다시 본다
+      }
+    }
+    return connected
   }
 
   /**
