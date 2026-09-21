@@ -75,6 +75,26 @@ const PAYMENT_PROVIDER_AMBIGUOUS =
   '(site for the site own pay such as 무신사머니, toss, kakao, naver, payco, samsung, apple, other)'
 // guard 모드에서 추가 확인을 받아야 하는 민감 항목
 const CONFIRM_ITEM_TYPES: VaultItemType[] = ['password', 'card']
+// PG 결제창(토스·ePAY 팝업)에서 채우는 항목 — 그 창의 호스트가 아니라 창을 연 사이트의 계정을 쓴다
+const PAYMENT_POPUP_ITEM_TYPES: VaultItemType[] = ['identity', 'card', 'password']
+// fill_secret 의 format 인자 — 저장된 값을 입력칸이 원하는 모양으로 바꾼다
+export const FILL_FORMATS = ['yymmdd', 'yyyymmdd', 'digits'] as const
+export type FillFormat = (typeof FILL_FORMATS)[number]
+
+/**
+ * 저장된 값을 입력칸 모양에 맞춘다(순수 함수). 못 맞추면 null.
+ *  - yymmdd: 1991-01-01 / 19910101 / 910101 → 910101 (토스페이 생년월일 6자리)
+ *  - yyyymmdd: 1991-01-01 → 19910101
+ *  - digits: 010-1234-5678 → 01012345678
+ */
+export function formatFillValue(value: string, format?: FillFormat): string | null {
+  if (!format) return value
+  const digits = value.replace(/\D/g, '')
+  if (format === 'digits') return digits === '' ? null : digits
+  if (digits.length === 8) return format === 'yymmdd' ? digits.slice(2) : digits
+  if (digits.length === 6) return format === 'yymmdd' ? digits : null
+  return null
+}
 // fill_secret 대상 요소가 실제로 비밀 입력칸(type=password)이어야 하는 항목 종류.
 // 카드·신원정보는 번호칸이 평문 input 인 경우가 흔해 이 검사에서 제외한다
 const SECRET_TARGET_ITEM_TYPES: VaultItemType[] = ['login', 'password']
@@ -583,7 +603,8 @@ ${raw}`
     available: VaultService,
     hosts: string[],
     accountLabel: string | undefined,
-    profile: string
+    profile: string,
+    wanted: VaultItemType = 'password'
   ): AccountDto | null => {
     const seen = new Set<number>()
     const candidates: AccountDto[] = []
@@ -594,9 +615,9 @@ ${raw}`
         candidates.push(a)
       }
     }
-    const withPayment = candidates.filter((a) => a.itemTypes.includes('password'))
+    const withItem = candidates.filter((a) => a.itemTypes.includes(wanted))
     return (
-      resolveAccount(withPayment, accountLabel, profile) ??
+      resolveAccount(withItem, accountLabel, profile) ??
       resolveAccount(candidates, accountLabel, profile)
     )
   }
@@ -1306,9 +1327,15 @@ overlays left: ${after.length}${kept}`
       provider: z
         .enum(PAYMENT_PROVIDER_NAMES)
         .optional()
-        .describe('payment method for itemType "password"')
+        .describe('payment method for itemType "password"'),
+      format: z
+        .enum(FILL_FORMATS)
+        .optional()
+        .describe(
+          'reshape the saved value for this input: yymmdd (birth date as 6 digits, e.g. 910101), yyyymmdd, or digits (strip hyphens/spaces from a phone or card number)'
+        )
     },
-    ({ elementId, itemType, field, accountLabel, provider }) =>
+    ({ elementId, itemType, field, accountLabel, provider, format }) =>
       guard(`입력: ${itemType}${field ? `.${field}` : ''} (#${elementId})`, async () => {
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
@@ -1326,8 +1353,15 @@ overlays left: ${after.length}${kept}`
         const available = vaultAvailable()
         if (typeof available === 'string') return available
         // 계정을 먼저 특정해야 계정별 접근 정책을 적용할 수 있다.
-        // 계정 목록 조회는 값(비밀번호)을 건드리지 않으므로 잠금 상태에서도 안전하다
-        const account = resolveAccount(available.listAccounts(host), accountLabel, tab.profile)
+        // 계정 목록 조회는 값(비밀번호)을 건드리지 않으므로 잠금 상태에서도 안전하다.
+        // 결제 관련 항목(신원정보·카드·결제 비밀번호)은 PG 결제창(토스·ePAY 팝업)에서 불리므로,
+        // 그 창의 호스트로 못 찾으면 창을 연 사이트(opener 사슬)의 계정을 쓴다
+        const direct = resolveAccount(available.listAccounts(host), accountLabel, tab.profile)
+        const viaOpener =
+          direct === null && PAYMENT_POPUP_ITEM_TYPES.includes(itemType)
+            ? keypadAccount(available, keypadAccountHosts(tab), accountLabel, tab.profile, itemType)
+            : null
+        const account = direct ?? viaOpener
         if (!account) return ACCOUNT_NOT_FOUND
         // 항목별 agentAccess 가 전역 정책을 override 한다
         const gate = await applyPolicy(
@@ -1364,10 +1398,14 @@ overlays left: ${after.length}${kept}`
           if (movedPay) return movedPay
           return await pageBridge.fillValue(tab, elementId, found.value)
         }
-        const value = v.getSecretForFill(account.id, itemType, fieldKey, ctx.jobId)
-        if (value === null) return `not found: no ${itemType}.${fieldKey} saved for this account`
-        // 확인 대기 사이에 페이지가 옮겨 갔을 수 있어 채우기 직전에 다시 검증한다
-        const moved = verifyFillTarget(account, tab)
+        const raw = v.getSecretForFill(account.id, itemType, fieldKey, ctx.jobId)
+        if (raw === null) return `not found: no ${itemType}.${fieldKey} saved for this account`
+        const value = formatFillValue(raw, format)
+        if (value === null)
+          return `refused: saved ${itemType}.${fieldKey} cannot be shaped as ${format}`
+        // 확인 대기 사이에 페이지가 옮겨 갔을 수 있어 채우기 직전에 다시 검증한다.
+        // 결제창(opener 사슬로 찾은 계정)은 창을 연 사이트가 계정 도메인이면 통과시킨다
+        const moved = viaOpener ? null : verifyFillTarget(account, tab)
         if (moved) return moved
         // 평문은 여기서만 존재하고 반환값·step 라벨·로그 어디에도 남기지 않는다
         const filled = await pageBridge.fillValue(tab, elementId, value)

@@ -300,3 +300,42 @@ describe('결제 비밀번호 복사(copyPaymentItems)', () => {
     expect(() => vault.copyPaymentItems(fromId, toId)).toThrow()
   })
 })
+
+describe('getSecretForFill — 평문 필드(신원정보)', () => {
+  it('비밀이 아닌 필드는 평문 값을 그대로 돌려주고, 값이 없으면 null', async () => {
+    const db = await openDatabase(':memory:')
+    const vault = new VaultService(db, makeSettings())
+    await vault.setup('master-pw')
+    const accountId = vault.upsertAccount({
+      host: 'member.one.musinsa.com',
+      label: 'buyer01',
+      username: 'buyer01',
+      isDefault: true
+    }).id
+    vault.putItem({
+      accountId,
+      type: 'identity',
+      label: '신원정보',
+      sections: [
+        {
+          key: 'identity',
+          label: '신원',
+          fields: [
+            { key: 'identity.phone', label: '휴대폰', kind: 'text', value: '010-1234-5678' },
+            { key: 'identity.birth', label: '생년월일', kind: 'date', value: '1991-01-01' },
+            { key: 'identity.name', label: '이름', kind: 'text' }
+          ]
+        }
+      ]
+    })
+    expect(vault.getSecretForFill(accountId, 'identity', 'identity.phone', 'job-1')).toBe(
+      '010-1234-5678'
+    )
+    expect(vault.getSecretForFill(accountId, 'identity', 'identity.birth', 'job-1')).toBe(
+      '1991-01-01'
+    )
+    expect(vault.getSecretForFill(accountId, 'identity', 'identity.name', 'job-1')).toBeNull()
+    vault.dispose()
+    db.close()
+  })
+})

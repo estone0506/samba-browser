@@ -1132,7 +1132,20 @@ export class VaultService {
   ): string | null {
     if (!this.key) return null
     const field = findField(row.sections, fieldKey)
-    if (!field || !isSecretField(field)) return null
+    if (!field) return null
+    // 비밀이 아닌 필드(신원정보의 휴대폰·생년월일·이름 등)는 평문으로 저장돼 있다 — 그대로 채운다.
+    // 토스페이 결제창이 휴대폰 번호·생년월일을 요구하는데, 이 경로가 없어 "not found" 로 끝났다(실기)
+    if (!isSecretField(field)) {
+      if (field.value === undefined || field.value === '') return null
+      this.repo.insertAudit({
+        itemId: row.id,
+        accountId: row.accountId,
+        action: 'fill',
+        source,
+        jobId
+      })
+      return field.value
+    }
     try {
       const plain = decrypt(
         this.key,

@@ -861,3 +861,44 @@ describe('list_accounts 응답', () => {
     ])
   })
 })
+
+describe('fill_secret 의 format 인자(토스페이 결제창의 휴대폰·생년월일)', () => {
+  it('생년월일 YYYY-MM-DD 를 6자리로 바꿔 채우고, 반환값·라벨에 값이 없다', async () => {
+    pageBridge.fillValue.mockClear()
+    const b = build({ secret: '1991-01-01' })
+    const result = await callTool(b, 'fill_secret', {
+      elementId: 4,
+      itemType: 'identity',
+      field: 'identity.birth',
+      format: 'yymmdd'
+    })
+    expect(result).toBe('ok')
+    expect(pageBridge.fillValue).toHaveBeenLastCalledWith(expect.anything(), 4, '910101')
+    expect(JSON.stringify(b.steps)).not.toContain('910101')
+  })
+
+  it('전화번호의 하이픈을 지운다(digits)', async () => {
+    pageBridge.fillValue.mockClear()
+    const b = build({ secret: '010-1234-5678' })
+    await callTool(b, 'fill_secret', {
+      elementId: 5,
+      itemType: 'identity',
+      field: 'identity.phone',
+      format: 'digits'
+    })
+    expect(pageBridge.fillValue).toHaveBeenLastCalledWith(expect.anything(), 5, '01012345678')
+  })
+
+  it('모양을 맞출 수 없으면 채우지 않고 거절한다', async () => {
+    pageBridge.fillValue.mockClear()
+    const b = build({ secret: 'not-a-date' })
+    const result = await callTool(b, 'fill_secret', {
+      elementId: 4,
+      itemType: 'identity',
+      field: 'identity.birth',
+      format: 'yymmdd'
+    })
+    expect(result).toMatch(/^refused/)
+    expect(pageBridge.fillValue).not.toHaveBeenCalled()
+  })
+})
