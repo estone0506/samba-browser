@@ -428,7 +428,7 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
   /** 런처 → 토스 결제 확인 → 보안 키패드 → 완료 */
   function scriptPayScreens(adb: ScriptedAdb): void {
     adb.pushScreen('com.sec.android.app.launcher', hierarchy([button('홈', 0)]))
-    adb.pushScreen('viva.republica.toss', hierarchy([button('결제하기', 200)]))
+    adb.pushScreen('viva.republica.toss', hierarchy([button('결제수단 변경 ・ 설정', 60), button('결제하기', 200)]))
     adb.pushScreen('viva.republica.toss', keypadScreen())
     adb.pushScreen('viva.republica.toss', hierarchy([button('결제 완료', 300)]))
   }

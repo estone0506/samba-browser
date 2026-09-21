@@ -46,6 +46,11 @@ export interface PayProviderSpec {
   /** 결제 화면에서 결제수단(카드)을 바꾸는 버튼 문구와, 열린 선택 목록의 제목. 둘 다 있어야 카드 지정을 지원한다 */
   changeMethodText?: RegExp
   methodSheetTitle?: RegExp
+  /**
+   * 결제 화면에만 있는 문구. 적혀 있으면 이 문구가 보이는 화면에서만 진행 버튼을 누른다 —
+   * 앱 홈이나 다른 서비스 화면의 [확인]·[다음]을 눌러 엉뚱한 곳으로 들어가지 않게 한다(실기: 토스 홈 → 용돈 화면)
+   */
+  payScreenHint?: RegExp
 }
 
 export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
@@ -53,13 +58,15 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     id: 'toss',
     packageName: 'viva.republica.toss',
     deepLink: 'supertoss://',
-    confirmText: /결제하기|확인|다음|동의하고 결제/,
+    // 토스는 결제 화면에서 [결제하기]만 누르면 된다 — [확인]·[다음]은 홈·광고·다른 서비스에도 있어 넣지 않는다
+    confirmText: /결제하기|동의하고 결제/,
     passwordHint: /비밀번호|간편비밀번호|PIN/,
     successHint: /결제(가)?\s?완료|송금 완료|완료되었습니다/,
     // "앱을 켜려면 비밀번호를 눌러주세요" — 토스는 앱 잠금과 결제에 같은 비밀번호를 쓴다
     unlockHint: /앱을 켜려면/,
     changeMethodText: /결제수단 변경/,
-    methodSheetTitle: /결제수단 선택/
+    methodSheetTitle: /결제수단 선택/,
+    payScreenHint: /결제수단 변경/
   },
   payco: {
     id: 'payco',
@@ -207,6 +214,20 @@ export function isSecretScreen(screen: PhoneScreen, spec: PayProviderSpec): bool
   return hasText(screen, spec.passwordHint)
 }
 
+/** 카드사 이름과 앱에 보이는 카드 상품명이 다른 경우 */
+const CARD_ALIASES: Record<string, string[]> = {
+  롯데: ['롯데', 'LOCA'],
+  국민: ['국민', 'KB'],
+  KB: ['KB', '국민']
+}
+
+/** 지시받은 카드 이름("현대카드", "롯데")을 앱의 카드 상품명("넥슨현대UNLIMITED", "LOCA …")과 맞출 정규식으로 */
+export function cardPatternOf(hint: string): RegExp {
+  const core = hint.replace(/\s+/g, '').replace(/카드$/, '') || hint.trim()
+  const names = CARD_ALIASES[core.toUpperCase()] ?? CARD_ALIASES[core] ?? [core]
+  return new RegExp(names.map(escapeRegExp).join('|'), 'i')
+}
+
 /** 카드 맞추기에서 누르는 최대 횟수(변경 버튼 1 + 카드 1, 여유 포함) */
 const MAX_CARD_TAPS = 4
 
@@ -234,7 +255,8 @@ export function cardStep(screen: PhoneScreen, spec: PayProviderSpec, card: RegEx
   const change = spec.changeMethodText
     ? screen.elements.find((e) => spec.changeMethodText?.test(e.text))
     : undefined
-  return change ? at(change) : { kind: 'missing' }
+  // 변경 버튼이 안 보이면 아직 결제 화면이 아니다 — 카드가 없다고 단정하지 않고 기다린다
+  return change ? at(change) : { kind: 'wait' }
 }
 
 /** 앱 안에서 화면을 보고 다음 할 일을 정한다 */
@@ -245,6 +267,8 @@ function stepInApp(
   // 비밀번호 화면 판정이 가장 먼저다 — 여기서 아무 버튼이나 누르면 안 된다
   if (isSecretScreen(screen, spec)) return { state: 'password' }
   if (hasText(screen, spec.successHint)) return { state: 'verify' }
+  // 결제 화면 표식이 있는 앱은 그 화면에서만 누른다
+  if (spec.payScreenHint && !hasText(screen, spec.payScreenHint)) return { state: 'app_steps' }
   const tapElementId = findConfirm(screen, spec.confirmText)
   return tapElementId === undefined ? { state: 'app_steps' } : { state: 'app_steps', tapElementId }
 }
@@ -503,7 +527,7 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
   // 결제 앱 안에서 고를 카드(이름 일부). 지정이 없거나 그 앱이 카드 바꾸기를 지원하지 않으면 건드리지 않는다
   const cardPattern =
     req.cardHint && req.cardHint.trim() !== '' && spec.changeMethodText && spec.methodSheetTitle
-      ? new RegExp(escapeRegExp(req.cardHint.trim()), 'i')
+      ? cardPatternOf(req.cardHint)
       : null
   let cardReady = false
   let cardTaps = 0
@@ -596,6 +620,9 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
 /** 앱 잠금을 푼 뒤 같은 잠금 화면이 이만큼까지는 더 보여도 기다린다(화면 전환 시간) */
 const UNLOCK_GRACE_POLLS = 4
 
+/** 결제 알림이 아직 없을 때 기다려 보는 횟수 */
+const NOTIFICATION_WAIT_POLLS = 8
+
 /** 알림을 누르는 최대 횟수(묶음 펼치기 1회 + 실제 알림 1~2회) */
 const NOTIFICATION_TAP_TRIES = 3
 
@@ -612,7 +639,12 @@ async function openPayNotification(
   const sleep = deps.sleep ?? defaultSleep
   if (!shade) return false
   try {
-    const mine = await shade.list(serial, spec.packageName)
+    let mine = await shade.list(serial, spec.packageName)
+    // 웹에서 결제를 요청한 직후에는 알림이 아직 안 왔을 수 있다 — 잠깐 기다려 본다
+    for (let w = 0; w < NOTIFICATION_WAIT_POLLS && mine.length === 0; w += 1) {
+      await sleep(PAY_POLL_MS)
+      mine = await shade.list(serial, spec.packageName)
+    }
     // 그 앱이 올린 결제 알림이 없으면 알림창을 열지도 않는다
     if (mine.length === 0) return false
     await shade.open(serial)

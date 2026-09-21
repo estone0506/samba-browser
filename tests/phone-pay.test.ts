@@ -16,6 +16,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 import {
   PAY_APP_TO_PAYMENT_PROVIDER,
   PAY_PROVIDERS,
+  cardPatternOf,
   findPayNotification,
   parseAppNotifications,
   checkPaymentGate,
@@ -201,7 +202,7 @@ describe('checkPaymentGate', () => {
 
 describe('nextPayState', () => {
   it('앱 패키지가 뜨면 app_steps 로 가고 확인 버튼 번호를 함께 돌려준다', () => {
-    const s = screen('viva.republica.toss', [el(1, '결제하기')])
+    const s = screen('viva.republica.toss', [el(1, '결제하기'), el(90, '결제수단 변경 ・ 설정', { clickable: false })])
     expect(nextPayState('await_app', s, TOSS)).toEqual({ state: 'app_steps', tapElementId: 1 })
   })
 
@@ -238,7 +239,7 @@ describe('nextPayState', () => {
 
 describe('runPayApproval', () => {
   const okScreens = [
-    screen('viva.republica.toss', [el(1, '결제하기')]),
+    screen('viva.republica.toss', [el(1, '결제하기'), el(90, '결제수단 변경 ・ 설정', { clickable: false })]),
     screen('viva.republica.toss', [el(2, '간편비밀번호', { clickable: false })]),
     screen('viva.republica.toss', [el(3, '결제 완료', { clickable: false })])
   ]
@@ -352,7 +353,7 @@ describe('runPayApproval', () => {
 
   it('같은 요소를 두 번 연속 탭하지 않는다', async () => {
     // 확인 버튼만 계속 보이는 화면 — 한 번 누른 뒤에는 다시 누르지 않는다
-    const h = harness({ screens: [screen('viva.republica.toss', [el(1, '결제하기')])] })
+    const h = harness({ screens: [screen('viva.republica.toss', [el(1, '결제하기'), el(90, '결제수단 변경 ・ 설정', { clickable: false })])] })
     const r = await runPayApproval(h.deps, request())
 
     expect(h.taps).toHaveLength(1)
@@ -442,7 +443,7 @@ describe('phone_approve_payment 도구', () => {
 describe('결제 요청이 푸시 알림으로만 와 있을 때 — 알림창에서 연다', () => {
   const shade = (elements: PhoneElement[]): PhoneScreen => screen('com.android.systemui', elements)
   const tossHome = screen(TOSS.packageName, [el(1, '홈', { clickable: true })])
-  const payAsk = screen(TOSS.packageName, [el(2, '결제하기')])
+  const payAsk = screen(TOSS.packageName, [el(2, '결제하기'), el(90, '결제수단 변경 ・ 설정', { clickable: false })])
   const keypad = screen(TOSS.packageName, [el(3, '비밀번호를 눌러주세요', { clickable: false })])
   const done = screen(TOSS.packageName, [el(4, '결제가 완료되었습니다', { clickable: false })])
   const TOSS_PUSH = { title: '무신사 결제하기', text: '알림을 누르고 결제를 완료해주세요.' }
@@ -597,7 +598,7 @@ describe('첫 결제 상한은 설정값이다', () => {
 
 describe('결제 확인 카드는 권한 모드를 따른다', () => {
   const flow = [
-    screen(TOSS.packageName, [el(2, '결제하기')]),
+    screen(TOSS.packageName, [el(2, '결제하기'), el(90, '결제수단 변경 ・ 설정', { clickable: false })]),
     screen(TOSS.packageName, [el(3, '비밀번호를 눌러주세요', { clickable: false })]),
     screen(TOSS.packageName, [el(4, '결제가 완료되었습니다', { clickable: false })]),
     screen(TOSS.packageName, [el(4, '결제가 완료되었습니다', { clickable: false })])
@@ -621,7 +622,7 @@ describe('토스 앱 잠금 — 앱을 켤 때도 비밀번호를 묻는다', ()
   const lock = screen(TOSS.packageName, [
     el(1, '앱을 켜려면\n비밀번호를 눌러주세요', { clickable: false })
   ])
-  const payAsk = screen(TOSS.packageName, [el(2, '결제하기')])
+  const payAsk = screen(TOSS.packageName, [el(2, '결제하기'), el(90, '결제수단 변경 ・ 설정', { clickable: false })])
   const payPw = screen(TOSS.packageName, [el(3, '비밀번호를 눌러주세요', { clickable: false })])
   const done = screen(TOSS.packageName, [el(4, '결제가 완료되었습니다', { clickable: false })])
 
@@ -707,5 +708,27 @@ describe('토스 결제 화면(실기 구조) — 글자와 눌리는 영역이 
     expect(h.tapPassword).not.toHaveBeenCalled()
     // [결제수단 변경]만 눌렀고 결제하기는 누르지 않았다
     expect(h.taps.map((t) => t[2])).toEqual([5 * 100 + 30])
+  })
+})
+
+describe('결제 화면이 아닌 곳에서는 아무것도 누르지 않는다(실기: 토스 홈의 버튼을 눌러 용돈 화면으로 들어감)', () => {
+  it('토스 홈·다른 서비스 화면의 [확인]·[다음]·[결제하기]는 누르지 않는다', async () => {
+    const other = screen(TOSS.packageName, [
+      el(1, '다음'),
+      el(2, '확인'),
+      el(3, '결제하기'),
+      el(4, '용돈 보내기')
+    ])
+    const h = harness({ screens: [other] })
+    const r = await runPayApproval(h.deps, request({ cardHint: '현대' }))
+    expect(r).toEqual({ ok: false, reason: 'stuck' })
+    expect(h.taps).toEqual([])
+  })
+
+  it('카드 이름은 카드사 이름으로 맞춘다 — "현대카드"는 넥슨현대UNLIMITED, "롯데카드"는 LOCA', () => {
+    expect(cardPatternOf('현대카드').test('넥슨현대UNLIMITED')).toBe(true)
+    expect(cardPatternOf('현대').test('LOCA Professional')).toBe(false)
+    expect(cardPatternOf('롯데카드').test('LOCA Professional')).toBe(true)
+    expect(cardPatternOf('KB국민카드').test('KB국민 톡톡')).toBe(true)
   })
 })
