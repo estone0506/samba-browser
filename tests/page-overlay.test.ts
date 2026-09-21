@@ -177,6 +177,51 @@ describe('detectOverlays — 문서에서 찾기', () => {
     expect(list[0].closeIds).toEqual([])
   })
 
+  it('이미 로그인된 화면의 로그인 유도 팝업은 닫아도 되는 레이어다(무신사 — 닫아야 구매 버튼이 풀린다)', () => {
+    document.body.innerHTML = `
+      <header><a href="/logout">로그아웃</a><a href="/my">마이</a></header>
+      <button>회원 전용</button>
+      <div role="dialog">
+        <h2>로그인하고 첫 구매 20% 쿠폰 받기</h2>
+        <button>로그인</button>
+        <button aria-label="닫기">✕</button>
+      </div>`
+    const list = detectOverlays()
+    expect(list).toHaveLength(1)
+    expect(list[0].sensitive).toBe(false)
+    expect(list[0].closeIds).toHaveLength(1)
+  })
+
+  it('로그인되지 않은 화면의 로그인 모달은 그대로 민감한 레이어다', () => {
+    document.body.innerHTML = `
+      <header><a href="/login">로그인</a></header>
+      <div role="dialog">
+        <h2>로그인이 필요합니다</h2>
+        <button aria-label="닫기">✕</button>
+      </div>`
+    const list = detectOverlays()
+    expect(list[0].sensitive).toBe(true)
+    expect(list[0].closeIds).toEqual([])
+  })
+
+  it('로그인 상태여도 비밀번호 칸이 있거나 결제·인증이 섞인 레이어는 닫지 않는다', () => {
+    document.body.innerHTML = `
+      <header><a href="/logout">로그아웃</a></header>
+      <div role="dialog">
+        <h2>로그인 후 본인 인증이 필요합니다</h2>
+        <button aria-label="닫기">✕</button>
+      </div>`
+    expect(detectOverlays()[0].sensitive).toBe(true)
+    document.body.innerHTML = `
+      <header><a href="/logout">로그아웃</a></header>
+      <div role="dialog">
+        <h2>다시 로그인해 주세요</h2>
+        <input type="password">
+        <button aria-label="닫기">✕</button>
+      </div>`
+    expect(detectOverlays()[0].sensitive).toBe(true)
+  })
+
   it('배경 dim 과 모달이 겹치면 안쪽 모달만 남긴다', () => {
     document.body.innerHTML = `
       <div id="dim" data-pos="fixed" data-z="1000">

@@ -9,7 +9,13 @@ import type {
   PageSnapshot
 } from '../shared/snapshot'
 import { MAX_ELEMENTS } from './page-constants'
-import { isCloseLabel, isOverlay, isSensitiveOverlay, type OverlaySignals } from './page-overlay'
+import {
+  isCloseLabel,
+  isOverlay,
+  isSensitiveOverlay,
+  isSignInPromptOnly,
+  type OverlaySignals
+} from './page-overlay'
 import {
   detectLoginFields,
   detectSignedInHint,
@@ -1189,7 +1195,14 @@ function describeOverlay(el: HTMLElement, index: Map<HTMLElement, number>): Page
   const cls = (el.getAttribute('class') ?? '').trim().split(/\s+/)[0]
   const fallback = `transparent layer ${cls ? `${tag}.${cls}` : tag}`
   const label = ((aria || headingText || body).trim() || fallback).slice(0, OVERLAY_LABEL_MAX)
-  const sensitive = isSensitiveOverlay(`${label} ${body.slice(0, OVERLAY_TEXT_MAX)}`)
+  const overlayText = `${label} ${body.slice(0, OVERLAY_TEXT_MAX)}`
+  // "로그인" 말고는 민감한 말이 없고, 비밀 입력칸도 없고, 페이지는 이미 로그인 상태다 →
+  // 가입·로그인 유도 팝업이다. 닫아도 되는 레이어로 본다(무신사는 이걸 닫아야 구매 버튼이 풀린다)
+  const signInPromo =
+    isSignInPromptOnly(overlayText) &&
+    el.querySelector('input[type="password"]') === null &&
+    detectSignedInHint().signedIn
+  const sensitive = isSensitiveOverlay(overlayText) && !signInPromo
   const closeIds: number[] = []
   // 결제·비밀번호·로그인 레이어는 닫기 후보를 아예 내놓지 않는다
   if (!sensitive) {

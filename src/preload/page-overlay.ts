@@ -70,3 +70,16 @@ const SENSITIVE_RE = /결제|비밀번호|\bPIN\b|로그인|인증/i
 export function isSensitiveOverlay(text: string): boolean {
   return SENSITIVE_RE.test(text)
 }
+
+// 로그인 말고는 민감한 말이 없는 레이어 = 로그인 유도(가입 혜택·"로그인하고 쿠폰 받기") 팝업
+const STRICT_SENSITIVE_RE = /결제|비밀번호|\bPIN\b|인증/i
+
+/**
+ * "로그인" 이라는 말 때문에만 민감으로 잡힌 레이어인가.
+ * 이미 로그인된 화면에 뜬 이런 레이어는 광고성 유도 팝업이라 닫아도 된다 — 무신사 상품 페이지는
+ * 이 팝업이 떠 있는 동안 구매 버튼이 '회원 전용'으로 잠기고, 닫아야 활성화된다(실기).
+ * 판정은 호출부가 로그인 상태·비밀 입력칸 유무와 함께 본다
+ */
+export function isSignInPromptOnly(text: string): boolean {
+  return SENSITIVE_RE.test(text) && !STRICT_SENSITIVE_RE.test(text)
+}
