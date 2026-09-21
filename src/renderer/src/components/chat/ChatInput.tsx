@@ -4,6 +4,14 @@ import { useTranslation } from 'react-i18next'
 import { ArrowUp, X } from 'lucide-react'
 import { useChatStore } from '@renderer/stores/chatStore'
 import { imageFilesOf, readAgentImage } from '@renderer/lib/paste-image'
+import {
+  addToHistory,
+  draftCursor,
+  loadInputHistory,
+  saveInputHistory,
+  stepHistory,
+  type HistoryCursor
+} from '@renderer/lib/input-history'
 import { AGENT_IMAGE_MAX_COUNT, agentImageDataUrl, type AgentImage } from '@shared/agent-image'
 import { PermissionMenu } from './PermissionMenu'
 import { ModelEffortMenu } from './ModelEffortMenu'
@@ -15,10 +23,17 @@ export function ChatInput(): React.JSX.Element {
   // 클립보드에서 붙여 넣은 이미지. 보내면 비운다
   const [images, setImages] = useState<AgentImage[]>([])
   const [note, setNote] = useState('')
+  // 보낸 문장 이력 — ↑/↓ 로 다시 꺼낸다(터미널과 같은 동작)
+  const [history, setHistory] = useState<string[]>(loadInputHistory)
+  const [cursor, setCursor] = useState<HistoryCursor>(() => draftCursor(loadInputHistory()))
   const submit = (): void => {
     const v = text.trim()
     // 그림만 붙이고 글이 없어도 보낼 수 있다(모델이 그림을 보고 묻게)
     if (!v && images.length === 0) return
+    const nextHistory = addToHistory(history, v)
+    setHistory(nextHistory)
+    setCursor(draftCursor(nextHistory))
+    saveInputHistory(nextHistory)
     setText('')
     setImages([])
     setNote('')
@@ -78,10 +93,26 @@ export function ChatInput(): React.JSX.Element {
       <div className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] px-3 py-2">
         <input
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value)
+            // 직접 고치기 시작하면 그 글이 새 '쓰던 글'이다
+            setCursor(draftCursor(history))
+          }}
           onPaste={(e) => void onPaste(e)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit()
+            if (e.nativeEvent.isComposing) return
+            if (e.key === 'Enter') return submit()
+            if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+            const step = stepHistory(
+              history,
+              cursor,
+              e.key === 'ArrowUp' ? 'older' : 'newer',
+              text
+            )
+            if (!step) return
+            e.preventDefault()
+            setCursor(step.cursor)
+            setText(step.value)
           }}
           placeholder={t('chat.placeholder')}
           disabled={status === 'running'}
