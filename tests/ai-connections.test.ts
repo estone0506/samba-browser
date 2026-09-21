@@ -71,7 +71,7 @@ describe('연결 / 해지 상태 전이', () => {
   it('로그인 안내는 플랫폼별 새 터미널 명령을 돌려준다', () => {
     expect(loginTerminalCommand('claude_subscription', 'win32')).toEqual({
       command: 'cmd',
-      args: ['/c', 'start', '', 'cmd', '/k', 'claude login']
+      args: ['/c', 'start', '', 'cmd', '/k', 'claude auth logout & claude auth login']
     })
     expect(loginTerminalCommand('codex_subscription', 'win32').args).toContain('codex login')
     expect(loginTerminalCommand('codex_subscription', 'linux')).toEqual({

@@ -45,7 +45,9 @@ export const SUBSCRIPTION_CLI: Record<
   claude_subscription: {
     bin: 'claude',
     credentialPaths: CLAUDE_CREDENTIAL_PATHS,
-    loginCommand: 'claude login'
+    // 예전 'claude login' 은 지금 CLI 에 없는 하위 명령이라 로그인 대신 대화가 시작됐다(실기).
+    // 먼저 로그아웃해야 다른 계정으로 바꿀 수 있다 — 이미 로그인돼 있으면 login 이 같은 계정으로 끝난다
+    loginCommand: 'claude auth logout & claude auth login'
   },
   codex_subscription: {
     bin: 'codex',

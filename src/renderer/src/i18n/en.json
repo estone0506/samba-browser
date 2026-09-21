@@ -251,7 +251,7 @@
     "finalConfirm": "Final confirmation"
   },
   "auth": {
-    "missing": "AI is not connected. Run claude login in a terminal or add an API key in Settings.",
+    "missing": "AI is not connected. Run claude auth login in a terminal or add an API key in Settings.",
     "limit": "You've reached the AI usage limit. Please try again later.",
     "notConnected": "No AI connection. Connect a subscription or add an API key in Settings > AI"
   },
@@ -921,7 +921,7 @@
   "ai": {
     "claudeSubscriptionDesc": "Reuses the Claude Code login already on this PC",
     "claudeInstallHint": "Claude Code is not installed. Install it in a terminal and check again",
-    "claudeLoginHint": "Run claude login in a terminal",
+    "claudeLoginHint": "Run claude auth login in a terminal",
     "noKey": "No key saved",
     "keyPlaceholder": "Paste a key to save it right away",
     "testOk": "The key works",
