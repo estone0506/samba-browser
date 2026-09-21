@@ -23,6 +23,7 @@ import { attachInternalProtocol } from './internal-protocol'
 import type { PermissionMode, SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
 import { installWebstoreNavigatorUserAgent, installWebstoreUserAgent } from './webstore-ua'
+import { installSessionCookieKeeper } from './session-cookies'
 import { installDialogHandler, isAutomationActive } from './dialogs'
 import { PopupRegistry, type PopupEntry } from './popups'
 import { buildTargets, pickAgentTargetId, type AgentTarget } from './targets'
@@ -120,6 +121,9 @@ function hardenSession(ses: Session, partition: string): void {
   // 웹스토어는 Electron UA 를 보면 "지원되지 않는 브라우저" 안내로 설치 버튼을 감춘다.
   // 그 호스트 요청에만 크롬 UA 를 보낸다(다른 사이트는 그대로)
   installWebstoreUserAgent(ses)
+  // 로그인 토큰이 세션 쿠키인 사이트(무신사)는 앱을 다시 켤 때마다 반쪽 로그인이 됐다 —
+  // 크롬의 "이전 세션 이어서" 처럼 세션 쿠키에 만료를 얹어 남긴다
+  installSessionCookieKeeper(ses)
 }
 
 // 리다이렉트·페이지 내 이동으로 금지 스킴에 도달하는 경로까지 막는다.
