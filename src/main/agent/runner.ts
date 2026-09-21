@@ -159,7 +159,9 @@ export class AgentRunner {
       return this.siteMemory.blockFor({
         prompt,
         playbookTexts: playbooks.map((p) => p.instructions),
-        currentUrl: this.currentUrl()
+        currentUrl: this.currentUrl(),
+        // 플레이북 실행은 플레이북 이름으로 경로를 남기므로 같은 이름의 경로를 먼저 싣는다
+        goals: playbooks.map((p) => p.name)
       })
     } catch (e: unknown) {
       console.error('사이트 기억 조회 실패', e instanceof Error ? e.message : String(e))
@@ -187,16 +189,25 @@ export class AgentRunner {
     /** 이번 실행의 전체 도구 호출 수(관찰 도구 포함) */
     toolCalls: number
     usedRecipe: boolean
+    /** 이번 실행에 걸린 플레이북 이름. 있으면 경로를 이 이름으로 누적한다 */
+    goal?: string
+    /** 끝까지 못 간 실행(도구 상한·오류). 성공한 단계까지만 부분 경로로 남긴다 */
+    partial?: boolean
   }): void {
     const seconds = Math.round((Date.now() - run.startedAt) / 1000)
     // 효과 비교용 한 줄. 기억을 실어 보낸 실행이면 표식이 붙는다
     console.info(
-      `작업 완료 — 도구 호출 ${run.toolCalls}회·${seconds}초` +
+      `작업 ${run.partial ? '중단' : '완료'} — 도구 호출 ${run.toolCalls}회·${seconds}초` +
         (run.usedRecipe ? ' (usedRecipe: true)' : '')
     )
     if (!this.siteMemory) return
     try {
-      this.siteMemory.learn({ prompt: run.prompt, calls: run.calls })
+      this.siteMemory.learn({
+        prompt: run.prompt,
+        calls: run.calls,
+        ...(run.goal === undefined ? {} : { goal: run.goal }),
+        ...(run.partial === true ? { partial: true } : {})
+      })
     } catch (e: unknown) {
       console.error('사이트 기억 저장 실패', e instanceof Error ? e.message : String(e))
     }
@@ -378,15 +389,22 @@ export class AgentRunner {
       if (gen !== this.generation) return
       if (e.type === 'text') entry.text = entry.text ? `${entry.text}\n${e.text}` : e.text
       if (e.type === 'step') entry.steps.push({ label: e.label, ok: e.ok })
-      // 성공으로 끝난 실행에서만 경로를 남긴다. 속도 지표도 여기서 한 줄 적는다
-      if (e.type === 'status' && e.state === 'done') {
-        this.finishRun({
-          prompt,
-          calls,
-          startedAt,
-          toolCalls: e.toolCalls ?? 0,
-          usedRecipe: memory.usedRecipe
-        })
+      // 성공이면 완주 경로, 도구를 쓰다 실패(상한·오류)했으면 부분 경로를 남긴다.
+      // 연결·인증 문제로 시작도 못 한 실패(auth:*)는 배울 것이 없다. 속도 지표도 여기서 한 줄 적는다
+      if (e.type === 'status' && (e.state === 'done' || e.state === 'failed')) {
+        const partial = e.state === 'failed'
+        const authFailure = partial && (e.message ?? '').startsWith('auth:')
+        if (!authFailure && (!partial || calls.length > 0)) {
+          this.finishRun({
+            prompt,
+            calls,
+            startedAt,
+            toolCalls: e.toolCalls ?? 0,
+            usedRecipe: memory.usedRecipe,
+            ...(playbooks[0] === undefined ? {} : { goal: playbooks[0].name }),
+            ...(partial ? { partial: true } : {})
+          })
+        }
       }
       this.emit(e)
     }

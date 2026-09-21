@@ -21,7 +21,8 @@ import { RECOMMEND_MAX, type DismissedRecommendation } from './activity-patterns
 
 // 도구 호출 상한 허용 범위
 export const MIN_TOOL_CALLS = 1
-export const MAX_TOOL_CALLS = 200
+// 계정 두 개로 주문서를 각각 만들어 원가를 비교하면 한 건에 200회를 넘긴다
+export const MAX_TOOL_CALLS = 400
 
 // 오른쪽 패널 폭 허용 범위
 // 패널 폭 한계(렌더러 uiStore 와 공유)
@@ -81,9 +82,9 @@ export const DEFAULT_SETTINGS = {
   sidebarWidth: 232,
   lastUrl: NEW_TAB_URL,
   dangerWords: DEFAULT_DANGER_WORDS,
-  // 한 작업에서 허용하는 도구 호출 수. 주문 흐름(로그인→검색→옵션→장바구니→주문서)은
-  // 40회로는 중간에 끊겨서 80회로 잡는다(상한은 MAX_TOOL_CALLS)
-  maxToolCalls: 120,
+  // 한 작업에서 허용하는 도구 호출 수. 주문 흐름(로그인→검색→옵션→장바구니→주문서→쿠폰→
+  // 결제수단 비교)은 120회로도 계정 비교 도중에 끊겼다(실기). 200회로 잡는다(상한은 MAX_TOOL_CALLS)
+  maxToolCalls: 200,
   permissionMode: 'guard' as const,
   finalConfirm: false,
   // Aside 방식: 자동 잠금 기본 1주(10080분), 이 PC 에서 기억 기본 켬
