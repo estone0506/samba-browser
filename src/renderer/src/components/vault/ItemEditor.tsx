@@ -63,7 +63,10 @@ const FORM_SPECS: Record<VaultItemType, SectionSpec[]> = {
           options: PAYMENT_PROVIDERS,
           optionLabelPrefix: 'vault.paymentProvider'
         },
-        { key: 'value', labelKey: 'vault.fieldNames.password', kind: 'secret' }
+        { key: 'value', labelKey: 'vault.fieldNames.password', kind: 'secret' },
+        // 토스페이처럼 결제창이 휴대폰 번호·생년월일을 먼저 묻는 수단용(선택). AI 가 결제창에 채운다
+        { key: 'payment.phone', labelKey: 'vault.fieldNames.paymentPhone', kind: 'text' },
+        { key: 'payment.birth', labelKey: 'vault.fieldNames.paymentBirth', kind: 'text' }
       ]
     }
   ],

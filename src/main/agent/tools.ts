@@ -1372,7 +1372,10 @@ overlays left: ${after.length}${kept}`
         const v = gate
         // 비밀번호류는 대상 요소가 실제 비밀 입력칸(type=password)일 때만 채운다.
         // 최신 스냅샷을 신뢰하지 않고, 매번 페이지에서 직접 확인한다
-        if (SECRET_TARGET_ITEM_TYPES.includes(itemType)) {
+        // 기본 필드(value = 비밀번호 자체)만 해당한다 — 결제 항목의 부가 필드(payment.phone·payment.birth)는
+        // 결제창의 평범한 입력칸에 들어간다
+        const isMainSecret = (field ?? DEFAULT_FIELD_KEY) === DEFAULT_FIELD_KEY
+        if (SECRET_TARGET_ITEM_TYPES.includes(itemType) && isMainSecret) {
           const isSecret = await pageBridge.isSecretField(tab, elementId)
           if (!isSecret) return NOT_A_SECRET_FIELD
         }
@@ -1392,11 +1395,16 @@ overlays left: ${after.length}${kept}`
           })
           if (found.reason === 'ambiguous') return PAYMENT_PROVIDER_AMBIGUOUS
           if (found.value === null) {
-            return `not found: no payment password${provider ? ` (${provider})` : ''} saved for this account`
+            return fieldKey === DEFAULT_FIELD_KEY
+              ? `not found: no payment password${provider ? ` (${provider})` : ''} saved for this account`
+              : `not found: no ${fieldKey} saved in the ${provider ?? ''} payment item - skip this pay method`
           }
-          const movedPay = verifyFillTarget(account, tab)
+          const shaped = formatFillValue(found.value, format)
+          if (shaped === null)
+            return `refused: saved password.${fieldKey} cannot be shaped as ${format}`
+          const movedPay = viaOpener ? null : verifyFillTarget(account, tab)
           if (movedPay) return movedPay
-          return await pageBridge.fillValue(tab, elementId, found.value)
+          return await pageBridge.fillValue(tab, elementId, shaped)
         }
         const raw = v.getSecretForFill(account.id, itemType, fieldKey, ctx.jobId)
         if (raw === null) return `not found: no ${itemType}.${fieldKey} saved for this account`
