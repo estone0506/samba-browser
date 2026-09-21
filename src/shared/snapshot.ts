@@ -44,6 +44,17 @@ export interface PageOverlay {
  * 결제 비밀번호 키패드 판정용 신호.
  * 값(입력 내용)은 절대 담기지 않는다 — "있는지·몇 개인지" 만 센다
  */
+/**
+ * 결제 비밀번호 키패드의 숫자 버튼 배치(프레임 하나 분). 값은 담기지 않는다 —
+ * 어느 숫자가 어느 요소 id 인지와, 지금까지 눌린 자리수(셀 수 있을 때)만 있다
+ */
+export interface KeypadLayoutDto {
+  /** 0~9 각각 정확히 하나씩, 10개 */
+  digits: { digit: string; id: number }[]
+  /** 비밀 입력칸에 찍힌 자리수. 셀 수 없으면 null(값은 읽지 않는다 — 길이만) */
+  filled: number | null
+}
+
 export interface KeypadSignals {
   url: string
   // 문구 판정용 페이지 텍스트(앞부분만)

@@ -34,6 +34,7 @@ import {
 } from './tools-phone'
 import { handoffToolResult, type HandoffResult } from './handoff'
 import { secretKeypadGate } from './secret-page'
+import { enterWebPaymentPassword, type WebKeypadResult } from '../vault/web-keypad'
 import { knownLoginUrl, isLikelyLoginUrl } from '../../shared/site-rules'
 import { BLOCKED_URL_MESSAGE, isInternalUrl } from '../../shared/url'
 import {
@@ -110,6 +111,14 @@ export const KEYPAD_SKIPPED_NEXT =
   'otherwise finish with done and tell the user the payment is waiting for their password.'
 // 넘김 카드에 표시할 근거 문구(값이 아니라 화면 종류만 담는다)
 const KEYPAD_HANDOFF_MATCHED = '결제 비밀번호 키패드'
+// 앱이 키패드에 결제 비밀번호를 다 넣었을 때. 확인·입력완료 버튼은 모델이 누른다
+export const KEYPAD_ENTERED_NEXT =
+  'ok: the app entered the payment password on the keypad. ' +
+  'Now call get_page and press the confirm/입력완료 button if the keypad has one; never press the digits yourself.'
+// 결제창(PG 팝업)의 계정을 여는 탭에서 찾을 수 없을 때
+const KEYPAD_ACCOUNT_UNKNOWN =
+  'account not found: the payment window is not linked to a saved account; ' +
+  'call list_accounts on the shop tab or pass accountLabel'
 // progress 도구가 말이 안 되는 숫자를 받았을 때 돌려주는 문자열
 export const PROGRESS_INVALID = 'refused: progress needs 0 <= done <= total and total >= 1'
 // 진행 라벨 표시 상한(상품명이 길어도 진행 배지가 무너지지 않게)
@@ -546,9 +555,88 @@ ${raw}`
   }
 
   /**
-   * 웹 결제 비밀번호 키패드를 사용자에게 넘긴다.
-   * 아직 웹 키패드에 자동으로 눌러 주는 경로는 없다 — 사용자가 직접 누르고 "계속" 하면 이어간다.
-   * 비밀값은 어디에도 오가지 않는다
+   * 결제창이 어느 사이트 계정의 것인지. 결제 키패드는 PG 도메인(NICE·KCP·페이코) 팝업이나
+   * iframe 에 뜨므로 그 창의 호스트로는 계정을 못 찾는다 — 팝업을 연 탭(opener)의 호스트로
+   * 되돌아가 찾는다. opener 도 없으면 현재 창 호스트 그대로다
+   */
+  const keypadAccountHosts = (tab: Tab): string[] => {
+    const hosts = [currentHost(tab)]
+    if (tab.openerId) {
+      const opener = ctx.tabs.list().find((t) => t.id === tab.openerId)
+      if (opener) hosts.push(normalizeHost(opener.url))
+    }
+    return hosts.filter((h) => h !== '')
+  }
+
+  /**
+   * 웹 결제 비밀번호 키패드에 키마스터 값을 앱이 넣는다. 값은 web-keypad 실행기 안에만 있고,
+   * 여기는 결과 문구만 받는다. 넣지 못했으면(배치 불완전·검증 실패) 사람에게 넘긴다.
+   * 계정 호스트 검사: 키패드가 계정 도메인 자체에 있거나, 계정 도메인 탭이 연 결제창(팝업)에
+   * 있어야 한다 — 아무 사이트의 키패드에나 결제 비밀번호를 넣지 않는다
+   */
+  const keypadEnter = async (
+    tab: Tab,
+    accountLabel: string | undefined,
+    provider: PaymentProvider | undefined
+  ): Promise<string> => {
+    const blocked = gateRefusal(currentUrl(tab))
+    if (blocked) return blocked
+    // 금고를 쓸 수 없으면(미설정·잠김) 예전처럼 사람에게 넘긴다 — 사용자가 직접 누르면 이어간다
+    const available = vaultAvailable()
+    if (typeof available === 'string') return await keypadHandoff(tab)
+    const hosts = keypadAccountHosts(tab)
+    let account: AccountDto | null = null
+    for (const host of hosts) {
+      account = resolveAccount(available.listAccounts(host), accountLabel, tab.profile)
+      if (account) break
+    }
+    if (!account) return hosts.length > 1 ? KEYPAD_ACCOUNT_UNKNOWN : ACCOUNT_NOT_FOUND
+    const gate = await applyPolicy(available, effectiveAccess(account.agentAccess, globalPolicy()))
+    // 잠김·미설정은 사람에게 넘기고(직접 누르면 이어간다), 접근 정책 거부(never)는 그대로 알린다
+    if (gate === VAULT_LOCKED || gate === VAULT_NOT_SET_UP) return await keypadHandoff(tab)
+    if (typeof gate === 'string') return gate
+    const v = gate
+    // 결제창 호스트가 계정 도메인과 다르면 계정 도메인 탭이 연 팝업이어야 한다
+    // (제외 도메인·평문 페이지는 위 gateRefusal 이 이미 걸렀다)
+    const here = currentHost(tab)
+    const accountHost = account.host
+    if (!sameRegistrableDomain(here, accountHost)) {
+      const openedFromAccountSite = hosts
+        .slice(1)
+        .some((h) => sameRegistrableDomain(h, accountHost))
+      if (!openedFromAccountSite) return FILL_HOST_MISMATCH
+    }
+    // guard 모드는 결제 비밀번호 입력 전에 한 번 더 묻는다(fill_secret 의 평소 규칙과 같다).
+    // full 모드는 묻지 않는다 — 결제 직전 확인은 플레이북이 정한다
+    if (ctx.mode === 'guard') {
+      const ok = await ctx.confirm('키마스터 입력: 결제 비밀번호 키패드', 'danger')
+      if (!ok) return 'denied by user'
+    }
+    const layout = await pageBridge.keypadLayout(tab).catch(() => null)
+    if (!layout) return await keypadHandoff(tab)
+    const frameIndex = layout.frameIndex
+    const result: WebKeypadResult = await enterWebPaymentPassword({
+      vault: v,
+      accountId: account.id,
+      ...(provider === undefined ? {} : { provider }),
+      ...(ctx.jobId === undefined ? {} : { jobId: ctx.jobId }),
+      layout,
+      click: (id) => pageBridge.click(tab, id),
+      filled: () => pageBridge.keypadFilled(tab, frameIndex),
+      onStep: ctx.onStep
+    })
+    if (result === 'ok') return KEYPAD_ENTERED_NEXT
+    if (result === 'ambiguous') return PAYMENT_PROVIDER_AMBIGUOUS
+    if (result === 'not-found') {
+      return `not found: no payment password${provider ? ` (${provider})` : ''} saved for this account`
+    }
+    // 금고가 잠겼거나, 배치를 못 읽었거나, 눌러도 자리수가 늘지 않았다 — 사람에게 넘긴다
+    return await keypadHandoff(tab)
+  }
+
+  /**
+   * 웹 결제 비밀번호 키패드를 사용자에게 넘긴다(앱이 넣지 못했을 때).
+   * 사용자가 직접 누르고 "계속" 하면 이어간다. 비밀값은 어디에도 오가지 않는다
    */
   const keypadHandoff = async (tab: Tab): Promise<string> => {
     if (!ctx.handoff) return `handoff: ${KEYPAD_HANDOFF_MESSAGE}`
@@ -1190,8 +1278,12 @@ overlays left: ${after.length}${kept}`
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
-        // 웹 결제 키패드에는 자동으로 넣을 수 있는 입력칸이 없다 — 사람에게 넘긴다
-        if (await secretKeypadGate.check(tab)) return await keypadHandoff(tab)
+        // 웹 결제 키패드: 입력칸이 아니라 숫자 버튼이다 — 앱이 키마스터 값을 눌러 넣는다.
+        // 결제 비밀번호가 아닌 항목을 키패드 화면에서 부르면 넘긴다(넣을 곳이 없다)
+        if (await secretKeypadGate.check(tab)) {
+          if (itemType !== 'password') return await keypadHandoff(tab)
+          return await keypadEnter(tab, accountLabel, provider)
+        }
         const host = currentHost(tab)
         // 평문(http) 페이지에는 비밀값을 절대 채우지 않는다(네트워크 도청·다운그레이드 방어)
         const blocked = gateRefusal(currentUrl(tab))

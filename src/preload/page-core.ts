@@ -1,7 +1,13 @@
 // [규칙] 이 파일은 page.ts 와 함께 sandbox preload 로 번들된다.
 // src/shared/* 에서 **값(value)** 을 import 하지 말 것 — Rollup 청크 분리로 require() 가 생겨
 // preload 로드가 실패한다. 타입은 `import type` 만 사용(번들에 남지 않음), 값은 ./page-constants 에서.
-import type { KeypadSignals, PageElement, PageOverlay, PageSnapshot } from '../shared/snapshot'
+import type {
+  KeypadLayoutDto,
+  KeypadSignals,
+  PageElement,
+  PageOverlay,
+  PageSnapshot
+} from '../shared/snapshot'
 import { MAX_ELEMENTS } from './page-constants'
 import { isCloseLabel, isOverlay, isSensitiveOverlay, type OverlaySignals } from './page-overlay'
 import {
@@ -878,6 +884,68 @@ export function keypadSignals(): KeypadSignals {
   }
 }
 
+// --- 결제 비밀번호 키패드 배치 ---------------------------------------------
+
+// 결제 비밀번호 칸으로 보는 비밀 입력칸(keypadSignals 의 pinField 와 같은 기준)
+function pinInputs(): HTMLInputElement[] {
+  return Array.from(document.querySelectorAll<HTMLInputElement>('input')).filter((el) => {
+    if (el.type !== 'password') return false
+    const max = el.maxLength
+    const short = max >= PIN_MAXLENGTH_MIN && max <= PIN_MAXLENGTH_MAX
+    const numeric = (el.getAttribute('inputmode') ?? '').toLowerCase() === 'numeric'
+    return short || (numeric && (max === -1 || max <= PIN_MAXLENGTH_MAX))
+  })
+}
+
+// 숫자 버튼 후보. 결제 키패드는 button·a 뿐 아니라 div·span·td 로도 그려진다
+const KEYPAD_DIGIT_SELECTOR = SELECTOR + ', div, span, td, li, p'
+const KEYPAD_DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+
+/** 요소가 한 자리 숫자만 보여 주는가(공백 제외) */
+function singleDigitOf(el: Element): string | null {
+  const label = (el.textContent ?? '').trim()
+  return label.length === 1 && label >= '0' && label <= '9' ? label : null
+}
+
+/** 이 요소에 id 가 없으면 매겨 registry 에 넣는다(스냅샷을 다시 찍지 않고 누를 수 있게) */
+function ensureId(el: HTMLElement): number {
+  if (idDoc !== document) resetElementIds()
+  let id = idOf.get(el)
+  if (id === undefined) {
+    id = ++idSeq
+    idOf.set(el, id)
+  }
+  registry.set(id, el)
+  goneIds.delete(id)
+  return id
+}
+
+/**
+ * 결제 비밀번호 키패드의 숫자 버튼 배치. 앱이 키마스터 값을 대신 누를 때 쓴다.
+ * 0~9 가 각각 정확히 한 개 보일 때만 배치를 돌려주고, 하나라도 빠지거나 겹치면 null —
+ * 부분·중복 배치로 누르면 잘못 눌러 계정이 잠긴다. 이미지로 그려진 숫자는 잡지 못한다.
+ * 값은 어디에서도 읽지 않는다: filled 는 비밀 입력칸의 길이(자리수)뿐이다
+ */
+export function keypadLayout(): KeypadLayoutDto | null {
+  const visible: VisibilityCache = new Map()
+  const found = new Map<string, HTMLElement>()
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>(KEYPAD_DIGIT_SELECTOR))
+  for (const el of candidates) {
+    const digit = singleDigitOf(el)
+    if (digit === null) continue
+    // <a><span>5</span></a> 처럼 겹친 경우 가장 안쪽만 센다(클릭은 위로 전파된다)
+    if (Array.from(el.children).some((child) => singleDigitOf(child) !== null)) continue
+    if (!isVisible(el, visible)) continue
+    // 같은 숫자가 두 곳에 보이면 어느 쪽인지 확정할 수 없다 — 배치 전체를 버린다
+    if (found.has(digit)) return null
+    found.set(digit, el)
+  }
+  if (KEYPAD_DIGITS.some((d) => !found.has(d))) return null
+  const digits = KEYPAD_DIGITS.map((digit) => ({ digit, id: ensureId(found.get(digit)!) }))
+  const pin = pinInputs()[0]
+  return { digits, filled: pin ? pin.value.length : null }
+}
+
 // --- 로그인 상태 유지 체크박스 ---------------------------------------------
 
 // "로그인 상태 유지" 류 체크박스 라벨(ko/en). 같은 세션을 오래 유지해 캡차 발생을 줄인다
@@ -1192,6 +1260,8 @@ export function runAgentOp(raw: unknown): unknown {
       return rectOf(id)
     case 'keypadSignals':
       return keypadSignals()
+    case 'keypadLayout':
+      return keypadLayout()
     case 'overlays':
       return detectOverlays()
     default:

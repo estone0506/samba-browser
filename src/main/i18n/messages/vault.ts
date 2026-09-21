@@ -15,6 +15,8 @@ export const vaultMessages = defineMessages({
     'vault.accountCreateFailed': '계정을 만들지 못했습니다',
     'vault.exportWarning':
       '내보낸 파일에는 비밀번호가 평문으로 들어갑니다. 저장 후 안전한 곳으로 옮기고 원본은 지우세요.',
+    'vault.webKeypadEntered': '결제 비밀번호 입력({digits}자리)',
+    'vault.webKeypadVerifyFailed': '결제 비밀번호 입력 확인 실패({digits}자리째)',
     'aiKeys.saveFailed': 'API 키 저장 실패: {reason}',
     'aiKeys.safeStorageUnavailable':
       '이 기기에서는 안전 저장소를 쓸 수 없어 API 키를 보관할 수 없습니다'
@@ -32,6 +34,8 @@ export const vaultMessages = defineMessages({
     'vault.accountCreateFailed': 'Could not create the account',
     'vault.exportWarning':
       'The exported file contains your passwords in plain text. After saving, move it somewhere safe and delete the original.',
+    'vault.webKeypadEntered': 'Payment password entered ({digits} digits)',
+    'vault.webKeypadVerifyFailed': 'Payment password entry not registering (digit {digits})',
     'aiKeys.saveFailed': 'Failed to save API key: {reason}',
     'aiKeys.safeStorageUnavailable':
       'Secure storage is not available on this device, so the API key cannot be stored'
