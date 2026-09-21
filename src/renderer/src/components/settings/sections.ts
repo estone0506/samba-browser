@@ -13,12 +13,12 @@ export interface SettingsSectionDef {
 /**
  * 설정에는 "다른 화면에 이미 있는 것"을 두지 않는다.
  *   개인     일반 · 모양 · 계정 · 보안 · 키마스터
- *   AI       동작 · AI 연결 · 자동화 · 알림 연동
- * (키마스터·자동화는 사이드바에 있었지만 2026-09-19 설정 안으로 옮겼다 — 사이드바를 얇게)
+ *   AI       동작 · AI 연결 · 자동화 · 폰 · 알림 연동
+ * (키마스터·자동화는 2026-09-19, 폰은 2026-09-21 사이드바에서 설정 안으로 옮겼다 — 사이드바를 얇게)
  *
  * 여기서 빠진 것들이 간 곳.
  * - 키마스터 정책 → 보안 섹션
- * - 폰(경로·화면 품질·결제 상한) → 폰 탭 화면의 "폰 설정" 패널
+ * - 폰(경로·화면 품질·결제 상한) → 폰 섹션 안의 "폰 설정" 패널
  * - 개발자(확장 관리) → 확장 프로그램 전용 페이지
  *
  * 그룹 이름과 섹션 이름이 똑같으면(에이전트 > 에이전트) 어디에 있는지 알 수 없어
@@ -33,11 +33,12 @@ export const SECTIONS: readonly SettingsSectionDef[] = [
   { group: 'agent', key: 'behavior', labelKey: 'settingsPage.sections.behavior' },
   { group: 'agent', key: 'ai', labelKey: 'settingsPage.sections.ai' },
   { group: 'agent', key: 'automation', labelKey: 'settingsPage.sections.automation' },
+  { group: 'agent', key: 'phones', labelKey: 'settingsPage.sections.phones' },
   { group: 'agent', key: 'notify', labelKey: 'settingsPage.sections.notify' }
 ]
 
 /** 자체 레이아웃(두 칸·자체 스크롤)을 가진 섹션 — 설정의 560px 폭 틀 없이 그린다 */
-export const FULL_WIDTH_SECTION_KEYS: readonly string[] = ['keymaster', 'automation']
+export const FULL_WIDTH_SECTION_KEYS: readonly string[] = ['keymaster', 'automation', 'phones']
 
 export function isFullWidthSection(key: string): boolean {
   return FULL_WIDTH_SECTION_KEYS.includes(key)

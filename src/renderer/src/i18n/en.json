@@ -729,7 +729,8 @@
       "ai": "AI connection",
       "automation": "Automation",
       "keymaster": "Key Master",
-      "notify": "Notifications"
+      "notify": "Notifications",
+      "phones": "Phones"
     },
     "general": {
       "searchTitle": "Search",

@@ -10,6 +10,7 @@ import { AgentSection } from '@renderer/components/settings/AgentSection'
 import { AiSection } from '@renderer/components/settings/AiSection'
 import { NotifySection } from '@renderer/components/settings/NotifySection'
 import { PlaceholderSection } from '@renderer/components/settings/PlaceholderSection'
+import { PhonesPage } from '@renderer/pages/PhonesPage'
 import { PersonalInfoPage } from '@renderer/pages/PersonalInfoPage'
 import { AutomationPage } from '@renderer/pages/AutomationPage'
 import {
@@ -139,6 +140,8 @@ function SectionBody({
       return <PersonalInfoPage />
     case 'automation':
       return <AutomationPage />
+    case 'phones':
+      return <PhonesPage />
     case 'notify':
       return <NotifySection settings={settings} update={update} />
     default:

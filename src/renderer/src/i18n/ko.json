@@ -729,7 +729,8 @@
       "ai": "AI 연결",
       "automation": "자동화",
       "keymaster": "키마스터",
-      "notify": "알림 연동"
+      "notify": "알림 연동",
+      "phones": "폰 연동"
     },
     "general": {
       "searchTitle": "검색",
