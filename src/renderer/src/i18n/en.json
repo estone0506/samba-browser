@@ -1084,7 +1084,9 @@
       "suggestion": "{{host}} was verified on {{phone}}. Make it the assigned phone?",
       "accept": "Assign",
       "dismiss": "Not now"
-    }
+    },
+    "showScreen": "Show screen",
+    "hideScreen": "Hide screen"
   },
   "extensions": {
     "title": "Extensions",

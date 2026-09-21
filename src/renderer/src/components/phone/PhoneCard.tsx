@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { Monitor, MonitorOff } from 'lucide-react'
 import type { PhoneDto, ScreenMode } from '@shared/phone'
 import { cn } from '@renderer/lib/utils'
 import { SecondaryButton, StatusBadge } from '@renderer/components/settings/shared'
@@ -45,17 +45,9 @@ export function PhoneCard({
         highlighted && 'ring-2 ring-black/70'
       )}
     >
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex items-start gap-2 text-left"
-        aria-expanded={expanded}
-      >
-        {expanded ? (
-          <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text2)]" />
-        ) : (
-          <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text2)]" />
-        )}
+      {/* 머리글은 이름·모델만 보여 준다. 화면은 아래 '화면 보기' 버튼으로 연다 —
+          모델명을 눌러야 열린다는 걸 알기 어려웠다(사용자 요청) */}
+      <div className="flex items-start gap-2">
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
             <span className={cn('h-[7px] w-[7px] rounded-full', phoneStateDotClass(phone.state))} />
@@ -68,7 +60,7 @@ export function PhoneCard({
             {phone.model || phone.serial}
           </span>
         </span>
-      </button>
+      </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
         <StatusBadge
@@ -85,11 +77,25 @@ export function PhoneCard({
         </p>
       )}
 
-      {canRecover(phone.state) && (
-        <SecondaryButton className="h-[30px]" onClick={() => void recover(phone.serial)}>
-          {t('phone.recover')}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <SecondaryButton
+          className="inline-flex h-[30px] items-center gap-1"
+          onClick={onToggle}
+          aria-expanded={expanded}
+        >
+          {expanded ? (
+            <MonitorOff className="h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <Monitor className="h-3.5 w-3.5 shrink-0" />
+          )}
+          {t(expanded ? 'phone.hideScreen' : 'phone.showScreen')}
         </SecondaryButton>
-      )}
+        {canRecover(phone.state) && (
+          <SecondaryButton className="h-[30px]" onClick={() => void recover(phone.serial)}>
+            {t('phone.recover')}
+          </SecondaryButton>
+        )}
+      </div>
 
       {expanded && <PhoneScreenView phone={phone} active={phone.state === 'online'} />}
     </section>
