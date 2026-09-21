@@ -182,10 +182,15 @@ export class DeviceManager {
     const connected = await this.connectDiscovered(parseDevices(first.stdout), services)
     const res = connected ? await this.deps.adb.run(['devices', '-l']) : first
     // 한 폰이 여러 전송 이름으로 보이면 하나만 남긴다(저장은 실제 시리얼로, 명령은 전송 이름으로)
-    const raw = pickOnePerPhone(parseDevices(res.stdout), services)
+    const seen = parseDevices(res.stdout)
+    // 고르지 않은 전송 이름으로 예전에 만들어진 줄도 실제 줄로 합친다(한 폰이 두 이름으로 동시에 보일 때)
+    for (const d of seen) {
+      const realSerial = realSerialOf(d.serial, services)
+      if (realSerial !== d.serial) this.deps.repo.mergeAlias?.(d.serial, realSerial)
+    }
+    const raw = pickOnePerPhone(seen, services)
     const now = this.deps.now()
     for (const d of raw) {
-      if (d.serial !== d.realSerial) this.deps.repo.mergeAlias?.(d.serial, d.realSerial)
       this.deps.repo.upsertSeen({
         serial: d.realSerial,
         model: d.model,
