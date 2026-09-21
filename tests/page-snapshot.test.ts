@@ -5,6 +5,7 @@ import {
   performClick,
   performScroll,
   performType,
+  releaseTextFocus,
   runAgentOp,
   textOf
 } from '../src/preload/page-core'
@@ -74,6 +75,29 @@ describe('performClick / performType', () => {
   it('없는 id는 오류', async () => {
     buildSnapshot()
     expect(await performClick(99)).toMatch(/not found/)
+  })
+  it('포커스 없는 페이지에서도 다음 칸으로 넘어가면 앞 칸에 blur·focusout 이 간다(blur 저장 화면)', () => {
+    buildSnapshot()
+    const first = document.querySelector('[name=q]') as HTMLInputElement
+    expect(performType(2, '202609211338390004', false)).toBe('ok')
+    const seen: string[] = []
+    first.addEventListener('blur', () => seen.push('blur'))
+    first.addEventListener('focusout', () => seen.push('focusout'))
+    // AI 패널이 포커스를 쥔 상태 흉내 — blur() 가 이벤트를 내지 않는다
+    first.blur = () => {}
+    const other = document.createElement('input')
+    document.body.appendChild(other)
+    releaseTextFocus(other)
+    expect(seen).toEqual(['blur', 'focusout'])
+  })
+  it('브라우저가 blur 를 직접 냈으면 한 번 더 보내지 않는다(이중 저장 방지)', () => {
+    buildSnapshot()
+    const first = document.querySelector('[name=q]') as HTMLInputElement
+    performType(2, 'x', false)
+    let blurs = 0
+    first.addEventListener('blur', () => (blurs += 1))
+    releaseTextFocus(document.body)
+    expect(blurs).toBe(1)
   })
   it('submit 의 Enter 는 입력 반영(리렌더) 뒤에 간다 — 옛 state 가 저장되지 않는다', async () => {
     buildSnapshot()

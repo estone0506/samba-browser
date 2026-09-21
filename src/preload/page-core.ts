@@ -677,12 +677,46 @@ function fireEnter(el: HTMLElement): void {
   }
 }
 
+/** 글자를 넣는 칸인가(입력 중이던 칸의 blur 를 챙겨야 하는 대상) */
+function isTextEntry(el: Element | null): el is HTMLElement {
+  if (!el) return false
+  const tag = el.tagName.toLowerCase()
+  if (tag === 'textarea') return true
+  if (tag !== 'input') return (el as HTMLElement).isContentEditable === true
+  const type = ((el as HTMLInputElement).type || 'text').toLowerCase()
+  return !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color'].includes(type)
+}
+
+/**
+ * 다른 요소를 누르거나 다른 칸에 입력하기 직전에, 입력 중이던 칸에서 포커스를 뗀다.
+ * 탭 페이지는 AI 패널이 포커스를 쥔 동안 document.hasFocus() 가 false 이고, 그 상태에서는
+ * focus()/blur() 가 activeElement 만 바꾸고 blur·focusout 이벤트는 내지 않는다. blur 에 저장을
+ * 걸어 둔 화면(SAMBA-WAVE 소싱주문번호·메모·실구매가)은 값이 화면에만 남고 서버에는 안 간다.
+ * 그래서 브라우저가 이벤트를 내지 않았을 때만 같은 이벤트를 직접 보낸다(이중 저장 방지)
+ */
+export function releaseTextFocus(next: HTMLElement): void {
+  const active = document.activeElement
+  if (!isTextEntry(active) || active === next || active.contains(next)) return
+  let fired = false
+  const mark = (): void => {
+    fired = true
+  }
+  active.addEventListener('blur', mark, { once: true })
+  active.blur()
+  active.removeEventListener('blur', mark)
+  if (fired || typeof FocusEvent !== 'function') return
+  active.dispatchEvent(new FocusEvent('blur', { relatedTarget: next }))
+  active.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: next }))
+}
+
 export async function performClick(id: number): Promise<string> {
   const el = get(id)
   if (!el) return missingMessage(id)
   // jsdom 등 일부 환경은 scrollIntoView 를 구현하지 않음
   el.scrollIntoView?.({ block: 'center' })
   const covered = coveredByNote(el)
+  // 실제 클릭은 mousedown 에서 입력 중이던 칸의 포커스를 뗀다. 기준값은 그 뒤에 찍는다
+  releaseTextFocus(el)
   const before = readClickBaseline(el)
   // 1차 — 기존 경로 그대로. React 합성 이벤트(onPointerDown/onMouseDown 으로만 반응하는
   // 옵션 UI)를 위해 실제 사용자 클릭과 같은 순서로 쏘고, 마지막 click 은 네이티브 기본동작
@@ -747,6 +781,7 @@ export function performType(id: number, text: string, submit: boolean): string |
   if (!el) return missingMessage(id)
   const input = el as HTMLInputElement
   if (input.type === 'password') return 'refused: SECRET field. Ask the user to type it.'
+  releaseTextFocus(el)
   el.focus()
   const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set
   if (setter) setter.call(el, text)
@@ -785,6 +820,7 @@ export function performSelect(id: number, value: string): string {
   const el = get(id) as HTMLSelectElement | null
   if (!el) return missingMessage(id, '')
   if (el.tagName !== 'SELECT') return 'refused: not a select'
+  releaseTextFocus(el)
   const opt = Array.from(el.options).find((o) => o.value === value || o.text.trim() === value)
   if (!opt) return `option "${value}" not found`
   el.value = opt.value
