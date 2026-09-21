@@ -572,6 +572,21 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     expect(h.confirms).toHaveLength(0)
   })
 
+  it('폰 도구의 기본 폰은 연결된 첫 번째가 아니라 그 계정의 담당 폰이다', () => {
+    // 실기: 담당 폰(김사무)을 골라 뒀는데 phone_screen 이 첫 번째 폰(삼성 플립)을 봐서 토스 알림을 못 찾았다
+    const h = harness(db)
+    const first = { ...phoneDto(), id: 1, serial: 'FLIP-USB' }
+    const assigned = { ...phoneDto(), id: 6, serial: 'adb-R5CR30LFATY._adb-tls-connect._tcp' }
+    h.deps.phones.list = () => [first, assigned]
+    h.deps.phones.assignForJob = () => assigned
+    expect(createPhoneAgentBridge(h.deps).defaultSerial()).toBe(assigned.serial)
+    // 담당 폰이 없으면(또는 끊겼으면) 예전처럼 연결된 첫 번째 폰
+    h.deps.phones.assignForJob = () => null
+    expect(createPhoneAgentBridge(h.deps).defaultSerial()).toBe('FLIP-USB')
+    h.deps.phones.list = () => []
+    expect(createPhoneAgentBridge(h.deps).defaultSerial()).toBeNull()
+  })
+
   it('구매 계정이 여럿이고 기본 계정이 없어도, 탭 프로필 이름으로 계정을 고른다', async () => {
     // 실기: 무신사에 buyer01·buyer02 가 함께 있어 폰 승인이 늘 "계정을 특정할 수 없음"으로 거부됐다
     const many = [

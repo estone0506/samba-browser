@@ -288,6 +288,12 @@ export interface PhoneWiringDeps {
 export interface PhoneAgentBridge {
   waitForSmsCode: (ctx: PhoneRunContext, host?: string) => Promise<SmsCodeOutcome>
   approvePayment: (ctx: PhoneRunContext, req: PayToolRequest) => Promise<PayResult>
+  /**
+   * 폰을 직접 다루는 도구(phone_screen·phone_tap…)가 기본으로 쓸 폰.
+   * 지금 탭의 사이트 계정에 담당 폰이 있고 붙어 있으면 그 폰, 아니면 연결된 첫 번째 폰.
+   * 예전에는 늘 첫 번째 폰이라, 담당 폰을 골라 둬도 엉뚱한 폰에서 토스 알림을 찾았다(실기)
+   */
+  defaultSerial: () => string | null
 }
 
 const defaultSleep = (ms: number): Promise<void> =>
@@ -445,5 +451,8 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     }
   }
 
-  return { waitForSmsCode, approvePayment }
+  const defaultSerial = (): string | null =>
+    serialsFor(accountFor(deps.page.host())?.id ?? null)[0] ?? null
+
+  return { waitForSmsCode, approvePayment, defaultSerial }
 }

@@ -1211,7 +1211,7 @@ export function registerIpc(
   })
   agent.setPhones({
     phones: phoneOps,
-    assigned: () => phones.list().find((p) => p.state === 'online')?.serial ?? null,
+    assigned: () => phoneBridge.defaultSerial(),
     waitForSmsCode: phoneBridge.waitForSmsCode,
     approvePayment: phoneBridge.approvePayment
   })
