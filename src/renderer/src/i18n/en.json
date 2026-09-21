@@ -155,7 +155,8 @@
     "save": "Save",
     "shortcutHint": "Ctrl+Alt+1–9 to switch",
     "switchedNotice": "Switched workspace. Already open tabs keep their old session; new tabs use the new one.",
-    "settingsHint": "Workspaces are managed from the sidebar"
+    "settingsHint": "Workspaces are managed from the sidebar",
+    "requestFailed": "Workspace request failed"
   },
   "address": {
     "placeholder": "Search or enter URL",
@@ -323,7 +324,10 @@
     "shortcuts": "Shortcuts",
     "shortcutsDesc": "Alt+1 to Alt+6 by default. Leave blank to disable a shortcut",
     "shortcutInvalid": "That shortcut could not be read (for example: Alt+1)",
-    "recordingBusy": "Stop the current recording before starting another (image captures still work)"
+    "recordingBusy": "Stop the current recording before starting another (image captures still work)",
+    "regionNotFound": "Could not find the area to record",
+    "canvasFailed": "Could not create the canvas",
+    "recorderError": "An error occurred while recording"
   },
   "bookmark": {
     "title": "Bookmarks",

@@ -10,6 +10,7 @@ import {
 } from '@shared/capture'
 import { cropDataUrl, startRecording, type RecordingHandle } from '@renderer/lib/capture-video'
 import { useUiStore } from './uiStore'
+import i18n from '@renderer/i18n'
 
 // 녹화 중인 작업. 핸들은 스토어 상태에 넣지 않는다(리렌더 대상이 아니다)
 // 녹화 중 새 녹화를 시작하려 할 때의 오류 표식(렌더러가 i18n 문구로 바꿔 보여 준다)
@@ -199,7 +200,7 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
     // 오버레이를 닫아 웹뷰를 돌려준 뒤 녹화를 시작한다(녹화 화면에 오버레이가 남지 않게)
     get().closeStill()
     try {
-      if (!source.viewport) throw new Error('녹화할 영역을 찾지 못했습니다')
+      if (!source.viewport) throw new Error(i18n.t('screenCapture.regionNotFound'))
       // 웹뷰가 다시 그려질 틈을 준다 — 첫 프레임에 오버레이 잔상이 담기지 않게
       await new Promise<void>((resolve) => window.setTimeout(resolve, 120))
       const crop = videoRegionCrop(normalizeDragRect(a, b), {

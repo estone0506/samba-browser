@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { WorkspaceDto } from '@shared/sync'
+import i18n from '@renderer/i18n'
 
 // 작업공간(브라우저 프로필) 목록과 활성 작업공간. 진실 원천은 메인이고,
 // 여기 값은 IPC 응답과 workspace:changed 이벤트를 그대로 비춘다.
@@ -25,7 +26,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     set({ error: null })
     const r = await fn()
     if (!r.ok) {
-      set({ error: r.error ?? '작업공간 요청에 실패했습니다' })
+      set({ error: r.error ?? i18n.t('workspace.requestFailed') })
       return false
     }
     return true

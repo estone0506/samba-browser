@@ -155,7 +155,8 @@
     "save": "저장",
     "shortcutHint": "Ctrl+Alt+1~9 로 전환",
     "switchedNotice": "작업공간을 바꿨습니다. 이미 열려 있는 탭은 이전 세션을 그대로 쓰고, 새로 여는 탭부터 새 세션을 씁니다.",
-    "settingsHint": "작업공간은 사이드바에서 관리해요"
+    "settingsHint": "작업공간은 사이드바에서 관리해요",
+    "requestFailed": "작업공간 요청에 실패했습니다"
   },
   "address": {
     "placeholder": "검색어 또는 URL 입력",
@@ -323,7 +324,10 @@
     "shortcuts": "단축키",
     "shortcutsDesc": "Alt+1~6 이 기본값이에요. 비워 두면 단축키를 쓰지 않아요",
     "shortcutInvalid": "단축키 표기를 알아볼 수 없어요 (예: Alt+1)",
-    "recordingBusy": "녹화 중에는 새 녹화를 시작할 수 없어요. 먼저 중지해 주세요 (이미지 캡처는 가능)"
+    "recordingBusy": "녹화 중에는 새 녹화를 시작할 수 없어요. 먼저 중지해 주세요 (이미지 캡처는 가능)",
+    "regionNotFound": "녹화할 영역을 찾지 못했습니다",
+    "canvasFailed": "캔버스를 만들지 못했습니다",
+    "recorderError": "녹화 중 오류가 났어요"
   },
   "bookmark": {
     "title": "북마크",
