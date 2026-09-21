@@ -10,8 +10,25 @@ import { usePhoneStore } from '@renderer/stores/phoneStore'
 // Task 5(scrcpy 스트림)가 아직 안 붙은 빌드에서는 화면 API 자체가 없으므로
 // 'unavailable' 을 돌려주고 화면 자리에 "준비 중" 안내를 띄운다
 
-/** 기대하는 h264 프로파일 — scrcpy 기본값(baseline 3.0) */
-const H264_CODEC = 'avc1.42E01E'
+/** SPS 를 못 읽었을 때 쓰는 기본 코덱(baseline 3.0) */
+const H264_FALLBACK_CODEC = 'avc1.42E01E'
+
+/**
+ * Annex-B 바이트에서 SPS(NAL 7)를 찾아 코덱 문자열(avc1.PPCCLL)을 만든다.
+ * 폰마다 인코더가 내는 프로파일·레벨이 다르다(실기: SM A155N 은 baseline 3.0 으로 열면 디코더가 죽어
+ * 간이 화면으로 내려갔다). 고정값으로 열지 않고 스트림이 말하는 값으로 연다
+ */
+export function codecFromAnnexB(data: Uint8Array): string | null {
+  for (let i = 0; i + 7 < data.length; i += 1) {
+    if (data[i] !== 0 || data[i + 1] !== 0) continue
+    const start = data[i + 2] === 1 ? i + 3 : data[i + 2] === 0 && data[i + 3] === 1 ? i + 4 : -1
+    if (start < 0 || start + 3 >= data.length) continue
+    if ((data[start] & 0x1f) !== 7) continue
+    const hex = (n: number): string => n.toString(16).padStart(2, '0').toUpperCase()
+    return `avc1.${hex(data[start + 1])}${hex(data[start + 2])}${hex(data[start + 3])}`
+  }
+  return null
+}
 
 export type ScreenStatus = 'unavailable' | 'starting' | 'playing' | 'failed'
 
@@ -110,7 +127,7 @@ export function useH264Player(
       setScreenMode(serial, 'still')
     }
 
-    const makeDecoder = (): VideoDecoderLike | null => {
+    const makeDecoder = (codec: string): VideoDecoderLike | null => {
       const Ctor = videoDecoderCtor()
       if (!Ctor) return null
       try {
@@ -122,7 +139,7 @@ export function useH264Player(
           },
           error: () => fallbackToStill()
         })
-        d.configure({ codec: H264_CODEC, optimizeForLatency: true })
+        d.configure({ codec, optimizeForLatency: true })
         return d
       } catch {
         return null
@@ -131,16 +148,19 @@ export function useH264Player(
 
     const handleVideoChunk = (chunk: PhoneScreenChunk): void => {
       if (!chunk.data) return
+      if (!sawKeyframeRef.current) {
+        if (!chunk.keyframe) return
+        sawKeyframeRef.current = true
+      }
       if (!decoder) {
-        decoder = makeDecoder()
+        // 첫 키프레임에는 SPS 가 실려 온다 — 거기 적힌 프로파일·레벨로 디코더를 연다
+        decoder = makeDecoder(
+          codecFromAnnexB(new Uint8Array(chunk.data)) ?? H264_FALLBACK_CODEC
+        )
         if (!decoder) {
           fallbackToStill()
           return
         }
-      }
-      if (!sawKeyframeRef.current) {
-        if (!chunk.keyframe) return
-        sawKeyframeRef.current = true
       }
       try {
         decoder.decode(
@@ -158,11 +178,24 @@ export function useH264Player(
     const handleStillChunk = (chunk: PhoneScreenChunk): void => {
       // 메인은 PNG 바이트(data)를 보낸다. dataUrl 은 테스트·구형 경로 호환용
       const bytes = chunk.data
-      const url =
-        chunk.dataUrl ??
-        (bytes
-          ? URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
-          : null)
+      if (!chunk.dataUrl && bytes) {
+        // blob: URL 을 <img> 로 읽으면 앱의 CSP(img-src 'self' data:)에 막혀 영영 안 그려진다(실기).
+        // ImageBitmap 은 이미지 요청이 아니라서 CSP 를 넓히지 않고도 그릴 수 있다
+        const blob = new Blob([new Uint8Array(bytes)], { type: 'image/png' })
+        void createImageBitmap(blob)
+          .then((bitmap) => {
+            if (!disposed) {
+              draw(bitmap, bitmap.width, bitmap.height)
+              setStatus('playing')
+            }
+            bitmap.close()
+          })
+          .catch(() => {
+            // 깨진 한 장은 건너뛴다 — 다음 장이 곧 온다
+          })
+        return
+      }
+      const url = chunk.dataUrl ?? null
       if (!url) return
       const img = new Image()
       img.onload = () => {
