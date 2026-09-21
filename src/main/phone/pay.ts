@@ -228,6 +228,7 @@ export interface PayRunDeps {
     matched: string
     currentUrl: () => string
     stillBlocked: () => Promise<boolean>
+    kind?: 'captcha' | 'keypad'
   }) => Promise<HandoffResult>
   /** 테스트에서 바꿔 끼우는 비밀번호 입력기. 기본값은 pay-secret 의 구현이다 */
   tapPassword?: typeof tapPaymentPassword
@@ -318,6 +319,7 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
     if (deps.handoff) {
       const result = await deps.handoff({
         matched: tr('phone.payKeypadHandoff'),
+        kind: 'keypad',
         currentUrl: () => req.siteHost,
         // 비밀번호 화면이 사라지면 사용자가 직접 끝낸 것으로 본다
         stillBlocked: async () => isSecretScreen(await deps.phones.screen(req.serial), spec)

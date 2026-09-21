@@ -47,8 +47,13 @@ const {
   mergeKeypadSignals,
   DIGIT_BUTTON_MIN
 } = await import('../src/main/agent/secret-page')
-const { createSambaTools, PAYMENT_KEYPAD_REFUSAL, SECRET_SCREEN_REFUSAL, KEYPAD_HANDOFF_MESSAGE } =
-  await import('../src/main/agent/tools')
+const {
+  createSambaTools,
+  PAYMENT_KEYPAD_REFUSAL,
+  SECRET_SCREEN_REFUSAL,
+  KEYPAD_HANDOFF_MESSAGE,
+  KEYPAD_SKIPPED_NEXT
+} = await import('../src/main/agent/tools')
 const { DEFAULT_DANGER_WORDS } = await import('../src/shared/danger')
 
 // 일반 화면 신호(비밀 키패드 아님)
@@ -335,8 +340,28 @@ describe('fill_secret 은 키패드 화면에서 사람에게 넘긴다', () => 
     })
     expect(handoff).toHaveBeenCalledTimes(1)
     expect(handoff.mock.calls[0][0].matched).toBe('결제 비밀번호 키패드')
+    // 카드가 캡차 문구가 아니라 키패드 문구를 띄우도록 종류를 함께 보낸다
+    expect(handoff.mock.calls[0][0].kind).toBe('keypad')
     expect(textOut(r)).toContain(KEYPAD_HANDOFF_MESSAGE)
+    // 건너뛰면 같은 키패드에 다시 시도하지 말라는 지시가 붙는다(카드 반복 방지)
+    expect(textOut(r)).toContain(KEYPAD_SKIPPED_NEXT)
     expect(pageBridge.fillValue).not.toHaveBeenCalled()
+  })
+
+  it('사용자가 직접 눌러 재개되면 페이지 변화를 알린다', async () => {
+    pageBridge.keypadSignals.mockResolvedValue(keypad)
+    const handoff = vi.fn(async (): Promise<HandoffResult> => ({
+      outcome: 'resumed',
+      url: 'https://shop.example/order/done'
+    }))
+    const { tools } = build({ handoff })
+    const r = await get(tools, 'fill_secret').handler({
+      elementId: 2,
+      itemType: 'password',
+      provider: 'site'
+    })
+    expect(textOut(r)).toContain('user completed the check')
+    expect(textOut(r)).not.toContain(KEYPAD_SKIPPED_NEXT)
   })
 
   it('넘김이 없으면 사용자에게 직접 누르라고 알리고 끝난다', async () => {

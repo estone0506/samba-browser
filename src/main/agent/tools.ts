@@ -46,6 +46,7 @@ import {
 } from './target'
 import type { AgentTarget } from '../browser/targets'
 import type { AgentToolCall, SiteActionTool } from '../../shared/site-memory'
+import type { HandoffKind } from '../../shared/ipc'
 import { PLAYBOOK_INSTRUCTIONS_MAX, type PlaybookDto } from '../../shared/playbook'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
@@ -102,6 +103,11 @@ export const PAYMENT_KEYPAD_REFUSAL =
 export const SECRET_SCREEN_REFUSAL = 'refused: secret screen'
 // 비밀 키패드 화면에서 fill_secret 이 사람에게 넘길 때의 안내
 export const KEYPAD_HANDOFF_MESSAGE = '결제 비밀번호는 직접 눌러 주세요'
+// 사용자가 키패드 넘김을 건너뛴 뒤 모델이 할 일(같은 키패드에 다시 시도하지 않게)
+export const KEYPAD_SKIPPED_NEXT =
+  'user skipped: they will enter the payment password themselves later. Do NOT call fill_secret, ' +
+  'click or type on this keypad again. Call get_page once; if the payment finished, verify the order, ' +
+  'otherwise finish with done and tell the user the payment is waiting for their password.'
 // 넘김 카드에 표시할 근거 문구(값이 아니라 화면 종류만 담는다)
 const KEYPAD_HANDOFF_MATCHED = '결제 비밀번호 키패드'
 // progress 도구가 말이 안 되는 숫자를 받았을 때 돌려주는 문자열
@@ -273,6 +279,7 @@ export interface ToolContext {
     matched: string
     currentUrl: () => string
     stillBlocked: () => Promise<boolean>
+    kind?: HandoffKind
   }) => Promise<HandoffResult>
   // 제외 도메인(정규화된 host 문자열). 미지정 시 빈 목록으로 동작한다
   vaultExcludedHosts?: string[]
@@ -548,9 +555,15 @@ ${raw}`
     try {
       const result = await ctx.handoff({
         matched: KEYPAD_HANDOFF_MATCHED,
+        kind: 'keypad',
         currentUrl: () => currentUrl(tab),
         stillBlocked: async () => (await secretKeypadGate.check(tab, { fresh: true })) !== null
       })
+      // '건너뛰고 계속'은 "지금은 안 누른다"는 뜻이다 — 같은 키패드에 fill_secret 을 다시 부르면
+      // 카드가 또 뜬다(실기에서 반복 관찰). 모델에게 다음 행동을 콕 집어 준다
+      if (result.outcome === 'skipped')
+        return `handoff: ${KEYPAD_HANDOFF_MESSAGE}
+${KEYPAD_SKIPPED_NEXT}`
       return `handoff: ${KEYPAD_HANDOFF_MESSAGE}
 ${handoffToolResult(result)}`
     } catch (e: unknown) {

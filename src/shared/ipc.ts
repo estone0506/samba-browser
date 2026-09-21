@@ -211,6 +211,9 @@ export const IPC = {
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
 // agent:run 의 즉시 응답. 작업 완료 여부가 아니라 "시작을 받았다"는 뜻만 담는다
+/** 넘김 카드 종류. captcha = 캡차·2FA, keypad = 결제 비밀번호 키패드(사용자가 직접 누른다) */
+export type HandoffKind = 'captcha' | 'keypad'
+
 export interface AgentRunAck {
   started: boolean
 }
@@ -255,7 +258,7 @@ export type AgentEvent =
   | { type: 'playbook'; names: string[] }
   // 캡차·2FA 를 사용자에게 넘김. 응답은 agentConfirmReply 채널을 그대로 쓴다
   // (approved=true → 건너뛰고 계속, false → 작업 중단)
-  | { type: 'handoff'; requestId: string; kind: 'captcha'; matched: string; url: string }
+  | { type: 'handoff'; requestId: string; kind: HandoffKind; matched: string; url: string }
   // 넘김 종료(사용자 처리 감지로 자동 재개 포함). 카드를 닫고 진행 로그를 남긴다
   | {
       type: 'handoffDone'

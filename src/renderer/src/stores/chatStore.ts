@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AgentEvent, ChatDto, ChatMessageDto } from '@shared/ipc'
+import type { AgentEvent, ChatDto, ChatMessageDto, HandoffKind } from '@shared/ipc'
 import { RECENT_CHAT_LIMIT, titleFromMessage } from '@shared/chat'
 import { DEFAULT_SETTINGS, type AgentEffort } from '@shared/settings'
 
@@ -19,6 +19,8 @@ export interface Step {
 // 캡차·2FA 사용자 넘김 카드 상태
 export interface Handoff {
   requestId: string
+  // 카드 종류(captcha = 캡차·2FA, keypad = 결제 비밀번호 키패드). 문구가 달라진다
+  kind: HandoffKind
   matched: string
   url: string
 }
@@ -243,7 +245,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (e.type === 'confirm')
       set({ confirm: { requestId: e.requestId, action: e.action, kind: e.kind ?? 'danger' } })
     if (e.type === 'handoff') {
-      set({ handoff: { requestId: e.requestId, matched: e.matched, url: e.url } })
+      set({ handoff: { requestId: e.requestId, kind: e.kind, matched: e.matched, url: e.url } })
       if (last?.role === 'ai') {
         patchLast({
           steps: [...(last.steps ?? []), { label: '', ok: true, key: 'handoff.waiting' }]

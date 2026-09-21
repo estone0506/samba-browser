@@ -220,6 +220,7 @@ export interface PhoneRunContext {
     matched: string
     currentUrl: () => string
     stillBlocked: () => Promise<boolean>
+    kind?: 'captcha' | 'keypad'
   }) => Promise<HandoffResult>
   cancelled: () => boolean
 }

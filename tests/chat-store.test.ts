@@ -136,6 +136,7 @@ describe('chatStore 캡차 넘김 카드', () => {
     })
     expect(useChatStore.getState().handoff).toEqual({
       requestId: 'r1',
+      kind: 'captcha',
       matched: '캡차',
       url: 'https://a.example/login'
     })

@@ -223,6 +223,9 @@
   "handoff": {
     "title": "The site needs your check",
     "body": "The site is asking for an extra check. Enter it on screen and the task continues",
+    "keypadTitle": "Enter the payment password yourself",
+    "keypadBody": "The app never taps a payment-password keypad for you. Enter the password on the on-screen keypad and press done; the task then continues to verify the payment",
+    "keypadSkip": "I’ll pay later myself",
     "skip": "Skip and continue",
     "abort": "Stop the task",
     "waiting": "Waiting for you to finish the check…",

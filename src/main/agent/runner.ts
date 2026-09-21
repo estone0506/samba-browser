@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import type { TabManager } from '../browser/tab-manager'
 import type { SettingsStore } from '../settings/store'
-import type { AgentEvent } from '../../shared/ipc'
+import type { AgentEvent, HandoffKind } from '../../shared/ipc'
 import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
 import { hasConnectedPhone } from './tools-phone'
@@ -229,6 +229,8 @@ export class AgentRunner {
       matched: string
       currentUrl: () => string
       stillBlocked: () => Promise<boolean>
+      // 카드 종류. 없으면 캡차·2FA 로 본다
+      kind?: HandoffKind
       // 테스트에서 폴링 주기·시계를 갈아 끼우기 위한 통로
       watch?: Pick<HandoffWatchDeps, 'sleep' | 'pollMs' | 'timeoutMs'>
     },
@@ -240,7 +242,7 @@ export class AgentRunner {
     emit({
       type: 'handoff',
       requestId: id,
-      kind: 'captcha',
+      kind: req.kind ?? 'captcha',
       matched: req.matched,
       url: req.currentUrl()
     })
