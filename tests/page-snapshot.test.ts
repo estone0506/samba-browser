@@ -75,6 +75,22 @@ describe('performClick / performType', () => {
     buildSnapshot()
     expect(await performClick(99)).toMatch(/not found/)
   })
+  it('submit 의 Enter 는 입력 반영(리렌더) 뒤에 간다 — 옛 state 가 저장되지 않는다', async () => {
+    buildSnapshot()
+    const input = document.querySelector('[name=q]') as HTMLInputElement
+    // React 제어 입력 흉내: input 이벤트는 state 갱신을 '예약'만 하고, Enter 핸들러는 state 를 읽는다
+    let state = '0'
+    let saved: string | null = null
+    input.addEventListener('input', () => {
+      const next = input.value
+      setTimeout(() => (state = next), 0)
+    })
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') saved = state
+    })
+    expect(await performType(2, '82420', true)).toBe('ok')
+    expect(saved).toBe('82420')
+  })
 })
 
 describe('textOf', () => {

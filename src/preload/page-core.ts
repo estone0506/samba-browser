@@ -732,7 +732,7 @@ export function pressOnce(id: number): string {
   return 'ok'
 }
 
-export function performType(id: number, text: string, submit: boolean): string {
+export function performType(id: number, text: string, submit: boolean): string | Promise<string> {
   const el = get(id)
   if (!el) return missingMessage(id)
   const input = el as HTMLInputElement
@@ -743,13 +743,33 @@ export function performType(id: number, text: string, submit: boolean): string {
   else input.value = text
   el.dispatchEvent(new Event('input', { bubbles: true }))
   el.dispatchEvent(new Event('change', { bubbles: true }))
-  if (submit) {
-    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }))
-    ;(el as HTMLInputElement).form?.requestSubmit?.()
-  }
-  return 'ok'
+  if (!submit) return 'ok'
+  // Enter 는 한 박자 뒤에 보낸다. React 제어 입력은 input 이벤트로 setState 만 예약하고,
+  // 리렌더 전에는 onKeyDown 핸들러가 옛 state(빈 값·0)를 쥐고 있다. 같은 틱에 Enter 를 쏘면
+  // 옛 값이 저장된다(실기: SAMBA-WAVE 실구매가 칸이 재조회 때 0 으로 돌아감)
+  return new Promise<string>((resolve) => {
+    setTimeout(() => {
+      const target = el.isConnected ? el : null
+      if (!target) return resolve('ok; input re-rendered before Enter — read the page to verify')
+      const init: KeyboardEventInit = {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13,
+        bubbles: true,
+        cancelable: true
+      }
+      target.dispatchEvent(new KeyboardEvent('keydown', init))
+      target.dispatchEvent(new KeyboardEvent('keypress', init))
+      target.dispatchEvent(new KeyboardEvent('keyup', init))
+      ;(target as HTMLInputElement).form?.requestSubmit?.()
+      resolve('ok')
+    }, SUBMIT_ENTER_DELAY_MS)
+  })
 }
+
+/** 입력과 Enter 사이 간격 — React 리렌더(핸들러 교체) 한 번이 끝나기에 충분한 시간 */
+const SUBMIT_ENTER_DELAY_MS = 120
 
 export function performSelect(id: number, value: string): string {
   const el = get(id) as HTMLSelectElement | null
