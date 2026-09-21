@@ -991,7 +991,7 @@
   },
   "phone": {
     "title": "Phones",
-    "subtitle": "Handle verification texts and payment approvals on connected phones. Up to {{n}} phones.",
+    "subtitle": "Handle verification texts and payment approvals on connected phones.",
     "findNow": "Scan now",
     "wifiPlaceholder": "Wi-Fi address (e.g. 192.168.0.5:5555)",
     "wifiConnect": "Connect",
@@ -1058,8 +1058,6 @@
       "detectFailed": "Could not find the paths. Please enter them manually.",
       "listTitle": "Connected phones",
       "labelPlaceholder": "Nickname (e.g. Work Galaxy)",
-      "limitNote": "You can connect up to {{n}} phones at a time.",
-      "overLimit": "You are over the {{n}} phone limit. Disconnect the phones you are not using.",
       "qualityTitle": "Screen quality",
       "maxSize": "Resolution",
       "maxSizeDesc": "Pixels on the long edge. Lower is lighter.",

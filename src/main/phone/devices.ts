@@ -3,7 +3,6 @@
 
 import {
   DEVICE_POLL_INTERVAL_MS,
-  PHONE_LIMIT,
   isPhoneCountry,
   type PhoneDto,
   type PhoneState,
@@ -103,9 +102,8 @@ function toTransport(value: string, serial: string): PhoneTransport {
   return isWifiSerial(serial) ? 'wifi' : 'usb'
 }
 
-function toDto(row: PhoneRowLike, live: RawDevice | undefined, overLimit: boolean): PhoneDto {
-  // 상한을 넘은 폰은 붙어 있어도 쓰지 않는다는 뜻으로 offline 으로 둔다
-  const state: PhoneState = overLimit ? 'offline' : (live?.state ?? 'disconnected')
+function toDto(row: PhoneRowLike, live: RawDevice | undefined): PhoneDto {
+  const state: PhoneState = live?.state ?? 'disconnected'
   return {
     id: row.id,
     // adb 명령(-s)은 전송 이름을 받는다. 붙어 있지 않으면 저장된 시리얼을 그대로 둔다
@@ -190,6 +188,14 @@ export class DeviceManager {
     }
     // 지금은 안 보이지만 예전에 ip:port 로 저장된 줄도, 그 주소의 주인을 알면 합친다
     for (const service of services) this.deps.repo.mergeAlias?.(service.address, service.serial)
+    // 무선 디버깅 포트는 접속할 때마다 바뀐다. 옛 포트로 남은 ip:port 줄은 같은 IP 의 주인에게 합친다
+    // (지금 그 이름으로 붙어 있는 장치는 건드리지 않는다)
+    for (const row of this.deps.repo.list()) {
+      if (!isWifiSerial(row.serial) || seen.some((d) => d.serial === row.serial)) continue
+      const ip = row.serial.split(':')[0]
+      const owner = services.find((s) => s.address.split(':')[0] === ip)
+      if (owner) this.deps.repo.mergeAlias?.(row.serial, owner.serial)
+    }
     const raw = pickOnePerPhone(seen, services)
     const now = this.deps.now()
     for (const d of raw) {
@@ -205,15 +211,13 @@ export class DeviceManager {
     }
     // 저장된 폰 중 이번에 안 보인 것은 끊김으로 본다
     const rows = this.deps.repo.list()
-    // 상한은 "지금 붙어 있는 폰"으로 센다 — 끊긴 옛 줄이 자리를 차지해 새 폰이 못 쓰이던 문제(실기)
-    let liveCount = 0
-    const next = rows.map((row) => {
-      const live = raw.find((d) => d.realSerial === row.serial)
-      if (live) liveCount += 1
-      return toDto(row, live, live !== undefined && liveCount > PHONE_LIMIT)
-    })
-    const over = liveCount - PHONE_LIMIT
-    const warning = over > 0 ? tr('phone.overLimit', { limit: PHONE_LIMIT, over }) : undefined
+    // 동시 연결 상한은 두지 않는다 — 붙어 있는 폰은 모두 쓴다(사용자 요청, 예전에는 3대)
+    const next = rows.map((row) =>
+      toDto(
+        row,
+        raw.find((d) => d.realSerial === row.serial)
+      )
+    )
     // 끊긴 폰 자동 복구 1회
     if (this.deps.autoReconnect()) {
       for (const p of next) {
@@ -226,7 +230,7 @@ export class DeviceManager {
     const hash = next.map((p) => `${p.serial}:${p.state}`).join('|')
     if (hash !== this.lastHash) {
       this.lastHash = hash
-      this.deps.onChange(next, warning)
+      this.deps.onChange(next)
     }
     return next
   }

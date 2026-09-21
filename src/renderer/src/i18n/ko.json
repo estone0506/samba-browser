@@ -991,7 +991,7 @@
   },
   "phone": {
     "title": "폰",
-    "subtitle": "연결된 폰에서 본인인증 문자와 간편결제 승인을 처리합니다. 최대 {{n}}대까지 연결할 수 있어요",
+    "subtitle": "연결된 폰에서 본인인증 문자와 간편결제 승인을 처리합니다",
     "findNow": "지금 찾기",
     "wifiPlaceholder": "와이파이 주소 (예: 192.168.0.5:5555)",
     "wifiConnect": "연결",
@@ -1058,8 +1058,6 @@
       "detectFailed": "경로를 찾지 못했어요. 직접 입력해 주세요",
       "listTitle": "연결된 폰",
       "labelPlaceholder": "별칭 (예: 업무용 갤럭시)",
-      "limitNote": "폰은 한 번에 {{n}}대까지 연결할 수 있어요",
-      "overLimit": "연결 상한 {{n}}대를 넘었어요. 쓰지 않는 폰은 연결을 끊어 주세요",
       "qualityTitle": "화면 품질",
       "maxSize": "해상도",
       "maxSizeDesc": "긴 변 기준 픽셀 수예요. 낮출수록 가볍습니다",

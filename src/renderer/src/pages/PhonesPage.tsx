@@ -2,12 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Settings2 } from 'lucide-react'
-import { PHONE_LIMIT } from '@shared/phone'
 import type { Settings } from '@shared/settings'
 import { PhoneCard } from '@renderer/components/phone/PhoneCard'
 import { ToolsInstallCard } from '@renderer/components/phone/ToolsInstallCard'
 import { PhoneSettingsPanel } from '@renderer/components/phone/PhoneSettingsPanel'
-import { PHONE_GRID_MAX } from '@renderer/components/phone/phone-view'
 import { SecondaryButton, TextInput } from '@renderer/components/settings/shared'
 import { cn } from '@renderer/lib/utils'
 import { usePhoneStore } from '@renderer/stores/phoneStore'
@@ -100,7 +98,7 @@ export function PhonesPage(): React.JSX.Element {
             {t('phone.title')}
           </h1>
           <p className="text-[12px] text-[var(--text2)]">
-            {t('phone.subtitle', { n: PHONE_LIMIT })}
+            {t('phone.subtitle')}
           </p>
         </header>
 
@@ -198,7 +196,7 @@ export function PhonesPage(): React.JSX.Element {
           </p>
         ) : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {list.slice(0, PHONE_GRID_MAX).map((phone) => (
+            {list.map((phone) => (
               <PhoneCard
                 key={phone.id}
                 phone={phone}

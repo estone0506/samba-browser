@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next'
 import { Switch } from '@renderer/components/ui/switch'
 import {
   PHONE_COUNTRIES,
-  PHONE_LIMIT,
   SCREEN_FPS,
   SCREEN_SIZES,
   type PhoneCountry,
@@ -15,7 +14,6 @@ import {
 import { usePhoneStore } from '@renderer/stores/phoneStore'
 import {
   countryBadge,
-  isOverPhoneLimit,
   phoneStateLabelKey,
   phoneStateTone,
   smsBadgeKey,
@@ -103,19 +101,11 @@ export function PhoneSettingsPanel({ settings, update }: SectionProps): React.JS
         {detectNote && <p className="text-[11.5px] text-[var(--text2)]">{detectNote}</p>}
       </SettingsSection>
 
-      <SettingsSection
-        title={t('phone.settings.listTitle')}
-        description={t('phone.settings.limitNote', { n: PHONE_LIMIT })}
-      >
+      <SettingsSection title={t('phone.settings.listTitle')}>
         {list.length === 0 ? (
           <p className="text-[11.5px] text-[var(--text2)]">{t('phone.empty')}</p>
         ) : (
           list.map((phone) => <PhoneRow key={phone.id} phone={phone} onSave={setLabel} />)
-        )}
-        {isOverPhoneLimit(list.length) && (
-          <p className="text-[11.5px] text-[#b91c1c]">
-            {t('phone.settings.overLimit', { n: PHONE_LIMIT })}
-          </p>
         )}
       </SettingsSection>
 

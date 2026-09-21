@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { DeviceManager, type DeviceRepo, type PhoneRowLike } from '../src/main/phone/devices'
-import { DEVICE_POLL_INTERVAL_MS, PHONE_LIMIT, type PhoneDto } from '../src/shared/phone'
+import { DEVICE_POLL_INTERVAL_MS, type PhoneDto } from '../src/shared/phone'
 import { ADB_CANDIDATES } from '../src/main/phone/adb'
 import { PhoneService, type PhoneServiceRepo } from '../src/main/phone/service'
 import { DEFAULT_SETTINGS, type Settings } from '../src/shared/settings'
@@ -250,18 +250,17 @@ describe('DeviceManager 끊김 복구', () => {
 })
 
 describe('DeviceManager 상한과 와이파이', () => {
-  it('동시 연결 상한을 넘는 폰은 offline 으로 두고 경고를 함께 통지한다', async () => {
+  it('동시 연결 상한이 없다 — 붙어 있는 폰은 몇 대든 모두 online 이고 경고도 없다', async () => {
     const h = makeHarness()
     const lines = ['List of devices attached']
-    for (let i = 0; i < PHONE_LIMIT + 1; i++) {
+    for (let i = 0; i < 5; i++) {
       lines.push(`SERIAL${i} device usb:1-${i} model:SM_A54${i}`)
     }
     h.adb.reply('devices -l', `${lines.join('\n')}\n`)
     const list = await h.manager.refresh()
-    expect(list).toHaveLength(PHONE_LIMIT + 1)
-    expect(list.slice(0, PHONE_LIMIT).every((p) => p.state === 'online')).toBe(true)
-    expect(list[PHONE_LIMIT].state).toBe('offline')
-    expect(h.changes[0].warning).toBeTruthy()
+    expect(list).toHaveLength(5)
+    expect(list.every((p) => p.state === 'online')).toBe(true)
+    expect(h.changes[0].warning).toBeUndefined()
   })
 
   it('connectWifi 는 포트를 생략하면 5555 를 붙인다', async () => {
@@ -518,12 +517,37 @@ describe('같은 폰의 여러 전송 이름을 한 줄로 합친다', () => {
     expect(list[0]).toMatchObject({ label: '이가명', state: 'online' })
   })
 
-  it('상한은 붙어 있는 폰으로 센다 — 끊긴 옛 줄이 자리를 차지하지 않는다', async () => {
+  it('끊긴 옛 줄이 몇 개든 새로 붙은 폰은 바로 쓴다', async () => {
     const h = makeHarness()
     for (const s of ['OLD1', 'OLD2', 'OLD3'])
       h.repo.upsertSeen({ serial: s, model: '', transport: 'usb', state: 'online', at: 1 })
     h.adb.reply('devices -l', 'List of devices attached\nNEW1 device model:SM_F711N\n')
     const list = await h.manager.refresh()
     expect(list.find((p) => p.serial === 'NEW1')?.state).toBe('online')
+  })
+})
+
+describe('옛 포트로 남은 ip:port 줄 정리', () => {
+  it('같은 IP 의 주인을 알면 그 폰 줄로 합친다(무선 디버깅 포트는 매번 바뀐다)', async () => {
+    const h = makeHarness()
+    const merged: string[][] = []
+    ;(h.repo as unknown as { mergeAlias: (a: string, r: string) => void }).mergeAlias = (a, r) => {
+      merged.push([a, r])
+      const i = h.repo.rows.findIndex((row) => row.serial === a)
+      if (i >= 0) h.repo.rows.splice(i, 1)
+    }
+    h.repo.upsertSeen({ serial: 'RF9X4021NHD', model: 'SM A155N', transport: 'wifi', state: 'online', at: 1 })
+    h.repo.upsertSeen({ serial: '192.168.45.126:40449', model: 'SM A155N', transport: 'wifi', state: 'online', at: 1 })
+    h.adb.reply(
+      'devices -l',
+      'List of devices attached\nadb-RF9X4021NHD-iEPG7p._adb-tls-connect._tcp device model:SM_A155N\n'
+    )
+    h.adb.reply(
+      'mdns services',
+      'List of discovered mdns services\nadb-RF9X4021NHD-iEPG7p\t_adb-tls-connect._tcp\t192.168.45.126:41777\n'
+    )
+    const list = await h.manager.refresh()
+    expect(merged).toContainEqual(['192.168.45.126:40449', 'RF9X4021NHD'])
+    expect(list.map((p) => p.label)).toEqual(['SM A155N'])
   })
 })

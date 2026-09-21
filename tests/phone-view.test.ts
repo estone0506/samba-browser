@@ -1,10 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
-  PHONE_GRID_MAX,
   PHONE_PAD_KEYS,
   canRecover,
   countryBadge,
-  isOverPhoneLimit,
   isPhoneDimmed,
   isSwipe,
   phoneStateDotClass,
@@ -17,7 +15,6 @@ import {
   transportLabelKey
 } from '../src/renderer/src/components/phone/phone-view'
 import {
-  PHONE_LIMIT,
   PHONE_STATES,
   PHONE_TRANSPORTS,
   type PhoneDto,
@@ -103,11 +100,6 @@ describe('폰 목록 정렬·상한', () => {
     expect(list.map((p) => p.id)).toEqual([1, 2])
   })
 
-  it('카드 격자 수는 동시 연결 상한과 같다', () => {
-    expect(PHONE_GRID_MAX).toBe(PHONE_LIMIT)
-    expect(isOverPhoneLimit(PHONE_LIMIT)).toBe(false)
-    expect(isOverPhoneLimit(PHONE_LIMIT + 1)).toBe(true)
-  })
 })
 
 describe('화면 좌표 환산', () => {
