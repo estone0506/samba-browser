@@ -430,7 +430,17 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
     return finish(false, 'declined')
   }
 
-  await deps.launchApp(req.serial, spec.deepLink)
+  // 가장 짧은 길은 결제 요청 알림을 누르는 것이다(누르면 바로 결제 화면). 그 앱이 올린 결제 알림이 없을 때만
+  // 앱을 직접 연다 — 앱만 열면 홈 화면이라 알림함을 거쳐야 해서 길다
+  let notificationTried = false
+  if (deps.notifications) {
+    notificationTried = true
+    if (!(await openPayNotification(deps, req.serial, spec))) {
+      await deps.launchApp(req.serial, spec.deepLink)
+    }
+  } else {
+    await deps.launchApp(req.serial, spec.deepLink)
+  }
 
   let state: PayState = 'await_app'
   let lastTapped: number | null = null
@@ -441,7 +451,6 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
   let screen: PhoneScreen | null = null
   // 누를 것이 없던 횟수. 몇 번 이어지면 알림창의 결제 요청 알림을 눌러 본다(실행당 한 번)
   let idlePolls = 0
-  let notificationTried = false
 
   for (let i = 0; i < MAX_PAY_STEPS && state !== 'done'; i++) {
     screen = await deps.phones.screen(req.serial)
@@ -516,6 +525,9 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
 /** 앱 잠금을 푼 뒤 같은 잠금 화면이 이만큼까지는 더 보여도 기다린다(화면 전환 시간) */
 const UNLOCK_GRACE_POLLS = 4
 
+/** 알림을 누르는 최대 횟수(묶음 펼치기 1회 + 실제 알림 1~2회) */
+const NOTIFICATION_TAP_TRIES = 3
+
 /** 누를 것이 없는 화면이 이만큼 이어지면 알림창을 열어 본다 */
 export const NOTIFICATION_AFTER_POLLS = 3
 
@@ -533,18 +545,23 @@ async function openPayNotification(
     // 그 앱이 올린 결제 알림이 없으면 알림창을 열지도 않는다
     if (mine.length === 0) return false
     await shade.open(serial)
-    await sleep(PAY_POLL_MS)
-    const screen = await deps.phones.screen(serial)
-    const id = findPayNotification(screen, mine)
-    const el = id === undefined ? undefined : findElement(screen, id)
-    if (!el) {
-      await shade.close(serial)
-      return false
+    let tapped = false
+    // 같은 앱의 알림이 여럿이면 묶음으로 접혀 있다 — 첫 탭은 묶음을 펼치기만 하므로, 앱이 앞으로 나올 때까지
+    // 같은 제목을 다시 찾아 누른다(맨 위가 가장 새 알림이다)
+    for (let attempt = 0; attempt < NOTIFICATION_TAP_TRIES; attempt += 1) {
+      await sleep(PAY_POLL_MS)
+      const screen = await deps.phones.screen(serial)
+      if (screen.app === spec.packageName) return true
+      const id = findPayNotification(screen, mine)
+      const el = id === undefined ? undefined : findElement(screen, id)
+      if (!el) break
+      if (!tapped) deps.onStep(tr('phone.payNotificationOpened'), true)
+      tapped = true
+      await deps.phones.tap(serial, el.center.x, el.center.y)
     }
-    deps.onStep(tr('phone.payNotificationOpened'), true)
-    await deps.phones.tap(serial, el.center.x, el.center.y)
-    await sleep(PAY_POLL_MS)
-    return true
+    if (tapped) return true
+    await shade.close(serial)
+    return false
   } catch {
     return false
   }

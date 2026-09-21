@@ -486,16 +486,14 @@ describe('결제 요청이 푸시 알림으로만 와 있을 때 — 알림창�
     expect(findPayNotification(s, [])).toBeUndefined()
   })
 
-  it('앱을 열어도 누를 것이 없으면 알림창을 내려 그 앱의 결제 알림을 누르고 이어간다', async () => {
+  it('그 앱이 올린 결제 알림이 있으면 앱을 열기 전에 그 알림부터 누른다(가장 짧은 길)', async () => {
     const screens = [
-      tossHome,
-      tossHome,
-      tossHome,
       shade([
         el(2, '토스', { clickable: false }),
         el(3, '[토스] 결제 혜택이 시작됐어요.'),
         el(11, '무신사 결제하기', { clickable: false })
       ]),
+      payAsk,
       payAsk,
       keypad,
       done,
@@ -514,12 +512,33 @@ describe('결제 요청이 푸시 알림으로만 와 있을 때 — 알림창�
     const r = await runPayApproval(h.deps, request())
     expect(r).toEqual({ ok: true })
     expect(calls).toEqual(['list:viva.republica.toss', 'open'])
-    // 토스 결제 알림(11) → 결제하기(2). 카카오톡의 토스 메시지(3)는 누르지 않았다
+    // 토스 결제 알림(11) → 결제하기(2). 카카오톡의 토스 메시지(3)는 누르지 않았고, 앱을 따로 열지도 않았다
     expect(h.taps.map((t) => t[2])).toEqual([11 * 100 + 30, 2 * 100 + 30])
+    expect(h.deps.launchApp).not.toHaveBeenCalled()
   })
 
-  it('그 앱이 올린 결제 알림이 없으면 알림창을 열지도 않는다', async () => {
-    const h = harness({ screens: [tossHome] })
+  it('알림이 묶음으로 접혀 있으면 첫 탭은 펼치기만 한다 — 같은 제목을 다시 눌러 연다', async () => {
+    const folded = shade([
+      el(9, '토스', { clickable: false }),
+      el(11, '무신사 결제하기', { clickable: false })
+    ])
+    const unfolded = shade([
+      el(9, '토스', { clickable: false }),
+      el(12, '무신사 결제하기', { clickable: false })
+    ])
+    const h = harness({ screens: [folded, unfolded, payAsk, payAsk, keypad, done, done] })
+    h.deps.notifications = {
+      open: async () => {},
+      close: async () => {},
+      list: async () => [TOSS_PUSH]
+    }
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: true })
+    expect(h.taps.map((t) => t[2])).toEqual([11 * 100 + 30, 12 * 100 + 30, 2 * 100 + 30])
+  })
+
+  it('그 앱이 올린 결제 알림이 없으면 알림창을 열지 않고 앱을 직접 연다', async () => {
+    const h = harness({ screens: [payAsk, keypad, done, done] })
     const calls: string[] = []
     h.deps.notifications = {
       open: async () => void calls.push('open'),
@@ -527,15 +546,13 @@ describe('결제 요청이 푸시 알림으로만 와 있을 때 — 알림창�
       list: async () => []
     }
     const r = await runPayApproval(h.deps, request())
-    expect(r.ok).toBe(false)
+    expect(r).toEqual({ ok: true })
     expect(calls).toEqual([])
-    expect(h.taps).toEqual([])
+    expect(h.deps.launchApp).toHaveBeenCalledTimes(1)
   })
 
-  it('알림 기록에는 있는데 알림창에서 같은 글자를 못 찾으면 누르지 않고 알림창을 도로 올린다', async () => {
-    const h = harness({
-      screens: [tossHome, tossHome, tossHome, shade([el(1, '카카오톡'), el(2, '토스')]), tossHome]
-    })
+  it('알림 기록에는 있는데 알림창에서 같은 글자를 못 찾으면 아무것도 누르지 않고 알림창을 올린 뒤 앱을 연다', async () => {
+    const h = harness({ screens: [shade([el(1, '카카오톡'), el(2, '토스')]), tossHome] })
     const calls: string[] = []
     h.deps.notifications = {
       open: async () => void calls.push('open'),
@@ -546,6 +563,7 @@ describe('결제 요청이 푸시 알림으로만 와 있을 때 — 알림창�
     expect(r.ok).toBe(false)
     expect(calls).toEqual(['open', 'close'])
     expect(h.taps).toEqual([])
+    expect(h.deps.launchApp).toHaveBeenCalledTimes(1)
   })
 })
 
