@@ -63,6 +63,8 @@ export interface DeviceManagerDeps {
   repo: DeviceRepo
   now: () => number
   autoReconnect: () => boolean
+  /** 사용자가 지운 폰의 실제 시리얼 — 보여도 저장하지 않고, 발견돼도 붙이지 않는다 */
+  ignored?: () => readonly string[]
   // 경고 문구는 상한 초과처럼 사용자가 알아야 할 때만 함께 온다
   onChange: (phones: PhoneDto[], warning?: string) => void
   /**
@@ -196,7 +198,8 @@ export class DeviceManager {
       const owner = services.find((s) => s.address.split(':')[0] === ip)
       if (owner) this.deps.repo.mergeAlias?.(row.serial, owner.serial)
     }
-    const raw = pickOnePerPhone(seen, services)
+    const ignored = this.deps.ignored?.() ?? []
+    const raw = pickOnePerPhone(seen, services).filter((d) => !ignored.includes(d.realSerial))
     const now = this.deps.now()
     for (const d of raw) {
       this.deps.repo.upsertSeen({
@@ -258,7 +261,9 @@ export class DeviceManager {
   ): Promise<boolean> {
     const now = this.deps.now()
     let connected = false
+    const ignored = this.deps.ignored?.() ?? []
     for (const service of services) {
+      if (ignored.includes(service.serial)) continue
       // 이 폰이 어떤 이름으로든 이미 붙어 있으면(USB·ip:port·adb 가 스스로 붙인 무선 디버깅) 또 붙이지 않는다
       if (current.some((d) => realSerialOf(d.serial, services) === service.serial)) continue
       if ((this.wifiRetryAt.get(service.address) ?? 0) > now) continue
@@ -315,6 +320,20 @@ export class DeviceManager {
       await this.refresh()
     }
     return { ok, message: res.stdout.trim() || res.stderr.trim() }
+  }
+
+  /** 이 폰의 모든 전송(ip:port·서비스 이름)을 끊는다. USB 는 adb 가 끊지 못하므로 넘어간다 */
+  async disconnectAll(realSerial: string): Promise<void> {
+    const res = await this.deps.adb.run(['devices', '-l'])
+    const services = await this.discover()
+    for (const d of parseDevices(res.stdout)) {
+      if (d.transport !== 'wifi' || realSerialOf(d.serial, services) !== realSerial) continue
+      try {
+        await this.deps.adb.run(['disconnect', d.serial])
+      } catch {
+        // 이미 끊겼으면 그만이다
+      }
+    }
   }
 
   async disconnect(serial: string): Promise<void> {

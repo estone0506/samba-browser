@@ -166,6 +166,9 @@ export const DEFAULT_SETTINGS = {
   phoneScreenFps: 15 as ScreenFps,
   // 끊겼을 때 kill-server/start-server 로 1회 자동 복구할지
   phoneAutoReconnect: true,
+  // 사용자가 목록에서 지운 폰의 시리얼. 같은 와이파이에 있으면 5초 검색이 다시 찾아오므로 여기 적어 건너뛴다.
+  // 주소 연결·페어링을 직접 하면 비운다. 이 PC 의 사정이라 SYNCED_SETTING_KEYS 에 넣지 않는다
+  phoneIgnoredSerials: [] as string[],
   // 결제 상한(원). 초과하면 권한 모드와 무관하게 사람 확인을 받는다
   paymentLimitKrw: DEFAULT_PAYMENT_LIMIT_KRW,
   // 결제 비밀번호 키패드 배치를 외부 AI(Visual)에게 물어볼지.
@@ -351,6 +354,7 @@ export const settingsSchema = z.object({
     .union([z.literal(10), z.literal(15), z.literal(30)])
     .catch(DEFAULT_SETTINGS.phoneScreenFps),
   phoneAutoReconnect: z.boolean().catch(DEFAULT_SETTINGS.phoneAutoReconnect),
+  phoneIgnoredSerials: z.array(z.string().max(120)).max(50).catch([]),
   paymentLimitKrw: z.number().int().min(0).catch(DEFAULT_SETTINGS.paymentLimitKrw),
   phoneKeypadVisual: z.boolean().catch(DEFAULT_SETTINGS.phoneKeypadVisual),
   // === 폰 연동 끝 =============================================================

@@ -1092,7 +1092,8 @@
     "pairCodePlaceholder": "6-digit code",
     "pairButton": "Pair",
     "pairDone": "Paired. The phone will connect automatically in a moment",
-    "pairFailed": "Could not pair: {{message}}"
+    "pairFailed": "Could not pair: {{message}}",
+    "remove": "Remove this phone"
   },
   "extensions": {
     "title": "Extensions",

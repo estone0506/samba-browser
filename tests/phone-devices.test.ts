@@ -551,3 +551,39 @@ describe('옛 포트로 남은 ip:port 줄 정리', () => {
     expect(list.map((p) => p.label)).toEqual(['SM A155N'])
   })
 })
+
+describe('지운 폰은 다시 끌어오지 않는다', () => {
+  const MDNS = 'List of discovered mdns services\nadb-R3CR50QEJJN\t_adb._tcp\t192.168.45.212:5555\n'
+
+  it('무시 목록의 폰은 보여도 저장하지 않고, 발견돼도 connect 하지 않는다', async () => {
+    const adb = new FakeAdb()
+    const repo = new FakeRepo()
+    const manager = new DeviceManager({
+      adb,
+      repo,
+      now: () => 1_000,
+      autoReconnect: () => false,
+      ignored: () => ['R3CR50QEJJN'],
+      onChange: () => {}
+    })
+    adb.reply('devices -l', 'List of devices attached\n192.168.45.212:5555 unauthorized\n')
+    adb.reply('mdns services', MDNS)
+    const list = await manager.refresh()
+    expect(list).toEqual([])
+    expect(repo.rows).toEqual([])
+    expect(adb.calls.some((c) => c[0] === 'connect')).toBe(false)
+  })
+
+  it('disconnectAll 은 그 폰의 와이파이 전송만 끊는다', async () => {
+    const h = makeHarness()
+    h.adb.reply(
+      'devices -l',
+      'List of devices attached\nR3CRA05HY3R device model:SM_F711N\n192.168.45.212:5555 unauthorized\n'
+    )
+    h.adb.reply('mdns services', MDNS)
+    await h.manager.disconnectAll('R3CR50QEJJN')
+    expect(h.adb.calls.filter((c) => c[0] === 'disconnect')).toEqual([
+      ['disconnect', '192.168.45.212:5555']
+    ])
+  })
+})

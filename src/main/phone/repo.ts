@@ -134,6 +134,13 @@ export class PhoneRepo {
     this.db.scheduleSave()
   }
 
+  /** 폰 줄과 그 폰에 걸린 담당 계정 매핑을 지운다(인증 기록은 남긴다) */
+  remove(id: number): void {
+    this.d.delete(accountPhones).where(eq(accountPhones.phoneId, id)).run()
+    this.d.delete(phones).where(eq(phones.id, id)).run()
+    this.db.scheduleSave()
+  }
+
   list(): PhoneRow[] {
     return this.d.select().from(phones).all().map(toPhoneRow)
   }

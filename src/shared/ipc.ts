@@ -144,6 +144,7 @@ export const IPC = {
   phoneDetectPaths: 'phone:detectPaths', // adb/scrcpy 경로 자동 찾기
   phoneConnect: 'phone:connect', // 와이파이 주소로 연결
   phonePair: 'phone:pair', // 무선 디버깅 페어링(주소 + 6자리 코드)
+  phoneRemove: 'phone:remove', // 목록에서 폰 지우기(연결 끊기 + 다시 찾지 않기)
   phoneDisconnect: 'phone:disconnect',
   phoneRecover: 'phone:recover', // kill/start-server 1회 재시도
   phoneSetLabel: 'phone:setLabel', // 별칭·국가

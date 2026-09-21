@@ -29,6 +29,8 @@ interface PhoneStoreState {
   /** 무선 디버깅 페어링. 성공 여부와 adb 가 돌려준 문구 */
   pairWifi: (address: string, code: string) => Promise<{ ok: boolean; message: string } | null>
   disconnect: (serial: string) => Promise<void>
+  /** 목록에서 폰을 지운다(연결을 끊고 다시 찾지 않는다) */
+  remove: (id: number) => Promise<void>
   recover: (serial: string) => Promise<boolean>
   setLabel: (id: number, label: string, country: string) => Promise<void>
   assign: (accountId: number, phoneId: number | null) => Promise<boolean>
@@ -124,6 +126,12 @@ export const usePhoneStore = create<PhoneStoreState>((set, get) => ({
     }
     if (r.data.ok) await get().refresh()
     return r.data
+  },
+
+  remove: async (id) => {
+    const r = await window.samba.phone.remove?.(id)
+    if (r && !r.ok) set({ error: r.error })
+    await get().refresh()
   },
 
   disconnect: async (serial) => {

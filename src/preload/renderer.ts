@@ -471,6 +471,7 @@ const api = {
       invoke(IPC.phoneSetLabel, id, label, country),
     assign: (accountId: number, phoneId: number | null): Promise<IpcResult<void>> =>
       invoke(IPC.phoneAssign, accountId, phoneId),
+    remove: (id: number): Promise<IpcResult<void>> => invoke(IPC.phoneRemove, id),
     pair: (address: string, code: string): Promise<IpcResult<{ ok: boolean; message: string }>> =>
       invoke(IPC.phonePair, address, code),
     assigned: (accountId: number): Promise<IpcResult<number | null>> =>

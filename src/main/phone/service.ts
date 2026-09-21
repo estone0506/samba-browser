@@ -20,6 +20,7 @@ export interface PhoneServiceRepo extends DeviceRepo {
   setSmsQueryOk: (id: number, ok: boolean) => void
   assignAccount: (accountId: number, phoneId: number | null) => void
   phoneForAccount: (accountId: number) => PhoneRowLike | null
+  remove: (id: number) => void
   listAuthEvents: (limit?: number) => AuthEventDto[]
 }
 
@@ -61,6 +62,7 @@ export class PhoneService {
       // 설정에 adb 경로가 없으면 폴링이 adb 를 부르지 않는다(부르면 곧바로 던진다)
       adbPath: () => deps.settings.get().adbPath,
       autoReconnect: () => deps.settings.get().phoneAutoReconnect,
+      ignored: () => deps.settings.get().phoneIgnoredSerials,
       onChange: (list, warning) => {
         deps.emit(list, warning)
         void this.probeSms(list)
@@ -87,11 +89,39 @@ export class PhoneService {
   }
 
   connectWifi(address: string): Promise<{ ok: boolean; message: string }> {
+    this.clearIgnored()
     return this.devices.connectWifi(address)
   }
 
-  pairWifi(address: string, code: string): Promise<{ ok: boolean; message: string }> {
+  async pairWifi(address: string, code: string): Promise<{ ok: boolean; message: string }> {
+    // 직접 페어링한다는 건 그 폰을 다시 쓰겠다는 뜻이다 — 지운 폰 목록을 비우고 찾는다
+    this.clearIgnored()
     return this.devices.pairWifi(address, code)
+  }
+
+  /**
+   * 목록에서 폰을 지운다: 와이파이 연결을 끊고, 줄과 담당 계정 매핑을 지우고, 다시 찾지 않게 적어 둔다.
+   * 적어 두지 않으면 같은 와이파이의 폰은 5초 뒤 검색에서 도로 나타난다
+   */
+  async remove(id: number): Promise<void> {
+    const row = this.deps.repo.list().find((r) => r.id === id)
+    if (!row) return
+    const ignored = this.deps.settings.get().phoneIgnoredSerials
+    if (!ignored.includes(row.serial))
+      this.deps.settings.set({ phoneIgnoredSerials: [...ignored, row.serial].slice(-50) })
+    try {
+      await this.devices.disconnectAll(row.serial)
+    } catch {
+      // adb 가 없어도 줄은 지운다
+    }
+    this.deps.repo.remove(id)
+    await this.devices.refresh()
+    this.deps.emit(this.devices.list())
+  }
+
+  private clearIgnored(): void {
+    if (this.deps.settings.get().phoneIgnoredSerials.length > 0)
+      this.deps.settings.set({ phoneIgnoredSerials: [] })
   }
 
   disconnect(serial: string): Promise<void> {

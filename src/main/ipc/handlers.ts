@@ -1144,6 +1144,7 @@ export function registerIpc(
   handleFromRenderer(IPC.phoneRefresh, () => phones.refresh())
   handleFromRenderer(IPC.phoneDetectPaths, () => phones.detectPaths())
   handleFromRenderer(IPC.phoneConnect, (address: string) => phones.connectWifi(address))
+  handleFromRenderer(IPC.phoneRemove, (id: number) => phones.remove(id))
   handleFromRenderer(IPC.phonePair, (address: string, code: string) =>
     phones.pairWifi(address, code)
   )
