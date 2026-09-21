@@ -72,6 +72,27 @@ export function isWifiSerial(serial: string): boolean {
   return WIFI_SERIAL_RE.test(serial)
 }
 
+// 무선 디버깅으로 adb 가 스스로 붙인 장치는 시리얼 자리에 서비스 이름이 온다:
+//   adb-RF9X4021NHD-iEPG7p._adb-tls-connect._tcp
+const MDNS_SERIAL_RE = /^adb-([A-Za-z0-9]+?)(?:-[A-Za-z0-9]+)?\._adb/
+
+/** 서비스 이름 꼴의 시리얼에서 폰의 실제 시리얼을 뽑는다. 그런 꼴이 아니면 null */
+export function serialFromMdnsName(serial: string): string | null {
+  return MDNS_SERIAL_RE.exec(serial)?.[1] ?? null
+}
+
+/**
+ * adb 가 보고한 전송 이름을 폰의 실제 시리얼로 바꾼다.
+ * 같은 폰이 USB(시리얼) · adb connect(ip:port) · 무선 디버깅 자동 연결(서비스 이름)로
+ * 서로 다른 이름을 달고 와서, 그대로 저장하면 한 폰이 세 줄이 된다(실기)
+ */
+export function realSerialOf(serial: string, services: readonly MdnsService[]): string {
+  const fromName = serialFromMdnsName(serial)
+  if (fromName) return fromName
+  if (isWifiSerial(serial)) return services.find((s) => s.address === serial)?.serial ?? serial
+  return serial
+}
+
 /** 와이파이로 발견된 adb 접속점 한 곳(`adb mdns services` 의 한 줄) */
 export interface MdnsService {
   /** 폰의 실제 시리얼(서비스 이름 adb-<serial>[-xxxx] 에서 뽑는다) */
@@ -123,7 +144,7 @@ export function parseDevices(stdout: string): RawDevice[] {
       serial,
       state: toState(rawState),
       model,
-      transport: isWifiSerial(serial) ? 'wifi' : 'usb'
+      transport: isWifiSerial(serial) || serialFromMdnsName(serial) !== null ? 'wifi' : 'usb'
     })
   }
   return out

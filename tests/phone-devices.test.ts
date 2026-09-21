@@ -480,3 +480,50 @@ describe('무선 디버깅 페어링(adb pair)', () => {
     expect(r).toEqual({ ok: false, message: 'Failed: Wrong password or connection was dropped.' })
   })
 })
+
+describe('같은 폰의 여러 전송 이름을 한 줄로 합친다', () => {
+  const MDNS =
+    'List of discovered mdns services\n' +
+    'adb-RF9X4021NHD-iEPG7p\t_adb-tls-connect._tcp\t192.168.45.126:40449\n'
+  // 실기 그대로: 무선 디버깅 폰 한 대가 서비스 이름과 ip:port 두 이름으로 동시에 보인다
+  const DEVICES =
+    'List of devices attached\n' +
+    '192.168.45.126:40449 device product:a15ks model:SM_A155N\n' +
+    'adb-RF9X4021NHD-iEPG7p._adb-tls-connect._tcp device product:a15ks model:SM_A155N\n'
+
+  it('한 대로 세고, 저장은 실제 시리얼로, 명령용 serial 은 전송 이름으로 준다', async () => {
+    const h = makeHarness()
+    h.adb.reply('devices -l', DEVICES)
+    h.adb.reply('mdns services', MDNS)
+    const list = await h.manager.refresh()
+    expect(h.repo.rows.map((r) => r.serial)).toEqual(['RF9X4021NHD'])
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({
+      serial: 'adb-RF9X4021NHD-iEPG7p._adb-tls-connect._tcp',
+      state: 'online',
+      transport: 'wifi'
+    })
+    // 이미 붙어 있는 폰에 connect 를 또 걸지 않는다
+    expect(h.adb.calls.some((c) => c[0] === 'connect')).toBe(false)
+  })
+
+  it('USB 로 등록해 둔 줄(이름 붙인 폰)이 와이파이로 붙어도 그 줄 그대로 쓴다', async () => {
+    const h = makeHarness()
+    h.repo.upsertSeen({ serial: 'RF9X4021NHD', model: 'SM A155N', transport: 'usb', state: 'online', at: 1 })
+    h.repo.rows[0].label = '이가명'
+    h.adb.reply('devices -l', DEVICES)
+    h.adb.reply('mdns services', MDNS)
+    const list = await h.manager.refresh()
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({ label: '이가명', state: 'online' })
+  })
+
+  it('상한은 붙어 있는 폰으로 센다 — 끊긴 옛 줄이 자리를 차지하지 않는다', async () => {
+    const h = makeHarness()
+    for (const s of ['OLD1', 'OLD2', 'OLD3'])
+      h.repo.upsertSeen({ serial: s, model: '', transport: 'usb', state: 'online', at: 1 })
+    h.adb.reply('devices -l', 'List of devices attached\nNEW1 device model:SM_F711N\n')
+    const list = await h.manager.refresh()
+    expect(list.find((p) => p.serial === 'NEW1')?.state).toBe('online')
+  })
+})

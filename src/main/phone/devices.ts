@@ -13,6 +13,7 @@ import {
   isWifiSerial,
   parseDevices,
   parseMdnsServices,
+  realSerialOf,
   type AdbRunner,
   type MdnsService,
   type RawDevice
@@ -51,6 +52,11 @@ export interface DeviceRepo {
     at: number
   }) => PhoneRowLike
   list: () => PhoneRowLike[]
+  /**
+   * 전송 이름(ip:port·서비스 이름)으로 잘못 만들어진 줄을 실제 시리얼의 줄로 합친다.
+   * 실제 시리얼 줄이 없으면 그 줄의 시리얼만 바꾸고(이름·담당 계정 유지), 있으면 담당 계정을 옮긴 뒤 지운다
+   */
+  mergeAlias?: (aliasSerial: string, realSerial: string) => void
 }
 
 export interface DeviceManagerDeps {
@@ -70,6 +76,27 @@ export interface DeviceManagerDeps {
   clearInterval?: (handle: unknown) => void
 }
 
+/** 실제 시리얼이 붙은 장치 한 대 */
+export interface LiveDevice extends RawDevice {
+  realSerial: string
+}
+
+/** 같은 폰의 전송이 여럿이면 하나만 고른다: 승인된 것 먼저, 그다음 USB → adb 자동 연결 → ip:port */
+export function pickOnePerPhone(
+  raw: readonly RawDevice[],
+  services: readonly MdnsService[]
+): LiveDevice[] {
+  const rank = (d: RawDevice): number =>
+    (d.state === 'online' ? 0 : 10) + (d.transport === 'usb' ? 0 : isWifiSerial(d.serial) ? 2 : 1)
+  const best = new Map<string, LiveDevice>()
+  for (const d of raw) {
+    const realSerial = realSerialOf(d.serial, services)
+    const current = best.get(realSerial)
+    if (!current || rank(d) < rank(current)) best.set(realSerial, { ...d, realSerial })
+  }
+  return [...best.values()]
+}
+
 /** 표의 문자열 칸을 공용 타입으로 좁힌다(손상된 값은 기본값으로 본다) */
 function toTransport(value: string, serial: string): PhoneTransport {
   if (value === 'usb' || value === 'wifi') return value
@@ -81,7 +108,8 @@ function toDto(row: PhoneRowLike, live: RawDevice | undefined, overLimit: boolea
   const state: PhoneState = overLimit ? 'offline' : (live?.state ?? 'disconnected')
   return {
     id: row.id,
-    serial: row.serial,
+    // adb 명령(-s)은 전송 이름을 받는다. 붙어 있지 않으면 저장된 시리얼을 그대로 둔다
+    serial: live?.serial ?? row.serial,
     label: row.label || row.model || row.serial,
     country: isPhoneCountry(row.country) ? row.country : 'KR',
     transport: toTransport(live?.transport ?? row.transport, row.serial),
@@ -149,14 +177,17 @@ export class DeviceManager {
     // 경로가 비어 있으면 adb 를 부르지 않는다(부르면 곧바로 던진다)
     if (!this.hasAdb()) return this.phones
     const first = await this.deps.adb.run(['devices', '-l'])
+    const services = await this.discover()
     // 같은 와이파이에서 발견된 폰은 주소를 몰라도 알아서 붙인다. 새로 붙인 게 있으면 목록을 다시 읽는다
-    const connected = await this.connectDiscovered(parseDevices(first.stdout))
+    const connected = await this.connectDiscovered(parseDevices(first.stdout), services)
     const res = connected ? await this.deps.adb.run(['devices', '-l']) : first
-    const raw = parseDevices(res.stdout)
+    // 한 폰이 여러 전송 이름으로 보이면 하나만 남긴다(저장은 실제 시리얼로, 명령은 전송 이름으로)
+    const raw = pickOnePerPhone(parseDevices(res.stdout), services)
     const now = this.deps.now()
     for (const d of raw) {
+      if (d.serial !== d.realSerial) this.deps.repo.mergeAlias?.(d.serial, d.realSerial)
       this.deps.repo.upsertSeen({
-        serial: d.serial,
+        serial: d.realSerial,
         model: d.model,
         transport: d.transport,
         state: d.state,
@@ -167,14 +198,14 @@ export class DeviceManager {
     }
     // 저장된 폰 중 이번에 안 보인 것은 끊김으로 본다
     const rows = this.deps.repo.list()
-    const next = rows.map((row, index) =>
-      toDto(
-        row,
-        raw.find((d) => d.serial === row.serial),
-        index >= PHONE_LIMIT
-      )
-    )
-    const over = next.length - PHONE_LIMIT
+    // 상한은 "지금 붙어 있는 폰"으로 센다 — 끊긴 옛 줄이 자리를 차지해 새 폰이 못 쓰이던 문제(실기)
+    let liveCount = 0
+    const next = rows.map((row) => {
+      const live = raw.find((d) => d.realSerial === row.serial)
+      if (live) liveCount += 1
+      return toDto(row, live, live !== undefined && liveCount > PHONE_LIMIT)
+    })
+    const over = liveCount - PHONE_LIMIT
     const warning = over > 0 ? tr('phone.overLimit', { limit: PHONE_LIMIT, over }) : undefined
     // 끊긴 폰 자동 복구 1회
     if (this.deps.autoReconnect()) {
@@ -201,18 +232,24 @@ export class DeviceManager {
    *  - 실패한 주소는 잠시 쉬었다가 다시 시도한다(5초 폴링마다 두드리지 않는다)
    * 새로 붙인 것이 있으면 true
    */
-  private async connectDiscovered(current: RawDevice[]): Promise<boolean> {
-    let services: MdnsService[]
+  private async discover(): Promise<MdnsService[]> {
     try {
-      services = parseMdnsServices((await this.deps.adb.run(['mdns', 'services'])).stdout)
+      return parseMdnsServices((await this.deps.adb.run(['mdns', 'services'])).stdout)
     } catch {
       // mdns 를 지원하지 않는 adb·방화벽 — 발견 없이 기존 동작 그대로 간다
-      return false
+      return []
     }
+  }
+
+  private async connectDiscovered(
+    current: RawDevice[],
+    services: MdnsService[]
+  ): Promise<boolean> {
     const now = this.deps.now()
     let connected = false
     for (const service of services) {
-      if (current.some((d) => d.serial === service.address || d.serial === service.serial)) continue
+      // 이 폰이 어떤 이름으로든 이미 붙어 있으면(USB·ip:port·adb 가 스스로 붙인 무선 디버깅) 또 붙이지 않는다
+      if (current.some((d) => realSerialOf(d.serial, services) === service.serial)) continue
       if ((this.wifiRetryAt.get(service.address) ?? 0) > now) continue
       this.wifiRetryAt.set(service.address, now + WIFI_CONNECT_COOLDOWN_MS)
       try {
