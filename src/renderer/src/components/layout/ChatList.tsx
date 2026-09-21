@@ -16,6 +16,9 @@ export function ChatList(): React.JSX.Element {
   const openChat = useChatStore((s) => s.openChat)
   const newChat = useChatStore((s) => s.newChat)
   const removeChat = useChatStore((s) => s.removeChat)
+  // 실행 중에는 다른 대화로 옮기지 못한다(화면의 메시지가 돌고 있는 작업에 묶여 있다).
+  // 말없이 무반응이면 고장처럼 보이므로 흐리게 하고 이유를 알려 준다
+  const locked = useChatStore((s) => s.status === 'running')
 
   // 앱이 뜨면 최근 대화를 한 번 읽어 온다
   useEffect(() => {
@@ -26,11 +29,13 @@ export function ChatList(): React.JSX.Element {
     <div className="flex flex-col">
       <button
         type="button"
+        disabled={locked}
+        title={locked ? t('chat.lockedWhileRunning') : undefined}
         onClick={() => {
           newChat()
           setView('browser')
         }}
-        className="flex items-center gap-1.5 rounded-[9px] px-2 py-1.5 text-left text-[12px] text-[var(--text2)] hover:bg-black/5"
+        className="flex items-center gap-1.5 rounded-[9px] px-2 py-1.5 text-left text-[12px] text-[var(--text2)] hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
       >
         <Plus className="h-3.5 w-3.5" />
         {t('chat.new')}
@@ -44,6 +49,7 @@ export function ChatList(): React.JSX.Element {
               key={chat.id}
               chat={chat}
               active={chat.id === activeChatId}
+              locked={locked && chat.id !== activeChatId}
               onOpen={() => {
                 void openChat(chat.id)
                 setView('browser')
@@ -60,11 +66,14 @@ export function ChatList(): React.JSX.Element {
 function ChatRow({
   chat,
   active,
+  locked,
   onOpen,
   onDelete
 }: {
   chat: ChatDto
   active: boolean
+  /** 실행 중이라 이 대화로 옮길 수 없다 */
+  locked: boolean
   onOpen: () => void
   onDelete: () => void
 }): React.JSX.Element {
@@ -74,9 +83,10 @@ function ChatRow({
       <button
         type="button"
         onClick={onOpen}
-        title={chat.title || t('chat.untitled')}
+        disabled={locked}
+        title={locked ? t('chat.lockedWhileRunning') : chat.title || t('chat.untitled')}
         className={cn(
-          'min-w-0 flex-1 truncate rounded-[9px] px-2 py-1.5 text-left text-[12px] text-[var(--text2)] hover:bg-black/5',
+          'min-w-0 flex-1 truncate rounded-[9px] px-2 py-1.5 text-left text-[12px] text-[var(--text2)] hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent',
           active && 'bg-black/5 font-medium text-[var(--text)]'
         )}
       >

@@ -213,7 +213,8 @@
     "collapsePanel": "Collapse AI panel",
     "expandPanel": "Expand AI panel",
     "setupHint": "No AI provider is connected yet.",
-    "setupLink": "Settings → AI connection"
+    "setupLink": "Settings → AI connection",
+    "lockedWhileRunning": "You can’t switch chats while a task is running. Wait for it to finish or stop it first"
   },
   "confirm": {
     "title": "Confirmation required",
