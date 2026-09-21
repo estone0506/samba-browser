@@ -781,6 +781,12 @@ export function performType(id: number, text: string, submit: boolean): string |
   if (!el) return missingMessage(id)
   const input = el as HTMLInputElement
   if (input.type === 'password') return 'refused: SECRET field. Ask the user to type it.'
+  // 비활성 칸은 값이 화면에만 들어가고 페이지는 받지 않는다(실기: SAMBA-WAVE 소싱주문번호 칸은
+  // 주문계정을 고르기 전에는 disabled). 조용히 성공한 척하지 않는다
+  if (input.disabled === true) {
+    const why = el.getAttribute('title')
+    return `refused: input is disabled${why ? ` (${why.slice(0, 80)})` : ''}. Enable it first, then type.`
+  }
   releaseTextFocus(el)
   el.focus()
   const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set
@@ -804,9 +810,22 @@ export function performType(id: number, text: string, submit: boolean): string |
         bubbles: true,
         cancelable: true
       }
+      // Enter 핸들러가 "e.target.blur() → onBlur 에서 저장" 식이면(SAMBA-WAVE 소싱주문번호),
+      // 포커스 없는 페이지에서는 그 blur() 가 이벤트를 내지 않아 저장이 안 된다.
+      // 포커스는 빠졌는데 blur 이벤트가 없었으면 직접 보낸다
+      let blurred = false
+      const markBlur = (): void => {
+        blurred = true
+      }
+      target.addEventListener('blur', markBlur)
       target.dispatchEvent(new KeyboardEvent('keydown', init))
       target.dispatchEvent(new KeyboardEvent('keypress', init))
       target.dispatchEvent(new KeyboardEvent('keyup', init))
+      target.removeEventListener('blur', markBlur)
+      if (!blurred && document.activeElement !== target && typeof FocusEvent === 'function') {
+        target.dispatchEvent(new FocusEvent('blur'))
+        target.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+      }
       ;(target as HTMLInputElement).form?.requestSubmit?.()
       resolve('ok')
     }, SUBMIT_ENTER_DELAY_MS)
