@@ -27,6 +27,7 @@ import {
   textOf,
   performClick,
   performType,
+  notePopupOpened,
   performSelect,
   performScroll,
   rectOf,
@@ -115,6 +116,7 @@ if (!isExtensionDocument) {
   // 메인이 이 프레임 안에서 동작 하나를 시킬 때 쓰는 통로.
   // 하위 프레임에는 executeJavaScriptInIsolatedWorld 가 없어서 코드 문자열 대신
   // 동작 이름만 받는다(shared/agent-op 의 AgentOp). 답은 같은 격리 월드에서만 나간다
+  ipcRenderer.on(PAGE_IPC.popupOpened, () => notePopupOpened())
   ipcRenderer.on(PAGE_IPC.agentCall, (_event, raw: unknown) => {
     if (typeof raw !== 'object' || raw === null) return
     const reqId = (raw as { reqId?: unknown }).reqId

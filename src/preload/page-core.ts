@@ -530,6 +530,8 @@ export interface ClickBaseline {
 /** 최대 이만큼 지켜본 뒤에도 변화가 없으면 실패로 본다 */
 const CLICK_SETTLE_MS = 400
 const CLICK_POLL_MS = 40
+/** 클릭 이벤트와 waitForChange 시작 사이의 틈 — 그 사이에 도착한 새 창 알림도 인정한다 */
+const POPUP_GRACE_MS = 150
 /** 가린 요소 설명에 담을 class 이름 최대 길이 */
 const COVER_LABEL_MAX = 60
 
@@ -618,10 +620,24 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** 이 페이지가 마지막으로 새 탭·새 창을 연 시각(메인 프로세스가 알려 준다) */
+let lastPopupAt = 0
+
+/** 메인의 '새 탭·새 창이 열렸다' 알림을 기록한다 — 클릭이 통했다는 증거다 */
+export function notePopupOpened(): void {
+  lastPopupAt = Date.now()
+}
+
 /** 기준값이 달라질 때까지 최대 CLICK_SETTLE_MS 동안 지켜본다 */
 async function waitForChange(el: HTMLElement, before: ClickBaseline): Promise<boolean> {
   const startedAt = Date.now()
   for (;;) {
+    // 새 탭·새 창이 열렸다면 이 페이지 화면은 그대로여도 클릭은 통한 것이다
+    if (lastPopupAt >= startedAt - POPUP_GRACE_MS) {
+      // 한 번 쓴 알림은 지운다 — 바로 다음 클릭까지 "통했다"로 오인하지 않게
+      lastPopupAt = 0
+      return true
+    }
     if (baselineChanged(before, readClickBaseline(el))) return true
     if (Date.now() - startedAt >= CLICK_SETTLE_MS) return false
     await sleep(CLICK_POLL_MS)

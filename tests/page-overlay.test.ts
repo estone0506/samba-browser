@@ -305,6 +305,22 @@ describe('클릭 기준값 비교', () => {
   })
 })
 
+describe('새 탭을 여는 버튼 — 화면이 그대로여도 다시 누르지 않는다', () => {
+  it('메인이 새 탭 열림을 알리면 폴백 없이 한 번으로 끝난다(SAMBA-WAVE 원문링크)', async () => {
+    const { notePopupOpened } = await import('../src/preload/page-core')
+    document.body.innerHTML = '<button id="src">원문링크</button>'
+    buildSnapshot()
+    let presses = 0
+    document.getElementById('src')!.addEventListener('click', () => {
+      presses += 1
+      // window.open → 메인의 setWindowOpenHandler → page:popupOpened 알림(비동기)
+      setTimeout(notePopupOpened, 10)
+    })
+    expect(await performClick(1)).toBe('ok')
+    expect(presses).toBe(1)
+  })
+})
+
 describe('performClick 폴백 — 첫 클릭이 먹지 않으면 Enter', () => {
   it('클릭에 반응 없는 버튼에 keydown Enter 를 쏜다', async () => {
     document.body.innerHTML = '<button id="buy">구매하기</button>'

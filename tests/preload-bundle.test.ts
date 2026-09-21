@@ -29,6 +29,10 @@ describe('page-constants 는 shared 원본과 동기화되어야 한다', () => 
     expect(PAGE_IPC.vaultCapture).toBe(IPC.vaultCapture)
   })
 
+  it('새 탭·새 창 알림 채널명이 shared/ipc 와 같다', () => {
+    expect(PAGE_IPC.popupOpened).toBe(IPC.pagePopupOpened)
+  })
+
   it('자동 채움 피커 채널명이 shared/ipc 와 같다', () => {
     expect(PAGE_IPC.vaultPickerAccounts).toBe(IPC.vaultPickerAccounts)
     expect(PAGE_IPC.vaultPickerFill).toBe(IPC.vaultPickerFill)

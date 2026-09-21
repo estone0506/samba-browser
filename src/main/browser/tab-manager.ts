@@ -668,6 +668,9 @@ export class TabManager {
         console.warn(`새 창 차단: ${target}`)
         return { action: 'deny' }
       }
+      // 여는 쪽 페이지에 알린다 — 새 탭이 열려도 그 페이지 화면은 그대로라, AI 클릭의 재시도 폴백이
+      // 같은 버튼을 다시 눌러 탭이 여러 개 열렸다(실기: SAMBA-WAVE 원문링크 → 탭 4개)
+      if (!wc.isDestroyed()) wc.send(IPC.pagePopupOpened)
       // 크롬과 같은 규칙: target=_blank 링크·일반 새 탭 요청은 탭으로 연다.
       // (같은 profile 로 열어 로그인 세션·쿠키가 이어진다)
       if (disposition === 'foreground-tab' || disposition === 'background-tab') {

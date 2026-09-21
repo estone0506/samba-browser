@@ -81,6 +81,8 @@ export const IPC = {
   // 미리 정해진 동작 이름(shared/agent-op 의 AgentOp)과 인자만 오간다
   pageAgentCall: 'page:agentCall', // main → 해당 프레임 preload (frame.send)
   pageAgentResult: 'page:agentResult', // 프레임 preload → main (send)
+  // 이 페이지가 새 탭·새 창을 열었다(main → preload). 클릭 폴백이 같은 버튼을 다시 누르지 않게 한다
+  pagePopupOpened: 'page:popupOpened',
   // 파비콘 — 사이트 자체에서만 받아온 dataUrl 을 돌려준다(제3자 전송 없음)
   faviconGet: 'favicon:get',
   // --- 작업공간(브라우저 프로필) ---------------------------------------------
