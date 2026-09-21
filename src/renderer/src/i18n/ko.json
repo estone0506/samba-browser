@@ -532,7 +532,9 @@
       "newTitle": "{{type}} 추가",
       "editItemTitle": "{{type}} 편집",
       "generate": "생성",
-      "keepHint": "비워두면 기존 값을 유지해요"
+      "keepHint": "비워두면 기존 값을 유지해요",
+      "showSecret": "입력한 값 보이기",
+      "hideSecret": "입력한 값 가리기"
     },
     "import": {
       "title": "가져오기",

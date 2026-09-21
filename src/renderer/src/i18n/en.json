@@ -532,7 +532,9 @@
       "newTitle": "New {{type}}",
       "editItemTitle": "Edit {{type}}",
       "generate": "Generate",
-      "keepHint": "Leave empty to keep the saved value"
+      "keepHint": "Leave empty to keep the saved value",
+      "showSecret": "Show what you typed",
+      "hideSecret": "Hide what you typed"
     },
     "import": {
       "title": "Import",
