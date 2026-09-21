@@ -210,6 +210,35 @@ describe('저장 상한', () => {
     expect(addRecipe([partial], later)).toEqual([later])
   })
 
+  it('일찍 접은 짧은 완주(1단계)는 주문서까지 간 긴 부분 경로를 막지도 밀어내지도 못한다', () => {
+    const step = { tool: 'click' as const, label: 'x', urlPattern: '/p' }
+    const lazyDone: SiteRecipe = { goal: '주문', steps: [step], createdAt: 1, uses: 0, lastOkAt: 1 }
+    const longPartial: SiteRecipe = {
+      goal: '주문',
+      steps: Array.from({ length: 40 }, () => step),
+      createdAt: 2,
+      uses: 0,
+      lastOkAt: 2,
+      partial: true
+    }
+    // 짧은 완주가 먼저 있어도 긴 부분 경로가 들어온다
+    expect(addRecipe([lazyDone], longPartial)).toEqual([longPartial])
+    // 긴 부분 경로가 있으면 짧은 완주는 덮어쓰지 못한다
+    expect(addRecipe([longPartial], { ...lazyDone, createdAt: 3, lastOkAt: 3 })).toEqual([
+      longPartial
+    ])
+    // 제대로 된 완주(5단계 이상)는 언제나 이긴다
+    const realDone: SiteRecipe = {
+      goal: '주문',
+      steps: Array.from({ length: 12 }, () => step),
+      createdAt: 4,
+      uses: 0,
+      lastOkAt: 4
+    }
+    expect(addRecipe([longPartial], realDone)).toEqual([realDone])
+    expect(addRecipe([realDone], longPartial)).toEqual([realDone])
+  })
+
   it('상한을 넘으면 짧은 경로부터 버린다(긴 주문 경로가 밀려나지 않는다)', () => {
     const step = { tool: 'click' as const, label: 'x', urlPattern: '/p' }
     const long: SiteRecipe = {

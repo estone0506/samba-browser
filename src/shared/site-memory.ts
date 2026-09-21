@@ -281,9 +281,28 @@ export function addNote(notes: readonly string[], note: string): string[] {
  * 상한을 넘으면 짧은 것부터 버린다: 한 줄짜리 지시("쿠폰 눌러")로 생긴 두 단계 경로가
  * 주문 한 건의 긴 경로를 밀어내지 않게 한다
  */
+/** "제대로 된 완주 경로"로 보는 최소 단계 수. 이보다 짧은 완주는 일찍 접은 실행이다 */
+export const SITE_REAL_PATH_MIN_STEPS = 5
+
+/**
+ * 같은 목표의 옛 경로를 새 경로로 갈아 끼울 것인가.
+ *  - 새 경로가 제대로 된 완주(5단계 이상)면 언제나 갈아 끼운다
+ *  - 옛 경로가 제대로 된 완주인데 새 것이 부분 경로면 그대로 둔다
+ *  - 그 밖에는 단계가 더 많은 쪽을 남긴다(같으면 새 것).
+ *    "상품 페이지만 보고 보류" 로 71초 만에 끝난 1단계 완주가, 주문서까지 간 40단계
+ *    부분 경로를 막거나 밀어내면 안 된다(실기에서 관찰)
+ */
+export function replacesSameGoal(old: SiteRecipe, fresh: SiteRecipe): boolean {
+  const real = (r: SiteRecipe): boolean =>
+    r.partial !== true && r.steps.length >= SITE_REAL_PATH_MIN_STEPS
+  if (real(fresh)) return true
+  if (real(old) && fresh.partial === true) return false
+  return fresh.steps.length >= old.steps.length
+}
+
 export function addRecipe(recipes: readonly SiteRecipe[], recipe: SiteRecipe): SiteRecipe[] {
   const same = recipes.find((r) => r.goal === recipe.goal)
-  if (same && recipe.partial === true && same.partial !== true) return [...recipes]
+  if (same && !replacesSameGoal(same, recipe)) return [...recipes]
   const rest = recipes.filter((r) => r.goal !== recipe.goal)
   const merged = [recipe, ...rest]
   if (merged.length <= SITE_RECIPE_MAX) return merged
