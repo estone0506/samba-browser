@@ -96,6 +96,9 @@ const BOOTSTRAP = `(() => {
     scroll: (dir, id) => invoke('page.scroll', [dir, id]),
     text: (id) => invoke('page.text', [id]),
     find: (query) => invoke('page.find', [query]),
+    // 글자로 요소를 찾는다 — 번호는 페이지를 읽을 때마다 바뀌므로, 다시 쓸 코드는 이걸로 쓴다
+    idOf: (text, nth) => invoke('page.idOf', [text, nth || 0]),
+    clickText: (text, nth) => invoke('page.clickText', [text, nth || 0]),
     dismissOverlay: () => invoke('page.dismissOverlay', []),
     url: () => invoke('page.url', []),
     title: () => invoke('page.title', [])

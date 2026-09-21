@@ -384,6 +384,9 @@ export interface ToolContext {
   // 행동 도구(click·type·select·scroll·switch_tab·dismiss_overlay·run_js) 호출 1건을 그대로 넘긴다.
   // 사이트 기억이 성공 경로를 뽑는 유일한 입구다 — 관찰 도구는 여기로 오지 않는다
   onCall?: (call: AgentToolCall) => void
+  // 통한(또는 실패한) run_js 코드 전문. 실행이 끝난 뒤 학습 단계가 이것으로 재생용 스크립트를 만든다.
+  // clicked 는 코드 안에서 번호로 누른 요소의 글자다(번호는 페이지마다 바뀌므로 글자로 바꿔 쓰게 한다)
+  onRunJs?: (run: { code: string; ok: boolean; url: string; clicked: string[] }) => void
   // 사이트 기억. 주입되지 않으면 remember_site 도구를 등록하지 않는다
   siteMemory?: { remember: (host: string, note: string) => string }
   // 저장된 사이트 스크립트. 주입되지 않으면 save_script·run_script 도구를 등록하지 않는다
@@ -1230,7 +1233,18 @@ overlays left: ${after.length}${kept}`
     typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : 0
 
   /** 샌드박스가 부르는 동작 표. 실행 1건마다 새로 만든다(직전 스냅샷을 그 안에서만 기억) */
-  const makeRunJsBridge = (): RunJsBridge => {
+  /** 글자로 요소 번호를 찾는다. 글자가 정확히 같은 것을 먼저, 없으면 포함하는 것. 못 찾으면 -1 */
+  const idOfText = async (query: string, nth: number): Promise<number> => {
+    const read = await readSnapshot({ query })
+    if (typeof read === 'string') return -1
+    const want = query.trim()
+    const label = (e: { text: string; name?: string }): string => (e.text || e.name || '').trim()
+    const exact = read.snapshot.elements.filter((e) => label(e) === want)
+    const pool = exact.length > 0 ? exact : read.snapshot.elements
+    return pool[Math.max(nth, 0)]?.id ?? -1
+  }
+
+  const makeRunJsBridge = (clicked?: string[]): RunJsBridge => {
     let lastTree: string | undefined
     return async (name, args) => {
       runJsTick()
@@ -1263,8 +1277,22 @@ overlays left: ${after.length}${kept}`
             elements: read.snapshot.elements.length
           }
         }
-        case 'page.click':
+        case 'page.click': {
+          // 학습용: 번호로 누른 요소가 무슨 글자였는지 남긴다
+          if (clicked) {
+            const tab = activeOr(ctx)
+            const text = tab ? await pageBridge.textOf(tab, asId(args[0])) : ''
+            clicked.push(`${asId(args[0])}=${text.slice(0, 40)}`)
+          }
           return doClick(asId(args[0]), asText(args[1]))
+        }
+        case 'page.idOf':
+          return idOfText(asText(args[0]), asId(args[1]))
+        case 'page.clickText': {
+          const id = await idOfText(asText(args[0]), asId(args[1]))
+          if (id < 0) return `not found: no element with text "${asText(args[0])}"`
+          return doClick(id, asText(args[0]))
+        }
         case 'page.type': {
           const tab = activeOr(ctx)
           if (!tab) return 'no active tab'
@@ -1343,12 +1371,25 @@ overlays left: ${after.length}${kept}`
       'The code runs in a sandbox in the browser process, not in the page - only these APIs exist: ' +
       'page.get({query,selector,interactive}) -> {tree,diff,total,elements}, page.click(id), ' +
       'page.type(id,text,submit), page.select(id,value), page.scroll(dir,id), page.text(id), ' +
-      'page.find(query), page.dismissOverlay(), page.url(), page.title(), ' +
+      'page.find(query), page.idOf(text,nth) -> id or -1, page.clickText(text,nth), ' +
+      'page.dismissOverlay(), page.url(), page.title(), ' +
       'tabs.list()/switch(id)/close(id)/open({url, profile}), sleep(ms), log(...). ' +
       'Use log() and return a value; both come back to you. ' +
       'fill_secret, login and the phone tools are NOT available here - call those tools directly.',
     { code: z.string().describe(`JavaScript, ${RUN_JS_MAX_CODE} characters or fewer`) },
-    ({ code }) => guard(runJsLabel(code), () => runSandbox(code, makeRunJsBridge()), 'run_js', true)
+    ({ code }) => {
+      const clicked: string[] = []
+      return guard(
+        runJsLabel(code),
+        async () => {
+          const result = await runSandbox(code, makeRunJsBridge(clicked))
+          ctx.onRunJs?.({ code, ok: isToolResultOk(result, true), url: currentUrl(), clicked })
+          return result
+        },
+        'run_js',
+        true
+      )
+    }
   )
 
   const wait = tool(

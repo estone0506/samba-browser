@@ -1,3 +1,4 @@
+import { buildLearnPrompt, LEARN_PROMPT_PREFIX, shouldLearn, type LearnedRunJs } from './learn'
 import { randomUUID } from 'crypto'
 import type { TabManager } from '../browser/tab-manager'
 import type { SettingsStore } from '../settings/store'
@@ -387,9 +388,15 @@ export class AgentRunner {
     if (!prompt.startsWith('직전 작업을 그 자리에서 이어서')) this.autoContinueLeft = 1
     // 이 실행의 행동 도구 호출 기록. 성공으로 끝나면 사이트 기억이 여기서 경로를 뽑는다
     const calls: AgentToolCall[] = []
+    // 이 실행에서 돌린 run_js 코드 전문. 실행이 끝나면 자동 학습 턴이 이것으로 재생용 스크립트를 만든다
+    const runJsLog: LearnedRunJs[] = []
+    // 이 실행이 끝난 뒤 이어서 돌릴 지시문(자동 이어가기·자동 학습). finally 에서 실행 상태를 비운 다음에 시작한다
+    let followUp: string | null = null
     const startedAt = Date.now()
     // 사용자 문장에 걸리는 플레이북 — 시스템 프롬프트 뒤에 절차를 덧붙이고, 화면에는 이름만 알린다
-    const playbooks = this.matchedPlaybooks(prompt)
+    // 자동 학습 턴에는 플레이북을 붙이지 않는다 — 지시문에 든 "주문처리"에 걸려 주문을 다시 처리하려 들면 안 된다
+    const learning = prompt.startsWith(LEARN_PROMPT_PREFIX)
+    const playbooks = learning ? [] : this.matchedPlaybooks(prompt)
     // 이번 실행에 붙일 사이트 기억 블록(지시문·플레이북 본문·현재 탭 URL 에서 호스트를 뽑는다)
     const memory = this.siteMemoryBlock(prompt, playbooks)
     const scripts = s.siteMemoryEnabled ? this.siteScripts : null
@@ -476,6 +483,7 @@ export class AgentRunner {
       onStep: (label, ok) => emit({ type: 'step', label, ok }),
       // 행동 도구 호출만 넘어온다(관찰 도구는 오지 않는다)
       onCall: (call) => calls.push(call),
+      onRunJs: (run) => runJsLog.push(run),
       siteMemory: this.siteMemory
         ? { remember: (host, note) => this.siteMemory?.remember(host, note) ?? '' }
         : undefined,
@@ -641,10 +649,16 @@ ${CODEX_NO_IMAGE_NOTE}`
           if (silentStop) {
             this.autoContinueLeft -= 1
             emit({ type: 'text', text: '(답 없이 멈춰 자동으로 이어갑니다)' })
-            void this.run(
-              '직전 작업을 그 자리에서 이어서 끝까지 진행하고, 끝나면 done 으로 보고해.',
-              chatId
-            )
+            followUp = '직전 작업을 그 자리에서 이어서 끝까지 진행하고, 끝나면 done 으로 보고해.'
+          } else if (scripts && shouldLearn(prompt, runJsLog)) {
+            // 성공이든 실패든, 통한 구간까지는 다음에 재생할 수 있게 스스로 저장하게 한다
+            emit({ type: 'text', text: '(이번에 통한 절차를 다음부터 한 번에 재생하도록 저장합니다)' })
+            followUp = buildLearnPrompt({
+              userPrompt: prompt,
+              runs: runJsLog,
+              steps: entry.steps,
+              savedScripts: scripts.list().map((sc) => ({ name: sc.name, description: sc.description }))
+            })
           }
         }
       }
@@ -685,6 +699,15 @@ ${CODEX_NO_IMAGE_NOTE}`
         } catch (e: unknown) {
           console.error('대화 기록 저장 실패', e instanceof Error ? e.message : String(e))
         }
+      }
+      // 이어서 돌릴 것이 있으면 이 실행이 완전히 끝난 다음(실행 상태를 비운 뒤)에 시작한다.
+      // 그 사이 사용자가 새 지시를 넣었으면(세대가 바뀜) 양보한다
+      const next = followUp
+      if (next !== null && gen === this.generation && !abort.signal.aborted) {
+        setTimeout(() => {
+          if (gen !== this.generation || this.abort) return
+          void this.run(next, chatId).catch(() => undefined)
+        }, 0)
       }
     }
   }

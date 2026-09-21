@@ -383,6 +383,14 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
       ctx.onStep(tr('phone.payRejected', { reason: tr('phone.gateNoAccount') }), false)
       return { ok: false, reason: 'no-account' }
     }
+    // 결제 앱은 담당 폰에만 있다. 담당 폰이 끊겨 있으면 다른 폰으로 넘어가지 않는다 —
+    // 남의 폰에서 결제 앱을 열고 한참 찾다가 stuck 으로 끝났다(실기)
+    const assigned = deps.phones.assignForJob(account.id)
+    if (assigned && !online().some((p) => p.serial === assigned.serial)) {
+      const name = assigned.label || assigned.model || assigned.serial
+      ctx.onStep(tr('phone.payRejected', { reason: tr('phone.gateAssignedOffline', { name }) }), false)
+      return { ok: false, reason: 'no-phone' }
+    }
     const serial = serialsFor(account.id)[0]
     if (!serial) {
       ctx.onStep(tr('phone.payRejected', { reason: tr('phone.gateNoPhone') }), false)

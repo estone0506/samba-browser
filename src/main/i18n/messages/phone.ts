@@ -38,6 +38,7 @@ export const phoneMessages = defineMessages({
     'phone.gateVaultLocked': '키마스터 잠김',
     'phone.gateNoAccount': '이 사이트의 계정을 특정할 수 없음',
     'phone.gateNoPhone': '연결된 폰 없음',
+    'phone.gateAssignedOffline': '담당 폰({name})이 연결되어 있지 않음 — 폰의 무선 디버깅·와이파이를 확인',
     'phone.payConfirmDeclined': '결제 확인 거부',
     'phone.payFailedStep': '결제 실패: {reason}',
     'phone.payFailedNotice': '결제를 끝내지 못했습니다({reason}). 폰에서 직접 확인해 주세요.',
@@ -80,6 +81,8 @@ export const phoneMessages = defineMessages({
     'phone.gateVaultLocked': 'Key Master is locked',
     'phone.gateNoAccount': 'could not identify the account for this site',
     'phone.gateNoPhone': 'no phone connected',
+    'phone.gateAssignedOffline':
+      'the assigned phone ({name}) is not connected - check its wireless debugging and Wi-Fi',
     'phone.payConfirmDeclined': 'Payment confirmation declined',
     'phone.payFailedStep': 'Payment failed: {reason}',
     'phone.payFailedNotice':
