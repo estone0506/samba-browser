@@ -40,6 +40,11 @@ export interface PayProviderSpec {
   successHint: RegExp
   /** 알림창에서 이 앱의 알림임을 알아보는 이름(알림 머리글) */
   notificationLabel: RegExp
+  /**
+   * 앱을 켤 때 묻는 잠금 비밀번호 화면의 문구. 결제 비밀번호와 같은 값을 쓰는 앱(토스)만 적는다 —
+   * 이 화면은 결제 비밀번호 입력과 따로 센다(잠금 1회 + 결제 1회)
+   */
+  unlockHint?: RegExp
 }
 
 /** 결제 요청 알림의 본문으로 볼 문구 — 앱 이름과 가까이 있을 때만 누른다 */
@@ -55,7 +60,9 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     confirmText: /결제하기|확인|다음|동의하고 결제/,
     passwordHint: /비밀번호|간편비밀번호|PIN/,
     successHint: /결제(가)?\s?완료|송금 완료|완료되었습니다/,
-    notificationLabel: /토스|toss/i
+    notificationLabel: /토스|toss/i,
+    // "앱을 켜려면 비밀번호를 눌러주세요" — 토스는 앱 잠금과 결제에 같은 비밀번호를 쓴다
+    unlockHint: /앱을 켜려면/
   },
   payco: {
     id: 'payco',
@@ -404,6 +411,9 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
   let state: PayState = 'await_app'
   let lastTapped: number | null = null
   let passwordTried = false
+  // 앱 잠금 화면에 넣은 적이 있는가 — 결제 비밀번호 입력과 따로 센다
+  let unlockTried = false
+  let unlockedAt = -1
   let screen: PhoneScreen | null = null
   // 누를 것이 없던 횟수. 몇 번 이어지면 알림창의 결제 요청 알림을 눌러 본다(실행당 한 번)
   let idlePolls = 0
@@ -415,9 +425,18 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
     state = next.state
 
     if (state === 'password') {
-      // 재시도하지 않는다 — 두 번째로 비밀번호 화면이 보이면 잘못 눌린 것으로 본다
-      if (passwordTried) return fail('verify-failed', screen)
-      passwordTried = true
+      // 앱 잠금 화면인가(앱을 켤 때 먼저 묻는 비밀번호). 잠금 1회 + 결제 1회, 어느 쪽도 재시도하지 않는다 —
+      // 같은 화면이 두 번째로 보이면 잘못 눌린 것으로 본다(오답이 쌓이면 잠긴다)
+      const unlocking = spec.unlockHint !== undefined && hasText(screen, spec.unlockHint)
+      // 비밀번호를 넣은 직후에는 화면이 넘어가는 동안 같은 잠금 화면이 잠깐 더 보인다 — 그동안은 기다리기만 한다
+      if (unlocking && unlockTried && i - unlockedAt <= UNLOCK_GRACE_POLLS) {
+        await sleep(PAY_POLL_MS)
+        continue
+      }
+      if (unlocking ? unlockTried : passwordTried) return fail('verify-failed', screen)
+      if (unlocking) unlockedAt = i
+      if (unlocking) unlockTried = true
+      else passwordTried = true
       const layout = await resolveKeypad(deps, screen, req.serial, (v) => (usedVisual = v))
       if (!layout) return handOff(screen)
       const r = await tapPassword({
@@ -431,7 +450,9 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
         onStep: deps.onStep
       })
       if (r !== 'ok') return fail(SECRET_FAIL[r], screen)
-      state = 'verify'
+      // 잠금을 풀었으면 결제 화면을 마저 따라간다. 결제 비밀번호였으면 완료를 기다린다
+      state = unlocking ? 'app_steps' : 'verify'
+      lastTapped = null
       await sleep(PAY_POLL_MS)
       continue
     }
@@ -467,6 +488,9 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
   deps.onStep(tr('phone.payDone'), true)
   return finish(true)
 }
+
+/** 앱 잠금을 푼 뒤 같은 잠금 화면이 이만큼까지는 더 보여도 기다린다(화면 전환 시간) */
+const UNLOCK_GRACE_POLLS = 4
 
 /** 누를 것이 없는 화면이 이만큼 이어지면 알림창을 열어 본다 */
 export const NOTIFICATION_AFTER_POLLS = 3

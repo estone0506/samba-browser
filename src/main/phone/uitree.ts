@@ -86,8 +86,14 @@ export function parseUiXml(xml: string, serial: string, app: string): PhoneScree
 
 /** dumpsys 출력에서 최상위 패키지명을 뽑는다(순수 함수 — 셸을 거치지 않는다) */
 export function parseCurrentApp(stdout: string): string {
-  const line = stdout.split(/\r?\n/).find((l) => l.includes('mCurrentFocus')) ?? ''
-  return /\s([A-Za-z0-9_.]+)\/[A-Za-z0-9_.$]+/.exec(line)?.[1] ?? ''
+  // 디스플레이가 여럿으로 잡히는 폰은 첫 줄이 `mCurrentFocus=null` 이다(실기: SM A426N — 토스가 앞에 떠 있는데도
+  // 앱 이름이 빈 값으로 읽혀 결제 흐름이 "앱이 아직 안 떴다"며 stuck 으로 끝났다). 패키지가 적힌 첫 줄을 쓴다
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.includes('mCurrentFocus')) continue
+    const app = /\s([A-Za-z0-9_.]+)\/[A-Za-z0-9_.$]+/.exec(line)?.[1]
+    if (app) return app
+  }
+  return ''
 }
 
 /**

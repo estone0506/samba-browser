@@ -97,3 +97,16 @@ describe('dumpScreen', () => {
     expect(screen).toEqual({ serial: 'S', width: 0, height: 0, app: '', elements: [] })
   })
 })
+
+describe('parseCurrentApp — 첫 줄이 null 인 폰', () => {
+  it('mCurrentFocus=null 줄을 건너뛰고 패키지가 적힌 줄을 쓴다(실기: SM A426N)', async () => {
+    const { parseCurrentApp } = await import('../src/main/phone/uitree')
+    const out = [
+      '  mCurrentFocus=null',
+      '  mFocusedApp=null',
+      '  mCurrentFocus=Window{d6224e5 u0 viva.republica.toss/viva.republica.toss.password.PasswordActivity}'
+    ].join('\n')
+    expect(parseCurrentApp(out)).toBe('viva.republica.toss')
+    expect(parseCurrentApp('  mCurrentFocus=null')).toBe('')
+  })
+})

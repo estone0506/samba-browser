@@ -559,3 +559,33 @@ describe('결제 확인 카드는 권한 모드를 따른다', () => {
     expect(h.confirm).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('토스 앱 잠금 — 앱을 켤 때도 비밀번호를 묻는다', () => {
+  const lock = screen(TOSS.packageName, [
+    el(1, '앱을 켜려면\n비밀번호를 눌러주세요', { clickable: false })
+  ])
+  const payAsk = screen(TOSS.packageName, [el(2, '결제하기')])
+  const payPw = screen(TOSS.packageName, [el(3, '비밀번호를 눌러주세요', { clickable: false })])
+  const done = screen(TOSS.packageName, [el(4, '결제가 완료되었습니다', { clickable: false })])
+
+  it('잠금 1회 + 결제 1회, 비밀번호를 두 번 넣고 끝까지 간다', async () => {
+    const h = harness({ screens: [lock, lock, payAsk, payPw, done, done] })
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: true })
+    expect(h.tapPassword).toHaveBeenCalledTimes(2)
+  })
+
+  it('잠금 화면이 한참 뒤에도 그대로면(오답) 다시 넣지 않고 멈춘다', async () => {
+    const h = harness({ screens: [lock] })
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: false, reason: 'verify-failed' })
+    expect(h.tapPassword).toHaveBeenCalledTimes(1)
+  })
+
+  it('결제 비밀번호 화면이 두 번째로 보이면 예전처럼 멈춘다(재시도 없음)', async () => {
+    const h = harness({ screens: [payAsk, payPw, payPw, payPw] })
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: false, reason: 'verify-failed' })
+    expect(h.tapPassword).toHaveBeenCalledTimes(1)
+  })
+})
