@@ -150,5 +150,9 @@ export const secretKeypadGate = createSecretKeypadGate({
     typeof pageBridge.keypadSignalsAll === 'function'
       ? mergeKeypadSignals(await pageBridge.keypadSignalsAll(tab))
       : pageBridge.keypadSignals(tab),
-  urlOf: (tab) => (tab.view.webContents.isDestroyed() ? '' : tab.view.webContents.getURL())
+  // 닫힌 탭은 view.webContents 가 undefined 다 — isDestroyed() 를 바로 부르면 메인 프로세스가 죽는다
+  urlOf: (tab) => {
+    const wc = tab.view.webContents as typeof tab.view.webContents | undefined
+    return wc && !wc.isDestroyed() ? wc.getURL() : ''
+  }
 })

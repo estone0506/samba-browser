@@ -145,6 +145,18 @@ export function guardNavigation(wc: WebContents, allowExtension: boolean): void 
 }
 
 // 탭 = WebContentsView 1개. 프로필은 persist: 파티션으로 쿠키 분리
+/**
+ * 탭의 웹 내용이 아직 살아 있는가.
+ * WebContentsView 가 닫히면 `view.webContents` 자체가 undefined 가 된다 — 곧바로 isDestroyed() 를 부르면
+ * "Cannot read properties of undefined" 로 메인 프로세스가 죽는다(실기: 탭 이벤트가 닫힌 탭 목록을 돌 때)
+ */
+export function isTabAlive(tab: {
+  view: { webContents?: { isDestroyed(): boolean } | null }
+}): boolean {
+  const wc = tab.view.webContents
+  return wc !== undefined && wc !== null && !wc.isDestroyed()
+}
+
 export class TabManager {
   private tabs: Tab[] = []
   private popups = new PopupRegistry<BrowserWindow>()
@@ -385,7 +397,7 @@ export class TabManager {
 
   list(): TabInfo[] {
     return this.tabs
-      .filter((t) => !t.view.webContents.isDestroyed())
+      .filter((t) => isTabAlive(t))
       .map((t) => ({
         id: t.id,
         url: t.view.webContents.getURL(),
@@ -544,7 +556,7 @@ export class TabManager {
     if (popup) return this.asTab(popup)
     for (let i = this.tabs.length - 1; i >= 0; i--) {
       const t = this.tabs[i]
-      if (t.openerId === openerId && !t.view.webContents.isDestroyed()) return t
+      if (t.openerId === openerId && isTabAlive(t)) return t
     }
     return null
   }
@@ -800,7 +812,7 @@ export class TabManager {
     const [tab] = this.tabs.splice(idx, 1)
     this.lastDialogMessage.delete(id)
     // 닫히기 전에 주소를 챙겨 둔다(제스처 '닫은 탭 다시 열기')
-    if (!tab.view.webContents.isDestroyed()) {
+    if (isTabAlive(tab)) {
       const record: ClosedTabRecord = {
         url: tab.view.webContents.getURL(),
         profile: tab.profile,
@@ -809,7 +821,7 @@ export class TabManager {
       for (const cb of this.closedListeners) cb(record)
     }
     if (!this.win.isDestroyed()) this.win.contentView.removeChildView(tab.view)
-    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
+    if (isTabAlive(tab)) tab.view.webContents.close()
     if (this.activeId === id) {
       const next = this.tabs[idx] ?? this.tabs[idx - 1]
       if (next) this.activate(next.id)
