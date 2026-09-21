@@ -254,22 +254,37 @@ export function resolveAccount(
 // 도구 하나의 상한 시간. run_js 는 자체 30초 상한이 있으므로 그보다 넉넉히 둔다
 const TOOL_TIMEOUT_MS = 90_000
 
-async function withToolTimeout<T>(p: Promise<T>, ms: number): Promise<T | string> {
-  let timer: ReturnType<typeof setTimeout> | undefined
+/** 제한 시간을 잴 때 시계를 확인하는 간격 */
+const TOOL_TIMEOUT_POLL_MS = 1_000
+
+/**
+ * 도구 하나의 제한 시간. 사람을 기다리는 동안(확인 카드·키패드 넘김)은 시간을 세지 않는다 —
+ * 사용자가 결제 비밀번호를 90초 넘게 누르고 있으면 도구가 "페이지 무응답"으로 끝나 버리고,
+ * 카드는 화면에 남은 채 모델이 다른 길로 새던 문제를 막는다
+ */
+export async function withToolTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  isWaitingForHuman: () => boolean = () => false,
+  pollMs: number = TOOL_TIMEOUT_POLL_MS
+): Promise<T | string> {
+  let timer: ReturnType<typeof setInterval> | undefined
   const timeout = new Promise<string>((resolve) => {
-    timer = setTimeout(
-      () =>
-        resolve(
-          `error: the page did not respond within ${Math.round(ms / 1000)}s (a dialog, a stuck popup or heavy loading). ` +
-            'Call list_tabs/get_page again, or switch to another tab.'
-        ),
-      ms
-    )
+    let spent = 0
+    timer = setInterval(() => {
+      if (isWaitingForHuman()) return
+      spent += pollMs
+      if (spent < ms) return
+      resolve(
+        `error: the page did not respond within ${Math.round(ms / 1000)}s (a dialog, a stuck popup or heavy loading). ` +
+          'Call list_tabs/get_page again, or switch to another tab.'
+      )
+    }, pollMs)
   })
   try {
     return await Promise.race([p, timeout])
   } finally {
-    if (timer) clearTimeout(timer)
+    if (timer) clearInterval(timer)
   }
 }
 
@@ -394,7 +409,23 @@ export async function findLoginFieldsWithFallback(
   return fields
 }
 
-export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkMcpServer> {
+export function createSambaTools(baseCtx: ToolContext): ReturnType<typeof createSdkMcpServer> {
+  // 사람을 기다리는 중인 호출 수 — 이 동안은 도구 제한 시간을 세지 않는다
+  let humanWaits = 0
+  const waitingForHuman = async <T>(fn: () => Promise<T>): Promise<T> => {
+    humanWaits += 1
+    try {
+      return await fn()
+    } finally {
+      humanWaits -= 1
+    }
+  }
+  const baseHandoff = baseCtx.handoff
+  const ctx: ToolContext = {
+    ...baseCtx,
+    confirm: (action, kind) => waitingForHuman(() => baseCtx.confirm(action, kind)),
+    ...(baseHandoff ? { handoff: (o) => waitingForHuman(() => baseHandoff(o)) } : {})
+  }
   // 상한 도달 알림은 1회만 보낸다
   let limitNotified = false
 
@@ -422,7 +453,7 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     try {
       // 페이지가 대화상자·무한 로딩으로 응답하지 않으면 실행 전체가 멈춘다(실기에서 14분 대기).
       // 도구 하나는 이 시간 안에 끝나야 하고, 넘기면 문구로 돌려줘 모델이 다른 길을 찾게 한다
-      const r = await withToolTimeout(fn(), TOOL_TIMEOUT_MS)
+      const r = await withToolTimeout(fn(), TOOL_TIMEOUT_MS, () => humanWaits > 0)
       const raw = typeof r === 'string' ? r : JSON.stringify(r)
       const ok = !/not found|not set up|host unknown|refused|denied|error|locked|fail/i.test(raw)
       ctx.onStep(resolveLabel(), ok)
