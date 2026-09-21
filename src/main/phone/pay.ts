@@ -38,19 +38,12 @@ export interface PayProviderSpec {
   // 비밀번호 화면임을 알리는 표식
   passwordHint: RegExp
   successHint: RegExp
-  /** 알림창에서 이 앱의 알림임을 알아보는 이름(알림 머리글) */
-  notificationLabel: RegExp
   /**
    * 앱을 켤 때 묻는 잠금 비밀번호 화면의 문구. 결제 비밀번호와 같은 값을 쓰는 앱(토스)만 적는다 —
    * 이 화면은 결제 비밀번호 입력과 따로 센다(잠금 1회 + 결제 1회)
    */
   unlockHint?: RegExp
 }
-
-/** 결제 요청 알림의 본문으로 볼 문구 — 앱 이름과 가까이 있을 때만 누른다 */
-const PAY_NOTIFICATION_TEXT = /결제|승인|인증/
-/** 알림 머리글(앱 이름)과 본문이 이 개수 안에 붙어 있어야 같은 알림으로 본다 */
-const NOTIFICATION_SPAN = 5
 
 export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
   toss: {
@@ -60,7 +53,6 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     confirmText: /결제하기|확인|다음|동의하고 결제/,
     passwordHint: /비밀번호|간편비밀번호|PIN/,
     successHint: /결제(가)?\s?완료|송금 완료|완료되었습니다/,
-    notificationLabel: /토스|toss/i,
     // "앱을 켜려면 비밀번호를 눌러주세요" — 토스는 앱 잠금과 결제에 같은 비밀번호를 쓴다
     unlockHint: /앱을 켜려면/
   },
@@ -70,8 +62,7 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     deepLink: 'payco://',
     confirmText: /결제하기|확인|다음/,
     passwordHint: /결제 ?비밀번호|PAYCO 비밀번호|비밀번호/,
-    successHint: /결제 ?완료|완료되었습니다/,
-    notificationLabel: /페이코|payco/i
+    successHint: /결제 ?완료|완료되었습니다/
   },
   kakaopay: {
     id: 'kakaopay',
@@ -79,8 +70,7 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     deepLink: 'kakaotalk://',
     confirmText: /결제하기|확인|다음|동의하고 결제/,
     passwordHint: /결제 ?비밀번호|카카오페이 비밀번호|비밀번호/,
-    successHint: /결제 ?완료|완료되었습니다/,
-    notificationLabel: /카카오페이|카카오톡|kakao/i
+    successHint: /결제 ?완료|완료되었습니다/
   },
   naverpay: {
     id: 'naverpay',
@@ -88,8 +78,7 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     deepLink: 'naversearchapp://',
     confirmText: /결제하기|확인|다음/,
     passwordHint: /결제 ?비밀번호|네이버페이 비밀번호|비밀번호/,
-    successHint: /결제 ?완료|완료되었습니다/,
-    notificationLabel: /네이버페이|네이버|naver/i
+    successHint: /결제 ?완료|완료되었습니다/
   }
 }
 
@@ -143,23 +132,56 @@ function findConfirm(screen: PhoneScreen, re: RegExp): number | undefined {
   )?.id
 }
 
+/** 결제 앱이 올린 알림 한 건(dumpsys notification 에서 읽는다). 발신 앱이 그 결제 앱인 것만 담는다 */
+export interface AppNotification {
+  title: string
+  text: string
+}
+
+/** 결제 요청 알림으로 볼 문구 — 광고·혜택 알림을 누르지 않게 제목이나 본문에 이 말이 있어야 한다 */
+const PAY_NOTIFICATION_TEXT = /결제|승인/
+
 /**
- * 알림창(내려진 상태)에서 이 결제 앱의 결제 요청 알림을 찾는다. 누를 요소의 id, 없으면 undefined.
- * 알림은 [앱 이름] [제목] [본문] 이 잇달아 나오는 납작한 목록으로 읽힌다 — 앱 이름과 몇 칸 안에 붙어 있는
- * 결제 문구만 고른다(다른 앱의 "결제" 알림을 누르지 않게). 한 줄에 둘 다 있으면 그 줄이다
+ * `dumpsys notification --noredact` 출력에서 **그 패키지가 올린** 알림의 제목·본문만 뽑는다.
+ * 알림창 글자로 앱을 짐작하지 않는다 — 카카오톡으로 온 "토스" 채널 메시지처럼 제목이 같은 남의 알림을
+ * 눌러 버린다(실기). 누가 올렸는지는 알림 기록의 pkg 로만 가린다
+ */
+export function parseAppNotifications(stdout: string, packageName: string): AppNotification[] {
+  const out: AppNotification[] = []
+  let mine = false
+  let current: AppNotification | null = null
+  const valueOf = (line: string): string =>
+    /=String \((.*)$/.exec(line)?.[1]?.replace(/\)\s*$/, '') ?? ''
+  for (const raw of stdout.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (line.startsWith('NotificationRecord(')) {
+      if (current && (current.title || current.text)) out.push(current)
+      mine = line.includes(`pkg=${packageName} `)
+      current = mine ? { title: '', text: '' } : null
+      continue
+    }
+    if (!mine || !current) continue
+    if (line.startsWith('android.title=')) current.title = valueOf(line)
+    else if (line.startsWith('android.text=')) current.text = valueOf(line)
+  }
+  if (current && (current.title || current.text)) out.push(current)
+  return out.filter((n) => PAY_NOTIFICATION_TEXT.test(`${n.title} ${n.text}`))
+}
+
+/**
+ * 알림창(내려진 상태)에서 누를 요소. 그 결제 앱이 올린 결제 알림의 **제목(없으면 본문)과 글자가 정확히 같은**
+ * 요소만 고른다. 같은 글자가 없으면 아무것도 누르지 않는다
  */
 export function findPayNotification(
   screen: PhoneScreen,
-  spec: PayProviderSpec
+  notifications: readonly AppNotification[]
 ): number | undefined {
-  const textOf = (e: PhoneScreen['elements'][number]): string => `${e.text} ${e.contentDesc ?? ''}`
-  let labelAt = -Infinity
-  for (let i = 0; i < screen.elements.length; i += 1) {
-    const text = textOf(screen.elements[i])
-    if (spec.notificationLabel.test(text)) labelAt = i
-    if (i - labelAt <= NOTIFICATION_SPAN && PAY_NOTIFICATION_TEXT.test(text)) {
-      return screen.elements[i].id
-    }
+  const same = (a: string, b: string): boolean => a.trim() !== '' && a.trim() === b.trim()
+  for (const n of notifications) {
+    const byTitle = screen.elements.find((e) => same(e.text, n.title))
+    if (byTitle) return byTitle.id
+    const byText = screen.elements.find((e) => same(e.text, n.text))
+    if (byText) return byText.id
   }
   return undefined
 }
@@ -263,6 +285,8 @@ export interface PayRunDeps {
   notifications?: {
     open: (serial: string) => Promise<void>
     close: (serial: string) => Promise<void>
+    /** 그 패키지가 올린 결제 알림(제목·본문). 발신 앱은 알림 기록의 pkg 로 가린다 */
+    list: (serial: string, packageName: string) => Promise<AppNotification[]>
   }
   /** 결제 확인 카드. 권한 모드와 무관하게 정확히 1회 부른다 */
   confirm: (action: string) => Promise<boolean>
@@ -505,10 +529,13 @@ async function openPayNotification(
   const sleep = deps.sleep ?? defaultSleep
   if (!shade) return false
   try {
+    const mine = await shade.list(serial, spec.packageName)
+    // 그 앱이 올린 결제 알림이 없으면 알림창을 열지도 않는다
+    if (mine.length === 0) return false
     await shade.open(serial)
     await sleep(PAY_POLL_MS)
     const screen = await deps.phones.screen(serial)
-    const id = findPayNotification(screen, spec)
+    const id = findPayNotification(screen, mine)
     const el = id === undefined ? undefined : findElement(screen, id)
     if (!el) {
       await shade.close(serial)

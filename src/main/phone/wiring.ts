@@ -411,15 +411,8 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     const runDeps: PayRunDeps = {
       phones: { screen, tap: deps.ops.tap, screenshot: deps.ops.screenshot },
       launchApp: createLaunchApp(deps.adb),
-      notifications: {
-        open: async (serial) =>
-          void (await deps.adb.run(
-            shellArgs(serial, ['cmd', 'statusbar', 'expand-notifications']),
-            10000
-          )),
-        close: async (serial) =>
-          void (await deps.adb.run(shellArgs(serial, ['cmd', 'statusbar', 'collapse']), 10000))
-      },
+      // 알림창은 열지 않는다(사용자 지시). 결제 앱을 열면 잠금 해제 뒤 결제 요청 화면이 바로 이어진다 —
+      // 알림창을 뒤지다 카카오톡의 "토스" 메시지를 누르는 사고가 있었다(실기). pay.ts 의 notifications 는 주입하지 않는다
       confirm: (action) => ctx.confirm(action, 'danger'),
       vault: deps.vault,
       vaultUnlocked: () => deps.vault.state() === 'unlocked',

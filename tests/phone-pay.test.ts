@@ -17,6 +17,7 @@ import {
   PAY_APP_TO_PAYMENT_PROVIDER,
   PAY_PROVIDERS,
   findPayNotification,
+  parseAppNotifications,
   checkPaymentGate,
   nextPayState,
   runPayApproval,
@@ -444,36 +445,56 @@ describe('결제 요청이 푸시 알림으로만 와 있을 때 — 알림창�
   const payAsk = screen(TOSS.packageName, [el(2, '결제하기')])
   const keypad = screen(TOSS.packageName, [el(3, '비밀번호를 눌러주세요', { clickable: false })])
   const done = screen(TOSS.packageName, [el(4, '결제가 완료되었습니다', { clickable: false })])
+  const TOSS_PUSH = { title: '무신사 결제하기', text: '알림을 누르고 결제를 완료해주세요.' }
 
-  it('findPayNotification: 앱 이름과 가까이 붙은 결제 문구만 고른다', () => {
-    const s = shade([
-      el(1, '쿠팡', { clickable: false }),
-      el(2, '결제가 완료되었습니다', { clickable: false }),
-      el(3, '문자', { clickable: false }),
-      el(4, '택배가 도착했어요', { clickable: false }),
-      el(5, '오늘의 날씨', { clickable: false }),
-      el(6, '미세먼지 보통', { clickable: false }),
-      el(7, '일정', { clickable: false }),
-      el(8, '회의 10분 전', { clickable: false }),
-      el(9, '토스', { clickable: false }),
-      el(10, '무신사 29,960원', { clickable: false }),
-      el(11, '결제를 완료해주세요', { clickable: false })
-    ])
-    // 쿠팡의 "결제" 알림(2)이 아니라 토스 머리글 아래의 결제 알림(11)
-    expect(findPayNotification(s, TOSS)).toBe(11)
-    expect(
-      findPayNotification(shade([el(1, '쿠팡'), el(2, '결제가 완료되었습니다')]), TOSS)
-    ).toBeUndefined()
+  // 실기 그대로: 카카오톡으로 온 "토스" 채널 메시지(제목이 토스)와 토스 앱의 결제 알림이 함께 떠 있다
+  const DUMP = [
+    '    NotificationRecord(0x0e5267b9: pkg=com.kakao.talk user=UserHandle{0} id=2 tag=49 importance=4 key=0|com.kakao.talk|2',
+    '                android.title=String (토스)',
+    '                android.text=String ([토스] 결제 혜택이 시작됐어요.',
+    '    NotificationRecord(0x08447035: pkg=viva.republica.toss user=UserHandle{0} id=2010044086 tag=null importance=4',
+    '                android.title=String (무신사 결제하기)',
+    '                android.text=String (알림을 누르고 결제를 완료해주세요.',
+    '    NotificationRecord(0x057392be: pkg=viva.republica.toss user=UserHandle{0} id=511393872 tag=null importance=4',
+    '                android.title=null',
+    '                android.text=null',
+    '    NotificationRecord(0x01: pkg=viva.republica.toss user=UserHandle{0} id=7 tag=null importance=3',
+    '                android.title=String (오늘의 혜택)',
+    '                android.text=String (만보기 포인트를 받아 가세요)'
+  ].join('\n')
+
+  it('parseAppNotifications: 그 앱이 올린 결제 알림만 뽑는다(카카오톡의 "토스" 메시지·토스의 광고 알림 제외)', () => {
+    expect(parseAppNotifications(DUMP, 'viva.republica.toss')).toEqual([TOSS_PUSH])
   })
 
-  it('앱을 열어도 누를 것이 없으면 알림창을 내려 결제 알림을 누르고 이어간다', async () => {
+  it('findPayNotification: 제목이 정확히 같은 알림만 고른다 — "토스" 글자가 들어간 남의 알림은 누르지 않는다', () => {
+    const s = shade([
+      el(1, '카카오톡', { clickable: false }),
+      el(2, '토스', { clickable: false }),
+      el(3, '[토스] 결제 혜택이 시작됐어요.', { clickable: false }),
+      el(4, '토스', { clickable: false }),
+      el(5, '무신사 결제하기', { clickable: false }),
+      el(6, '알림을 누르고 결제를 완료해주세요.', { clickable: false })
+    ])
+    expect(findPayNotification(s, [TOSS_PUSH])).toBe(5)
+    // 결제 알림 글자가 화면에 없으면 아무것도 고르지 않는다
+    expect(
+      findPayNotification(shade([el(1, '카카오톡'), el(2, '토스'), el(3, '[토스] 결제 혜택')]), [
+        TOSS_PUSH
+      ])
+    ).toBeUndefined()
+    expect(findPayNotification(s, [])).toBeUndefined()
+  })
+
+  it('앱을 열어도 누를 것이 없으면 알림창을 내려 그 앱의 결제 알림을 누르고 이어간다', async () => {
     const screens = [
       tossHome,
       tossHome,
       tossHome,
       shade([
-        el(9, '토스', { clickable: false }),
-        el(11, '결제를 완료해주세요', { clickable: false })
+        el(2, '토스', { clickable: false }),
+        el(3, '[토스] 결제 혜택이 시작됐어요.'),
+        el(11, '무신사 결제하기', { clickable: false })
       ]),
       payAsk,
       keypad,
@@ -481,31 +502,49 @@ describe('결제 요청이 푸시 알림으로만 와 있을 때 — 알림창�
       done
     ]
     const h = harness({ screens })
-    const opened: string[] = []
+    const calls: string[] = []
     h.deps.notifications = {
-      open: async () => void opened.push('open'),
-      close: async () => void opened.push('close')
+      open: async () => void calls.push('open'),
+      close: async () => void calls.push('close'),
+      list: async (_serial, pkg) => {
+        calls.push(`list:${pkg}`)
+        return [TOSS_PUSH]
+      }
     }
     const r = await runPayApproval(h.deps, request())
     expect(r).toEqual({ ok: true })
-    expect(opened).toEqual(['open'])
-    // 알림(11) → 결제하기(2) 순서로 눌렀다
+    expect(calls).toEqual(['list:viva.republica.toss', 'open'])
+    // 토스 결제 알림(11) → 결제하기(2). 카카오톡의 토스 메시지(3)는 누르지 않았다
     expect(h.taps.map((t) => t[2])).toEqual([11 * 100 + 30, 2 * 100 + 30])
-    expect(h.steps.some((s) => s.label.includes('알림'))).toBe(true)
   })
 
-  it('알림창에 그 앱의 결제 알림이 없으면 아무것도 누르지 않고 알림창을 도로 올린다', async () => {
-    const h = harness({
-      screens: [tossHome, tossHome, tossHome, shade([el(1, '쿠팡'), el(2, '결제 완료')]), tossHome]
-    })
-    const opened: string[] = []
+  it('그 앱이 올린 결제 알림이 없으면 알림창을 열지도 않는다', async () => {
+    const h = harness({ screens: [tossHome] })
+    const calls: string[] = []
     h.deps.notifications = {
-      open: async () => void opened.push('open'),
-      close: async () => void opened.push('close')
+      open: async () => void calls.push('open'),
+      close: async () => void calls.push('close'),
+      list: async () => []
     }
     const r = await runPayApproval(h.deps, request())
     expect(r.ok).toBe(false)
-    expect(opened).toEqual(['open', 'close'])
+    expect(calls).toEqual([])
+    expect(h.taps).toEqual([])
+  })
+
+  it('알림 기록에는 있는데 알림창에서 같은 글자를 못 찾으면 누르지 않고 알림창을 도로 올린다', async () => {
+    const h = harness({
+      screens: [tossHome, tossHome, tossHome, shade([el(1, '카카오톡'), el(2, '토스')]), tossHome]
+    })
+    const calls: string[] = []
+    h.deps.notifications = {
+      open: async () => void calls.push('open'),
+      close: async () => void calls.push('close'),
+      list: async () => [TOSS_PUSH]
+    }
+    const r = await runPayApproval(h.deps, request())
+    expect(r.ok).toBe(false)
+    expect(calls).toEqual(['open', 'close'])
     expect(h.taps).toEqual([])
   })
 })
