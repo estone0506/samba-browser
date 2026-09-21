@@ -21,7 +21,7 @@ export function PhonesPage(): React.JSX.Element {
     warning,
     error,
     authWaiting,
-    expandedId,
+    expandedIds,
     screenModes,
     load,
     refresh,
@@ -202,7 +202,7 @@ export function PhonesPage(): React.JSX.Element {
               <PhoneCard
                 key={phone.id}
                 phone={phone}
-                expanded={expandedId === phone.id}
+                expanded={expandedIds.includes(phone.id)}
                 highlighted={
                   authWaiting?.waiting === true &&
                   (authWaiting.phoneId === null || authWaiting.phoneId === phone.id)

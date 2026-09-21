@@ -66,7 +66,7 @@ const reset = (): void =>
     warning: null,
     error: null,
     authWaiting: null,
-    expandedId: null,
+    expandedIds: [],
     screenModes: {},
     assignSuggestion: null
   })
@@ -128,29 +128,30 @@ describe('phoneStore 이벤트 구독', () => {
   })
 
   it('목록에서 빠진 폰은 펼침 상태도 접는다', () => {
-    usePhoneStore.setState({ expandedId: 9 })
+    usePhoneStore.setState({ expandedIds: [9, 1] })
     const off = usePhoneStore.getState().subscribe()
     onUpdatedCb?.([phone({ id: 1 })])
-    expect(usePhoneStore.getState().expandedId).toBeNull()
+    // 사라진 폰(9)만 접고, 남아 있는 폰(1)의 화면은 그대로 둔다
+    expect(usePhoneStore.getState().expandedIds).toEqual([1])
     off()
   })
 
   it('인증 대기가 오면 그 폰 카드를 펼치고, 끝나면 접는다', () => {
     const off = usePhoneStore.getState().subscribe()
     onAuthWaitingCb?.({ waiting: true, kind: 'sms', siteHost: 'naver.com', phoneId: 7 })
-    expect(usePhoneStore.getState().expandedId).toBe(7)
+    expect(usePhoneStore.getState().expandedIds).toEqual([7])
     expect(usePhoneStore.getState().authWaiting?.waiting).toBe(true)
     onAuthWaitingCb?.({ waiting: false, kind: 'sms', siteHost: 'naver.com', phoneId: 7 })
-    expect(usePhoneStore.getState().expandedId).toBeNull()
+    expect(usePhoneStore.getState().expandedIds).toEqual([])
     expect(usePhoneStore.getState().authWaiting).toBeNull()
     off()
   })
 
   it('배정 폰 없이 대기하면 펼침 상태를 건드리지 않는다', () => {
-    usePhoneStore.setState({ expandedId: 3 })
+    usePhoneStore.setState({ expandedIds: [3] })
     const off = usePhoneStore.getState().subscribe()
     onAuthWaitingCb?.({ waiting: true, kind: 'sms', siteHost: 'naver.com', phoneId: null })
-    expect(usePhoneStore.getState().expandedId).toBe(3)
+    expect(usePhoneStore.getState().expandedIds).toEqual([3])
     off()
   })
 
@@ -178,9 +179,27 @@ describe('phoneStore 조작', () => {
 
   it('카드 펼침은 같은 폰을 다시 누르면 접힌다', () => {
     usePhoneStore.getState().toggleExpand(5)
-    expect(usePhoneStore.getState().expandedId).toBe(5)
+    expect(usePhoneStore.getState().expandedIds).toEqual([5])
     usePhoneStore.getState().toggleExpand(5)
-    expect(usePhoneStore.getState().expandedId).toBeNull()
+    expect(usePhoneStore.getState().expandedIds).toEqual([])
+  })
+
+  it('여러 폰의 화면을 동시에 열 수 있다 — 하나를 열어도 다른 화면이 닫히지 않는다', () => {
+    usePhoneStore.getState().toggleExpand(1)
+    usePhoneStore.getState().toggleExpand(2)
+    expect(usePhoneStore.getState().expandedIds).toEqual([1, 2])
+    usePhoneStore.getState().toggleExpand(1)
+    expect(usePhoneStore.getState().expandedIds).toEqual([2])
+  })
+
+  it('인증이 끝나면 인증 때문에 펼친 카드만 접는다(직접 열어 둔 화면은 그대로)', () => {
+    usePhoneStore.setState({ expandedIds: [2] })
+    const off = usePhoneStore.getState().subscribe()
+    onAuthWaitingCb?.({ waiting: true, kind: 'sms', siteHost: 'naver.com', phoneId: 7 })
+    expect(usePhoneStore.getState().expandedIds).toEqual([2, 7])
+    onAuthWaitingCb?.({ waiting: false, kind: 'sms', siteHost: 'naver.com', phoneId: 7 })
+    expect(usePhoneStore.getState().expandedIds).toEqual([2])
+    off()
   })
 
   it('화면 모드를 null 로 두면 기록에서 지운다', () => {
