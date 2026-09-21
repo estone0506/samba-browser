@@ -255,6 +255,8 @@ export interface WiringVault extends PaySecretVault {
 export interface PagePort {
   /** 활성 탭 호스트(정규화). 없으면 빈 문자열 */
   host: () => string
+  /** 활성 탭의 프로필 이름(계정별 탭). 같은 사이트에 계정이 여럿일 때 고르는 기준. 없으면 빈 문자열 */
+  profile?: () => string
   /** 활성 탭 id — 결제 팝업(openerId)을 되찾는 데 쓴다 */
   activeTabId: () => string | null
   snapshot: () => Promise<PageSnapshot>
@@ -305,6 +307,15 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     if (!host) return null
     const accounts = deps.vault.listAccounts(host)
     if (accounts.length === 0) return null
+    // 구매 계정이 여럿인 사이트(무신사의 buyer01·buyer02…)는 기본 계정이 없어 늘 "특정할 수 없음"으로
+    // 끝났다(실기: 토스페이 결제 요청까지 가서 폰 승인이 거부됨). 계정별 프로필 탭의 이름으로 고른다.
+    // 같은 이름의 계정이 로그인 도메인별로 여럿이면 결제 비밀번호를 가진 쪽이 먼저다
+    const profile = deps.page.profile?.() ?? ''
+    if (profile) {
+      const named = accounts.filter((a) => a.label === profile || a.username === profile)
+      const picked = named.find((a) => a.itemTypes.includes('password')) ?? named[0]
+      if (picked) return picked
+    }
     return accounts.find((a) => a.isDefault) ?? (accounts.length === 1 ? accounts[0] : null)
   }
 

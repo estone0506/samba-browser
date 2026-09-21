@@ -572,6 +572,39 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     expect(h.confirms).toHaveLength(0)
   })
 
+  it('구매 계정이 여럿이고 기본 계정이 없어도, 탭 프로필 이름으로 계정을 고른다', async () => {
+    // 실기: 무신사에 buyer01·buyer02 가 함께 있어 폰 승인이 늘 "계정을 특정할 수 없음"으로 거부됐다
+    const many = [
+      { ...ACCOUNT, id: 11, label: 'buyer02', username: 'buyer02', isDefault: false },
+      { ...ACCOUNT, id: 12, label: 'buyer01', username: 'buyer01', isDefault: false, itemTypes: ['login'] },
+      { ...ACCOUNT, id: 13, label: 'buyer01', username: 'buyer01', isDefault: false }
+    ] as AccountDto[]
+    const without = harness(db, { vault: { listAccounts: () => many } })
+    scriptPayScreens(without.adb)
+    const req = { provider: 'toss', amountKrw: 9000, merchant: '삼바상회', methodLabel: '토스페이' } as const
+    expect(await createPhoneAgentBridge(without.deps).approvePayment(without.ctx, req)).toEqual({
+      ok: false,
+      reason: 'no-account'
+    })
+
+    const asked: number[] = []
+    const withProfile = harness(db, {
+      vault: {
+        listAccounts: () => many,
+        getPaymentSecretForFill: (args: { accountId: number }) => {
+          asked.push(args.accountId)
+          return { value: SECRET }
+        }
+      }
+    })
+    withProfile.deps.page.profile = () => 'buyer01'
+    scriptPayScreens(withProfile.adb)
+    const r = await createPhoneAgentBridge(withProfile.deps).approvePayment(withProfile.ctx, req)
+    expect(r.ok === false && r.reason === 'no-account').toBe(false)
+    // 같은 이름이 둘이면 결제 비밀번호를 가진 계정(13)이다
+    expect(asked.every((id) => id === 13)).toBe(true)
+  })
+
   it('앱은 끝냈지만 웹 결제창이 성공으로 넘어가지 않으면 성공으로 보지 않는다', async () => {
     const h = harness(db)
     scriptPayScreens(h.adb)
