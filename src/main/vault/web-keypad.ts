@@ -49,6 +49,11 @@ export async function enterWebPaymentPassword(deps: {
   provider?: PaymentProvider
   jobId?: string
   layout: KeypadLayout
+  /**
+   * 매 자리 직전에 배치를 다시 읽는다(선택). 한 글자 누를 때마다 숫자가 재배열되는 키패드에서
+   * 처음 읽은 배치로 계속 누르면 오답이 된다 — 다시 읽은 배치가 불완전하면 그 자리에서 멈춘다
+   */
+  relayout?: () => Promise<KeypadLayout | null>
   /** 숫자 버튼 하나 누르기(pageBridge.click). 결과 문구는 쓰지 않는다 */
   click: (id: number) => Promise<unknown>
   /**
@@ -79,8 +84,18 @@ export async function enterWebPaymentPassword(deps: {
   // 검증 기준으로만 쓴다 — 어차피 틀린 값이 되므로 사이트가 지우기를 요구한다
   const before = await deps.filled().catch(() => null)
   let pressed = 0
+  let layout: KeypadLayout = deps.layout
   for (const d of digits) {
-    await deps.click(deps.layout.digits[d])
+    // 첫 자리는 방금 읽은 배치를 쓰고, 둘째 자리부터는 다시 읽는다(재배열 키패드)
+    if (pressed > 0 && deps.relayout) {
+      const fresh = await deps.relayout().catch(() => null)
+      if (!isCompleteLayout(fresh)) {
+        deps.onStep(tr('vault.webKeypadVerifyFailed', { digits: pressed + 1 }), false)
+        return 'verify-failed'
+      }
+      layout = fresh
+    }
+    await deps.click(layout.digits[d])
     pressed += 1
     await sleep(WEB_KEYPAD_TAP_DELAY_MS)
     // 자리수를 셀 수 있을 때만 검증한다. 첫 자리부터 늘지 않으면 버튼이 먹지 않은 것이다
@@ -88,7 +103,7 @@ export async function enterWebPaymentPassword(deps: {
       let now = await deps.filled().catch(() => null)
       // 합성 클릭이 먹지 않았다 — 진짜 마우스 클릭으로 한 번만 다시 누른다
       if (now !== null && now < before + pressed && deps.clickNative) {
-        if (await deps.clickNative(deps.layout.digits[d]).catch(() => false)) {
+        if (await deps.clickNative(layout.digits[d]).catch(() => false)) {
           await sleep(WEB_KEYPAD_TAP_DELAY_MS)
           now = await deps.filled().catch(() => null)
         }

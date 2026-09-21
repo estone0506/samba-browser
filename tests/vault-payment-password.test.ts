@@ -76,9 +76,10 @@ describe('결제 비밀번호 제공자', () => {
     }).id
   }
 
-  it('제공자 값 목록은 8종이고 모르는 값은 site 로 정규화된다', () => {
+  it('제공자 값 목록은 9종(무신사페이 포함)이고 모르는 값은 site 로 정규화된다', () => {
     expect([...PAYMENT_PROVIDERS]).toEqual([
       'site',
+      'musinsapay',
       'toss',
       'kakao',
       'naver',
@@ -88,6 +89,7 @@ describe('결제 비밀번호 제공자', () => {
       'other'
     ])
     expect(normalizePaymentProvider('toss')).toBe('toss')
+    expect(normalizePaymentProvider('musinsapay')).toBe('musinsapay')
     expect(normalizePaymentProvider('unknown')).toBe('site')
     expect(normalizePaymentProvider(null)).toBe('site')
     expect(paymentProviderOfSections([])).toBe('site')

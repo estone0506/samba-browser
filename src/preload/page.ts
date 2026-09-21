@@ -39,6 +39,7 @@ import {
   isSecretField,
   keypadSignals,
   keypadLayout,
+  pressOnce,
   detectOverlays,
   runAgentOp,
   installCaptureListener
@@ -100,6 +101,8 @@ if (!isExtensionDocument) {
     keypadSignals: () => keypadSignals(),
     // 결제 키패드 숫자 버튼 배치(앱이 키마스터 값을 넣을 때). 값은 담기지 않는다
     keypadLayout: () => keypadLayout(),
+    // 키패드 버튼 단발 누름(폴백 없음)
+    pressOnce: (id: number) => pressOnce(id),
     // 화면을 덮고 있는 레이어(공지·쿠폰·앱 설치 배너·결제 확인창) 목록
     overlays: () => detectOverlays(),
     // 요소 가운데의 뷰포트 좌표. 메인 프로세스가 실제 마우스 클릭을 보낼 자리다

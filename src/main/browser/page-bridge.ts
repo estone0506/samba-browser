@@ -305,6 +305,8 @@ function opToCode(op: AgentOp): string {
       return '__samba.keypadSignals()'
     case 'keypadLayout':
       return '__samba.keypadLayout()'
+    case 'pressOnce':
+      return `__samba.pressOnce(${op.id})`
     case 'overlays':
       return '__samba.overlays()'
   }
@@ -414,6 +416,9 @@ export const pageBridge = {
     }
     return null
   },
+  /** 키패드 버튼을 정확히 한 번 누른다(일반 click 의 재시도 폴백이 없다) */
+  pressOnce: (tab: Tab, id: number): Promise<string> =>
+    callById(tab, id, (n) => ({ op: 'pressOnce', id: n }), resultSchema),
   /** 그 프레임의 비밀 입력칸에 찍힌 자리수(값은 읽지 않는다). 셀 수 없으면 null */
   keypadFilled: async (tab: Tab, frameIndex: number): Promise<number | null> => {
     const wc = tab.view.webContents

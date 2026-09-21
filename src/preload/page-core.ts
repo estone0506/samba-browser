@@ -715,6 +715,23 @@ export async function performClick(id: number): Promise<string> {
   return withCoverNote(`ok; ${CLICK_NO_CHANGE_NOTE}`, covered)
 }
 
+/**
+ * 요소를 정확히 한 번만 누른다 — 결제 비밀번호 키패드 전용.
+ * performClick 의 폴백(Enter·좌표 재클릭)은 '변화가 안 보이면 다시 누르기' 라서, 점(●) 표시가
+ * 버튼 바깥에서 바뀌는 키패드에서는 같은 숫자를 두세 번 넣는다(실기: 무신사페이 오답 누적).
+ * 여기서는 실제 사용자 클릭과 같은 이벤트 한 벌만 보내고 끝낸다
+ */
+export function pressOnce(id: number): string {
+  const el = get(id)
+  if (!el) return missingMessage(id)
+  fireMouseEvent(el, 'pointerdown')
+  fireMouseEvent(el, 'mousedown')
+  fireMouseEvent(el, 'pointerup')
+  fireMouseEvent(el, 'mouseup')
+  el.click()
+  return 'ok'
+}
+
 export function performType(id: number, text: string, submit: boolean): string {
   const el = get(id)
   if (!el) return missingMessage(id)
@@ -1295,6 +1312,8 @@ export function runAgentOp(raw: unknown): unknown {
       return keypadSignals()
     case 'keypadLayout':
       return keypadLayout()
+    case 'pressOnce':
+      return pressOnce(id)
     case 'overlays':
       return detectOverlays()
     default:

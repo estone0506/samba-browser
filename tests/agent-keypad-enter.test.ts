@@ -27,6 +27,7 @@ const { pageBridge } = vi.hoisted(() => ({
     snapshot: vi.fn(async () => ({ url: '', title: '', text: '', elements: [], total: 0 })),
     textOf: vi.fn(async () => ''),
     click: vi.fn(async () => 'ok'),
+    pressOnce: vi.fn(async () => 'ok'),
     type: vi.fn(async () => 'ok'),
     select: vi.fn(async () => 'ok'),
     scroll: vi.fn(async () => 'ok'),
@@ -201,7 +202,7 @@ async function fill(b: Built, args: Record<string, unknown> = {}): Promise<strin
 
 beforeEach(() => {
   secretKeypadGate.clear()
-  pageBridge.click.mockClear()
+  pageBridge.pressOnce.mockClear()
   pageBridge.keypadSignals.mockReset()
   pageBridge.keypadSignals.mockResolvedValue(keypadSignals(SHOP))
   pageBridge.keypadLayout.mockReset()
@@ -210,7 +211,7 @@ beforeEach(() => {
   // 누를 때마다 자리수가 하나씩 늘어난다
   let n = 0
   pageBridge.keypadFilled.mockImplementation(async () => n)
-  pageBridge.click.mockImplementation(async () => {
+  pageBridge.pressOnce.mockImplementation(async () => {
     n += 1
     return 'ok'
   })
@@ -221,7 +222,7 @@ describe('fill_secret — 키패드 화면에서 앱이 결제 비밀번호를 �
     const b = build()
     const r = await fill(b)
     expect(r).toBe(KEYPAD_ENTERED_NEXT)
-    expect(pageBridge.click.mock.calls.map((c) => c[1])).toEqual(
+    expect(pageBridge.pressOnce.mock.calls.map((c) => c[1])).toEqual(
       SECRET.split('').map((d) => 100 + Number(d))
     )
     expect(b.handoff).not.toHaveBeenCalled()
@@ -245,7 +246,7 @@ describe('fill_secret — 키패드 화면에서 앱이 결제 비밀번호를 �
     const guard = build({ mode: 'guard', confirmResult: false })
     expect(await fill(guard)).toBe('denied by user')
     expect(guard.confirm).toHaveBeenCalledTimes(1)
-    expect(pageBridge.click).toHaveBeenCalledTimes(6) // full 쪽 6번만
+    expect(pageBridge.pressOnce).toHaveBeenCalledTimes(6) // full 쪽 6번만
   })
 
   it('PG 팝업(niceepay)이라도 계정 사이트 탭이 연 창이면 그 계정으로 누른다', async () => {
@@ -305,7 +306,7 @@ describe('fill_secret — 키패드 화면에서 앱이 결제 비밀번호를 �
     expect(await fill(alone)).toMatch(/^account not found/)
     const other = build({ tabUrl: PG, openerUrl: 'https://www.29cm.co.kr/order' })
     expect(await fill(other)).toMatch(/^account not found/)
-    expect(pageBridge.click).not.toHaveBeenCalled()
+    expect(pageBridge.pressOnce).not.toHaveBeenCalled()
   })
 
   it('제외 도메인·평문(http) 결제창에는 넣지 않는다', async () => {
@@ -314,7 +315,7 @@ describe('fill_secret — 키패드 화면에서 앱이 결제 비밀번호를 �
     expect(await fill(excluded)).toMatch(/excluded/)
     const insecure = build({ tabUrl: 'http://m.niceepay.com/app/pinCert.do', openerUrl: SHOP })
     expect(await fill(insecure)).toMatch(/insecure/)
-    expect(pageBridge.click).not.toHaveBeenCalled()
+    expect(pageBridge.pressOnce).not.toHaveBeenCalled()
   })
 
   it('배치를 못 읽으면 누르지 않고 사람에게 넘긴다', async () => {
@@ -324,7 +325,7 @@ describe('fill_secret — 키패드 화면에서 앱이 결제 비밀번호를 �
     expect(r).toContain(KEYPAD_HANDOFF_MESSAGE)
     expect(b.handoff).toHaveBeenCalledTimes(1)
     expect(b.handoff.mock.calls[0][0].kind).toBe('keypad')
-    expect(pageBridge.click).not.toHaveBeenCalled()
+    expect(pageBridge.pressOnce).not.toHaveBeenCalled()
   })
 
   it('눌러도 자리수가 늘지 않으면 첫 자리에서 멈추고 사람에게 넘긴다', async () => {
@@ -332,7 +333,7 @@ describe('fill_secret — 키패드 화면에서 앱이 결제 비밀번호를 �
     const b = build()
     const r = await fill(b)
     expect(r).toContain(KEYPAD_HANDOFF_MESSAGE)
-    expect(pageBridge.click).toHaveBeenCalledTimes(1)
+    expect(pageBridge.pressOnce).toHaveBeenCalledTimes(1)
     expect(b.handoff).toHaveBeenCalledTimes(1)
   })
 
@@ -341,7 +342,7 @@ describe('fill_secret — 키패드 화면에서 앱이 결제 비밀번호를 �
     expect(await fill(locked)).toContain(KEYPAD_HANDOFF_MESSAGE)
     const none = build({ withVault: false })
     expect(await fill(none)).toContain(KEYPAD_HANDOFF_MESSAGE)
-    expect(pageBridge.click).not.toHaveBeenCalled()
+    expect(pageBridge.pressOnce).not.toHaveBeenCalled()
   })
 
   it('결제 수단이 여럿인데 provider 가 없으면 되묻고, 항목이 없으면 not found', async () => {
@@ -349,13 +350,13 @@ describe('fill_secret — 키패드 화면에서 앱이 결제 비밀번호를 �
     expect(await fill(many, { provider: undefined })).toMatch(/^ambiguous/)
     const none = build({ payment: { value: null, reason: 'not-found' } })
     expect(await fill(none)).toMatch(/^not found: no payment password \(site\)/)
-    expect(pageBridge.click).not.toHaveBeenCalled()
+    expect(pageBridge.pressOnce).not.toHaveBeenCalled()
   })
 
   it('결제 비밀번호가 아닌 항목(login)을 키패드 화면에서 부르면 넘긴다', async () => {
     const b = build()
     const r = await fill(b, { itemType: 'login', provider: undefined })
     expect(r).toContain(KEYPAD_HANDOFF_MESSAGE)
-    expect(pageBridge.click).not.toHaveBeenCalled()
+    expect(pageBridge.pressOnce).not.toHaveBeenCalled()
   })
 })

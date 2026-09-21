@@ -200,3 +200,34 @@ describe('isCompleteLayout', () => {
     expect(isCompleteLayout(null)).toBe(false)
   })
 })
+
+describe('재배열 키패드 — 매 자리 직전에 배치를 다시 읽는다', () => {
+  it('둘째 자리부터 새 배치의 id 로 누른다', async () => {
+    // 누를 때마다 id 가 1000 씩 밀리는 키패드
+    let round = 0
+    const relayout = vi.fn(async () => {
+      round += 1
+      const map: Record<string, number> = {}
+      for (let d = 0; d <= 9; d += 1) map[String(d)] = round * 1000 + d
+      return { digits: map, filled: null, frameIndex: 0 }
+    })
+    const { deps, click } = build({ layout: layoutOf(undefined, null), filledAfter: () => null })
+    expect(await enterWebPaymentPassword({ ...deps, relayout })).toBe('ok')
+    const ids = click.mock.calls.map((c) => c[0] as number)
+    // 첫 자리는 처음 배치(100+d), 나머지는 다시 읽은 배치
+    expect(ids[0]).toBe(100 + Number(SECRET[0]))
+    expect(ids.slice(1)).toEqual(
+      SECRET.slice(1)
+        .split('')
+        .map((d, i) => (i + 1) * 1000 + Number(d))
+    )
+    expect(relayout).toHaveBeenCalledTimes(5)
+  })
+
+  it('다시 읽은 배치가 불완전하면 그 자리에서 멈춘다', async () => {
+    const relayout = vi.fn(async () => null)
+    const { deps, click } = build({ layout: layoutOf(undefined, null), filledAfter: () => null })
+    expect(await enterWebPaymentPassword({ ...deps, relayout })).toBe('verify-failed')
+    expect(click).toHaveBeenCalledTimes(1)
+  })
+})

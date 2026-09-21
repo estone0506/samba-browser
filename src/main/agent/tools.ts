@@ -135,6 +135,11 @@ const KEYPAD_HANDOFF_MATCHED = '결제 비밀번호 키패드'
 export const KEYPAD_ENTERED_NEXT =
   'ok: the app entered the payment password on the keypad. ' +
   'Now call get_page and press the confirm/입력완료 button if the keypad has one; never press the digits yourself.'
+// 같은 결제창에 자동 입력을 이미 한 번 했을 때(연속 오답 → 결제 수단 잠금 방지)
+export const KEYPAD_ALREADY_TRIED =
+  'refused: the app already entered the payment password once in this window during this task. ' +
+  'Do NOT retry - a wrong password locks the pay method after 5 tries. Read the page: if it says the password ' +
+  'is wrong, stop and tell the user which pay method and provider you used; otherwise continue.'
 // 결제창(PG 팝업)의 계정을 여는 탭에서 찾을 수 없을 때
 const KEYPAD_ACCOUNT_UNKNOWN =
   'account not found: the payment window is not linked to a saved account; ' +
@@ -200,6 +205,7 @@ const ITEM_TYPES = [
 // 결제 수단(도구 스키마용). shared/vault 의 PaymentProvider 와 단일 소스로 유지한다
 const PAYMENT_PROVIDER_NAMES = [
   'site',
+  'musinsapay',
   'toss',
   'kakao',
   'naver',
@@ -579,6 +585,9 @@ ${raw}`
    * iframe 에 뜨므로 그 창의 호스트로는 계정을 못 찾는다 — 팝업을 연 탭(opener)의 호스트로
    * 되돌아가 찾는다. opener 도 없으면 현재 창 호스트 그대로다
    */
+  // 이번 실행에서 키패드 자동 입력을 이미 한 결제창 호스트들
+  const keypadAttempts = new Set<string>()
+
   const keypadAccountHosts = (tab: Tab): string[] => {
     const hosts = [currentHost(tab)]
     // opener 사슬을 팝업까지 따라간다(무신사머니 팝업 → 그 안에서 열린 ePAY 팝업). 탭 목록에는
@@ -662,8 +671,13 @@ ${raw}`
       const ok = await ctx.confirm('키마스터 입력: 결제 비밀번호 키패드', 'danger')
       if (!ok) return 'denied by user'
     }
+    // 한 실행에서 키패드 자동 입력은 결제창(호스트)마다 1회뿐이다. 틀린 값을 모델이 다시 부르면
+    // 5회 오답으로 결제 수단이 잠긴다(실기: 3/5 까지 감). 두 번째부터는 앱이 거절하고 사람에게 맡긴다
+    const attemptKey = currentHost(tab)
+    if (keypadAttempts.has(attemptKey)) return KEYPAD_ALREADY_TRIED
     const layout = await pageBridge.keypadLayout(tab).catch(() => null)
     if (!layout) return await keypadHandoff(tab)
+    keypadAttempts.add(attemptKey)
     const frameIndex = layout.frameIndex
     const result: WebKeypadResult = await enterWebPaymentPassword({
       vault: v,
@@ -671,7 +685,11 @@ ${raw}`
       ...(provider === undefined ? {} : { provider }),
       ...(ctx.jobId === undefined ? {} : { jobId: ctx.jobId }),
       layout,
-      click: (id) => pageBridge.click(tab, id),
+      // 누를 때마다 숫자가 재배열되는 키패드가 있다 — 매 자리 직전에 배치를 다시 읽는다
+      relayout: () => pageBridge.keypadLayout(tab).catch(() => null),
+      // 일반 click 은 변화가 안 보이면 Enter·좌표로 다시 눌러 같은 숫자가 두세 번 들어간다 —
+      // 키패드는 폴백 없는 단발 누름만 쓴다
+      click: (id) => pageBridge.pressOnce(tab, id),
       // 보안 키패드가 합성 클릭을 무시하면 요소 가운데 좌표에 진짜 마우스 클릭을 보낸다.
       // 프레임 안 요소는 화면 좌표를 알 수 없어 rectOf 가 null 이다 — 그때는 폴백 없이 넘김으로 간다
       clickNative: async (id) => {
@@ -1318,6 +1336,7 @@ overlays left: ${after.length}${kept}`
       'Use field for a specific field such as "card.number". ' +
       'For itemType "password" (a payment password) pass provider to say which checkout it is: ' +
       'site when the site pays with its own money such as 무신사머니 or SSG머니, ' +
+      'musinsapay for 무신사페이 when the user saved a separate password for it (otherwise follow the playbook - many users share one password with site), ' +
       'toss for 토스페이, kakao for 카카오페이, naver for 네이버페이, payco for 페이코.',
     {
       elementId: z.number().int(),

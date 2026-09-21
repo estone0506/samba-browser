@@ -113,3 +113,23 @@ describe('keypadLayout', () => {
     expect(keypadLayout()).toBeNull()
   })
 })
+
+describe('pressOnce — 키패드 단발 누름', () => {
+  it('화면 변화가 없어도 정확히 한 번만 누른다(일반 click 의 재시도 폴백 없음)', async () => {
+    const { pressOnce } = await import('../src/preload/page-core')
+    document.body.innerHTML = keypadHtml()
+    const layout = keypadLayout()!
+    const five = layout.digits.find((d) => d.digit === '5')!
+    let presses = 0
+    document.querySelectorAll('button').forEach((b) => {
+      if ((b.textContent ?? '') === '5') b.addEventListener('click', () => (presses += 1))
+    })
+    expect(pressOnce(five.id)).toBe('ok')
+    expect(presses).toBe(1)
+  })
+
+  it('없는 id 는 누르지 않고 알린다', async () => {
+    const { pressOnce } = await import('../src/preload/page-core')
+    expect(pressOnce(9999)).toMatch(/not found|gone/)
+  })
+})

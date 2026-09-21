@@ -677,6 +677,7 @@
     },
     "paymentProvider": {
       "site": "Site's own pay",
+      "musinsapay": "Musinsa Pay",
       "toss": "Toss Pay",
       "kakao": "KakaoPay",
       "naver": "Naver Pay",
