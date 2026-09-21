@@ -1074,7 +1074,7 @@
     },
     "assign": {
       "label": "Assigned phone",
-      "open": "Choose a phone",
+      "open": "Change phone",
       "title": "Choose a phone",
       "desc": "Pick which phone receives verifications for this account. If you skip it, all connected phones are watched.",
       "none": "Not chosen",
@@ -1083,7 +1083,8 @@
       "save": "Save",
       "suggestion": "{{host}} was verified on {{phone}}. Make it the assigned phone?",
       "accept": "Assign",
-      "dismiss": "Not now"
+      "dismiss": "Not now",
+      "currentNone": "Not chosen — all connected phones are watched"
     },
     "showScreen": "Show screen",
     "hideScreen": "Hide screen"

@@ -138,6 +138,11 @@ export class PhoneService {
     this.deps.repo.assignAccount(accountId, phoneId)
   }
 
+  /** 계정의 담당 폰 id. 고르지 않았으면 null — 화면이 저장된 선택을 다시 보여 주는 데 쓴다 */
+  assignedPhoneId(accountId: number): number | null {
+    return this.deps.repo.phoneForAccount(accountId)?.id ?? null
+  }
+
   authEvents(limit?: number): AuthEventDto[] {
     return this.deps.repo.listAuthEvents(limit)
   }

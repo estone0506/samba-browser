@@ -1152,6 +1152,7 @@ export function registerIpc(
   handleFromRenderer(IPC.phoneAssign, (accountId: number, phoneId: number | null) =>
     phones.assign(accountId, phoneId)
   )
+  handleFromRenderer(IPC.phoneAssigned, (accountId: number) => phones.assignedPhoneId(accountId))
   handleFromRenderer(IPC.phoneAuthEvents, (limit?: number) => phones.authEvents(limit))
   // 폰 연동 프로그램 원클릭 설치 — 내려받기·해제·설정 저장까지 메인에서만 한다
   handleFromRenderer(IPC.phoneToolsStatus, () =>

@@ -29,6 +29,8 @@ interface PhoneStoreState {
   recover: (serial: string) => Promise<boolean>
   setLabel: (id: number, label: string, country: string) => Promise<void>
   assign: (accountId: number, phoneId: number | null) => Promise<boolean>
+  /** 계정의 담당 폰 id(없으면 null). 조회에 실패해도 null 이다 */
+  assignedFor: (accountId: number) => Promise<number | null>
   toggleExpand: (id: number) => void
   setScreenMode: (serial: string, mode: ScreenMode | null) => void
   clearWarning: () => void
@@ -126,6 +128,11 @@ export const usePhoneStore = create<PhoneStoreState>((set, get) => ({
       return
     }
     await get().refresh()
+  },
+
+  assignedFor: async (accountId) => {
+    const r = await window.samba.phone.assigned?.(accountId)
+    return r?.ok ? r.data : null
   },
 
   assign: async (accountId, phoneId) => {

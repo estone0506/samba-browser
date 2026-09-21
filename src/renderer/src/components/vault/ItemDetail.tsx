@@ -3,6 +3,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { useVaultStore } from '@renderer/stores/vaultStore'
+import { usePhoneStore } from '@renderer/stores/phoneStore'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 import { AGENT_ACCESS_VALUES, paymentProviderOfSections } from '@shared/vault'
@@ -596,11 +597,35 @@ export function ItemDetail({
 function PhoneAssignSection({ accountId }: { accountId: number }): React.JSX.Element {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  const phones = usePhoneStore((s) => s.list)
+  const loadPhones = usePhoneStore((s) => s.load)
+  const assignedFor = usePhoneStore((s) => s.assignedFor)
+  // 저장된 담당 폰. undefined 는 아직 읽는 중이다
+  const [assigned, setAssigned] = useState<number | null | undefined>(undefined)
+  useEffect(() => {
+    let alive = true
+    setAssigned(undefined)
+    void loadPhones()
+    void assignedFor(accountId).then((id) => {
+      if (alive) setAssigned(id)
+    })
+    return () => {
+      alive = false
+    }
+  }, [accountId, assignedFor, loadPhones])
+  const phone = assigned ? phones.find((p) => p.id === assigned) : undefined
   return (
     <section className="mb-5">
       <h4 className="mb-2 text-[12px] font-semibold text-[var(--text2)]">
         {t('phone.assign.label')}
       </h4>
+      {assigned !== undefined && (
+        <p className="mb-2 text-[12.5px] text-[var(--text)]">
+          {phone
+            ? `${phone.label || phone.serial} · ${phone.model || phone.serial}`
+            : t('phone.assign.currentNone')}
+        </p>
+      )}
       <Button
         variant="outline"
         size="sm"
@@ -609,7 +634,13 @@ function PhoneAssignSection({ accountId }: { accountId: number }): React.JSX.Ele
       >
         {t('phone.assign.open')}
       </Button>
-      <PhoneAssignDialog accountId={accountId} open={open} onOpenChange={setOpen} />
+      <PhoneAssignDialog
+        accountId={accountId}
+        open={open}
+        current={assigned ?? null}
+        onOpenChange={setOpen}
+        onSaved={setAssigned}
+      />
     </section>
   )
 }

@@ -147,6 +147,7 @@ export const IPC = {
   phoneRecover: 'phone:recover', // kill/start-server 1회 재시도
   phoneSetLabel: 'phone:setLabel', // 별칭·국가
   phoneAssign: 'phone:assign', // 계정 ↔ 폰 매핑
+  phoneAssigned: 'phone:assigned', // 계정의 담당 폰 id 조회(없으면 null)
   phoneScreenStart: 'phone:screenStart',
   phoneScreenStop: 'phone:screenStop',
   phoneScreenChunk: 'phone:screenChunk', // main → renderer 이벤트(영상 청크/스틸 이미지)
