@@ -259,6 +259,9 @@ const api = {
     putItem: (input: PutItemInput): Promise<IpcResult<VaultItemMeta>> =>
       invoke(IPC.vaultPutItem, input),
     deleteItem: (id: number): Promise<IpcResult<void>> => invoke(IPC.vaultDeleteItem, id),
+    // 결제 비밀번호 항목을 다른 계정으로 복사. 복사한 개수만 돌아온다
+    copyPaymentItems: (fromAccountId: number, toAccountId: number): Promise<IpcResult<number>> =>
+      invoke(IPC.vaultCopyPaymentItems, fromAccountId, toAccountId),
     // 사용자가 '보기' 를 눌렀을 때만 호출한다. fieldKey 로 항목 안의 개별 필드를 지정한다
     reveal: (id: number, fieldKey?: string): Promise<IpcResult<string>> =>
       invoke(IPC.vaultReveal, id, fieldKey),

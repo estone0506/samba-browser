@@ -106,12 +106,20 @@ function build(
     confirmResult?: boolean
     withVault?: boolean
     vaultExcludedHosts?: string[]
+    /** 키패드 창의 프로필(파티션) — 계정 라벨 자동 선택에 쓰인다 */
+    tabProfile?: string
+    /** 키패드 창을 연 대상 id(openerUrl 대신 targets 로 사슬을 준다) */
+    openerId?: string
+    /** 탭+팝업 전체 목록(opener 사슬 검사용) */
+    targets?: AgentTarget[]
   } = {}
 ): Built {
   const confirm = vi.fn(async () => opts.confirmResult ?? true)
   const steps: Array<{ label: string; ok: boolean }> = []
+  // 실제 VaultService.listAccounts 처럼 등록 도메인(eTLD+1)이 같으면 같은 사이트로 본다
+  const domainOf = (h: string): string => h.split('.').slice(-2).join('.')
   const listAccounts = vi.fn((host: string) =>
-    (opts.accounts ?? [account()]).filter((a) => host.endsWith(a.host))
+    (opts.accounts ?? [account()]).filter((a) => domainOf(host) === domainOf(a.host))
   )
   const getPaymentSecretForFill = vi.fn(() => opts.payment ?? { value: SECRET })
   const vault = {
@@ -125,9 +133,13 @@ function build(
   const tab = {
     id: 'pay-1',
     view: { webContents: { getURL: () => tabUrl, isDestroyed: () => false } },
-    profile: 'default',
+    profile: opts.tabProfile ?? 'default',
     mobile: false,
-    ...(opts.openerUrl === undefined ? {} : { openerId: 'shop-1' })
+    ...(opts.openerId !== undefined
+      ? { openerId: opts.openerId }
+      : opts.openerUrl === undefined
+        ? {}
+        : { openerId: 'shop-1' })
   }
   const tabs = {
     active: () => tab,
@@ -137,6 +149,16 @@ function build(
       opts.openerUrl === undefined
         ? []
         : [{ id: 'shop-1', url: opts.openerUrl, title: '주문서', active: true }],
+    // 탭+팝업 목록. 주지 않으면 탭 목록을 그대로 대상 목록으로 쓴다
+    ...(opts.targets
+      ? { listTargets: () => opts.targets }
+      : opts.openerUrl !== undefined
+        ? {
+            listTargets: () => [
+              { id: 'shop-1', kind: 'tab', url: opts.openerUrl, title: '주문서', active: true }
+            ]
+          }
+        : {}),
     navigate: vi.fn(async () => {})
   } as unknown as TabManager
   const handoff = vi.fn(async (): Promise<HandoffResult> => ({
@@ -235,6 +257,46 @@ describe('fill_secret — 키패드 화면에서 앱이 결제 비밀번호를 �
       'm.niceepay.com',
       'order.musinsa.com'
     ])
+  })
+
+  it('같은 이름의 계정이 여럿이면 결제 비밀번호를 가진 계정을 고른다(실기: 로그인 도메인별 buyer02 3개)', async () => {
+    const b = build({
+      accounts: [
+        account({ id: 1, host: 'musinsa.com', label: 'buyer02', itemTypes: ['login'] }),
+        account({ id: 2, host: 'my.musinsa.com', label: 'buyer02', itemTypes: ['login'] }),
+        account({
+          id: 3,
+          host: 'member.one.musinsa.com',
+          label: 'buyer02',
+          itemTypes: ['login', 'password']
+        })
+      ],
+      tabProfile: 'buyer02'
+    })
+    expect(await fill(b)).toBe(KEYPAD_ENTERED_NEXT)
+    expect(b.getPaymentSecretForFill).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 3 })
+    )
+  })
+
+  it('팝업 안에서 열린 팝업(무신사머니 창 → ePAY)도 opener 사슬을 따라 계정 사이트를 찾는다', async () => {
+    pageBridge.keypadSignals.mockResolvedValue(keypadSignals(PG))
+    const b = build({
+      tabUrl: PG,
+      openerId: 'money-popup',
+      targets: [
+        { id: 'shop-1', kind: 'tab', url: SHOP, title: '주문서', active: true },
+        {
+          id: 'money-popup',
+          kind: 'popup',
+          url: 'https://pay.musinsapayments.com/payment',
+          title: '무신사머니',
+          openerId: 'shop-1',
+          active: false
+        }
+      ]
+    })
+    expect(await fill(b)).toBe(KEYPAD_ENTERED_NEXT)
   })
 
   it('계정 사이트와 무관한 창의 키패드에는 넣지 않는다', async () => {

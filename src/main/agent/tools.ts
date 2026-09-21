@@ -561,11 +561,44 @@ ${raw}`
    */
   const keypadAccountHosts = (tab: Tab): string[] => {
     const hosts = [currentHost(tab)]
-    if (tab.openerId) {
-      const opener = ctx.tabs.list().find((t) => t.id === tab.openerId)
-      if (opener) hosts.push(normalizeHost(opener.url))
+    // opener 사슬을 팝업까지 따라간다(무신사머니 팝업 → 그 안에서 열린 ePAY 팝업). 탭 목록에는
+    // 팝업이 없어 list() 만 보면 결제창의 부모를 못 찾는다(실기: account not found)
+    const targets = targetList()
+    let openerId = tab.openerId
+    for (let depth = 0; depth < 4 && openerId; depth += 1) {
+      const opener = targets.find((t) => t.id === openerId)
+      if (!opener) break
+      hosts.push(normalizeHost(opener.url))
+      openerId = opener.openerId
     }
     return hosts.filter((h) => h !== '')
+  }
+
+  /**
+   * 결제 비밀번호를 넣을 계정. 같은 이름의 계정이 로그인 도메인별로 여럿일 수 있다
+   * (member.one.musinsa.com / my.musinsa.com / musinsa.com 의 buyer02) — 그중 결제 비밀번호를
+   * 가진 계정을 먼저 본다. 안 그러면 프로필 이름이 같은 다른 계정을 잡아 "not found" 로 끝난다(실기)
+   */
+  const keypadAccount = (
+    available: VaultService,
+    hosts: string[],
+    accountLabel: string | undefined,
+    profile: string
+  ): AccountDto | null => {
+    const seen = new Set<number>()
+    const candidates: AccountDto[] = []
+    for (const host of hosts) {
+      for (const a of available.listAccounts(host)) {
+        if (seen.has(a.id)) continue
+        seen.add(a.id)
+        candidates.push(a)
+      }
+    }
+    const withPayment = candidates.filter((a) => a.itemTypes.includes('password'))
+    return (
+      resolveAccount(withPayment, accountLabel, profile) ??
+      resolveAccount(candidates, accountLabel, profile)
+    )
   }
 
   /**
@@ -585,11 +618,7 @@ ${raw}`
     const available = vaultAvailable()
     if (typeof available === 'string') return await keypadHandoff(tab)
     const hosts = keypadAccountHosts(tab)
-    let account: AccountDto | null = null
-    for (const host of hosts) {
-      account = resolveAccount(available.listAccounts(host), accountLabel, tab.profile)
-      if (account) break
-    }
+    const account = keypadAccount(available, hosts, accountLabel, tab.profile)
     if (!account) return hosts.length > 1 ? KEYPAD_ACCOUNT_UNKNOWN : ACCOUNT_NOT_FOUND
     const gate = await applyPolicy(available, effectiveAccess(account.agentAccess, globalPolicy()))
     // 잠김·미설정은 사람에게 넘기고(직접 누르면 이어간다), 접근 정책 거부(never)는 그대로 알린다

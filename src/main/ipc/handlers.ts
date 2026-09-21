@@ -439,6 +439,12 @@ export function registerIpc(
     return vault.listItems(accountId ?? null)
   })
   handleFromRenderer(IPC.vaultPutItem, (input: PutItemInput) => vault.putItem(input))
+  // 같은 사람의 두 계정이 같은 결제 비밀번호를 쓸 때. 사용자 화면에서만 부른다(AI 도구 아님)
+  handleFromRenderer(IPC.vaultCopyPaymentItems, (from: unknown, to: unknown) => {
+    if (!Number.isInteger(from) || !Number.isInteger(to))
+      throw new Error(tr('vault.accountNotFound'))
+    return vault.copyPaymentItems(from as number, to as number)
+  })
   handleFromRenderer(IPC.vaultDeleteItem, (id: number) => vault.deleteItem(id))
   // 사용자가 '보기' 를 눌렀을 때만 호출된다(감사 로그 기록됨)
   handleFromRenderer(IPC.vaultReveal, (id: number, fieldKey?: string) => vault.reveal(id, fieldKey))

@@ -36,6 +36,7 @@ export const IPC = {
   vaultAccounts: 'vault:accounts',
   vaultItems: 'vault:items',
   vaultPutItem: 'vault:putItem',
+  vaultCopyPaymentItems: 'vault:copyPaymentItems', // 결제 비밀번호 항목을 다른 계정으로 복사(평문은 메인 안에서만)
   vaultDeleteItem: 'vault:deleteItem',
   vaultReveal: 'vault:reveal',
   vaultUpsertAccount: 'vault:upsertAccount',

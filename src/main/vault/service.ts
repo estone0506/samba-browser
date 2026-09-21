@@ -1002,6 +1002,56 @@ export class VaultService {
 
   // 사용자가 "보기" 를 눌렀을 때만 호출된다. 평문을 돌려주는 유일한 사용자 경로.
   // fieldKey 를 생략하면 단일 값 항목의 기본 필드('value')를 본다
+  /**
+   * 한 계정의 결제 비밀번호 항목들을 다른 계정으로 복사한다(같은 사람의 두 계정이 같은
+   * 결제 비밀번호를 쓸 때). 평문은 이 메서드 안에서 복호화 → 재암호화로만 흐르고 반환값·로그에
+   * 남지 않는다. 대상 계정에 같은 결제 수단 항목이 이미 있으면 건너뛴다. 복사한 개수를 돌려준다
+   */
+  copyPaymentItems(fromAccountId: number, toAccountId: number): number {
+    const key = this.requireKey()
+    if (fromAccountId === toAccountId) return 0
+    const sources = this.repo.listPaymentItemRows(fromAccountId)
+    const existing = new Set(
+      this.repo.listPaymentItemRows(toAccountId).map((r) => paymentProviderOfSections(r.sections))
+    )
+    let copied = 0
+    for (const row of sources) {
+      const provider = paymentProviderOfSections(row.sections)
+      if (existing.has(provider)) continue
+      const sections: PutSectionInput[] = row.sections.map((section) => ({
+        key: section.key,
+        label: section.label,
+        fields: section.fields.map((field): PutFieldInput => {
+          if (!isSecretField(field)) {
+            return {
+              key: field.key,
+              label: field.label,
+              kind: field.kind,
+              ...(field.value === undefined ? {} : { value: field.value })
+            }
+          }
+          const plain = decrypt(
+            key,
+            Buffer.from(field.ciphertext, 'base64'),
+            Buffer.from(field.iv, 'base64'),
+            aadFor(row.id, field)
+          )
+          return { key: field.key, label: field.label, kind: 'secret', value: plain }
+        })
+      }))
+      this.putItem({
+        accountId: toAccountId,
+        type: 'password',
+        label: row.label,
+        sections,
+        jobId: 'copy-payment'
+      })
+      existing.add(provider)
+      copied += 1
+    }
+    return copied
+  }
+
   reveal(id: number, fieldKey: string = DEFAULT_FIELD_KEY): string {
     const key = this.requireKey()
     const row = this.repo.getItemRow(id)
