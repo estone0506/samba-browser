@@ -51,6 +51,11 @@ export async function enterWebPaymentPassword(deps: {
   layout: KeypadLayout
   /** 숫자 버튼 하나 누르기(pageBridge.click). 결과 문구는 쓰지 않는다 */
   click: (id: number) => Promise<unknown>
+  /**
+   * 같은 버튼을 진짜 마우스 클릭으로 누르기(좌표 클릭). 보안 키패드가 합성 클릭을 무시할 때만 쓴다 —
+   * 자리수가 늘지 않은 것을 확인한 뒤에만 부르므로 같은 숫자가 두 번 들어가지 않는다
+   */
+  clickNative?: (id: number) => Promise<boolean>
   /** 지금 찍힌 자리수(값은 아니다). 셀 수 없으면 null */
   filled: () => Promise<number | null>
   sleep?: (ms: number) => Promise<void>
@@ -80,7 +85,14 @@ export async function enterWebPaymentPassword(deps: {
     await sleep(WEB_KEYPAD_TAP_DELAY_MS)
     // 자리수를 셀 수 있을 때만 검증한다. 첫 자리부터 늘지 않으면 버튼이 먹지 않은 것이다
     if (before !== null) {
-      const now = await deps.filled().catch(() => null)
+      let now = await deps.filled().catch(() => null)
+      // 합성 클릭이 먹지 않았다 — 진짜 마우스 클릭으로 한 번만 다시 누른다
+      if (now !== null && now < before + pressed && deps.clickNative) {
+        if (await deps.clickNative(deps.layout.digits[d]).catch(() => false)) {
+          await sleep(WEB_KEYPAD_TAP_DELAY_MS)
+          now = await deps.filled().catch(() => null)
+        }
+      }
       if (now !== null && now < before + pressed) {
         deps.onStep(tr('vault.webKeypadVerifyFailed', { digits: pressed }), false)
         return 'verify-failed'

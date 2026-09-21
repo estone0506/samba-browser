@@ -137,6 +137,43 @@ describe('enterWebPaymentPassword', () => {
     expect(steps).toEqual([{ label: '결제 비밀번호 입력 확인 실패(1자리째)', ok: false }])
   })
 
+  it('합성 클릭이 먹지 않으면 진짜 마우스 클릭으로 한 번만 다시 누른다(이중 입력 없음)', async () => {
+    // 합성 클릭은 자리수를 올리지 못하고, 좌표 클릭만 올린다(nFilter 류)
+    let filled = 0
+    const click = vi.fn(async () => 'ok')
+    const clickNative = vi.fn(async () => {
+      filled += 1
+      return true
+    })
+    const { deps, steps } = build()
+    const r = await enterWebPaymentPassword({
+      ...deps,
+      click,
+      clickNative,
+      filled: async () => filled
+    })
+    expect(r).toBe('ok')
+    expect(click).toHaveBeenCalledTimes(6)
+    expect(clickNative).toHaveBeenCalledTimes(6)
+    expect(filled).toBe(6)
+    expect(steps.at(-1)).toEqual({ label: '결제 비밀번호 입력(6자리)', ok: true })
+  })
+
+  it('합성 클릭이 먹으면 좌표 클릭은 부르지 않는다', async () => {
+    const clickNative = vi.fn(async () => true)
+    const { deps } = build()
+    expect(await enterWebPaymentPassword({ ...deps, clickNative })).toBe('ok')
+    expect(clickNative).not.toHaveBeenCalled()
+  })
+
+  it('좌표 클릭까지 해도 자리수가 안 늘면 verify-failed', async () => {
+    const clickNative = vi.fn(async () => true)
+    const { deps, click } = build({ filledAfter: () => 0 })
+    expect(await enterWebPaymentPassword({ ...deps, clickNative })).toBe('verify-failed')
+    expect(click).toHaveBeenCalledTimes(1)
+    expect(clickNative).toHaveBeenCalledTimes(1)
+  })
+
   it('자리수를 셀 수 없으면(filled null) 검증 없이 끝까지 누른다', async () => {
     const { deps, click } = build({ layout: layoutOf(undefined, null), filledAfter: () => null })
     expect(await enterWebPaymentPassword(deps)).toBe('ok')

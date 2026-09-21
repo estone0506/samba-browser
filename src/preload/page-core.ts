@@ -898,13 +898,33 @@ function pinInputs(): HTMLInputElement[] {
 }
 
 // 숫자 버튼 후보. 결제 키패드는 button·a 뿐 아니라 div·span·td 로도 그려진다
-const KEYPAD_DIGIT_SELECTOR = SELECTOR + ', div, span, td, li, p'
+const KEYPAD_DIGIT_SELECTOR = SELECTOR + ', div, span, td, li, p, img, area'
 const KEYPAD_DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
 
-/** 요소가 한 자리 숫자만 보여 주는가(공백 제외) */
+/**
+ * 요소가 나타내는 한 자리 숫자. 화면 글자가 없으면 접근성 이름(aria-label·alt·title)을 본다 —
+ * NICE nFilter 보안 키패드는 숫자를 배경 스프라이트로 그리고 글자는 aria-label 에만 둔다(실기)
+ */
 function singleDigitOf(el: Element): string | null {
-  const label = (el.textContent ?? '').trim()
-  return label.length === 1 && label >= '0' && label <= '9' ? label : null
+  const isDigit = (s: string): boolean => s.length === 1 && s >= '0' && s <= '9'
+  const text = (el.textContent ?? '').trim()
+  if (text !== '') return isDigit(text) ? text : null
+  for (const attr of ['aria-label', 'alt', 'title']) {
+    const name = (el.getAttribute(attr) ?? '').trim()
+    if (name !== '') return isDigit(name) ? name : null
+  }
+  return null
+}
+
+// 자리수를 세는 입력칸. 비밀 입력칸이 없으면 PIN 길이의 숫자칸(type=tel — nFilter)도 본다
+function pinCounterInput(): HTMLInputElement | null {
+  const secret = pinInputs()[0]
+  if (secret) return secret
+  const tel = Array.from(document.querySelectorAll<HTMLInputElement>('input')).find(
+    (el) =>
+      el.type === 'tel' && el.maxLength >= PIN_MAXLENGTH_MIN && el.maxLength <= PIN_MAXLENGTH_MAX
+  )
+  return tel ?? null
 }
 
 /** 이 요소에 id 가 없으면 매겨 registry 에 넣는다(스냅샷을 다시 찍지 않고 누를 수 있게) */
@@ -942,7 +962,7 @@ export function keypadLayout(): KeypadLayoutDto | null {
   }
   if (KEYPAD_DIGITS.some((d) => !found.has(d))) return null
   const digits = KEYPAD_DIGITS.map((digit) => ({ digit, id: ensureId(found.get(digit)!) }))
-  const pin = pinInputs()[0]
+  const pin = pinCounterInput()
   return { digits, filled: pin ? pin.value.length : null }
 }
 

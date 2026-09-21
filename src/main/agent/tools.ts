@@ -622,6 +622,12 @@ ${raw}`
       ...(ctx.jobId === undefined ? {} : { jobId: ctx.jobId }),
       layout,
       click: (id) => pageBridge.click(tab, id),
+      // 보안 키패드가 합성 클릭을 무시하면 요소 가운데 좌표에 진짜 마우스 클릭을 보낸다.
+      // 프레임 안 요소는 화면 좌표를 알 수 없어 rectOf 가 null 이다 — 그때는 폴백 없이 넘김으로 간다
+      clickNative: async (id) => {
+        const point = await pageBridge.rectOf(tab, id).catch(() => null)
+        return point ? pageBridge.clickAt(tab, point.x, point.y) : false
+      },
       filled: () => pageBridge.keypadFilled(tab, frameIndex),
       onStep: ctx.onStep
     })

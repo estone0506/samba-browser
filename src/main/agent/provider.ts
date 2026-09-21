@@ -6,7 +6,7 @@ import {
   type SDKUserMessage
 } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentImage } from '../../shared/agent-image'
-import type { AgentEffort } from '../../shared/settings'
+import { MAX_TOOL_CALLS, type AgentEffort } from '../../shared/settings'
 import type { AgentAuth } from '../ai/auth-route'
 import { runCodex, type CodexEvent, type CodexInput } from './provider-codex'
 
@@ -93,7 +93,10 @@ export function buildQueryOptions(
     // 사용자/프로젝트 설정(훅·CLAUDE.md)을 상속하지 않음
     settingSources: [],
     permissionMode: 'default',
-    maxTurns: 60,
+    // 실제 상한은 도구 호출 수(설정 maxToolCalls, 러너의 counter)다. 턴 상한이 그보다 먼저 걸리면
+    // 도구를 95회밖에 안 썼는데 "maximum number of turns (60)" 로 죽는다(실기: 결제 키패드 앞에서 중단).
+    // 도구 상한 최대값보다 넉넉히 잡아, 멈추는 기준을 한 곳으로 모은다
+    maxTurns: MAX_TOOL_CALLS + 50,
     abortController: input.abort
   }
 }

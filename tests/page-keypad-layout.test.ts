@@ -49,6 +49,35 @@ describe('keypadLayout', () => {
     expect(layout?.digits.length).toBe(10)
   })
 
+  it('글자 없이 aria-label 에만 숫자가 있는 키패드도 읽는다(NICE nFilter 실기 구조)', () => {
+    // 숫자는 배경 스프라이트, 접근성 이름만 "1".."0". 명령 키와 빈 칸(이름 없음)이 섞여 있다
+    const keys = ['1', '2', '3', '', '4', '5', '6', '7', '8', '9', '', '0']
+      .map((d) =>
+        d === ''
+          ? '<button class="nfilter_keypad_button kpd"></button>'
+          : `<button class="nfilter_keypad_button kpd" aria-label="${d}"></button>`
+      )
+      .join('')
+    document.body.innerHTML =
+      `<div id="ownKeypad">${keys}` +
+      '<button id="nfilter_renew" aria-label="재배열"></button>' +
+      '<button id="nfilter_enter" aria-label="입력완료"></button></div>' +
+      // 숨겨진 다른 자판(display:none)에 같은 숫자가 있어도 세지 않는다
+      '<div class="kpdGrp lower" style="display:none"><button aria-label="1"></button></div>' +
+      '<input type="tel" maxlength="6" value="">'
+    const layout = keypadLayout()
+    expect(layout?.digits.map((d) => d.digit)).toEqual(DIGITS)
+    // 비밀 입력칸이 없어도 PIN 길이의 숫자칸으로 자리수를 센다
+    expect(layout?.filled).toBe(0)
+  })
+
+  it('alt·title 에 숫자가 있는 이미지 키도 읽는다', () => {
+    document.body.innerHTML = DIGITS.map((d, i) =>
+      i % 2 === 0 ? `<a href="#"><img alt="${d}"></a>` : `<button title="${d}"></button>`
+    ).join('')
+    expect(keypadLayout()?.digits.length).toBe(10)
+  })
+
   it('숫자가 하나라도 빠지면 null', () => {
     document.body.innerHTML = keypadHtml(DIGITS.filter((d) => d !== '7'))
     expect(keypadLayout()).toBeNull()
