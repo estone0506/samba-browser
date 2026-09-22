@@ -70,6 +70,12 @@ export interface SyncBackend {
   /** 지금 로그인된 사용자의 비밀번호를 바꾼다(살아 있는 세션 필요). 메일 없이 이 PC 에서 재설정하는 길 */
   updatePassword(password: string): Promise<void>
   /**
+   * 세션 토큰을 꺼내고(없으면 null) 다른 클라이언트에 심는다 — **같은 프로젝트**의 클라이언트끼리만 유효하다.
+   * 디렉터리와 데이터가 같은 프로젝트일 때 로그인을 두 번 시키지 않으려고 쓴다. 값은 메모리에서만 오간다
+   */
+  exportSession(): Promise<{ accessToken: string; refreshToken: string } | null>
+  importSession(session: { accessToken: string; refreshToken: string }): Promise<void>
+  /**
    * 커서보다 뒤에 있는 행을 (updated_at asc, id asc) 순으로 최대 limit 행 준다.
    * workspaceId 를 주면 그 작업공간의 행만 받는다 — 다른 작업공간 행까지 내려받아 봐야
    * 로컬에서는 보이지 않고, 커서만 앞으로 밀어 버린다.

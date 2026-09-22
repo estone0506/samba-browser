@@ -356,3 +356,44 @@ describe('이 PC 설정에 주소가 있는데 계정에는 없을 때', () => {
     expect(auth.state()).toMatchObject({ signedIn: true, email: 'me@example.com' })
   })
 })
+
+describe('디렉터리와 데이터가 같은 프로젝트일 때', () => {
+  it('앱을 다시 켜면 디렉터리 세션을 데이터 쪽에 심어 로그인을 다시 시키지 않는다', async () => {
+    const directory = createFakeBackend()
+    directory.seedKeyed('settings_sync', [
+      {
+        user_id: FAKE_USER_ID,
+        workspace_id: DIRECTORY_WORKSPACE_ID,
+        key: DIRECTORY_URL_KEY,
+        value: URL,
+        updated_at: new Date(1000).toISOString(),
+        deleted_at: null
+      },
+      {
+        user_id: FAKE_USER_ID,
+        workspace_id: DIRECTORY_WORKSPACE_ID,
+        key: DIRECTORY_ANON_KEY,
+        value: KEY,
+        updated_at: new Date(1000).toISOString(),
+        deleted_at: null
+      }
+    ])
+    await directory.signIn('me@example.com', 'pw')
+    const data = createFakeBackend()
+    const auth = authFor(null)
+    const settings = { syncSupabaseUrl: '', syncSupabaseAnonKey: '' }
+    const account = new AccountService({
+      directory,
+      directoryAuth: authFor(directory),
+      auth,
+      createDataBackend: () => data,
+      onDataBackend: () => {},
+      settings: { get: () => settings, set: (p) => Object.assign(settings, p) },
+      applyEnv: () => {},
+      directoryUrl: URL
+    })
+    await account.restore()
+    expect(auth.state()).toMatchObject({ signedIn: true, email: 'me@example.com' })
+    expect(await data.currentUser()).toMatchObject({ email: 'me@example.com' })
+  })
+})

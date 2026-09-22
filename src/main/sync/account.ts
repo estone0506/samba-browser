@@ -31,6 +31,8 @@ export interface AccountDeps {
   }
   /** 저장된 주소를 env 읽기보다 앞에 놓는다(sync/env.ts) */
   applyEnv: (url: string, anonKey: string) => void
+  /** 디렉터리 프로젝트의 URL. 데이터 주소와 같으면 디렉터리 세션을 데이터 쪽에 그대로 심는다 */
+  directoryUrl?: string
   /** 비밀번호를 메모리에 두는 최대 시간(ms). 기본 10분 */
   credentialTtlMs?: number
   now?: () => number
@@ -249,8 +251,32 @@ export class AccountService {
       needsSupabase: !config,
       ...(userCount === null ? {} : { userCount })
     })
-    if (config) this.attachData(config)
+    if (config) {
+      this.attachData(config)
+      await this.reuseDirectorySession(config)
+    }
     return config
+  }
+
+  /**
+   * 디렉터리와 데이터가 같은 프로젝트면 디렉터리 세션 토큰을 데이터 클라이언트에 심어 로그인을 한 번으로 끝낸다
+   * (비밀번호를 바꿔 데이터 세션이 끊긴 뒤 앱을 다시 켰을 때 두 번 로그인시키지 않게). 실패해도 조용히 넘긴다
+   */
+  private async reuseDirectorySession(config: DirectoryConfig): Promise<void> {
+    const dir = this.directory()
+    const data = this.deps.auth.currentBackend()
+    if (!dir || !data) return
+    if (this.deps.directoryUrl === undefined || this.deps.directoryUrl.trim() !== config.url.trim())
+      return
+    if (this.deps.auth.state().signedIn) return
+    try {
+      const session = await dir.backend.exportSession()
+      if (!session) return
+      await data.importSession(session)
+      await this.deps.auth.restore()
+    } catch (e: unknown) {
+      console.warn('디렉터리 세션 재사용 실패', e instanceof Error ? e.message : String(e))
+    }
   }
 
   /** 데이터 프로젝트 로그인. 계정이 없으면 가입한다(같은 이메일·비밀번호) */

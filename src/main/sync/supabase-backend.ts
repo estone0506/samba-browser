@@ -126,6 +126,18 @@ export function createSupabaseBackend(
       // scope: 'local' 은 서버 세션은 두고 이 클라이언트 저장소만 비운다
       await client.auth.signOut({ scope: 'local' })
     },
+    async exportSession() {
+      const { data } = await client.auth.getSession()
+      const s = data.session
+      return s ? { accessToken: s.access_token, refreshToken: s.refresh_token } : null
+    },
+    async importSession(session) {
+      const { error } = await client.auth.setSession({
+        access_token: session.accessToken,
+        refresh_token: session.refreshToken
+      })
+      if (error) raise(error.message)
+    },
     async updatePassword(password) {
       const { error } = await client.auth.updateUser({ password })
       if (error) raise(error.message)

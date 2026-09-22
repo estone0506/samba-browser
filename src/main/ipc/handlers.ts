@@ -921,7 +921,8 @@ export function registerIpc(
       get: () => settings.get(),
       set: (patch) => void settings.set(patch)
     },
-    applyEnv: setSupabaseEnvFromSettings
+    applyEnv: setSupabaseEnvFromSettings,
+    directoryUrl: directoryConfigured ? readDirectoryEnv().url : undefined
   })
   // 렌더러에는 데이터 인증 상태 + 디렉터리 상태를 한 덩어리로 보낸다(토큰·비밀번호 없음)
   // 계정 로그인 전(게이트)에는 이 PC 에 남은 데이터 세션의 이메일을 화면에 내보내지 않는다 —
