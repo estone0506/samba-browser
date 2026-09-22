@@ -3,6 +3,8 @@ import { defineMessages } from '../define'
 
 export const syncMessages = defineMessages({
   ko: {
+    'auth.badSupabaseUrl': 'https:// 로 시작하는 프로젝트 URL 을 넣어 주세요',
+    'auth.badSupabaseKey': 'anon(publishable) 키만 넣을 수 있습니다. service_role 키는 넣지 마세요',
     'auth.notConfigured':
       'Supabase 설정이 필요합니다. docs/supabase-설정.md 를 보고 .env 를 채워 주세요',
     'auth.emailRequired': '이메일을 입력해 주세요',
@@ -25,6 +27,9 @@ export const syncMessages = defineMessages({
     'sync.unnamedDevice': '이름 없는 기기'
   },
   en: {
+    'auth.badSupabaseUrl': 'Enter a project URL starting with https://',
+    'auth.badSupabaseKey':
+      'Only the anon (publishable) key is accepted. Never paste the service_role key',
     'auth.notConfigured':
       'Supabase is not configured. Fill in .env following docs/supabase-설정.md',
     'auth.emailRequired': 'Please enter your email',

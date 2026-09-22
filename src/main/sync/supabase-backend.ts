@@ -13,7 +13,7 @@ import {
   type SyncBackend
 } from './backend'
 import type { SessionStorageAdapter } from './session-store'
-import { readSupabaseEnv } from './env'
+import { readSupabaseEnv, type SupabaseEnv } from './env'
 import { tr } from '../i18n'
 
 // 인증 만료로 볼 응답 코드/문구
@@ -71,8 +71,11 @@ function raise(message: string): never {
   throw new Error(message)
 }
 
-export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBackend {
-  const env = readSupabaseEnv()
+export function createSupabaseBackend(
+  storage: SessionStorageAdapter,
+  // 주소를 직접 주면 그 프로젝트로 붙는다(디렉터리·계정에서 내려받은 주소). 생략하면 설정/.env
+  env: SupabaseEnv = readSupabaseEnv()
+): SyncBackend {
   const client: SupabaseClient = createClient(env.url, env.anonKey, {
     auth: {
       persistSession: true,
@@ -123,6 +126,10 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
       // scope: 'local' 은 서버 세션은 두고 이 클라이언트 저장소만 비운다
       await client.auth.signOut({ scope: 'local' })
     },
+    async updatePassword(password) {
+      const { error } = await client.auth.updateUser({ password })
+      if (error) raise(error.message)
+    },
     async currentUser() {
       const { data } = await client.auth.getUser()
       return data.user ? { userId: data.user.id, email: data.user.email ?? '' } : null
@@ -171,6 +178,11 @@ export function createSupabaseBackend(storage: SessionStorageAdapter): SyncBacke
       if (ids.length === 0) return
       const { error } = await client.from(table).delete().in('id', ids)
       if (error) raise(error.message)
+    },
+    async rpcNumber(name) {
+      const { data, error } = await client.rpc(name)
+      if (error) return null
+      return typeof data === 'number' ? data : null
     },
     async subscribe(table, onChange) {
       // Realtime 은 "있으면 좋은" 기능이다. 실패해도 폴링으로 계속 동작해야 한다

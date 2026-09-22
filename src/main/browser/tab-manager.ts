@@ -165,6 +165,8 @@ export class TabManager {
   private focusedPopupId: string | null = null
   // 팝업이 새로 열렸을 때 알리는 구독자(AI 도구가 "팝업이 열렸다"를 결과에 붙인다)
   private popupOpenedListeners: Array<(target: AgentTarget) => void> = []
+  // 로그인 게이트: 계정 로그인 전에는 탭 뷰(네이티브)를 화면에서 치운다 — 렌더러가 가리는 것만으로는 안 보인다
+  private gateHidden = false
   private layout: Layout = {
     x: 0,
     y: 0,
@@ -874,11 +876,22 @@ export class TabManager {
     this.applyBounds()
   }
 
+  /** 로그인 게이트 — true 면 활성 탭 뷰를 0 크기로 둔다(로그인 화면만 보인다) */
+  setGateHidden(hidden: boolean): void {
+    if (this.gateHidden === hidden) return
+    this.gateHidden = hidden
+    this.applyBounds()
+  }
+
   // 저장된 좌표를 현재 창 크기에 맞춰 활성 탭에 적용. mobile 탭이면 가운데 412px 카드로 좁힌다
   private applyBounds(): void {
     if (this.disposed || this.win.isDestroyed()) return
     const tab = this.active()
     if (!tab) return
+    if (this.gateHidden) {
+      tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+      return
+    }
     const [w, h] = this.win.getContentSize()
     tab.view.setBounds(computeViewBounds(this.layout, w, h, tab.mobile))
   }

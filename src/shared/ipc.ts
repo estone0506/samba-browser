@@ -120,6 +120,8 @@ export const IPC = {
   authSignIn: 'auth:signIn',
   authSignInGoogle: 'auth:signInGoogle', // 브라우저를 열고 루프백 콜백까지 기다린다
   authSignOut: 'auth:signOut',
+  authSaveSupabase: 'auth:saveSupabase', // 로그인한 계정에 데이터 Supabase 주소 저장 + 즉시 연결
+  authResetPassword: 'auth:resetPassword', // 이 PC 에 살아 있는 세션으로 비밀번호 새로 정하기 + 로그인
   authStateChanged: 'auth:stateChanged', // main → renderer 이벤트
   // --- 확장(2b) — 폴더 불러오기 + 다른 브라우저 가져오기 + 웹스토어 설치 ------
   extList: 'ext:list',

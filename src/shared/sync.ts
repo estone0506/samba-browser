@@ -33,6 +33,19 @@ export interface AuthState {
   deviceId: string | null
   /** Supabase 접속 정보(앱 설정 또는 .env)가 채워져 있는가 */
   configured: boolean
+  /**
+   * 계정 디렉터리(중앙 로그인) 상태. 앱에 디렉터리 주소가 없는 빌드에서는 configured=false.
+   * needsSupabase 가 true 면 로그인은 됐지만 이 계정에 데이터 Supabase 주소가 아직 없다
+   */
+  account?: {
+    configured: boolean
+    signedIn: boolean
+    email?: string
+    userId?: string
+    needsSupabase: boolean
+    /** 관리자에게만 서버가 돌려주는 가입 사용자 수. 그 외는 없음 */
+    userCount?: number
+  }
 }
 
 // === Supabase 연결 입력값 검증 ============================================

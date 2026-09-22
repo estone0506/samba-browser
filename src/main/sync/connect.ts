@@ -59,6 +59,8 @@ export interface SyncConnectionDeps {
 
 export class SyncConnection {
   private readonly outbox: SyncOutbox
+  /** 지금 쓰는 백엔드. 계정에서 주소를 내려받으면 setBackend 로 바뀐다 */
+  private backend: SyncBackend | null
   private engine: SyncEngine | null = null
   private deviceService: DeviceService | null = null
   /** 시작이 겹치지 않게 막는다(상태 통지가 연달아 올 수 있다) */
@@ -71,9 +73,18 @@ export class SyncConnection {
 
   constructor(private readonly deps: SyncConnectionDeps) {
     this.outbox = new SyncOutbox(deps.db)
+    this.backend = deps.backend
     this.deps.auth.onStateChanged((state) => {
       void this.apply(state)
     })
+  }
+
+  /** 데이터 백엔드를 바꾼다. 돌던 엔진은 세우고(금고는 잠그지 않는다) 다음 로그인 때 새 백엔드로 뜬다 */
+  setBackend(backend: SyncBackend | null): void {
+    if (this.backend === backend) return
+    this.lockOnNextTeardown = false
+    this.teardown()
+    this.backend = backend
   }
 
   /** 설정 화면의 기기 목록이 쓴다. 로그아웃 상태면 null */
@@ -111,7 +122,7 @@ export class SyncConnection {
   }
 
   private async startEngine(): Promise<void> {
-    const backend = this.deps.backend
+    const backend = this.backend
     if (!backend || this.engine || this.starting) return
     this.starting = this.run(backend).finally(() => {
       this.starting = null

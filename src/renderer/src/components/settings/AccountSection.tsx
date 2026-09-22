@@ -56,16 +56,36 @@ export function AccountSection(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedIn])
 
-  // Supabase 접속 정보가 없으면 로그인 폼 대신 연결 폼을 보여 준다
-  if (auth.state && !auth.state.configured) return <SupabaseConnectCard />
   if (!auth.state) return <SettingsSection title={t('account.title')}>{null}</SettingsSection>
-  if (!signedIn)
-    return (
-      <>
-        <SignInCard />
-        <SupabaseConnectCard />
-      </>
-    )
+  const account = auth.state.account
+  // 계정 디렉터리가 있는 빌드: 로그인이 먼저다. 로그인 뒤 이 계정에 주소가 없을 때만 주소 폼을 보여 준다
+  if (account?.configured) {
+    if (!account.signedIn) return <SignInCard />
+    if (account.needsSupabase || !auth.state.configured)
+      return (
+        <>
+          <AccountCard email={account.email} userCount={account.userCount} />
+          <SupabaseConnectCard toAccount />
+        </>
+      )
+    if (!signedIn)
+      return (
+        <>
+          <AccountCard email={account.email} userCount={account.userCount} />
+          <SignInCard />
+        </>
+      )
+  } else {
+    // 디렉터리 없는 빌드(개인용): Supabase 접속 정보가 없으면 로그인 폼 대신 연결 폼을 보여 준다
+    if (!auth.state.configured) return <SupabaseConnectCard />
+    if (!signedIn)
+      return (
+        <>
+          <SignInCard />
+          <SupabaseConnectCard />
+        </>
+      )
+  }
 
   return (
     <>
@@ -76,6 +96,11 @@ export function AccountSection(): React.JSX.Element {
               {auth.state.email ?? '-'}
             </div>
             <div className="text-[11px] text-[var(--text2)]">{t('account.signedIn')}</div>
+            {account?.userCount !== undefined && (
+              <div className="text-[11px] text-[var(--text2)]">
+                {t('account.userCount', { n: account.userCount })}
+              </div>
+            )}
           </div>
         </div>
         <SecondaryButton disabled={auth.pending !== null} onClick={() => void auth.signOut()}>
@@ -101,8 +126,9 @@ export function AccountSection(): React.JSX.Element {
 
 // 내 Supabase 프로젝트 연결 — 동기화를 쓰려는 사람만 채우면 된다.
 // 비워 두면 앱은 로컬 전용으로 그대로 돈다
-function SupabaseConnectCard(): React.JSX.Element {
+function SupabaseConnectCard({ toAccount = false }: { toAccount?: boolean }): React.JSX.Element {
   const { t } = useTranslation()
+  const auth = useAuthStore()
   const [saved, setSaved] = useState<{ url: string; anonKey: string } | null>(null)
   const [url, setUrl] = useState('')
   const [anonKey, setAnonKey] = useState('')
@@ -132,6 +158,19 @@ function SupabaseConnectCard(): React.JSX.Element {
       return
     }
     setError(null)
+    if (toAccount) {
+      // 계정에 저장하고 곧바로 붙는다 — 다른 PC 에서 같은 계정으로 로그인하면 이 값이 따라온다
+      void auth.saveSupabase(nextUrl, nextKey).then((ok) => {
+        if (!ok) {
+          setError(auth.error ?? t('account.errors.generic'))
+          return
+        }
+        setSaved({ url: nextUrl, anonKey: nextKey })
+        setAnonKey('')
+        setEditing(false)
+      })
+      return
+    }
     void window.samba.settings
       .set({ syncSupabaseUrl: nextUrl, syncSupabaseAnonKey: nextKey })
       .then((r) => {
@@ -149,7 +188,10 @@ function SupabaseConnectCard(): React.JSX.Element {
   const connected = (saved?.url.length ?? 0) > 0 && (saved?.anonKey.length ?? 0) > 0
 
   return (
-    <SettingsSection title={t('account.supabase.title')} description={t('account.supabase.desc')}>
+    <SettingsSection
+      title={toAccount ? t('account.needsSupabaseTitle') : t('account.supabase.title')}
+      description={toAccount ? t('account.needsSupabaseDesc') : t('account.supabase.desc')}
+    >
       {connected && !editing ? (
         <>
           <SettingsRow label={t('account.supabase.urlLabel')}>
@@ -187,7 +229,7 @@ function SupabaseConnectCard(): React.JSX.Element {
         </>
       )}
       {error && <p className="text-[12px] text-red-600">{error}</p>}
-      {done && <NotReadyNote text={t('account.supabase.restartNeeded')} />}
+      {done && !toAccount && <NotReadyNote text={t('account.supabase.restartNeeded')} />}
       {/* 설정칸이 비었는데 동기화가 연결돼 있으면 .env(개발용) 값으로 도는 것 — 사용자가 "왜 비었지" 헷갈리지 않게 */}
       {!connected && (
         <p className="text-[11.5px] text-[var(--text2)]">{t('account.supabase.envInUse')}</p>
@@ -197,13 +239,46 @@ function SupabaseConnectCard(): React.JSX.Element {
   )
 }
 
+// 계정 디렉터리에 로그인된 계정(데이터 프로젝트 연결 전 단계). 관리자에게는 가입 사용자 수도 보인다
+function AccountCard({
+  email,
+  userCount
+}: {
+  email?: string
+  userCount?: number
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const auth = useAuthStore()
+  return (
+    <SettingsSection title={t('account.title')}>
+      <div className="min-w-0">
+        <div className="truncate text-[13px] font-medium text-[var(--text)]">{email ?? '-'}</div>
+        <div className="text-[11px] text-[var(--text2)]">{t('account.accountSignedIn')}</div>
+        {userCount !== undefined && (
+          <div className="text-[11px] text-[var(--text2)]">
+            {t('account.userCount', { n: userCount })}
+          </div>
+        )}
+      </div>
+      <SecondaryButton disabled={auth.pending !== null} onClick={() => void auth.signOut()}>
+        {t('account.signOut')}
+      </SecondaryButton>
+    </SettingsSection>
+  )
+}
+
 // 미로그인 — 이메일/비밀번호 가입·로그인 + 구글로 계속하기
-function SignInCard(): React.JSX.Element {
+export function SignInCard(): React.JSX.Element {
   const { t } = useTranslation()
   const auth = useAuthStore()
   const [mode, setMode] = useState<'signIn' | 'signUp'>('signIn')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  // 비밀번호를 잊었을 때: 이 PC 에 데이터 세션이 살아 있으면 메일 없이 새 비밀번호를 정할 수 있다
+  const [resetting, setResetting] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  // 세션이 남아 있는지만 안다(누구 것인지는 화면에 내보내지 않는다 — 이메일은 사용자가 직접 친다)
+  const canReset = auth.state?.signedIn === true
 
   const busy = auth.pending !== null
   const canSubmit = email.trim().length > 0 && password.length > 0 && !busy
@@ -231,7 +306,9 @@ function SignInCard(): React.JSX.Element {
   return (
     <SettingsSection
       title={mode === 'signIn' ? t('account.signInTitle') : t('account.signUpTitle')}
-      description={t('account.signInDesc')}
+      description={
+        auth.state?.account?.configured ? t('account.directorySignInDesc') : t('account.signInDesc')
+      }
     >
       <SettingsRow label={t('account.email')}>
         <TextInput
@@ -265,10 +342,42 @@ function SignInCard(): React.JSX.Element {
           {mode === 'signIn' ? t('account.toSignUp') : t('account.toSignIn')}
         </SecondaryButton>
       </div>
-      <div className="h-px bg-[var(--line)]" />
-      <SecondaryButton disabled={busy} onClick={() => void auth.signInGoogle()}>
-        {t('account.continueWithGoogle')}
-      </SecondaryButton>
+      {canReset && !resetting && (
+        <button
+          type="button"
+          className="w-fit text-[11.5px] text-[var(--text2)] underline"
+          onClick={() => {
+            auth.clearError()
+            setResetting(true)
+          }}
+        >
+          {t('account.forgotPassword')}
+        </button>
+      )}
+      {canReset && resetting && (
+        <>
+          <p className="text-[11.5px] text-[var(--text2)]">{t('account.resetHint')}</p>
+          <SettingsRow label={t('account.newPassword')}>
+            <TextInput
+              value={newPassword}
+              onChange={setNewPassword}
+              type="password"
+              autoComplete="new-password"
+            />
+          </SettingsRow>
+          <div className="flex flex-wrap items-center gap-2">
+            <PrimaryButton
+              disabled={newPassword.length < 8 || email.trim().length === 0 || busy}
+              onClick={() => void auth.resetPassword(email.trim(), newPassword)}
+            >
+              {t('account.resetAndSignIn')}
+            </PrimaryButton>
+            <SecondaryButton disabled={busy} onClick={() => setResetting(false)}>
+              {t('account.googleCancel')}
+            </SecondaryButton>
+          </div>
+        </>
+      )}
     </SettingsSection>
   )
 }

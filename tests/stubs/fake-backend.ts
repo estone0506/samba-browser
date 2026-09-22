@@ -111,6 +111,9 @@ export function createFakeBackend(): FakeBackend {
     async clearLocalSession() {
       signedIn = null
     },
+    async updatePassword() {
+      if (!signedIn) throw new Error('not signed in')
+    },
     async currentUser() {
       return signedIn
     },
@@ -167,6 +170,9 @@ export function createFakeBackend(): FakeBackend {
       calls.remove += 1
       const t = table(name)
       for (const id of ids) t.delete(id)
+    },
+    async rpcNumber() {
+      return null
     },
     async subscribe(name, onChange) {
       let set = listeners.get(name)
