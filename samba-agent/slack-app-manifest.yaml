@@ -1,0 +1,36 @@
+# SAMBA 주문 봇 — 슬랙 앱 매니페스트
+# 사용법: https://api.slack.com/apps → Create New App → "From a manifest" → 워크스페이스 선택 → 이 파일 내용 붙여넣기.
+# 만든 뒤:
+#   1) Basic Information → App-Level Tokens → Generate Token(scope: connections:write) → xapp-… 를 .env 의 SLACK_APP_TOKEN 에
+#   2) OAuth & Permissions → Install to Workspace → xoxb-… 를 .env 의 SLACK_BOT_TOKEN 에
+#   3) 검토 전에는 테스트 채널에서만 쓴다: 채널에 봇을 초대(/invite @SAMBA 주문 봇)하고 .env 의 SLACK_CHANNEL 을 그 채널로.
+#      #sambaorder 초대는 사용자 검토·승인 뒤(스펙 §7 ④).
+#   4) 명령을 받을 사람의 슬랙 사용자 ID(U…)를 .env 의 SLACK_ALLOWED_USERS 에 쉼표로.
+# 토큰은 .env 에만 둔다 — 채팅·커밋·로그에 절대 붙여넣지 않는다.
+display_information:
+  name: SAMBA 주문 봇
+  description: 포이즌·판매처 주문을 소싱처에서 자동 구매하고 SAMBA-WAVE 에 기록하는 하네스. 외부 변경 전에는 승인 버튼으로 묻는다
+  background_color: '#111111'
+features:
+  bot_user:
+    display_name: SAMBA 주문 봇
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read # @봇 멘션으로 명령 받기
+      - chat:write # 진행 보고·승인 카드 올리기
+      - channels:history # 채널 메시지(멘션 문맥) 읽기
+      - channels:read # 채널 이름 → id
+      - groups:history # 비공개 채널일 때
+      - groups:read
+      - users:read # 승인자 확인(허용 목록 U… 대조)
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+  interactivity:
+    is_enabled: true # 승인/거부 버튼(block_actions)
+  org_deploy_enabled: false
+  socket_mode_enabled: true # Socket Mode — 공개 URL 없이 로컬에서 받는다
+  token_rotation_enabled: false
