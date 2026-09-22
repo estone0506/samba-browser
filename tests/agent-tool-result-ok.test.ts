@@ -20,7 +20,9 @@ describe('isToolResultOk', () => {
       instructions: '금고가 locked 면 멈춘다. 결제 error·fail 은 보고한다. 계정 not found 면 보류'
     })
     expect(isToolResultOk(playbook, true)).toBe(true)
-    expect(isToolResultOk('URL: https://shop.example\nPAGE TEXT\n로그인 실패 error 403', true)).toBe(true)
+    expect(
+      isToolResultOk('URL: https://shop.example\nPAGE TEXT\n로그인 실패 error 403', true)
+    ).toBe(true)
   })
 
   it('본문 도구도 결과가 실패 표식으로 시작하면 실패다', () => {
@@ -31,7 +33,9 @@ describe('isToolResultOk', () => {
   })
 
   it('run_js 는 log 출력 뒤 줄 머리의 Error: 도 실패로 본다', () => {
-    expect(isToolResultOk('found 3 rows\nError: 행을 못 찾음\n    at <anonymous>', true)).toBe(false)
+    expect(isToolResultOk('found 3 rows\nError: 행을 못 찾음\n    at <anonymous>', true)).toBe(
+      false
+    )
     expect(isToolResultOk('{"status":"error shown on page","rows":3}', true)).toBe(true)
   })
 })

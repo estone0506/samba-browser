@@ -114,7 +114,7 @@ describe('parseCurrentApp — 첫 줄이 null 인 폰', () => {
 
 describe('토스 결제 비밀번호 화면(실기 구조) — 숫자 키의 id 에 password 가 들어 있다', () => {
   // 실기: 키 id 는 password_btnNumberN 이고 N 과 라벨은 무관하다(매번 섞인다). 라벨을 지우면 키패드를 읽지 못한다
-  const order = ["5","2","0","8","9","7","4","1","3","6"]
+  const order = ['5', '2', '0', '8', '9', '7', '4', '1', '3', '6']
   const xml = [
     '<hierarchy rotation="0">',
     '<node text="29,960원을 결제하려면 비밀번호를 눌러주세요" resource-id="viva.republica.toss:id/password_tvInfo" class="android.widget.TextView" clickable="false" password="false" bounds="[183,357][537,469]" />',
@@ -132,7 +132,18 @@ describe('토스 결제 비밀번호 화면(실기 구조) — 숫자 키의 id 
     expect(screen.elements.some((e) => e.text === '1234')).toBe(false)
     const layout = keypadFromUiTree(screen)
     expect(layout).not.toBeNull()
-    expect(Object.keys(layout?.digits ?? {}).sort()).toEqual(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
+    expect(Object.keys(layout?.digits ?? {}).sort()).toEqual([
+      '0',
+      '1',
+      '2',
+      '3',
+      '4',
+      '5',
+      '6',
+      '7',
+      '8',
+      '9'
+    ])
     // 라벨 기준으로 자리를 잡는다 — id 의 번호가 아니다
     expect(layout?.digits['5']).toEqual({ x: 113, y: 955 })
   })

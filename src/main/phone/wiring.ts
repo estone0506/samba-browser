@@ -259,7 +259,7 @@ export interface WiringVault extends PaySecretVault {
 export interface PagePort {
   /** 활성 탭 호스트(정규화). 없으면 빈 문자열 */
   host: () => string
-  /** 네이버페이 결제창(활성 탭 또는 그 팝업)에 보이는 마스킹된 로그인 아이디(cann******). 창이 없으면 null */
+  /** 네이버페이 결제창(활성 탭 또는 그 팝업)에 보이는 마스킹된 로그인 아이디(mjki******). 창이 없으면 null */
   naverPayAccount?: () => Promise<string | null>
   /** 활성 탭의 프로필 이름(계정별 탭). 같은 사이트에 계정이 여럿일 때 고르는 기준. 없으면 빈 문자열 */
   profile?: () => string

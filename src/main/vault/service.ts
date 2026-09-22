@@ -1411,7 +1411,7 @@ export class VaultService {
     if (!this.key) return { value: null, reason: 'locked' }
     const found = this.repo.findPaymentItemRow(args.accountId, args.provider)
     if (!found.row) return { value: null, reason: found.reason }
-    // 쇼핑몰 계정의 항목이 "네이버 계정 buyer01 의 비밀번호를 쓴다"는 연결이면 그 앱 계정의 항목으로 간다
+    // 쇼핑몰 계정의 항목이 "네이버 계정 mjkim88 의 비밀번호를 쓴다"는 연결이면 그 앱 계정의 항목으로 간다
     const linked = this.linkedPaymentRow(found.row)
     if (linked === 'missing') return { value: null, reason: 'not-found' }
     const plain = this.decryptForFill(

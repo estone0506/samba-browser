@@ -39,14 +39,27 @@ describe('tools/list', () => {
     expect(list).toBeDefined()
     const result = await list!({ method: 'tools/list', params: {} }, {})
     const names = result.tools.map((t) => t.name)
-    for (const name of ['get_page', 'click', 'run_js', 'fill_secret', 'save_script', 'run_script', 'remember_site', 'update_playbook', 'done'])
+    for (const name of [
+      'get_page',
+      'click',
+      'run_js',
+      'fill_secret',
+      'save_script',
+      'run_script',
+      'remember_site',
+      'update_playbook',
+      'done'
+    ])
       expect(names).toContain(name)
   })
 })
 
 describe('parseScriptArgs', () => {
   it('JSON 객체 문자열만 받는다', () => {
-    expect(parseScriptArgs('{"orderNo":"A-1","cost":33630}')).toEqual({ orderNo: 'A-1', cost: 33630 })
+    expect(parseScriptArgs('{"orderNo":"A-1","cost":33630}')).toEqual({
+      orderNo: 'A-1',
+      cost: 33630
+    })
     expect(parseScriptArgs(undefined)).toEqual({})
     expect(parseScriptArgs('  ')).toEqual({})
     expect(parseScriptArgs('[1,2]')).toBeNull()

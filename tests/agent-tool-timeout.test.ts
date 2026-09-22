@@ -11,7 +11,12 @@ describe('withToolTimeout', () => {
   })
 
   it('페이지가 응답하지 않으면 제한 시간 뒤 안내 문구로 끝난다', async () => {
-    const r = await withToolTimeout(sleep(500).then(() => 'late'), 40, () => false, 5)
+    const r = await withToolTimeout(
+      sleep(500).then(() => 'late'),
+      40,
+      () => false,
+      5
+    )
     expect(r).toMatch(/did not respond/)
   })
 
@@ -27,7 +32,12 @@ describe('withToolTimeout', () => {
   it('사람 대기가 끝난 뒤부터는 다시 시간을 센다', async () => {
     let waiting = true
     setTimeout(() => (waiting = false), 60)
-    const r = await withToolTimeout(sleep(1000).then(() => 'late'), 40, () => waiting, 5)
+    const r = await withToolTimeout(
+      sleep(1000).then(() => 'late'),
+      40,
+      () => waiting,
+      5
+    )
     expect(r).toMatch(/did not respond/)
   })
 })
