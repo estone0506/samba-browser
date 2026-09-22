@@ -5,6 +5,8 @@
 """
 
 import json
+import os
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -16,6 +18,7 @@ from samba_agent.queue.db import JobQueue
 from samba_agent.supervisor.policy import STAGES
 
 DEFAULT_PORT = 47812
+MAX_RULES_BODY = 256 * 1024  # 256KB — 규칙 파일 PUT 본문 상한(리뷰 지적 — Important 2)
 
 
 def build_app(
@@ -36,7 +39,7 @@ def build_app(
         elif req.method == 'GET' and path == '/jobs':
             resp = _get_jobs(queue)
         elif req.method == 'GET' and path == '/releases':
-            resp = _get_releases(releases, version)
+            resp = _get_releases(releases, version, root)
         elif req.method == 'PUT' and path.startswith('/graph/rules/'):
             resp = _put_rules(reg, root, version, path[len('/graph/rules/') :], req)
         else:
@@ -86,13 +89,13 @@ def _get_jobs(queue: JobQueue) -> Response:
     )
 
 
-def _get_releases(releases: ReleaseStore, version: Callable[[], str]) -> Response:
+def _get_releases(releases: ReleaseStore, version: Callable[[], str], root: Path) -> Response:
     current = releases.current_prod()
     return _json(
         {
             'current': current.__dict__ if current else None,
             'history': [r.__dict__ for r in releases.history()],
-            'candidate': _candidate(version()),
+            'candidate': _candidate(root, version()),
         }
     )
 
@@ -107,8 +110,15 @@ def _put_rules(
         spec = reg[name]
     except KeyError:
         return _json({'error': f'unknown agent: {name}'}, 404)
+    # content-length 로 먼저 거른다(스트림 다 읽기 전에 413 — 리뷰 지적 — Important 2).
+    # 헤더가 없거나 거짓이어도 아래에서 실제 바이트 길이로 다시 확인한다.
+    if (req.content_length or 0) > MAX_RULES_BODY:
+        return _json({'error': 'payload too large'}, 413)
+    raw = req.get_data(as_text=False)
+    if len(raw) > MAX_RULES_BODY:
+        return _json({'error': 'payload too large'}, 413)
     try:
-        body = json.loads(req.get_data(as_text=True) or '{}')
+        body = json.loads(raw.decode('utf-8') or '{}')
     except ValueError:
         return _json({'error': 'bad json'}, 400)
     if not isinstance(body, dict):
@@ -121,15 +131,32 @@ def _put_rules(
     # 안 나가는지 확인한다(스펙 §10-3 — 실패 케이스는 항상 한 번 더 검사한다)
     if root.resolve() not in rules_path.parents and rules_path != root.resolve():
         return _json({'error': 'bad path'}, 400)
-    rules_path.write_text(text, encoding='utf-8')
+    _atomic_write(rules_path, text)
     return _json({'ok': True, 'version': version()})
 
 
-def _candidate(version: str) -> dict[str, object] | None:
-    """후보 버전의 판정 요약. 아직 판정 파일이 없으면 None."""
-    from samba_agent.ops.gate import REPORT_DIR
+def _atomic_write(path: Path, text: str) -> None:
+    """임시 파일에 쓰고 ``os.replace`` 로 갈아치운다(리뷰 지적 — Important 3).
 
-    path = REPORT_DIR / f'{version}.md'
+    중간에 죽어도 원본 규칙 파일이 반쯤 쓰인 채로 남지 않는다.
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f'.{path.name}.', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(text)
+        os.replace(tmp_name, path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+
+
+def _candidate(root: Path, version: str) -> dict[str, object] | None:
+    """후보 버전의 판정 요약. 아직 판정 파일이 없으면 None.
+
+    ``ops.gate.REPORT_DIR`` 은 패키지 고정 경로라 테스트에서 격리할 수 없었다
+    (리뷰 지적 — Minor 5). 대신 ``root`` 기준 경로를 본다.
+    """
+    path = root / 'ops' / 'reports' / f'{version}.md'
     if not path.exists():
         return None
     return {'version': version, 'report': path.read_text(encoding='utf-8')}

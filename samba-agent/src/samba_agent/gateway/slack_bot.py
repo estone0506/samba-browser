@@ -159,7 +159,8 @@ class SambaBot:
         if cmd.kind == 'diagnose':
             return self.diagnose(cmd.order_no)
         if cmd.kind == 'version':
-            return f'하네스 버전 {self.worker.d.version} · 환경 {self.settings.harness_env}'
+            # WorkerDeps.version 이 콜러블로 바뀌었다(Task 16 리뷰 지적) — 매번 불러 최신 버전을 보여준다
+            return f'하네스 버전 {self.worker.d.version()} · 환경 {self.settings.harness_env}'
         if cmd.kind == 'approve' and cmd.version:
             # 버전 승격 승인은 Task 15 의 ops.gate 가 받는다
             return f'버전 {cmd.version} 승인 요청을 접수했습니다(판정 파일에 기록)'

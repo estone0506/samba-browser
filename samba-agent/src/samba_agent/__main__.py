@@ -6,6 +6,7 @@
 
 import functools
 import logging
+import signal
 import threading
 
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -72,7 +73,7 @@ def main() -> None:
         WorkerDeps(
             queue=queue,
             graph=graph,
-            version=version_fn(),
+            version=version_fn,  # 콜러블 그대로 넘긴다 — tick 마다 다시 불러 규칙 변경을 반영한다
             report=_report,
             parse_order=lambda job: lookup_order(bridge, job.order_no, job.options),
             dry_run=settings.dry_run,
@@ -91,7 +92,12 @@ def main() -> None:
 
     app = build_app(reg=reg, queue=queue, releases=releases, root=settings.root, version=version_fn)
 
+    # 이벤트 하나로 통일한다(리뷰 지적 — Minor) — SIGINT/SIGTERM 이 이걸 세우면
+    # 워커 고리와(봇 없을 때의) 대기가 함께 풀린다.
     stop = threading.Event()
+    signal.signal(signal.SIGINT, lambda *_a: stop.set())
+    signal.signal(signal.SIGTERM, lambda *_a: stop.set())
+
     worker_thread = threading.Thread(
         target=worker.run_forever, args=(stop.is_set,), daemon=True, name='worker'
     )
@@ -106,8 +112,7 @@ def main() -> None:
         SocketModeHandler(slack_app, settings.slack_app_token.get_secret_value()).start()
     else:
         log.warning('슬랙 토큰이 없다 — 봇 없이 큐/API 만 돈다')
-        stop_forever = threading.Event()
-        stop_forever.wait()
+        stop.wait()
 
 
 if __name__ == '__main__':

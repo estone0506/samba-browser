@@ -77,3 +77,32 @@ def test_경로_탈출은_400(client):
 
 def test_모르는_경로는_404(client):
     assert client.get('/nope').status_code == 404
+
+
+def test_규칙_본문이_256KB_넘으면_413(client):
+    big = {'text': 'a' * (256 * 1024 + 1)}
+    resp = client.put('/graph/rules/payer', json=big)
+    assert resp.status_code == 413
+
+
+def test_규칙_쓰기는_원자적이다(tmp_path, client):
+    # 파일 내용이 그대로 반영되고, 임시 파일이 안 남는지 확인한다(리뷰 지적 — Important 3)
+    resp = client.put('/graph/rules/payer', json={'text': '# 원자적 쓰기 시험\n'})
+    assert resp.status_code == 200
+    # fixture 의 root 는 tmp_path / 'root' 다
+    rules_dir = tmp_path / 'root' / 'rules'
+    payer_files = list(rules_dir.glob('payer*'))
+    assert payer_files, 'payer 규칙 파일을 찾지 못함'
+    payer_path = payer_files[0]
+    assert payer_path.read_text(encoding='utf-8') == '# 원자적 쓰기 시험\n'
+    tmp_leftovers = list(rules_dir.glob('.*tmp*'))
+    assert tmp_leftovers == []
+
+
+def test_candidate는_root_기준_ops_reports를_본다(tmp_path, client):
+    # 리뷰 지적 — Minor 5: ops.gate.REPORT_DIR 고정 경로가 아니라 root 기준으로 읽는지 확인
+    reports = tmp_path / 'root' / 'ops' / 'reports'
+    reports.mkdir(parents=True)
+    (reports / 'vtest.md').write_text('# 판정 — vtest\n', encoding='utf-8')
+    body = _json(client.get('/releases'))
+    assert body['candidate'] == {'version': 'vtest', 'report': '# 판정 — vtest\n'}

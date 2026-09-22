@@ -202,6 +202,30 @@ def test_동시에_두번_resume해도_그래프는_한번만_불린다(setup):
     assert sum(1 for r in results if r is not None) == 1
 
 
+def test_version이_콜러블이면_tick마다_다시_불러_새_버전을_기록한다(setup):
+    # 리뷰 지적 — Important 1: 규칙 파일을 PUT 으로 고쳐 harness_version 이 바뀌면
+    # 다음 tick 은 옛 버전이 아니라 새 버전을 큐에 남겨야 한다.
+    q, _log, sent, _make = setup
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    q.enqueue('A2', 'U1', {}, 'ts2')
+    reg = Registry.load(DEFAULT_ROOT)
+    graph = build_supervisor(reg, agents([]), checkpointer=MemorySaver(), gate=False)
+    versions = iter(['v1', 'v2'])
+    w = Worker(
+        WorkerDeps(
+            queue=q,
+            graph=graph,
+            version=lambda: next(versions),
+            report=lambda job, line: sent.append(line),
+            parse_order=order_of,
+        )
+    )
+    w.tick()
+    w.tick()
+    assert q.get('A1').harness_version == 'v1'
+    assert q.get('A2').harness_version == 'v2'
+
+
 def test_dry_run_False로_주입하면_state에_반영된다(setup):
     q, _log, _sent, make = setup
     q.enqueue('A1', 'U1', {}, 'ts1')

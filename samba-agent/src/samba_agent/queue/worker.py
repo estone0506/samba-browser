@@ -22,15 +22,26 @@ _log = logging.getLogger(__name__)
 
 @dataclass
 class WorkerDeps:
-    """실행기가 쓰는 것들. 테스트는 여기에 가짜를 넣는다."""
+    """실행기가 쓰는 것들. 테스트는 여기에 가짜를 넣는다.
+
+    ``version`` 은 tick 마다 다시 불러야 한다 — 규칙 파일을 PUT 으로 고치면
+    harness_version 이 바뀌는데, 기동 시점 문자열로 고정하면 워커가 옛 버전을
+    계속 기록한다(리뷰 지적 — Important 1). 기존 테스트 호환을 위해 문자열이
+    오면 ``__post_init__`` 에서 상수를 돌려주는 콜러블로 감싼다.
+    """
 
     queue: JobQueue
     graph: object  # CompiledGraph
-    version: str
+    version: Callable[[], str] | str
     report: Callable[[Job, str], None]
     parse_order: Callable[[Job], OrderRef]
     # settings.dry_run 이 아직 여기까지 안 들어와서 당장은 기본값 True 로 주입한다.
     dry_run: bool = True
+
+    def __post_init__(self) -> None:
+        if isinstance(self.version, str):
+            fixed = self.version
+            self.version = lambda: fixed
 
 
 class Worker:
@@ -44,8 +55,9 @@ class Worker:
         job = self.d.queue.claim()
         if job is None:
             return None
-        self.d.queue.set_version(job.id, self.d.version)
-        self.d.report(job, f'접수: {job.order_no} 처리 시작(하네스 {self.d.version})')
+        version = self.d.version()
+        self.d.queue.set_version(job.id, version)
+        self.d.report(job, f'접수: {job.order_no} 처리 시작(하네스 {version})')
         state = {
             'order': self.d.parse_order(job),
             'options': {str(k): str(v) for k, v in job.options.items()},
