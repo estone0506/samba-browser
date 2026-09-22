@@ -115,3 +115,48 @@ describe('문구', () => {
     }
   })
 })
+
+describe('FlowGraph·RulesDialog 가 쓰는 i18n 키(ko·en 양쪽)', () => {
+  const keys = [
+    'automation.harness.title',
+    'automation.harness.desc',
+    'automation.harness.version',
+    'automation.harness.refresh',
+    'automation.harness.expand',
+    'automation.harness.collapse',
+    'automation.harness.empty',
+    'automation.harness.stage.buy',
+    'automation.harness.stage.pay',
+    'automation.harness.stage.record',
+    'automation.harness.stage.verify',
+    'automation.harness.node.supervisor',
+    'automation.harness.node.retry',
+    'automation.harness.node.noRetry',
+    'automation.harness.node.tools',
+    'automation.harness.node.edit',
+    'automation.harness.node.status.running',
+    'automation.harness.node.status.waiting',
+    'automation.harness.node.status.attention',
+    'automation.harness.rules.title',
+    'automation.harness.rules.path',
+    'automation.harness.rules.loading',
+    'automation.harness.rules.loadFailed',
+    'automation.harness.rules.warn',
+    'automation.harness.rules.newVersion',
+    'automation.harness.rules.placeholder',
+    'automation.harness.rules.save',
+    'automation.harness.rules.confirm',
+    'automation.harness.rules.confirmDesc',
+    'automation.harness.rules.cancel',
+    'automation.harness.rules.saved',
+    'automation.harness.rules.failed'
+  ]
+
+  const read = (src: Record<string, unknown>, key: string): unknown =>
+    key.split('.').reduce<unknown>((acc, k) => (acc as Record<string, unknown>)?.[k], src)
+
+  it.each(keys)('%s', (key) => {
+    expect(read(ko as unknown as Record<string, unknown>, key)).toBeTypeOf('string')
+    expect(read(en as unknown as Record<string, unknown>, key)).toBeTypeOf('string')
+  })
+})
