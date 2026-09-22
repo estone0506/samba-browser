@@ -51,3 +51,38 @@ describe('serializeSnapshot', () => {
     expect(serializeSnapshot(long)).toContain('a'.repeat(16000))
   })
 })
+
+describe('입력칸 현재 값', () => {
+  it('입력·선택칸의 value 를 나열에 싣고, 비밀 입력칸은 값을 싣지 않는다', () => {
+    const s: PageSnapshot = {
+      url: 'https://samba-wave.vercel.app/samba/orders',
+      title: '주문',
+      text: '',
+      elements: [
+        { id: 1, tag: 'input', role: 'textbox', text: '실구매가', isSecret: false, value: '29000' },
+        {
+          id: 2,
+          tag: 'select',
+          role: 'combobox',
+          text: '주문계정',
+          isSecret: false,
+          value: 'mjkim88'
+        },
+        {
+          id: 3,
+          tag: 'input',
+          role: 'textbox',
+          text: '비밀번호',
+          inputType: 'password',
+          isSecret: true,
+          value: 'x'
+        }
+      ]
+    }
+    const out = serializeSnapshot(s)
+    expect(out).toContain('value="29000"')
+    expect(out).toContain('value="mjkim88"')
+    expect(out).toContain('(SECRET)')
+    expect(out).not.toContain('value="x"')
+  })
+})

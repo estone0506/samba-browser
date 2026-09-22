@@ -201,6 +201,7 @@ function labelOf(el: HTMLElement): string {
 function describeElement(el: HTMLElement, id: number, clickable = false): PageElement {
   const input = el as HTMLInputElement
   const inputType = el.tagName === 'INPUT' ? input.type : undefined
+  const isSecret = inputType === 'password'
   return {
     id,
     tag: el.tagName.toLowerCase(),
@@ -209,8 +210,36 @@ function describeElement(el: HTMLElement, id: number, clickable = false): PageEl
     name: input.name || undefined,
     href: (el as HTMLAnchorElement).getAttribute?.('href') || undefined,
     inputType,
-    isSecret: inputType === 'password'
+    ...(isSecret ? {} : valueOf(el)),
+    isSecret
   }
+}
+
+/**
+ * 입력칸·선택칸·체크박스의 현재 값. 비밀 입력칸(password)은 호출하지 않는다.
+ * SAMBA-WAVE 같은 앱은 입력값이 접근성 트리에 안 나와 스크립트가 "저장 후 되읽기"를 못 했다 —
+ * 이 값이 스냅샷에 실려야 기록 검증이 된다. 값이 없으면 필드를 아예 넣지 않는다
+ */
+function valueOf(el: HTMLElement): { value?: string } {
+  const tag = el.tagName
+  if (tag === 'SELECT') {
+    const sel = el as HTMLSelectElement
+    const opt = sel.options[sel.selectedIndex]
+    return { value: (opt?.text ?? sel.value ?? '').trim() }
+  }
+  if (tag === 'TEXTAREA') return { value: (el as HTMLTextAreaElement).value.slice(0, 500) }
+  if (tag === 'INPUT') {
+    const input = el as HTMLInputElement
+    if (input.type === 'checkbox' || input.type === 'radio')
+      return { value: input.checked ? 'on' : 'off' }
+    if (input.type === 'file' || input.type === 'hidden') return {}
+    return { value: input.value.slice(0, 500) }
+  }
+  if (el.getAttribute('role') === 'switch' || el.getAttribute('aria-pressed') !== null) {
+    const v = el.getAttribute('aria-checked') ?? el.getAttribute('aria-pressed')
+    return v === null ? {} : { value: v === 'true' ? 'on' : 'off' }
+  }
+  return {}
 }
 
 /** 지금 화면(뷰포트) 안에 들어와 있는 요소인가. 좌표를 못 구하면 false(문서 순으로 밀린다) */
@@ -700,7 +729,17 @@ function isTextEntry(el: Element | null): el is HTMLElement {
   if (tag === 'textarea') return true
   if (tag !== 'input') return (el as HTMLElement).isContentEditable === true
   const type = ((el as HTMLInputElement).type || 'text').toLowerCase()
-  return !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color'].includes(type)
+  return ![
+    'button',
+    'submit',
+    'reset',
+    'checkbox',
+    'radio',
+    'file',
+    'image',
+    'range',
+    'color'
+  ].includes(type)
 }
 
 /**

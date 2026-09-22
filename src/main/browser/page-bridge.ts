@@ -31,6 +31,8 @@ const elementSchema = z.object({
   name: z.string().optional(),
   href: z.string().optional(),
   inputType: z.string().optional(),
+  // 입력칸 현재 값(비밀 입력칸은 프리로드가 애초에 싣지 않는다). 스키마에 없으면 zod 가 조용히 버린다
+  value: z.string().max(500).optional(),
   isSecret: z.boolean()
 })
 
