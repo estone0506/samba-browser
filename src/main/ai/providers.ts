@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
+import { resolveCliBin } from './cli-bin'
 import {
   connectionKeyOf,
   type AiConnections,
@@ -69,9 +70,11 @@ export function defaultProbes(): ProviderProbes {
     fileExists: existsSync,
     runVersion: (provider) =>
       new Promise((resolve) => {
+        // Windows 의 npm 셔틀(codex.cmd)은 이름만으로는 못 돌리므로 실제 실행 파일로 푼다
+        const cli = resolveCliBin(SUBSCRIPTION_CLI[provider].bin)
         const child = execFile(
-          SUBSCRIPTION_CLI[provider].bin,
-          ['--version'],
+          cli.command,
+          [...cli.prefixArgs, '--version'],
           { timeout: VERSION_TIMEOUT_MS },
           (err) => resolve(!err)
         )

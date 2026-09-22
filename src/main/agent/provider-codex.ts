@@ -15,6 +15,7 @@
 // MCP 서버가 주어졌을 때만** 도구를 연결하고, 없으면 텍스트 응답 경로로만 동작한다.
 
 import { spawn } from 'node:child_process'
+import { resolveCliBin } from '../ai/cli-bin'
 
 /** codex 에 넘길 실행 입력 */
 export interface CodexInput {
@@ -148,7 +149,9 @@ export function splitLines(buffer: string): { lines: string[]; rest: string } {
 }
 
 function defaultSpawn(command: string, args: string[], cwd?: string): CodexChild {
-  const child = spawn(command, args, {
+  // Windows 의 npm 셔틀(codex.cmd)은 spawn 이름만으로는 못 돌리므로 실제 실행 파일(node + .js)로 푼다
+  const cli = resolveCliBin(command)
+  const child = spawn(cli.command, [...cli.prefixArgs, ...args], {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true
