@@ -14,6 +14,7 @@ import type { PhoneScreen } from '../../shared/phone-snapshot'
 import type { Settings } from '../../shared/settings'
 import type { AccountDto, PaymentProvider, VaultItemType, VaultState } from '../../shared/vault'
 import { normalizeHost } from '../../shared/host'
+import { maskedNaverAccountMatches } from '../../shared/naverpay'
 import type { KeypadLayout } from '../ai/visual'
 import { extractCode } from '../ai/visual'
 import type { HandoffResult } from '../agent/handoff'
@@ -244,6 +245,8 @@ export interface WiringVault extends PaySecretVault {
   listAccounts: (host?: string) => AccountDto[]
   /** 계정에 이 결제 수단의 결제 비밀번호 항목이 있는가(복호화 없음). 없으면 'password' 항목 유무로 본다 */
   hasPaymentItem?: (accountId: number, provider: PaymentProvider) => boolean
+  /** 이 결제 수단으로 결제될 앱 계정 아이디(네이버페이 → 네이버 아이디). 없으면 null */
+  paymentAccountUsername?: (accountId: number, provider: PaymentProvider) => string | null
   getSecretForFill: (
     accountId: number,
     type: VaultItemType,
@@ -256,6 +259,8 @@ export interface WiringVault extends PaySecretVault {
 export interface PagePort {
   /** 활성 탭 호스트(정규화). 없으면 빈 문자열 */
   host: () => string
+  /** 네이버페이 결제창(활성 탭 또는 그 팝업)에 보이는 마스킹된 로그인 아이디(cann******). 창이 없으면 null */
+  naverPayAccount?: () => Promise<string | null>
   /** 활성 탭의 프로필 이름(계정별 탭). 같은 사이트에 계정이 여럿일 때 고르는 기준. 없으면 빈 문자열 */
   profile?: () => string
   /** 활성 탭 id — 결제 팝업(openerId)을 되찾는 데 쓴다 */
@@ -438,6 +443,25 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
         : tr('phone.gateNoAccount')
       ctx.onStep(tr('phone.payRejected', { reason }), false)
       return { ok: false, reason: 'no-account' }
+    }
+    // 네이버페이: 결제창이 키마스터에서 고른 네이버 계정으로 로그인돼 있는지 맞춘다(다른 계정으로 결제 금지)
+    if (req.provider === 'naverpay') {
+      const expected = deps.vault.paymentAccountUsername?.(account.id, 'naver') ?? null
+      const shown = expected ? ((await deps.page.naverPayAccount?.()) ?? null) : null
+      if (expected && shown && !maskedNaverAccountMatches(shown, expected)) {
+        ctx.onStep(
+          tr('phone.payRejected', {
+            reason: tr('phone.gatePayAccountMismatch', { shown, expected })
+          }),
+          false
+        )
+        return {
+          ok: false,
+          reason: 'pay-account-mismatch',
+          detail: `Naver Pay window is signed in as ${shown}, expected ${expected}`
+        }
+      }
+      if (expected && shown) ctx.onStep(tr('phone.payAccountChecked', { shown }), true)
     }
     // 결제 앱은 담당 폰에만 있다. 담당 폰이 끊겨 있으면 다른 폰으로 넘어가지 않는다 —
     // 남의 폰에서 결제 앱을 열고 한참 찾다가 stuck 으로 끝났다(실기)

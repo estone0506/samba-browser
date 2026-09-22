@@ -135,6 +135,10 @@ describe('서브도메인 계정 합치기', () => {
       ])
     })
     expect(vault.hasPaymentItem(site.id, 'naver')).toBe(true)
+    // 결제창 계정 검사에 쓸 아이디: 쇼핑몰 계정은 연결된 아이디, 네이버 계정은 제 아이디
+    expect(vault.paymentAccountUsername(site.id, 'naver')).toBe('buyer01')
+    expect(vault.paymentAccountUsername(naver.id, 'naver')).toBe('buyer01')
+    expect(vault.paymentAccountUsername(site.id, 'toss')).toBeNull()
     expect(vault.getPaymentSecretForFill({ accountId: site.id, provider: 'naver' }).value).toBe(
       '246810'
     )

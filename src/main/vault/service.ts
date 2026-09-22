@@ -1359,6 +1359,22 @@ export class VaultService {
   }
 
   /**
+   * 이 결제 수단으로 결제될 앱 계정의 아이디(네이버페이면 네이버 아이디). 결제창이 그 계정으로 로그인돼 있는지
+   * 맞춰 볼 때 쓴다. 쇼핑몰 계정의 항목이면 연결된 아이디, 계정 자체가 앱 사이트(naver.com) 계정이면 제 아이디.
+   * 앱 계정이 따로 없는 결제 수단(토스 등)이나 항목이 없으면 null
+   */
+  paymentAccountUsername(accountId: number, provider: PaymentProvider): string | null {
+    const appHost = PAYMENT_PROVIDER_ACCOUNT_HOST[provider]
+    if (!appHost) return null
+    const account = this.repo.getAccount(accountId)
+    if (!account) return null
+    if (registrableDomain(account.host) === appHost) return account.username
+    const found = this.repo.findPaymentItemRow(accountId, provider)
+    if (!found.row) return null
+    return paymentAccountOfSections(found.row.sections)
+  }
+
+  /**
    * 결제 비밀번호 항목이 앱 계정 연결(payment.account)이면 그 앱 계정의 같은 결제 수단 항목을 돌려준다.
    * 연결이 아니면(값을 직접 넣은 옛 항목) null, 연결인데 그 계정·항목이 없으면 'missing'.
    * 연결은 한 단계만 따라간다(앱 계정 항목이 또 연결이어도 더 가지 않는다)

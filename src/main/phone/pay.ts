@@ -336,6 +336,8 @@ export type PayFailReason =
   | 'no-phone'
   // 결제 앱 계정(네이버 등)이 여럿인데 payAccount 로 고르지 않았다
   | 'pay-account-ambiguous'
+  // 네이버페이 창이 고른 네이버 계정이 아닌 다른 계정으로 로그인돼 있다
+  | 'pay-account-mismatch'
 
 export interface PayResult {
   ok: boolean
