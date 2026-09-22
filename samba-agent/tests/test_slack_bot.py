@@ -180,3 +180,66 @@ def test_채널을_못_풀면_전부_무시한다():
     s = Settings(SAMBA_BRIDGE_TOKEN='a' * 64, SLACK_ALLOWED_USERS='U1', SLACK_CHANNEL='#nope')
     b = SambaBot(app=None, worker=None, queue=None, settings=s, diagnose=lambda v: '')
     assert not b.is_target_channel('C1')
+
+
+class _RecordingClient:
+    """chat_postMessage 인자를 그대로 모아두는 가짜 슬랙 클라이언트."""
+
+    def __init__(self) -> None:
+        self.posts: list[dict[str, object]] = []
+
+    def chat_postMessage(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.posts.append(kwargs)
+        return {'ok': True}
+
+
+class _RecordingApp:
+    def __init__(self) -> None:
+        self.client = _RecordingClient()
+
+
+def _posting_bot() -> tuple[SambaBot, _RecordingApp]:
+    app = _RecordingApp()
+    s = Settings(
+        _env_file=None,
+        SAMBA_BRIDGE_TOKEN='a' * 64,
+        SLACK_ALLOWED_USERS='U1',
+        SLACK_CHANNEL='#sambaorder',
+    )
+    return (
+        SambaBot(
+            app=app, worker=None, queue=None, settings=s, diagnose=lambda v: '', channel_id='C1'
+        ),
+        app,
+    )
+
+
+def test_승인_요청은_두_버튼을_달아_보낸다():
+    # 리뷰 지적 — Critical 1: 승인 버튼이 실제로 슬랙에 나가야 한다
+    b, app = _posting_bot()
+    assert b.post_approval('ts1', 'A1', 'pay', '결제 승인 요청 요약')
+    sent = app.client.posts[-1]
+    assert sent['channel'] == 'C1'
+    assert sent['thread_ts'] == 'ts1'
+    values = [
+        e['value'] for blk in sent['blocks'] if blk['type'] == 'actions' for e in blk['elements']
+    ]
+    assert values == ['A1|pay', 'A1|pay']
+
+
+def test_진행_보고는_채널_이름이_아니라_id로_나가고_개인정보를_가린다():
+    # 리뷰 지적 — Minor: 채널 이름(#sambaorder)이 아니라 풀어둔 id 로 보낸다
+    b, app = _posting_bot()
+    assert b.post('ts1', '수취인 홍길동 · 010-1234-5678')
+    sent = app.client.posts[-1]
+    assert sent['channel'] == 'C1'
+    assert '홍길동' not in str(sent['text'])
+    assert '010-1234-5678' not in str(sent['text'])
+
+
+def test_채널을_못_풀었으면_슬랙에_보내지_않는다():
+    app = _RecordingApp()
+    s = Settings(_env_file=None, SAMBA_BRIDGE_TOKEN='a' * 64, SLACK_ALLOWED_USERS='U1')
+    b = SambaBot(app=app, worker=None, queue=None, settings=s, diagnose=lambda v: '')
+    assert not b.post('ts1', '아무 말')
+    assert app.client.posts == []

@@ -35,6 +35,9 @@ class WorkerDeps:
     version: Callable[[], str] | str
     report: Callable[[Job, str], None]
     parse_order: Callable[[Job], OrderRef]
+    # 승인 요청 전용 통로 — 슬랙 버튼을 달아 보낸다(리뷰 지적 — Critical 1).
+    # 주입하지 않으면 평문 보고(report)로 떨어진다.
+    approval_report: Callable[[Job, str, str, str], None] | None = None
     # settings.dry_run 이 아직 여기까지 안 들어와서 당장은 기본값 True 로 주입한다.
     dry_run: bool = True
 
@@ -117,11 +120,16 @@ class Worker:
         interrupts = out.get('__interrupt__') or []
         if interrupts:
             req = interrupts[0].value
-            self.d.queue.progress(
-                job.id, agent=f'approval.{req["stage"]}', step=f'승인 대기: {req["stage"]}'
-            )
+            stage = str(req['stage'])
+            summary = str(req['summary'])
+            order_no = str(req.get('order_no') or job.order_no)
+            self.d.queue.progress(job.id, agent=f'approval.{stage}', step=f'승인 대기: {stage}')
             self.d.queue.finish(job.id, 'needs_human')
-            self.d.report(job, f'승인 요청\n{req["summary"]}')
+            if self.d.approval_report is not None:
+                self.d.approval_report(job, order_no, stage, summary)
+            else:
+                # 버튼을 달 통로가 없을 때의 폴백 — 사람이 `@삼바` 명령으로 이어가야 한다
+                self.d.report(job, f'승인 요청\n{summary}')
             return self.d.queue.get(job.order_no)  # type: ignore[return-value]
         outcome = out['outcome']
         fail = out.get('fail_reason')

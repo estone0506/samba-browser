@@ -242,3 +242,28 @@ def test_dry_run_False로_주입하면_state에_반영된다(setup):
     w.tick()
 
     assert seen['dry_run'] is False
+
+
+def test_승인_요청은_approval_report로_나간다(setup):
+    # 리뷰 지적 — Critical 1: 승인 대기는 평문이 아니라 버튼을 달 수 있는 콜백으로 나간다
+    q, _log, sent, make = setup
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    w = make(gate=True)
+    asked: list[tuple[str, str, str]] = []
+    w.d.approval_report = lambda job, order_no, stage, summary: asked.append(
+        (order_no, stage, summary)
+    )
+    w.tick()
+    assert len(asked) == 1
+    order_no, stage, summary = asked[0]
+    assert (order_no, stage) == ('A1', 'pay')
+    assert '승인 요청' in summary
+    # 평문 보고로 중복해서 나가지 않는다
+    assert not any('승인 요청' in s for s in sent)
+
+
+def test_approval_report가_없으면_평문_보고로_떨어진다(setup):
+    q, _log, sent, make = setup
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    make(gate=True).tick()
+    assert any('승인 요청' in s for s in sent)

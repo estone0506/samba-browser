@@ -8,6 +8,7 @@ import functools
 import logging
 import signal
 import threading
+from collections.abc import Callable
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from slack_bolt import App
@@ -31,6 +32,28 @@ from samba_agent.supervisor.graph import build_supervisor
 from samba_agent.version import harness_version
 
 log = logging.getLogger(__name__)
+
+ReportFn = Callable[[Job, str], None]
+ApprovalReportFn = Callable[[Job, str, str, str], None]
+
+
+def make_reporters(get_bot: 'Callable[[], SambaBot]') -> tuple[ReportFn, ApprovalReportFn]:
+    """실행기가 쓸 보고 통로 두 개(진행 보고 · 승인 요청)를 만든다.
+
+    승인 요청은 반드시 버튼이 달린 경로로 나가야 한다 — 버튼이 없으면 사람이 승인할 방법이
+    없어 결제·기록 단계가 영구 정지한다(리뷰 지적 — Critical 1). 봇은 나중에 만들어지므로
+    콜러블로 받아 호출 시점에 푼다.
+    """
+
+    def report(job: Job, line: str) -> None:
+        if not get_bot().post(job.thread_ts, line):
+            log.info('%s', mask_text(line))
+
+    def approval_report(job: Job, order_no: str, stage: str, summary: str) -> None:
+        if not get_bot().post_approval(job.thread_ts, order_no, stage, summary):
+            log.info('승인 요청(슬랙 없음) %s %s\n%s', order_no, stage, mask_text(summary))
+
+    return report, approval_report
 
 
 def main() -> None:
@@ -60,14 +83,7 @@ def main() -> None:
         checkpointer = checkpointer.__enter__()
     graph = build_supervisor(reg, agents, checkpointer=checkpointer, gate=True)
 
-    def _report(job: Job, line: str) -> None:
-        """진행 보고 — 슬랙 원본 스레드에 남긴다. 개인정보는 슬랙에 닿기 전에 가린다."""
-        if job.thread_ts is None or slack_app is None:
-            log.info('%s', mask_text(line))
-            return
-        slack_app.client.chat_postMessage(
-            channel=settings.slack_channel, thread_ts=job.thread_ts, text=mask_text(line)
-        )
+    _report, _approval_report = make_reporters(lambda: bot)
 
     worker = Worker(
         WorkerDeps(
@@ -76,6 +92,7 @@ def main() -> None:
             version=version_fn,  # 콜러블 그대로 넘긴다 — tick 마다 다시 불러 규칙 변경을 반영한다
             report=_report,
             parse_order=lambda job: lookup_order(bridge, job.order_no, job.options),
+            approval_report=_approval_report,
             dry_run=settings.dry_run,
         )
     )
@@ -106,10 +123,8 @@ def main() -> None:
     api_thread.start()
 
     if slack_app is not None:
-        from slack_bolt.adapter.socket_mode import SocketModeHandler
-
+        # start() 안에서 Socket Mode 핸들러를 직접 띄운다 — 여기서 또 띄우지 않는다(리뷰 지적 — Minor)
         bot.start()
-        SocketModeHandler(slack_app, settings.slack_app_token.get_secret_value()).start()
     else:
         log.warning('슬랙 토큰이 없다 — 봇 없이 큐/API 만 돈다')
         stop.wait()

@@ -75,6 +75,34 @@ class SambaBot:
         # 여기로 직접 주입한다 — start() 는 이게 비어 있을 때만 conversations.list 로 풀어본다.
         self._channel_id = channel_id
 
+    def post(
+        self, thread_ts: str | None, text: str, blocks: list[dict[str, object]] | None = None
+    ) -> bool:
+        """스레드에 한 줄 남긴다. 보냈으면 True, 슬랙이 없거나 채널을 못 풀었으면 False.
+
+        채널은 설정의 이름이 아니라 시작 시 풀어둔 채널 id 로 보낸다(리뷰 지적 — Minor).
+        개인정보는 슬랙에 닿기 전에 여기서 마지막으로 한 번 더 가린다.
+        """
+        if self.app is None or self._channel_id is None or thread_ts is None:
+            return False
+        kwargs: dict[str, object] = {
+            'channel': self._channel_id,
+            'thread_ts': thread_ts,
+            'text': mask_text(text),
+        }
+        if blocks is not None:
+            kwargs['blocks'] = blocks
+        self.app.client.chat_postMessage(**kwargs)
+        return True
+
+    def post_approval(self, thread_ts: str | None, order_no: str, stage: str, summary: str) -> bool:
+        """승인 요청을 버튼과 함께 보낸다(리뷰 지적 — Critical 1).
+
+        버튼이 없으면 사람이 승인할 방법이 없어 결제·기록 단계가 영구 정지한다.
+        """
+        safe = mask_text(summary)
+        return self.post(thread_ts, f'승인 요청\n{safe}', approval_blocks(order_no, stage, safe))
+
     def _allowed(self, user: str) -> bool:
         """등록부가 비어 있으면 아무도 못 시킨다 — 실수로 열려 있는 걸 막는다."""
         return user in self.settings.slack_allowed_users
