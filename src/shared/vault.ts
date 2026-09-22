@@ -58,6 +58,31 @@ export const PAYMENT_PROVIDERS: readonly PaymentProvider[] = [
 /** 결제 비밀번호 항목에서 제공자를 담는 평문 필드 키 */
 export const PAYMENT_PROVIDER_FIELD_KEY = 'payment.provider'
 
+/**
+ * 결제 수단이 "그 앱 계정"으로 결제되는 경우 그 계정이 사는 사이트(등록 도메인).
+ * 네이버페이만 해당한다 — 어느 쇼핑몰에서 쓰든 네이버 계정으로 로그인해 결제하므로 결제 비밀번호는
+ * **네이버 계정(naver.com)에만** 두고, 쇼핑몰 계정의 결제 비밀번호 항목은 어느 네이버 계정을 쓸지
+ * (PAYMENT_ACCOUNT_FIELD_KEY)만 적는다. 토스·카카오·페이코는 전화번호로 결제하므로 예전처럼 쇼핑몰 계정에 둔다
+ */
+export const PAYMENT_PROVIDER_ACCOUNT_HOST: Partial<Record<PaymentProvider, string>> = {
+  naver: 'naver.com'
+}
+
+/** 결제 비밀번호 항목에서 "이 앱 계정(아이디)의 비밀번호를 쓴다"를 담는 평문 필드 키 */
+export const PAYMENT_ACCOUNT_FIELD_KEY = 'payment.account'
+
+/** 섹션 목록에서 연결된 결제 앱 계정 아이디를 읽는다. 없으면 null */
+export function paymentAccountOfSections(
+  sections: readonly ProviderLookupSection[]
+): string | null {
+  for (const section of sections) {
+    for (const field of section.fields) {
+      if (field.key === PAYMENT_ACCOUNT_FIELD_KEY) return field.value?.trim() || null
+    }
+  }
+  return null
+}
+
 /** 제공자 필드가 없는 옛 항목은 사이트 자체 결제로 본다(마이그레이션 없이 읽기 기본값) */
 export const DEFAULT_PAYMENT_PROVIDER: PaymentProvider = 'site'
 

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Eye, EyeOff } from 'lucide-react'
@@ -14,13 +14,16 @@ import { Input } from '@renderer/components/ui/input'
 import { Button } from '@renderer/components/ui/button'
 import { useVaultStore, type PutSectionInput } from '@renderer/stores/vaultStore'
 import { useBrowserStore } from '@renderer/stores/browserStore'
-import { normalizeHost } from '@shared/host'
+import { normalizeHost, registrableDomain } from '@shared/host'
 import { PasswordGenerator } from './PasswordGenerator'
 import {
   DEFAULT_PAYMENT_PROVIDER,
   PAYMENT_PROVIDER_FIELD_KEY,
   PAYMENT_PROVIDERS,
-  paymentProviderOfSections
+  paymentProviderOfSections,
+  normalizePaymentProvider,
+  PAYMENT_PROVIDER_ACCOUNT_HOST,
+  PAYMENT_ACCOUNT_FIELD_KEY
 } from '@shared/vault'
 import type { AccountDto, FieldKind, VaultItemMeta, VaultItemType } from '@shared/ipc'
 
@@ -239,7 +242,40 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
   const [customFields, setCustomFields] = useState<CustomField[]>([])
   const [saving, setSaving] = useState(false)
 
-  const specs = FORM_SPECS[itemType]
+  const accounts = useVaultStore((s) => s.accounts)
+  // 결제 앱(네이버페이 등)의 비밀번호는 앱 계정(naver.com …)에만 둔다 — 쇼핑몰 계정에서는 어느 앱 계정을 쓸지만 고른다
+  const appHost =
+    itemType === 'password'
+      ? PAYMENT_PROVIDER_ACCOUNT_HOST[normalizePaymentProvider(values[PAYMENT_PROVIDER_FIELD_KEY])]
+      : undefined
+  const onAppSite =
+    appHost !== undefined && account !== undefined && registrableDomain(account.host) === appHost
+  const appAccounts = useMemo(
+    () =>
+      appHost === undefined || onAppSite
+        ? []
+        : accounts.filter((a) => registrableDomain(a.host) === appHost),
+    [accounts, appHost, onAppSite]
+  )
+  // 앱 계정이 하나라도 있으면 비밀번호 칸 대신 계정 선택을 보여 준다. 없으면 예전처럼 직접 넣는다
+  const linkMode = appAccounts.length > 0
+  const specs = useMemo((): SectionSpec[] => {
+    const base = FORM_SPECS[itemType]
+    if (!linkMode) return base
+    return base.map((section) => ({
+      ...section,
+      fields: section.fields.map((field) =>
+        field.key === 'value'
+          ? {
+              key: PAYMENT_ACCOUNT_FIELD_KEY,
+              labelKey: 'vault.fieldNames.paymentAccount',
+              kind: 'select' as const,
+              options: [...new Set(appAccounts.map((a) => a.username))]
+            }
+          : field
+      )
+    }))
+  }, [itemType, linkMode, appAccounts])
 
   const setValue = (key: string, value: string): void => {
     setValues((prev) => ({ ...prev, [key]: value }))
@@ -254,12 +290,17 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
     const sections: PutSectionInput[] = specs.map((section) => ({
       key: section.key,
       label: t(section.labelKey),
-      fields: section.fields.map((field) => ({
-        key: field.key,
-        label: t(field.labelKey),
-        kind: field.kind,
-        ...(values[field.key] ? { value: values[field.key] } : {})
-      }))
+      fields: section.fields.map((field) => {
+        // 선택 칸은 고르지 않았으면 첫 항목이 보인 그대로 저장된다
+        const value =
+          values[field.key] || (field.kind === 'select' ? field.options?.[0] : undefined)
+        return {
+          key: field.key,
+          label: t(field.labelKey),
+          kind: field.kind,
+          ...(value ? { value } : {})
+        }
+      })
     }))
     if (customFields.length > 0) {
       sections.push({
@@ -382,7 +423,13 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
                         </option>
                       ))}
                     </select>
-                  ) : (
+                  ) : null}
+                  {field.key === PAYMENT_ACCOUNT_FIELD_KEY ? (
+                    <p className="text-[11px] text-[var(--text3)]">
+                      {t('vault.editor.paymentAccountHint', { host: appHost ?? '' })}
+                    </p>
+                  ) : null}
+                  {field.kind === 'select' ? null : (
                     <div className="flex items-center gap-1.5">
                       {field.kind === 'secret' ? (
                         <SecretInput

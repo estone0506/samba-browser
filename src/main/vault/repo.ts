@@ -574,6 +574,33 @@ export class VaultRepo {
   }
 
   /** 계정과 딸린 항목을 지운다(FK cascade 에 기대지 않고 직접 지운다) */
+  /**
+   * fromId 계정의 항목 중 skipTypes 에 없는 종류를 toId 계정으로 옮긴다(계정 합치기용).
+   * 항목 id 는 그대로라 AAD(itemId:fieldKey) 도 그대로다. 옮긴 항목 id 를 돌려준다
+   */
+  moveItems(fromId: number, toId: number, skipTypes: Set<string>): number[] {
+    const rows = this.d
+      .select({ id: vaultItems.id, type: vaultItems.type })
+      .from(vaultItems)
+      .where(and(eq(vaultItems.accountId, fromId), isNull(vaultItems.deletedAt)))
+      .all()
+    const moved: number[] = []
+    const now = Date.now()
+    for (const row of rows) {
+      const type = normalizeItemType(row.type)
+      if (skipTypes.has(type)) continue
+      this.d
+        .update(vaultItems)
+        .set({ accountId: toId, updatedAt: now })
+        .where(eq(vaultItems.id, row.id))
+        .run()
+      skipTypes.add(type)
+      moved.push(row.id)
+    }
+    if (moved.length > 0) this.db.scheduleSave()
+    return moved
+  }
+
   deleteAccountCascade(id: number): void {
     this.d.delete(vaultItems).where(eq(vaultItems.accountId, id)).run()
     this.d.delete(accounts).where(eq(accounts.id, id)).run()

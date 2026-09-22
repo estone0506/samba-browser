@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+import { useAuthStore } from '@renderer/stores/authStore'
 import { Lock } from 'lucide-react'
 import { PasswordInput } from './PasswordInput'
 import { Button } from '@renderer/components/ui/button'
@@ -9,6 +10,7 @@ import { useVaultStore } from '@renderer/stores/vaultStore'
 // 잠긴 상태: 마스터 비밀번호 1칸 + 잠금 해제
 export function UnlockScreen(): React.JSX.Element {
   const { t } = useTranslation()
+  const accountConfigured = useAuthStore((st) => st.state?.account?.configured === true)
   const unlock = useVaultStore((s) => s.unlock)
   // 체크박스를 건드리지 않았으면 설정을 저장하지 않는 경로(기존 값 유지)
   const unlockOnly = useVaultStore((s) => s.unlockOnly)
@@ -59,6 +61,9 @@ export function UnlockScreen(): React.JSX.Element {
         </div>
         <div className="text-center">
           <h1 className="text-[19px] font-semibold tracking-tight">{t('vault.unlock.title')}</h1>
+          {accountConfigured && (
+            <p className="text-[12px] text-[var(--text2)]">{t('vault.accountUnlockHint')}</p>
+          )}
           <p className="mt-1.5 text-[12.5px] text-[var(--text2)]">
             {t(fromSync ? 'vault.unlock.fromSync' : 'vault.unlock.desc')}
           </p>

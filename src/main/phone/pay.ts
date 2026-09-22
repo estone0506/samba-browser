@@ -11,6 +11,7 @@
 import { type AuthEventDto } from '../../shared/phone'
 import { findElement, type PhoneScreen } from '../../shared/phone-snapshot'
 import type { PaymentProvider } from '../../shared/vault'
+import { PAYMENT_PROVIDER_ACCOUNT_HOST } from '../../shared/vault'
 import type { KeypadLayout } from '../ai/visual'
 import type { HandoffResult } from '../agent/handoff'
 import {
@@ -106,6 +107,15 @@ export const PAY_APP_TO_PAYMENT_PROVIDER: Record<PayProvider, PaymentProvider> =
   payco: 'payco',
   kakaopay: 'kakao',
   naverpay: 'naver'
+}
+
+/**
+ * 결제 앱 자체의 계정이 키마스터에 저장되는 사이트(등록 도메인). 네이버페이만 — 네이버 계정으로 로그인하고
+ * 결제 비밀번호도 그 계정의 것이라 구매 사이트(abcmart) 계정이 아니라 네이버 계정에서 찾는다.
+ * 토스·카카오·페이코는 전화번호 결제라 구매 사이트 계정의 항목을 그대로 쓴다
+ */
+export const PAY_APP_ACCOUNT_HOST: Partial<Record<PayProvider, string>> = {
+  naverpay: PAYMENT_PROVIDER_ACCOUNT_HOST.naver ?? 'naver.com'
 }
 
 /** 앱 화면을 더듬는 최대 스텝(무한 루프 방지) */
@@ -324,10 +334,14 @@ export type PayFailReason =
   // 배선부가 실행기에 닿기도 전에 막는 두 가지(계정 특정 실패·연결된 폰 없음)
   | 'no-account'
   | 'no-phone'
+  // 결제 앱 계정(네이버 등)이 여럿인데 payAccount 로 고르지 않았다
+  | 'pay-account-ambiguous'
 
 export interface PayResult {
   ok: boolean
   reason?: PayFailReason
+  /** 모델에게 돌려줄 덧붙임(예: 고를 수 있는 계정 아이디 목록). 비밀 값은 절대 담지 않는다 */
+  detail?: string
 }
 
 export interface PayRequest {

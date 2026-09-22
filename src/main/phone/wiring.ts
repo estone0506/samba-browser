@@ -12,7 +12,7 @@ import type { AuthEventDto } from '../../shared/phone'
 import type { PageSnapshot } from '../../shared/snapshot'
 import type { PhoneScreen } from '../../shared/phone-snapshot'
 import type { Settings } from '../../shared/settings'
-import type { AccountDto, VaultItemType, VaultState } from '../../shared/vault'
+import type { AccountDto, PaymentProvider, VaultItemType, VaultState } from '../../shared/vault'
 import { normalizeHost } from '../../shared/host'
 import type { KeypadLayout } from '../ai/visual'
 import { extractCode } from '../ai/visual'
@@ -27,6 +27,9 @@ import {
   PAY_PROVIDERS,
   parseAppNotifications,
   runPayApproval,
+  PAY_APP_ACCOUNT_HOST,
+  PAY_APP_TO_PAYMENT_PROVIDER,
+  type PayProvider,
   type PayResult,
   type PayRunDeps
 } from './pay'
@@ -239,6 +242,8 @@ export interface WiringRepo {
 export interface WiringVault extends PaySecretVault {
   state: () => VaultState
   listAccounts: (host?: string) => AccountDto[]
+  /** 계정에 이 결제 수단의 결제 비밀번호 항목이 있는가(복호화 없음). 없으면 'password' 항목 유무로 본다 */
+  hasPaymentItem?: (accountId: number, provider: PaymentProvider) => boolean
   getSecretForFill: (
     accountId: number,
     type: VaultItemType,
@@ -321,6 +326,44 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     return accounts.find((a) => a.isDefault) ?? (accounts.length === 1 ? accounts[0] : null)
   }
 
+  /**
+   * 결제 비밀번호를 넣을 계정. 네이버페이는 네이버 계정(naver.com)으로 결제되므로 그 계정 것을 쓴다. 순서:
+   *  1) payAccount 로 지목했으면 앱 사이트 계정 중 그 아이디·라벨(없으면 no-account)
+   *  2) 구매 사이트 계정에 그 결제 수단 항목(직접 값 또는 네이버 계정 연결)이 있으면 그 계정
+   *  3) 앱 사이트 계정 중 그 결제 수단 비밀번호를 가진 것이 하나면 그 계정, 여럿이면 ambiguous(목록을 돌려준다)
+   *  4) 그 밖에는 구매 사이트 계정(없으면 no-account). 토스·카카오·페이코는 2·4 만 해당한다
+   */
+  const payAccountFor = (
+    siteHost: string,
+    provider: PayProvider,
+    wanted: string | undefined
+  ): { account: AccountDto | null; ambiguous?: string[]; missing?: string } => {
+    const paymentProvider = PAY_APP_TO_PAYMENT_PROVIDER[provider]
+    const appHost = PAY_APP_ACCOUNT_HOST[provider]
+    // 앱 계정이 따로 없는 결제 수단(토스·카카오·페이코)은 구매 사이트 계정만 본다
+    const appAccounts = appHost === undefined ? [] : deps.vault.listAccounts(appHost)
+    const hasSecret = (a: AccountDto): boolean =>
+      deps.vault.hasPaymentItem
+        ? deps.vault.hasPaymentItem(a.id, paymentProvider)
+        : a.itemTypes.includes('password')
+    const name = wanted?.trim() ?? ''
+    if (name) {
+      const named = appAccounts.filter((a) => a.username === name || a.label === name)
+      const hit = named.find(hasSecret) ?? named[0]
+      return hit ? { account: hit } : { account: null, missing: name }
+    }
+    const site = accountFor(siteHost)
+    if (site && hasSecret(site)) return { account: site }
+    const withSecret = appAccounts.filter(hasSecret)
+    if (withSecret.length === 1) return { account: withSecret[0] }
+    if (withSecret.length > 1) {
+      const preferred = withSecret.find((a) => a.isDefault)
+      if (preferred) return { account: preferred }
+      return { account: null, ambiguous: withSecret.map((a) => a.username) }
+    }
+    return { account: site }
+  }
+
   /** 계정에 배정된 폰이 지금 붙어 있으면 그 폰만, 아니면 연결된 폰 전부 */
   const serialsFor = (accountId: number | null): string[] => {
     const list = online()
@@ -377,9 +420,23 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
   // --- 2) phone_approve_payment → runPayApproval -------------------------------
   const approvePayment = async (ctx: PhoneRunContext, req: PayToolRequest): Promise<PayResult> => {
     const siteHost = deps.page.host()
-    const account = accountFor(siteHost)
+    const picked = payAccountFor(siteHost, req.provider, req.payAccount)
+    if (picked.ambiguous) {
+      const list = picked.ambiguous.join(', ')
+      ctx.onStep(
+        tr('phone.payRejected', {
+          reason: tr('phone.gatePayAccountAmbiguous', { app: req.methodLabel, list })
+        }),
+        false
+      )
+      return { ok: false, reason: 'pay-account-ambiguous', detail: `choose payAccount: ${list}` }
+    }
+    const account = picked.account
     if (!account) {
-      ctx.onStep(tr('phone.payRejected', { reason: tr('phone.gateNoAccount') }), false)
+      const reason = picked.missing
+        ? tr('phone.gatePayAccountMissing', { app: req.methodLabel, name: picked.missing })
+        : tr('phone.gateNoAccount')
+      ctx.onStep(tr('phone.payRejected', { reason }), false)
       return { ok: false, reason: 'no-account' }
     }
     // 결제 앱은 담당 폰에만 있다. 담당 폰이 끊겨 있으면 다른 폰으로 넘어가지 않는다 —

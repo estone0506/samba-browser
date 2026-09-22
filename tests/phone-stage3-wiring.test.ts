@@ -606,6 +606,67 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     expect(asked.every((id) => id === 13)).toBe(true)
   })
 
+  it('네이버페이: 구매 사이트 계정에 항목이 없으면 네이버 계정에서 고른다 — 여럿이면 목록을 돌려주고, payAccount 로 지목하면 그 계정', async () => {
+    const site = { ...ACCOUNT, id: 7, itemTypes: ['login'] } as AccountDto
+    const navers = [
+      {
+        ...ACCOUNT,
+        id: 21,
+        host: 'nid.naver.com',
+        label: 'a',
+        username: 'buyer01',
+        isDefault: false
+      },
+      { ...ACCOUNT, id: 22, host: 'nid.naver.com', label: 'b', username: 'other', isDefault: false }
+    ] as AccountDto[]
+    const asked: number[] = []
+    const h = harness(db, {
+      vault: {
+        listAccounts: (host?: string) => (host === 'naver.com' ? navers : [site]),
+        hasPaymentItem: (id: number) => id !== 7,
+        getPaymentSecretForFill: (args: { accountId: number }) => {
+          asked.push(args.accountId)
+          return { value: SECRET }
+        }
+      }
+    })
+    scriptPayScreens(h.adb)
+    const bridge = createPhoneAgentBridge(h.deps)
+    const base = {
+      provider: 'naverpay',
+      amountKrw: 9000,
+      merchant: '삼바상회',
+      methodLabel: '네이버페이'
+    } as const
+    const r1 = await bridge.approvePayment(h.ctx, base)
+    expect(r1).toEqual({
+      ok: false,
+      reason: 'pay-account-ambiguous',
+      detail: 'choose payAccount: buyer01, other'
+    })
+    scriptPayScreens(h.adb)
+    const r2 = await bridge.approvePayment(h.ctx, { ...base, payAccount: 'buyer01' })
+    expect(r2.ok === false && r2.reason === 'no-account').toBe(false)
+    expect(asked.every((id) => id === 21)).toBe(true)
+    // 모르는 아이디는 no-account
+    const r3 = await bridge.approvePayment(h.ctx, { ...base, payAccount: 'ghost' })
+    expect(r3).toEqual({ ok: false, reason: 'no-account' })
+  })
+
+  it('토스처럼 앱 계정이 따로 없는 결제 수단은 예전처럼 구매 사이트 계정만 본다', async () => {
+    const h = harness(db, {
+      vault: { listAccounts: (host?: string) => (host === HOST ? [ACCOUNT] : []) }
+    })
+    scriptPayScreens(h.adb)
+    const r = await createPhoneAgentBridge(h.deps).approvePayment(h.ctx, {
+      provider: 'toss',
+      amountKrw: 9000,
+      merchant: '삼바상회',
+      methodLabel: '토스페이'
+    })
+    expect(r.ok === false && r.reason === 'no-account').toBe(false)
+  })
+
   it('앱은 끝냈지만 웹 결제창이 성공으로 넘어가지 않으면 성공으로 보지 않는다', async () => {
     const h = harness(db)
     scriptPayScreens(h.adb)

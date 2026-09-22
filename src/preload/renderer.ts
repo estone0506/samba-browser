@@ -282,6 +282,11 @@ const api = {
     deleteAccounts: (ids: number[]): Promise<IpcResult<{ token: string; count: number }>> =>
       invoke(IPC.vaultDeleteAccounts, ids),
     undoDelete: (token: string): Promise<IpcResult<boolean>> => invoke(IPC.vaultUndoDelete, token),
+    // 같은 사이트(등록 도메인)의 같은 아이디 계정을 하나로 합친다. 지운 계정은 되돌리기 토큰으로 60초 보관
+    mergeDomain: (
+      domain: string
+    ): Promise<IpcResult<{ token: string | null; kept: number; removed: number }>> =>
+      invoke(IPC.vaultMergeDomain, domain),
     // 사용 기록(감사 로그). accountId 생략 시 전체(최근 200건), 계정 지정 시 해당 계정 항목만
     audit: (accountId?: number, limit?: number): Promise<IpcResult<AuditLogDto[]>> =>
       invoke(IPC.vaultAudit, accountId, limit),

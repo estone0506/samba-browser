@@ -45,6 +45,7 @@ export const IPC = {
   // 계정 삭제(딸린 항목까지)와 되돌리기. 되돌리기용 스냅샷은 메인 메모리에만 60초 머문다
   vaultDeleteAccounts: 'vault:deleteAccounts',
   vaultUndoDelete: 'vault:undoDelete',
+  vaultMergeDomain: 'vault:mergeDomain', // 같은 사이트 같은 아이디 계정 합치기
   vaultAudit: 'vault:audit',
   // 내보내기 — 잠금 해제 + 마스터 재입력 검증을 통과해야만 실행된다(응답은 개수·경로뿐)
   vaultExport: 'vault:export',

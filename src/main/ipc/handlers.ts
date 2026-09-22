@@ -497,6 +497,9 @@ export function registerIpc(
     vault.deleteAccounts(Array.isArray(ids) ? ids : [])
   )
   handleFromRenderer(IPC.vaultUndoDelete, (token: string) => vault.undoDeleteAccounts(token))
+  handleFromRenderer(IPC.vaultMergeDomain, (domain: string) =>
+    vault.mergeDomainAccounts(String(domain ?? ''))
+  )
   handleFromRenderer(IPC.vaultUpsertAccount, (dto: UpsertAccountInput) => vault.upsertAccount(dto))
   // 사용 기록(감사 로그). accountId 를 주면 그 계정 소유 항목만, 아니면 전체를 반환한다
   handleFromRenderer(IPC.vaultAudit, (accountId?: number, limit?: number) =>
@@ -948,7 +951,9 @@ export function registerIpc(
       set: (patch) => void settings.set(patch)
     },
     applyEnv: setSupabaseEnvFromSettings,
-    directoryUrl: directoryConfigured ? readDirectoryEnv().url : undefined
+    directoryUrl: directoryConfigured ? readDirectoryEnv().url : undefined,
+    // 계정 비밀번호가 곧 키마스터 열쇠 — 로그인되면 이 PC 금고를 그 비밀번호에 맞춘다
+    vault: { adoptAccountPassword: (password) => vault.adoptAccountPassword(password) }
   })
   // 렌더러에는 데이터 인증 상태 + 디렉터리 상태를 한 덩어리로 보낸다(토큰·비밀번호 없음)
   // 계정 로그인 전(게이트)에는 이 PC 에 남은 데이터 세션의 이메일을 화면에 내보내지 않는다 —
@@ -1122,7 +1127,9 @@ export function registerIpc(
       hostname: () => os.hostname(),
       osLabel: () => `${os.type()} ${os.release()}`,
       appVersion: () => app.getVersion()
-    }
+    },
+    // 서버 키 재료가 다르면 계정 비밀번호로 자동으로 맞춘다(사용자 개입 없음)
+    onVaultKeyMismatch: () => void account.onVaultKeyMismatch()
   })
   onDataBackend = (backend) => connection.setBackend(backend)
   // 수동 동기화는 연결을 거친다 — 최초 업로드가 놓친 행을 먼저 보충하고 한 주기를 돈다

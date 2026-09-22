@@ -438,7 +438,9 @@
       "deleteSite": "Delete all accounts for this site",
       "deleteConfirm": "Delete {{count}} accounts?",
       "deleted": "Deleted",
-      "undo": "Undo"
+      "undo": "Undo",
+      "merge": "Merge {{count}} duplicates",
+      "mergeTitle": "Merge same-username accounts into one used on every subdomain of {{domain}}"
     },
     "settings": {
       "title": "KeyMaster settings",
@@ -535,7 +537,8 @@
       "generate": "Generate",
       "keepHint": "Leave empty to keep the saved value",
       "showSecret": "Show what you typed",
-      "hideSecret": "Hide what you typed"
+      "hideSecret": "Hide what you typed",
+      "paymentAccountHint": "Uses the payment password of that {{host}} account. Keep the password in that account's payment password item"
     },
     "import": {
       "title": "Import",
@@ -677,7 +680,8 @@
       "passport": "Passport number",
       "idCard": "ID card number",
       "note": "Note",
-      "paymentProvider": "Payment method"
+      "paymentProvider": "Payment method",
+      "paymentAccount": "Pay-app account"
     },
     "paymentProvider": {
       "site": "Site's own pay",
@@ -689,7 +693,9 @@
       "samsung": "Samsung Pay",
       "apple": "Apple Pay",
       "other": "Other"
-    }
+    },
+    "preparing": "Preparing KeyMaster with your account password…",
+    "accountUnlockHint": "Your account password is the KeyMaster key. Enter your sign-in password"
   },
   "settingsPage": {
     "title": "Settings",

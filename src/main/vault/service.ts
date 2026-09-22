@@ -66,7 +66,11 @@ import type {
   VaultItemType,
   VaultState
 } from '../../shared/vault'
-import { paymentProviderOfSections } from '../../shared/vault'
+import {
+  paymentProviderOfSections,
+  paymentAccountOfSections,
+  PAYMENT_PROVIDER_ACCOUNT_HOST
+} from '../../shared/vault'
 import type { Settings } from '../../shared/settings'
 import {
   VAULT_KEY_SYNC_KEYS,
@@ -77,7 +81,7 @@ import {
   type VaultKeySyncKey,
   type WorkspaceScope
 } from '../../shared/sync'
-import { normalizeHost, registrableDomain } from '../../shared/host'
+import { normalizeHost, registrableDomain, isSeparateLoginDomain } from '../../shared/host'
 
 // electron safeStorage 중 실제로 쓰는 부분만 좁혀 둔 인터페이스(테스트에서 스텁 주입)
 export interface SafeStorageLike {
@@ -187,6 +191,11 @@ const RECOVERY_PENDING_TTL_MS = 10 * 60_000
 const UNDO_TTL_MS = 60_000
 
 const SALT_BYTES = 16
+
+// 순서를 지키며 중복·빈 문자열을 뺀다(주소·태그 합치기용)
+function uniqueStrings(list: string[]): string[] {
+  return [...new Set(list.filter((v) => v.length > 0))]
+}
 const CAPTURE_TTL_MS = 60_000
 const MINUTE_MS = 60_000
 // setTimeout 이 받는 최대 지연(2^31-1 ms ≈ 24.8일)
@@ -327,8 +336,7 @@ export class VaultService {
   async rekeyToRemote(
     master: string
   ): Promise<'ok' | 'locked' | 'no-remote' | 'wrong-master' | 'decrypt-failed'> {
-    const oldKey = this.key
-    if (!oldKey) return 'locked'
+    if (!this.key) return 'locked'
     const remote = this.pendingRemoteMaterial
     if (!remote) return 'no-remote'
     if (master.length === 0) return 'wrong-master'
@@ -341,7 +349,92 @@ export class VaultService {
       zeroize(newKey)
       return 'wrong-master'
     }
-    // 먼저 전부 풀어 본다 — 하나라도 못 풀면 아무것도 바꾸지 않는다
+    const r = this.rekeyTo(newKey, remote)
+    if (r !== 'ok') return r
+    this.pendingRemoteMaterial = null
+    return 'ok'
+  }
+
+  /**
+   * 이 PC 의 금고를 새 비밀번호(계정 비밀번호)로 다시 잠근다 — 새 소금·검증자를 만들고 모든 항목을 옮겨 잠근 뒤
+   * 키 재료를 서버에 올린다(다른 PC 는 다음 주기에 이 재료로 맞춘다). 지금 키가 있어야 한다
+   */
+  async rekeyToPassword(password: string): Promise<'ok' | 'locked' | 'decrypt-failed'> {
+    if (!this.key) return 'locked'
+    if (password.length === 0) return 'locked'
+    const salt = randomBytes(SALT_BYTES)
+    const kdf: KdfParams = resolveDefaultKdfParams()
+    const newKey = await deriveKey(password, salt, {
+      memoryKiB: kdf.memoryKiB,
+      iterations: kdf.iterations,
+      parallelism: kdf.parallelism
+    })
+    const verifier = makeVerifier(newKey)
+    const r = this.rekeyTo(newKey, {
+      salt,
+      kdf,
+      verifierCt: verifier.ciphertext,
+      verifierIv: verifier.iv
+    })
+    if (r !== 'ok') return r
+    this.pendingRemoteMaterial = null
+    this.recordKeyMaterial()
+    return 'ok'
+  }
+
+  /**
+   * 계정 비밀번호가 곧 키마스터 열쇠다 — 마스터 비밀번호를 따로 두지 않는다.
+   * 로그인 직후(비밀번호를 아는 순간) 불러 이 PC 금고를 계정 비밀번호에 맞춘다:
+   *  - 서버 재료와 어긋나 있으면(pendingRemoteMaterial) 그 재료로 다시 잠근다
+   *  - 금고가 없으면 계정 비밀번호로 만든다(재료는 서버로 올라간다)
+   *  - 잠겨 있으면 계정 비밀번호로 연다. 안 열리면 기기 키로 열어 계정 비밀번호로 다시 잠근다
+   *  - 열려 있는데 다른 비밀번호로 잠긴 금고면 계정 비밀번호로 다시 잠근다
+   * 'needs-old-master' 는 옛 마스터로 잠긴 금고를 기기 키로도 못 연 경우 — 사용자가 옛 마스터를 한 번 쳐야 한다
+   */
+  async adoptAccountPassword(
+    password: string
+  ): Promise<
+    | 'setup'
+    | 'unlocked'
+    | 'rekeyed'
+    | 'rekeyed-to-remote'
+    | 'already'
+    | 'needs-old-master'
+    | 'failed'
+  > {
+    if (this.db.isClosed || password.length === 0) return 'failed'
+    if (!this.isInitialized()) {
+      await this.setup(password)
+      return 'setup'
+    }
+    if (!this.key) {
+      if (await this.unlock(password)) {
+        // 서버 재료와 어긋난 상태였으면 이제 키가 있으니 맞춘다
+        if (this.pendingRemoteMaterial) {
+          const r = await this.rekeyToRemote(password)
+          if (r === 'ok') return 'rekeyed-to-remote'
+        }
+        return 'unlocked'
+      }
+      if (!(await this.ensureUnlockedByDevice())) return 'needs-old-master'
+    }
+    if (this.pendingRemoteMaterial) {
+      const r = await this.rekeyToRemote(password)
+      if (r === 'ok') return 'rekeyed-to-remote'
+      // 서버 재료가 다른 비밀번호로 만들어졌으면(옛 마스터) 이 PC 것을 계정 비밀번호로 새로 만들어 올린다
+    }
+    if (await this.verifyMaster(password)) return 'already'
+    const r = await this.rekeyToPassword(password)
+    return r === 'ok' ? 'rekeyed' : 'failed'
+  }
+
+  /** 모든 항목을 newKey 로 옮겨 잠그고 키 재료를 material 로 바꾼다(실패 시 아무것도 바꾸지 않는다) */
+  private rekeyTo(newKey: Buffer, material: RemoteKeyMaterial): 'ok' | 'locked' | 'decrypt-failed' {
+    const oldKey = this.key
+    if (!oldKey) {
+      zeroize(newKey)
+      return 'locked'
+    }
     const rows = this.repo.listAllItemRows()
     const rekeyed: Array<{ row: VaultItemRow; sections: StoredSection[] }> = []
     try {
@@ -378,10 +471,10 @@ export class VaultService {
         this.repo.updateItemFields(row.id, sections, row.label, row.type, now)
         this.record('vault_items', row.id, 'upsert')
       }
-      this.repo.setMeta(META_SALT, remote.salt)
-      this.repo.setMeta(META_KDF_PARAMS, Buffer.from(JSON.stringify(remote.kdf), 'utf8'))
-      this.repo.setMeta(META_VERIFIER_CT, remote.verifierCt)
-      this.repo.setMeta(META_VERIFIER_IV, remote.verifierIv)
+      this.repo.setMeta(META_SALT, material.salt)
+      this.repo.setMeta(META_KDF_PARAMS, Buffer.from(JSON.stringify(material.kdf), 'utf8'))
+      this.repo.setMeta(META_VERIFIER_CT, material.verifierCt)
+      this.repo.setMeta(META_VERIFIER_IV, material.verifierIv)
       // 복구 키·기기 키는 옛 키를 감싼 것 — 지운다(기기 키는 applyKey 가 새로 감싼다)
       this.repo.deleteMeta(META_RECOVERY_SALT)
       this.repo.deleteMeta(META_RECOVERY_CT)
@@ -389,7 +482,6 @@ export class VaultService {
       this.repo.deleteMeta(META_DEVICE_KEY)
       return null
     })
-    this.pendingRemoteMaterial = null
     this.applyKey(newKey)
     this.repo.insertAudit({ itemId: null, accountId: null, action: 'rekey', source: 'user' })
     return 'ok'
@@ -1055,6 +1147,70 @@ export class VaultService {
     return { token, count: snapshots.length }
   }
 
+  /**
+   * 한 사이트(등록 도메인) 안에서 같은 아이디로 여러 서브도메인에 흩어진 계정을 하나로 합친다.
+   * 남길 계정(항목 많은 것 → 기본 계정 → 먼저 만든 것)에 나머지 계정의 항목·주소·태그를 옮기고,
+   * 호스트를 등록 도메인(예: a-rt.com — 모든 서브도메인에 맞는다)으로 바꾼 뒤 나머지를 지운다.
+   * 지운 계정은 deleteAccounts 와 같은 되돌리기 토큰으로 60초 동안 되살릴 수 있다
+   */
+  mergeDomainAccounts(domain: string): { token: string | null; kept: number; removed: number } {
+    this.requireKey()
+    const key = registrableDomain(domain) || domain
+    if (isSeparateLoginDomain(key)) return { token: null, kept: 0, removed: 0 }
+    const rows = this.repo
+      .listAccounts()
+      .filter((a) => (registrableDomain(a.host) || a.host) === key)
+    const byUser = new Map<string, AccountRow[]>()
+    for (const a of rows) byUser.set(a.username, [...(byUser.get(a.username) ?? []), a])
+    const types = this.repo.itemTypesByAccount()
+    const removeIds: number[] = []
+    let kept = 0
+    this.repo.transaction(() => {
+      for (const group of byUser.values()) {
+        const [keeper, ...rest] = [...group].sort(
+          (a, b) =>
+            (types.get(b.id)?.length ?? 0) - (types.get(a.id)?.length ?? 0) ||
+            Number(b.isDefault) - Number(a.isDefault) ||
+            a.id - b.id
+        )
+        kept += 1
+        const have = new Set<string>(types.get(keeper.id) ?? [])
+        for (const other of rest) {
+          for (const itemId of this.repo.moveItems(other.id, keeper.id, have)) {
+            this.record('vault_items', itemId, 'upsert')
+          }
+          removeIds.push(other.id)
+        }
+        const urls = uniqueStrings(group.flatMap((a) => a.urls))
+        const tags = uniqueStrings(group.flatMap((a) => a.tags))
+        const changed =
+          keeper.host !== key ||
+          urls.length !== keeper.urls.length ||
+          tags.length !== keeper.tags.length ||
+          rest.some((a) => a.isDefault)
+        if (changed) {
+          this.repo.upsertAccount({
+            id: keeper.id,
+            host: key,
+            username: keeper.username,
+            urls,
+            tags,
+            isDefault: keeper.isDefault || rest.some((a) => a.isDefault)
+          })
+          this.record('accounts', keeper.id, 'upsert')
+        }
+      }
+      return null
+    })
+    if (removeIds.length === 0) {
+      this.touch()
+      return { token: null, kept, removed: 0 }
+    }
+    const del = this.deleteAccounts(removeIds)
+    this.repo.insertAudit({ itemId: null, accountId: null, action: 'merge', source: 'user' })
+    return { token: del.token, kept, removed: del.count }
+  }
+
   /** 되돌리기 — 보관 중인 스냅샷을 원래 id 그대로 복원한다. 만료됐으면 false */
   undoDeleteAccounts(token: string): boolean {
     const entry = this.undoBuffer.get(token)
@@ -1197,6 +1353,36 @@ export class VaultService {
     return null
   }
 
+  /** 계정에 그 결제 수단의 결제 비밀번호 항목(직접 값 또는 앱 계정 연결)이 있는가. 복호화하지 않는다 */
+  hasPaymentItem(accountId: number, provider: PaymentProvider): boolean {
+    return this.repo.findPaymentItemRow(accountId, provider).row !== null
+  }
+
+  /**
+   * 결제 비밀번호 항목이 앱 계정 연결(payment.account)이면 그 앱 계정의 같은 결제 수단 항목을 돌려준다.
+   * 연결이 아니면(값을 직접 넣은 옛 항목) null, 연결인데 그 계정·항목이 없으면 'missing'.
+   * 연결은 한 단계만 따라간다(앱 계정 항목이 또 연결이어도 더 가지 않는다)
+   */
+  private linkedPaymentRow(row: VaultItemRow): VaultItemRow | null | 'missing' {
+    const username = paymentAccountOfSections(row.sections)
+    if (username === null) return null
+    const secret = findField(row.sections, DEFAULT_FIELD_KEY)
+    // 값을 직접 넣어 둔 항목은 연결보다 그 값이 우선이다
+    if (secret && isSecretField(secret)) return null
+    const provider = paymentProviderOfSections(row.sections)
+    const appHost = PAYMENT_PROVIDER_ACCOUNT_HOST[provider]
+    if (!appHost) return 'missing'
+    // 네이버는 서브도메인마다 다른 계정(nid / accounts.commerce / mail)이 같은 아이디일 수 있다 —
+    // 그 아이디 중 이 결제 수단의 비밀번호를 실제로 가진 계정을 고른다
+    for (const target of this.matchAccountRows(appHost).filter((a) => a.username === username)) {
+      const found = this.repo.findPaymentItemRow(target.id, provider)
+      if (!found.row) continue
+      const targetSecret = findField(found.row.sections, DEFAULT_FIELD_KEY)
+      if (targetSecret && isSecretField(targetSecret)) return found.row
+    }
+    return 'missing'
+  }
+
   /**
    * 결제 비밀번호 전용 조회 — **메인 프로세스 내부에서만** 호출한다.
    * provider 를 주면 그 결제 수단의 항목만 본다. 주지 않았는데 계정에 결제 비밀번호가
@@ -1212,8 +1398,11 @@ export class VaultService {
     if (!this.key) return { value: null, reason: 'locked' }
     const found = this.repo.findPaymentItemRow(args.accountId, args.provider)
     if (!found.row) return { value: null, reason: found.reason }
+    // 쇼핑몰 계정의 항목이 "네이버 계정 buyer01 의 비밀번호를 쓴다"는 연결이면 그 앱 계정의 항목으로 간다
+    const linked = this.linkedPaymentRow(found.row)
+    if (linked === 'missing') return { value: null, reason: 'not-found' }
     const plain = this.decryptForFill(
-      found.row,
+      linked ?? found.row,
       args.fieldKey ?? DEFAULT_FIELD_KEY,
       args.jobId,
       args.source ?? 'ai'
@@ -1273,7 +1462,7 @@ export class VaultService {
   hasSameSecret(host: string, username: string, password: string): boolean {
     if (!this.key) return false
     const normalized = normalizeHost(host) || host
-    const account = this.repo.listAccounts(normalized).find((a) => a.username === username)
+    const account = this.matchAccountRows(normalized).find((a) => a.username === username)
     if (!account) return false
     const row = this.repo.findItemRow(account.id, 'login')
     if (!row) return false

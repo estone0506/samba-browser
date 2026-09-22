@@ -127,6 +127,8 @@ interface VaultStoreState {
   // 계정(들) 삭제 — 성공하면 되돌리기 토스트가 뜬다
   deleteAccounts: (ids: number[]) => Promise<void>
   undoDelete: () => Promise<void>
+  /** 같은 사이트 같은 아이디 계정 합치기. 지운 계정은 되돌리기 토스트로 되살린다 */
+  mergeDomain: (domain: string) => Promise<void>
   clearPendingUndo: () => void
   expandAllGroups: (keys: string[]) => void
   collapseAllGroups: () => void
@@ -384,6 +386,23 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
           ? null
           : s.selectedAccountId
     }))
+    await get().loadAccounts()
+    await get().loadRecent()
+  },
+
+  mergeDomain: async (domain) => {
+    const r = await window.samba.vault.mergeDomain(domain)
+    if (!r.ok) {
+      set({ error: r.error })
+      return
+    }
+    if (r.data.token !== null) {
+      const token = r.data.token
+      set((s) => ({
+        pendingUndo: { token, count: r.data.removed },
+        selectedAccountId: typeof s.selectedAccountId === 'number' ? null : s.selectedAccountId
+      }))
+    }
     await get().loadAccounts()
     await get().loadRecent()
   },
