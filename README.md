@@ -124,7 +124,7 @@ pnpm build    # typecheck + electron-vite build
 - **[기술스택](docs/기술스택.md)** — 사용 기술 및 라이브러리
 - **[실행방법](docs/실행방법.md)** — 화면별 사용법 상세(설치·실행은 이 README 가 기준입니다)
 - **[Supabase 설정](docs/supabase-설정.md)** — 내 Supabase 프로젝트를 직접 쓸 때만 필요
-- **[검수 기록](docs/검수/)** · **[Aside 검토](docs/reference/aside-검토.md)** · **[목업](docs/mockups/)**
+- **[설계 스펙](docs/superpowers/specs/)** — 단계별 설계 문서
 
 ## 기여
 
