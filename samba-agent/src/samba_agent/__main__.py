@@ -7,6 +7,7 @@
 import functools
 import logging
 import signal
+import sqlite3
 import threading
 from collections.abc import Callable
 
@@ -80,9 +81,12 @@ def main() -> None:
     agents = build_agents(reg, bridge, decide)
 
     version_fn = functools.partial(harness_version, settings.root, {})
-    checkpointer = SqliteSaver.from_conn_string(str(settings.root / 'checkpoints.sqlite'))
-    if hasattr(checkpointer, '__enter__'):
-        checkpointer = checkpointer.__enter__()
+    # from_conn_string 은 컨텍스트 매니저라 __enter__ 만 꺼내 쓰면 매니저가 버려지는 순간 연결이 닫힌다
+    # (실기: "Cannot operate on a closed database"). 연결을 직접 열어 프로세스가 사는 동안 유지한다.
+    # 워커 스레드와 봇 스레드가 같이 쓰므로 스레드 제약을 푼다(SqliteSaver 는 내부 잠금으로 직렬화)
+    checkpointer = SqliteSaver(
+        sqlite3.connect(str(settings.root / 'checkpoints.sqlite'), check_same_thread=False)
+    )
     # 결제 진입 표시를 큐에 남기려면 실행기가 필요하다 — 아래에서 만들고 콜백으로 잇는다
     graph = build_supervisor(
         reg,
