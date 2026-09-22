@@ -238,6 +238,9 @@ const api = {
     get: (): Promise<IpcResult<Settings>> => invoke(IPC.settingsGet),
     set: (patch: Partial<Settings>): Promise<IpcResult<Settings>> => invoke(IPC.settingsSet, patch)
   },
+  bridge: {
+    regenerateToken: (): Promise<IpcResult<{ token: string }>> => invoke(IPC.bridgeRegenerateToken)
+  },
   // 금고 — reveal 만이 평문을 돌려준다. 나머지는 상태·메타뿐이다
   vault: {
     state: (): Promise<IpcResult<VaultState>> => invoke(IPC.vaultState),

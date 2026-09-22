@@ -784,6 +784,16 @@
       "siteMemoryCounts": "{{recipes}} paths · {{notes}} notes",
       "siteMemoryForget": "Clear"
     },
+    "behavior": {
+      "bridgeTitle": "Harness bridge",
+      "bridgeDesc": "Lets the external order-processing harness (LangGraph) drive this browser. Listens only on 127.0.0.1",
+      "bridgeEnabled": "Enable bridge",
+      "bridgePort": "Port",
+      "bridgeToken": "Token",
+      "bridgeCopy": "Copy",
+      "bridgeRegenerate": "Regenerate",
+      "bridgeHint": "Put SAMBA_BRIDGE_URL=http://127.0.0.1:<port> and SAMBA_BRIDGE_TOKEN=<token> in the harness .env. While the bridge is using tools, the chat AI is unavailable"
+    },
     "security": {
       "autofillTitle": "Autofill"
     },

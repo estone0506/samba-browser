@@ -784,6 +784,16 @@
       "siteMemoryCounts": "경로 {{recipes}}개 · 메모 {{notes}}개",
       "siteMemoryForget": "지우기"
     },
+    "behavior": {
+      "bridgeTitle": "하네스 브릿지",
+      "bridgeDesc": "밖에서 도는 주문처리 하네스(LangGraph)가 이 브라우저를 손발로 쓰게 여는 문이에요. 이 PC 안(127.0.0.1)에서만 열립니다",
+      "bridgeEnabled": "브릿지 켜기",
+      "bridgePort": "포트",
+      "bridgeToken": "토큰",
+      "bridgeCopy": "복사",
+      "bridgeRegenerate": "새로 만들기",
+      "bridgeHint": "하네스의 .env 에 SAMBA_BRIDGE_URL=http://127.0.0.1:<포트> 와 SAMBA_BRIDGE_TOKEN=<토큰> 을 넣으세요. 브릿지가 도구를 쓰는 동안은 채팅창 AI 를 못 씁니다"
+    },
     "security": {
       "autofillTitle": "자동 채우기"
     },
