@@ -21,6 +21,8 @@ export interface ProviderInput {
   abort: AbortController
   // 추론 강도. SDK Options.effort('low'|'medium'|'high'|…)와 값이 같다
   effort?: AgentEffort
+  /** 이어받을 SDK 세션 id(같은 대화의 앞선 실행). 없으면 새 세션 */
+  resume?: string
 }
 
 // 사용자가 설정에 넣어 둔 내 API 키를 읽는 함수. 메인 프로세스가 주입한다.
@@ -97,7 +99,9 @@ export function buildQueryOptions(
     // 도구를 95회밖에 안 썼는데 "maximum number of turns (60)" 로 죽는다(실기: 결제 키패드 앞에서 중단).
     // 도구 상한 최대값보다 넉넉히 잡아, 멈추는 기준을 한 곳으로 모은다
     maxTurns: MAX_TOOL_CALLS + 50,
-    abortController: input.abort
+    abortController: input.abort,
+    // 같은 대화의 앞선 실행을 이어받는다 — 앞선 지시·도구 결과를 기억한 채로 돈다
+    ...(input.resume === undefined ? {} : { resume: input.resume })
   }
 }
 

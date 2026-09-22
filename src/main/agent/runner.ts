@@ -1,4 +1,10 @@
 import { buildLearnPrompt, LEARN_PROMPT_PREFIX, shouldLearn, type LearnedRunJs } from './learn'
+import {
+  buildHistoryNote,
+  RESUME_MAX_RUNS,
+  type ChatSessionStore,
+  type HistoryMessage
+} from './chat-session'
 import { randomUUID } from 'crypto'
 import type { TabManager } from '../browser/tab-manager'
 import type { SettingsStore } from '../settings/store'
@@ -113,6 +119,10 @@ export class AgentRunner {
   // 사이트 기억. 없으면 기억을 붙이지도 남기지도 않는다(기존 호출부·테스트)
   private siteMemory: SiteMemoryService | null = null
   private siteScripts: SiteScriptStore | null = null
+  // 대화 ↔ SDK 세션 연결. 없으면 매 실행이 새 세션이다(기억 없음)
+  private chatSessions: ChatSessionStore | null = null
+  // 세션을 못 이어받을 때 앞부분 요약을 만들 대화 읽기. 없으면 요약도 없다
+  private historyReader: ((chatId: number) => HistoryMessage[]) | null = null
   // 실행 중인 작업이 쥔 금고 자동 잠금 보류 해제 함수. stop() 과 run() 의 finally 가
   // 겹쳐 불러도 되도록 해제 함수 자체가 여러 번 호출에 안전하다
   private releaseVaultHold: (() => void) | null = null
@@ -148,6 +158,18 @@ export class AgentRunner {
   /** 저장된 사이트 스크립트를 붙인다. null 이면 목록 주입과 save_script·run_script 가 꺼진다 */
   setSiteScripts(store: SiteScriptStore | null): void {
     this.siteScripts = store
+  }
+
+  /**
+   * 대화 ↔ SDK 세션 연결을 붙인다. 같은 대화의 다음 지시는 세션을 이어받아 앞선 지시·도구 결과를 기억한다.
+   * reader 는 세션을 못 이어받을 때(세션 없음·상한 초과) 앞부분 요약을 만들 대화 메시지를 준다
+   */
+  setChatSessions(
+    store: ChatSessionStore | null,
+    reader: ((chatId: number) => HistoryMessage[]) | null
+  ): void {
+    this.chatSessions = store
+    this.historyReader = reader
   }
 
   /** 사이트 기억을 붙인다. null 이면 기억 주입·학습·remember_site 가 모두 꺼진다 */
@@ -409,6 +431,10 @@ export class AgentRunner {
     const runJsLog: LearnedRunJs[] = []
     // 이 실행이 끝난 뒤 이어서 돌릴 지시문(자동 이어가기·자동 학습). finally 에서 실행 상태를 비운 다음에 시작한다
     let followUp: string | null = null
+    // 이 실행의 SDK 세션 id(init 메시지) · 이어받은 세션 id · 이어받기 실패 여부
+    let sessionId: string | null = null
+    let resume: string | undefined
+    let resumeFailed = false
     const startedAt = Date.now()
     // 사용자 문장에 걸리는 플레이북 — 시스템 프롬프트 뒤에 절차를 덧붙이고, 화면에는 이름만 알린다
     // 자동 학습 턴에는 플레이북을 붙이지 않는다 — 지시문에 든 "주문처리"에 걸려 주문을 다시 처리하려 들면 안 된다
@@ -588,8 +614,17 @@ ${CODEX_NO_IMAGE_NOTE}`
         )
         return
       }
+      // 같은 대화면 SDK 세션을 이어받는다(앞선 지시·탭·도구 결과를 기억). 세션이 없거나 한 세션으로
+      // 너무 오래 돌았으면 새 세션을 열고, 대신 앞부분 요약을 지시문 앞에 붙여 맥락을 넘긴다
+      const session = chatId === undefined ? null : (this.chatSessions?.get(chatId) ?? null)
+      resume = session !== null && session.runs < RESUME_MAX_RUNS ? session.sessionId : undefined
+      const historyNote =
+        resume === undefined && chatId !== undefined && !learning && this.historyReader
+          ? buildHistoryNote(this.historyReader(chatId))
+          : ''
       const stream = runQuery({
-        prompt,
+        prompt: historyNote === '' ? prompt : `${historyNote}${prompt}`,
+        ...(resume === undefined ? {} : { resume }),
         ...(images && images.length > 0 ? { images } : {}),
         systemPrompt: systemPrompt(s.permissionMode, s.agentEffort),
         model: runModel,
@@ -610,6 +645,9 @@ ${CODEX_NO_IMAGE_NOTE}`
             const text = deduper.accept(block.text)
             if (text) emit({ type: 'text', text })
           }
+        } else if (msg.type === 'system' && msg.subtype === 'init') {
+          // 이 실행의 SDK 세션 id — 끝나면 대화에 남겨 다음 지시가 이어받는다
+          sessionId = msg.session_id
         } else if (msg.type === 'system' && msg.subtype === 'api_retry') {
           // 인증 실패는 SDK 가 최대 10회 재시도한다(수 분 소요). 회복 불가 오류면 즉시 중단
           apiError = `${msg.error} ${msg.error_status ?? ''}`.trim()
@@ -687,6 +725,21 @@ ${CODEX_NO_IMAGE_NOTE}`
         }
       }
     } catch (e) {
+      // 세션을 이어받으려다 시작도 못 하고 죽었으면(세션 파일 없음·다른 cwd) 연결을 지우고 새 세션으로 한 번 다시 돈다
+      if (
+        !abort.signal.aborted &&
+        !settled &&
+        resume !== undefined &&
+        chatId !== undefined &&
+        counter.count() === 0 &&
+        sessionId === null
+      ) {
+        settled = true
+        resumeFailed = true
+        this.chatSessions?.clear(chatId)
+        emit({ type: 'text', text: '(이전 세션을 이어받지 못해 새 세션으로 다시 시작합니다)' })
+        followUp = prompt
+      }
       // stop() 또는 result 처리에서 이미 종료 상태를 보냈으면 중복 emit 하지 않는다
       if (!abort.signal.aborted && !settled) {
         const message = e instanceof Error ? e.message : String(e)
@@ -711,6 +764,9 @@ ${CODEX_NO_IMAGE_NOTE}`
     } finally {
       releaseVaultHold()
       if (this.releaseVaultHold === releaseVaultHold) this.releaseVaultHold = null
+      // 다음 지시가 이어받을 세션 id 를 대화에 남긴다(이어받기에 실패한 실행은 남기지 않는다)
+      if (chatId !== undefined && sessionId !== null && !resumeFailed)
+        this.chatSessions?.note(chatId, sessionId)
       // 이미 stop() 이나 다음 run() 이 상태를 가져갔으면 건드리지 않는다
       if (gen === this.generation) {
         this.abort = null

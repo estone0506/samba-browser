@@ -1,3 +1,4 @@
+import { ChatSessionStore } from '../agent/chat-session'
 import {
   app,
   dialog,
@@ -228,6 +229,11 @@ export function registerIpc(
   agent.setSiteMemory(siteMemory)
   // 한 번 통한 run_js 코드를 저장해 두고 재생한다(기기 로컬). 사이트 기억과 같은 스위치로 켜고 끈다
   agent.setSiteScripts(new SiteScriptStore(join(app.getPath('userData'), 'site-scripts.json')))
+  // 같은 대화의 다음 지시는 SDK 세션을 이어받아 앞선 지시·도구 결과를 기억한다(세션 연결은 이 PC 에만 남는다)
+  agent.setChatSessions(
+    new ChatSessionStore(join(app.getPath('userData'), 'chat-sessions.json')),
+    (chatId) => chats.messages(chatId).map((m) => ({ role: m.role, content: m.content }))
+  )
   // 예약 실행. 실행 기록은 이 PC 의 파일에만 남는다(동기화 대상이 아니다)
   const scheduleRuns = new ScheduleRunStore(join(app.getPath('userData'), 'schedule-runs.json'))
   const scheduler = new PlaybookScheduler({
