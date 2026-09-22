@@ -29,11 +29,8 @@ import {
 } from '../src/main/phone/pay'
 import { createPayTool, PAY_TOOL_NAME, PHONE_TOOL_NAMES } from '../src/main/agent/tools-phone'
 import { SAMBA_TOOL_NAMES } from '../src/main/agent/tools'
-import { DEFAULT_PAYMENT_LIMIT_KRW, FIRST_RUN_LIMIT_KRW } from '../src/shared/phone'
 
 // 사용자가 설정에 적어 넣은 상한(테스트용 값). 기본값은 둘 다 없음(0)이다
-const USER_LIMIT_KRW = 500_000
-const USER_FIRST_LIMIT_KRW = 10_000
 import type { PhoneElement, PhoneScreen } from '../src/shared/phone-snapshot'
 import type { KeypadLayout } from '../src/main/ai/visual'
 
@@ -78,7 +75,6 @@ function request(over: Partial<PayRequest> = {}): PayRequest {
     serial: SERIAL,
     siteHost: 'shop.example.com',
     jobId: 'job-1',
-    isFirstRunForCombo: false,
     ...over
   }
 }
@@ -166,38 +162,17 @@ describe('PAY_APP_TO_PAYMENT_PROVIDER', () => {
 })
 
 describe('checkPaymentGate', () => {
-  const base = {
-    amountKrw: 10_000,
-    limitKrw: USER_LIMIT_KRW,
-    isFirstRunForCombo: false,
-    vaultUnlocked: true
-  }
-
-  it('상한 안이면 ok', () => {
-    expect(checkPaymentGate(base)).toBe('ok')
+  it('금액이 양수고 금고가 열려 있으면 ok — 금액 상한은 두지 않는다', () => {
+    expect(checkPaymentGate({ amountKrw: 10_000, vaultUnlocked: true })).toBe('ok')
+    expect(checkPaymentGate({ amountKrw: 10_000_000, vaultUnlocked: true })).toBe('ok')
   })
 
-  it('상한을 넘으면 over-limit', () => {
-    expect(checkPaymentGate({ ...base, amountKrw: USER_LIMIT_KRW + 1 })).toBe('over-limit')
-  })
-
-  it('기본값은 상한 없음 — 앱이 임의로 금액을 막지 않는다', () => {
-    expect(DEFAULT_PAYMENT_LIMIT_KRW).toBe(0)
-    expect(FIRST_RUN_LIMIT_KRW).toBe(0)
-    const free = { ...base, limitKrw: DEFAULT_PAYMENT_LIMIT_KRW, isFirstRunForCombo: true }
-    expect(checkPaymentGate({ ...free, amountKrw: 10_000_000 })).toBe('ok')
-  })
-
-  it('사용자가 첫 결제 상한을 적어 두었을 때만, 새 조합의 첫 결제가 그 값을 넘으면 first-run-too-large', () => {
-    const first = { ...base, isFirstRunForCombo: true, firstRunLimitKrw: USER_FIRST_LIMIT_KRW }
-    expect(checkPaymentGate({ ...first, amountKrw: USER_FIRST_LIMIT_KRW + 1 })).toBe(
-      'first-run-too-large'
-    )
-    expect(checkPaymentGate({ ...first, amountKrw: USER_FIRST_LIMIT_KRW })).toBe('ok')
+  it('금액이 0 이하면 bad-amount', () => {
+    expect(checkPaymentGate({ amountKrw: 0, vaultUnlocked: true })).toBe('bad-amount')
   })
 
   it('금고가 잠겨 있으면 vault-locked', () => {
-    expect(checkPaymentGate({ ...base, vaultUnlocked: false })).toBe('vault-locked')
+    expect(checkPaymentGate({ amountKrw: 10_000, vaultUnlocked: false })).toBe('vault-locked')
   })
 })
 
@@ -273,18 +248,6 @@ describe('runPayApproval', () => {
     expect(h.taps).toEqual([])
     expect(h.tapPassword).not.toHaveBeenCalled()
     expect(h.deps.launchApp).not.toHaveBeenCalled()
-  })
-
-  it('사용자가 적은 상한을 넘으면 확인 카드도 띄우지 않고 거부한다', async () => {
-    const h = harness({ screens: okScreens })
-    const r = await runPayApproval(
-      h.deps,
-      request({ amountKrw: 900_000, limitKrw: USER_LIMIT_KRW })
-    )
-
-    expect(r).toEqual({ ok: false, reason: 'over-limit' })
-    expect(h.confirm).not.toHaveBeenCalled()
-    expect(h.records).toEqual([{ kind: 'app_approve', ok: false }])
   })
 
   it('금고가 잠겨 있으면 비밀번호를 건드리지 않는다', async () => {
@@ -435,8 +398,8 @@ describe('phone_approve_payment 도구', () => {
     const good = buildTool()
     expect((await good.tool.handler(args)).content[0].text).toBe('ok')
 
-    const bad = buildTool({ result: { ok: false, reason: 'over-limit' } })
-    expect((await bad.tool.handler(args)).content[0].text).toBe('refused: over-limit')
+    const bad = buildTool({ result: { ok: false, reason: 'declined' } })
+    expect((await bad.tool.handler(args)).content[0].text).toBe('refused: declined')
   })
 
   it('호출 상한에 걸리면 실행기를 부르지 않는다', async () => {
@@ -628,34 +591,6 @@ describe('결제 요청이 푸시 알림으로만 와 있을 때 — 알림창�
     expect(calls).toEqual(['open', 'close'])
     expect(h.taps).toEqual([])
     expect(h.deps.launchApp).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe('첫 결제 상한은 설정값이다', () => {
-  const base = {
-    amountKrw: 29_960,
-    limitKrw: 500_000,
-    isFirstRunForCombo: true,
-    vaultUnlocked: true
-  }
-
-  it('기본값은 첫 결제 상한 없음 — 3만원 첫 결제가 그대로 통과한다(실기: 29,960원이 막혔던 건)', () => {
-    expect(checkPaymentGate(base)).toBe('ok')
-    expect(checkPaymentGate({ ...base, firstRunLimitKrw: 10_000 })).toBe('first-run-too-large')
-  })
-
-  it('설정으로 올리면 통과하고, 0 이면 첫 결제 상한을 끈다(결제 상한은 그대로 본다)', () => {
-    expect(checkPaymentGate({ ...base, firstRunLimitKrw: 50_000 })).toBe('ok')
-    expect(checkPaymentGate({ ...base, firstRunLimitKrw: 0 })).toBe('ok')
-    expect(checkPaymentGate({ ...base, amountKrw: 600_000, firstRunLimitKrw: 0 })).toBe(
-      'over-limit'
-    )
-  })
-
-  it('첫 결제가 아니면 첫 결제 상한과 무관하다', () => {
-    expect(checkPaymentGate({ ...base, isFirstRunForCombo: false, firstRunLimitKrw: 1_000 })).toBe(
-      'ok'
-    )
   })
 })
 

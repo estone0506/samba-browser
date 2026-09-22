@@ -8,11 +8,7 @@
 //    직접 읽어 좌표만 누른다. 오입력이 의심돼도 재시도하지 않는다(계정 잠금 방지)
 //  - 실패 통지의 스크린샷은 비밀번호 화면이면 붙이지 않는다
 
-import {
-  DEFAULT_PAYMENT_LIMIT_KRW,
-  FIRST_RUN_LIMIT_KRW,
-  type AuthEventDto
-} from '../../shared/phone'
+import { type AuthEventDto } from '../../shared/phone'
 import { findElement, type PhoneScreen } from '../../shared/phone-snapshot'
 import type { PaymentProvider } from '../../shared/vault'
 import type { KeypadLayout } from '../ai/visual'
@@ -117,25 +113,11 @@ export const MAX_PAY_STEPS = 30
 /** 화면이 그대로일 때 다음 확인까지 기다리는 시간 */
 export const PAY_POLL_MS = 1000
 
-export type PayGate = 'ok' | 'over-limit' | 'first-run-too-large' | 'vault-locked'
+export type PayGate = 'ok' | 'bad-amount' | 'vault-locked'
 
-/** 결제를 시작해도 되는지 본다. 금액은 원 단위 정수다 */
-export function checkPaymentGate(input: {
-  amountKrw: number
-  limitKrw: number
-  isFirstRunForCombo: boolean
-  vaultUnlocked: boolean
-  /** 첫 결제 소액 상한. 0 이면 첫 결제도 결제 상한만 본다. 생략하면 기본값(1만원) */
-  firstRunLimitKrw?: number
-}): PayGate {
-  if (!(input.amountKrw > 0)) return 'over-limit'
-  // 상한은 사용자가 설정에 적었을 때만 건다(0 = 없음). 앱이 임의로 금액을 막지 않는다
-  if (input.limitKrw > 0 && input.amountKrw > input.limitKrw) return 'over-limit'
-  // 새 (사이트 × 결제수단) 조합의 첫 자동 결제는 소액만 허용한다
-  const firstLimit = input.firstRunLimitKrw ?? FIRST_RUN_LIMIT_KRW
-  if (input.isFirstRunForCombo && firstLimit > 0 && input.amountKrw > firstLimit) {
-    return 'first-run-too-large'
-  }
+/** 결제를 시작해도 되는지 본다. 금액은 원 단위 정수다. 금액 상한은 두지 않는다 — 사용자가 시킨 결제는 그대로 한다 */
+export function checkPaymentGate(input: { amountKrw: number; vaultUnlocked: boolean }): PayGate {
+  if (!(input.amountKrw > 0)) return 'bad-amount'
   // 금고가 잠겨 있으면 비밀번호를 만질 수 없으므로 시작조차 하지 않는다
   if (!input.vaultUnlocked) return 'vault-locked'
   return 'ok'
@@ -361,15 +343,10 @@ export interface PayRequest {
   serial: string
   siteHost: string
   jobId?: string
-  isFirstRunForCombo: boolean
-  /** 첫 결제 소액 상한(설정값). 0 이면 끈다 */
-  firstRunLimitKrw?: number
   /** 결제 앱 안에서 고를 카드 이름의 일부(예: "현대"). 지금 선택된 카드가 이와 다르면 바꾼 뒤 결제한다 */
   cardHint?: string
   /** 결제 전에 확인 카드를 띄울지. 생략하면 띄운다(guard). 자동 모드에서는 false */
   confirmFirst?: boolean
-  /** 설정에서 바꾼 상한. 없으면 기본 50만원 */
-  limitKrw?: number
 }
 
 /** 실행기가 남기는 인증 이벤트 1건(문자와 같은 표를 쓰되 본문은 없다) */
@@ -441,8 +418,7 @@ export function payConfirmText(req: PayRequest): string {
 
 // 문구는 앱 언어를 따라야 하므로 키만 두고 쓰는 시점에 번역한다
 const GATE_LABEL: Record<Exclude<PayGate, 'ok'>, MessageKey> = {
-  'over-limit': 'phone.gateOverLimit',
-  'first-run-too-large': 'phone.gateFirstRunTooLarge',
+  'bad-amount': 'phone.gateBadAmount',
   'vault-locked': 'phone.gateVaultLocked'
 }
 
@@ -516,13 +492,7 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
     return fail('layout-incomplete', screen)
   }
 
-  const gate = checkPaymentGate({
-    amountKrw: req.amountKrw,
-    limitKrw: req.limitKrw ?? DEFAULT_PAYMENT_LIMIT_KRW,
-    isFirstRunForCombo: req.isFirstRunForCombo,
-    vaultUnlocked: deps.vaultUnlocked(),
-    ...(req.firstRunLimitKrw === undefined ? {} : { firstRunLimitKrw: req.firstRunLimitKrw })
-  })
+  const gate = checkPaymentGate({ amountKrw: req.amountKrw, vaultUnlocked: deps.vaultUnlocked() })
   if (gate !== 'ok') {
     // 앱을 열기 전이라 화면도 없다 — 카드도 띄우지 않고 사유만 남긴다
     deps.onStep(tr('phone.payRejected', { reason: tr(GATE_LABEL[gate]) }), false)

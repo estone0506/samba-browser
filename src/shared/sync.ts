@@ -177,8 +177,6 @@ export const SYNCED_SETTING_KEYS = [
   'phoneScreenFps',
   'phoneAutoReconnect',
   'phoneKeypadVisual',
-  'paymentLimitKrw',
-  'firstPaymentLimitKrw',
   'captureFormat',
   'captureMicrophone',
   'captureCopyToClipboard',

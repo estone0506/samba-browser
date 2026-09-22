@@ -14,12 +14,7 @@ import {
   toViewRatio,
   transportLabelKey
 } from '../src/renderer/src/components/phone/phone-view'
-import {
-  PHONE_STATES,
-  PHONE_TRANSPORTS,
-  type PhoneDto,
-  type PhoneState
-} from '../src/shared/phone'
+import { PHONE_STATES, PHONE_TRANSPORTS, type PhoneDto, type PhoneState } from '../src/shared/phone'
 import ko from '../src/renderer/src/i18n/ko.json'
 import en from '../src/renderer/src/i18n/en.json'
 
@@ -99,7 +94,6 @@ describe('폰 목록 정렬·상한', () => {
     sortPhones(list)
     expect(list.map((p) => p.id)).toEqual([1, 2])
   })
-
 })
 
 describe('화면 좌표 환산', () => {
@@ -162,7 +156,6 @@ describe('폰 i18n 키', () => {
       'phone.authWaiting',
       'phone.screen.openWindow',
       'phone.settings.detect',
-      'phone.settings.paymentLimit',
       'phone.assign.title',
       'phone.assign.suggestion',
       // 폰 설정은 설정 페이지가 아니라 폰 화면의 톱니 패널에 있다
