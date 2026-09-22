@@ -26,7 +26,7 @@ from samba_agent.ops.masking import mask_text
 from samba_agent.ops.releases import ReleaseStore
 from samba_agent.ops.tracing import configure_tracing
 from samba_agent.queue.db import Job, JobQueue
-from samba_agent.queue.orders import lookup_order
+from samba_agent.queue.orders import LOOKUP_TOOLS, lookup_order
 from samba_agent.queue.worker import Worker, WorkerDeps
 from samba_agent.settings import load_settings
 from samba_agent.supervisor.graph import build_supervisor
@@ -72,8 +72,8 @@ def main() -> None:
         settings.bridge_token.get_secret_value(),
         allowed=(),  # 최상위 클라이언트는 도구를 직접 부르지 않는다 — 에이전트마다 scoped() 로 좁힌다
     )
-    # 주문 조회는 앱 저장 스크립트(samba_find_order) 하나만 부른다
-    lookup_bridge = bridge.scoped(['run_script'])
+    # 주문 조회 = 삼바웨이브 탭 앞에 두기(list_tabs·switch_tab·new_tab·wait) + 저장 스크립트 1회
+    lookup_bridge = bridge.scoped(list(LOOKUP_TOOLS))
 
     # 모델명은 settings 에 없다 — llm.decide 의 상수(claude-sonnet-5) 를 그대로 쓴다
     decide = make_decide()
@@ -105,6 +105,9 @@ def main() -> None:
             version=version_fn,  # 콜러블 그대로 넘긴다 — tick 마다 다시 불러 규칙 변경을 반영한다
             report=_report,
             parse_order=lambda job: lookup_order(lookup_bridge, job.order_no, job.options),
+            # 같은 주문을 취소 뒤 다시 접수하면 job id(=스레드)가 같다 — 끝난 실행의 attempts·results 가
+            # 남은 채 새 입력이 들어가면 재시도 횟수가 이어져 버린다(실기). 끝난 스레드는 지우고 시작한다
+            reset_thread=checkpointer.delete_thread,
             approval_report=_approval_report,
             dry_run=settings.dry_run,
             dry_run_digits=settings.dry_run_digits,

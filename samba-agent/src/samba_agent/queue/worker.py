@@ -52,6 +52,9 @@ class WorkerDeps:
     # 보관 기간 지난 이벤트 정리(EventLog.prune). 기동 시 1회 + 주기마다 부른다(리뷰 지적 — Minor)
     prune: Callable[[], int] | None = None
     prune_interval_s: float = 6 * 60 * 60
+    # 끝난 실행의 체크포인트 스레드를 지운다(체크포인터의 delete_thread). 같은 job id 로 다시 접수될 때
+    # 지난 실행의 attempts·results 가 새 실행에 섞이지 않게 한다. 없으면 지우지 않는다(테스트)
+    reset_thread: Callable[[str], None] | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.version, str):
@@ -82,6 +85,7 @@ class Worker:
             self.d.queue.finish(job.id, 'needs_human', error=f'주문 조회 실패: {msg}')
             self.d.report(job, f'주문 조회 실패 — 사람 확인 필요: {msg}')
             return self.d.queue.get(job.order_no)
+        self._reset_finished_thread(job.id)
         state = {
             'order': order,
             'options': {str(k): str(v) for k, v in job.options.items()},
@@ -147,6 +151,28 @@ class Worker:
         if job_id is None:
             return
         self.d.queue.progress(int(job_id), agent='payer', step=PAY_STARTED_STEP)
+
+    def _reset_finished_thread(self, job_id: int) -> None:
+        """이 job 의 스레드에 끝난(다음 노드가 없는) 체크포인트만 남아 있으면 지운다.
+
+        중단(승인 대기·비정상 종료)으로 다음 노드가 남아 있으면 건드리지 않는다 — 그 경우는
+        _ResumeSafeGraph 가 입력을 무시하고 이어서 돌린다.
+        """
+        if self.d.reset_thread is None:
+            return
+        thread_id = f'{THREAD_PREFIX}{job_id}'
+        get_state = getattr(self.d.graph, 'get_state', None)
+        if callable(get_state):
+            try:
+                if get_state(self._config(job_id)).next:
+                    return
+            except Exception:  # noqa: BLE001 — 상태를 못 읽으면 지우지 않는 쪽이 안전하다
+                _log.debug('체크포인트 상태를 읽지 못해 스레드를 지우지 않는다: %s', thread_id)
+                return
+        try:
+            self.d.reset_thread(thread_id)
+        except Exception:  # noqa: BLE001 — 정리 실패가 실행을 막지는 않는다
+            _log.exception('끝난 스레드 정리 실패 — 그대로 진행한다: %s', thread_id)
 
     def _config(self, job_id: int) -> dict[str, object]:
         return {'configurable': {'thread_id': f'{THREAD_PREFIX}{job_id}'}}

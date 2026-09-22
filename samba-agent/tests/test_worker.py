@@ -395,3 +395,30 @@ def test_주문_조회가_실패하면_running으로_남기지_않고_사람에�
     assert job.state == 'needs_human'
     assert '주문 조회 실패' in (q.get('A1').error or '')
     assert all('hong@example.com' not in s for s in sent)
+
+
+def test_같은_주문을_다시_접수하면_끝난_스레드를_지우고_새로_돈다(setup):
+    q, _log, _sent, make = setup
+    w = make(gate=False)
+    wiped: list[str] = []
+    w.d.reset_thread = wiped.append
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    assert w.tick().state == 'done'
+    # 끝난 주문을 다시 접수하면 같은 행(id) 이 되살아난다 — 스레드도 같다
+    job, fresh = q.enqueue('A1', 'U1', {}, 'ts2')
+    assert fresh and job.id == 1
+    assert w.tick().state == 'done'
+    assert wiped == ['job:1', 'job:1']
+
+
+def test_승인_대기로_멈춘_스레드는_지우지_않는다(setup):
+    q, _log, _sent, make = setup
+    w = make(gate=True)
+    wiped: list[str] = []
+    w.d.reset_thread = wiped.append
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    assert w.tick().state == 'needs_human'
+    assert '승인 대기' in q.get('A1').step
+    wiped.clear()
+    w._reset_finished_thread(1)  # 다음 노드(승인 뒤 결제)가 남아 있다
+    assert wiped == []
