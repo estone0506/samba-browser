@@ -3,7 +3,7 @@ import pytest
 from pydantic import ValidationError
 
 from samba_agent.agents.contracts import AgentResult, Assignment, Evidence, OrderRef
-from samba_agent.agents.registry import Registry
+from samba_agent.agents.registry import AgentSpec, Registry
 from samba_agent.failures import FailReason
 from samba_agent.settings import DEFAULT_ROOT
 
@@ -93,3 +93,9 @@ def test_배정은_허용_도구와_규칙을_함께_넘긴다(reg):
     assert 'run_js' in a.allowed_tools
     assert 'phone_approve_payment' not in a.allowed_tools
     assert a.dry_run is True
+
+
+def test_등록부의_모르는_필드는_거부한다() -> None:
+    """registry.yaml 에 필드명을 잘못 쓰면(예: macth) 조용히 무시되지 않고 로딩이 실패해야 한다."""
+    with pytest.raises(ValidationError):
+        AgentSpec(name='x', kind='buyer', tools=['get_page'], rules='r.md', macth={'source': 'a'})

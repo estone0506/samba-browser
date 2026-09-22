@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from samba_agent.agents.contracts import OrderRef
 
@@ -51,7 +51,9 @@ AgentKind = Literal['buyer', 'payer', 'recorder', 'verifier']
 
 
 class AgentSpec(BaseModel):
-    """등록부 1행."""
+    """등록부 1행. 모르는 필드(오타)는 조용히 버리지 않고 로딩을 거부한다."""
+
+    model_config = ConfigDict(extra='forbid')
 
     name: str
     kind: AgentKind
