@@ -57,6 +57,10 @@ export const phoneMessages = defineMessages({
     'phone.payCardRequired':
       '카드 미지정 거부: 지시문에 {card}가 있는데 결제 도구에 card 를 넘기지 않음',
     'phone.payPasswordEntered': '결제 비밀번호 입력({digits}자리)',
+    'phone.payPasswordPartial': '시험 입력: 결제 비밀번호 {digits}자리만 누름(결제 안 함)',
+    'phone.payDryRunCancelled': '시험 입력 취소: 키패드에서 빠져나왔습니다({digits}자리 입력)',
+    'phone.payDryRunSucceeded':
+      '시험 입력인데 결제 완료 문구가 보입니다 — 폰에서 결제 상태를 바로 확인해 주세요',
     'phone.arsNotice': '전화 인증 수신 감지: 폰 화면을 확인하세요'
   },
   en: {
@@ -112,6 +116,11 @@ export const phoneMessages = defineMessages({
     'phone.payCardRequired':
       'Refused: the instruction names {card} but the payment tool was called without card',
     'phone.payPasswordEntered': 'Payment password entered ({digits} digits)',
+    'phone.payPasswordPartial':
+      'Dry run: pressed only {digits} digits of the payment password (not paying)',
+    'phone.payDryRunCancelled': 'Dry run cancelled: left the keypad after {digits} digits',
+    'phone.payDryRunSucceeded':
+      'Dry run, but a payment-complete message is on screen - check the payment on your phone now',
     'phone.arsNotice': 'Incoming verification call detected: check the phone screen'
   }
 })

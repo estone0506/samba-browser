@@ -501,7 +501,13 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     }
 
     const runDeps: PayRunDeps = {
-      phones: { screen, tap: deps.ops.tap, screenshot: deps.ops.screenshot },
+      phones: {
+        screen,
+        tap: deps.ops.tap,
+        screenshot: deps.ops.screenshot,
+        // 시험 입력(dry-run)을 취소하고 키패드에서 빠져나올 때만 쓴다
+        back: (s) => deps.ops.key(s, 'back')
+      },
       launchApp: createLaunchApp(deps.adb),
       // 결제 요청 알림을 누르는 것이 가장 짧은 길이다. 누를 알림은 알림 기록에서 **그 결제 앱이 올린 것**만 고르고
       // 제목이 정확히 같은 요소만 누른다 — 카카오톡의 "토스" 메시지 같은 남의 알림은 후보가 되지 않는다
@@ -546,6 +552,7 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
         merchant: req.merchant,
         methodLabel: req.methodLabel,
         ...(req.card === undefined ? {} : { cardHint: req.card }),
+        ...(req.dryRunDigits === undefined ? {} : { dryRunDigits: req.dryRunDigits }),
         phoneLabel: deps.phones.list().find((p) => p.serial === serial)?.label ?? serial,
         accountId: account.id,
         phoneId: phoneIdOf(serial),

@@ -170,6 +170,36 @@ describe('tapPaymentPassword', () => {
   })
 })
 
+describe('tapPaymentPassword — 시험 입력(dry-run)', () => {
+  it('maxDigits 만큼만 누르고 멈춘다(누른 자리수를 알려 준다)', async () => {
+    const { deps, tap, steps } = build()
+    const typed: number[] = []
+    const r = await tapPaymentPassword({
+      ...deps,
+      maxDigits: 3,
+      onTyped: (n) => typed.push(n)
+    })
+
+    expect(r).toBe('ok')
+    expect(tap).toHaveBeenCalledTimes(3)
+    expect(typed).toEqual([3])
+    expect(steps).toEqual([
+      { label: '시험 입력: 결제 비밀번호 3자리만 누름(결제 안 함)', ok: true }
+    ])
+    expect(steps.some((x) => SECRET_RE.test(x.label))).toBe(false)
+  })
+
+  it('요청 자리수가 비밀번호보다 길어도 끝까지 누르지 않는다(자리수 − 1)', async () => {
+    const { deps, tap } = build({ secret: '12' })
+    const typed: number[] = []
+    const r = await tapPaymentPassword({ ...deps, maxDigits: 3, onTyped: (n) => typed.push(n) })
+
+    expect(r).toBe('ok')
+    expect(tap).toHaveBeenCalledTimes(1)
+    expect(typed).toEqual([1])
+  })
+})
+
 describe('keypadFromUiTree', () => {
   function screenWith(texts: string[]): PhoneScreen {
     return {

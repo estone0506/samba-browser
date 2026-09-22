@@ -338,6 +338,8 @@ export type PayFailReason =
   | 'pay-account-ambiguous'
   // 네이버페이 창이 고른 네이버 계정이 아닌 다른 계정으로 로그인돼 있다
   | 'pay-account-mismatch'
+  // 시험 입력(dry-run) — 결제 비밀번호를 일부만 누르고 취소했다. 실패가 아니라 "결제하지 않음" 이다
+  | 'dry-run'
 
 export interface PayResult {
   ok: boolean
@@ -363,16 +365,29 @@ export interface PayRequest {
   cardHint?: string
   /** 결제 전에 확인 카드를 띄울지. 생략하면 띄운다(guard). 자동 모드에서는 false */
   confirmFirst?: boolean
+  /**
+   * 시험 입력(dry-run) 자리수. 주면 결제 비밀번호 화면까지 가서 이 자리수만 누르고 취소한다 —
+   * 결제는 끝내지 않는다. 앱 잠금 화면(토스)의 비밀번호는 그대로 다 푼다
+   */
+  dryRunDigits?: number
 }
 
-/** 실행기가 남기는 인증 이벤트 1건(문자와 같은 표를 쓰되 본문은 없다) */
-export type PayRecord = Omit<AuthEventDto, 'id'> & { kind: 'app_approve' }
+/**
+ * 실행기가 남기는 인증 이벤트 1건(문자와 같은 표를 쓰되 본문은 없다).
+ * dryRunDigits 는 시험 입력에서 누른 자리수다 — 표에는 열이 없어 저장되지 않고, 배선부·통계가 보는 값이다
+ */
+export type PayRecord = Omit<AuthEventDto, 'id'> & {
+  kind: 'app_approve'
+  dryRunDigits?: number
+}
 
 export interface PayRunDeps {
   phones: {
     screen: (serial: string) => Promise<PhoneScreen>
     tap: (serial: string, x: number, y: number) => Promise<void>
     screenshot: (serial: string) => Promise<{ png: Buffer; secret: boolean }>
+    /** 뒤로 키. 시험 입력을 취소하고 키패드에서 빠져나오는 데만 쓴다 */
+    back?: (serial: string) => Promise<void>
   }
   /** 딥링크로 결제 앱을 앞으로 부른다(배선부가 am start 로 채운다) */
   launchApp: (serial: string, deepLink: string) => Promise<void>
@@ -453,10 +468,11 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
   // 키패드를 Visual 로 읽었는지 — 인증 이벤트의 method 에 남긴다
   let usedVisual = false
 
-  const finish = (ok: boolean, reason?: PayFailReason): PayResult => {
+  const finish = (ok: boolean, reason?: PayFailReason, detail?: string): PayResult => {
     const at = deps.now()
     deps.record({
       kind: 'app_approve',
+      ...(req.dryRunDigits === undefined ? {} : { dryRunDigits: req.dryRunDigits }),
       jobId: req.jobId ?? null,
       phoneId: req.phoneId,
       siteHost: req.siteHost,
@@ -468,7 +484,8 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
       senderTail: null,
       at
     })
-    return ok ? { ok: true } : { ok: false, reason }
+    if (ok) return { ok: true }
+    return detail === undefined ? { ok: false, reason } : { ok: false, reason, detail }
   }
 
   /** 실패 통지 + 기록. 비밀번호 화면이면 이미지를 아예 만들지 않는다 */
@@ -488,6 +505,35 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
       deps.notify(message)
     }
     return finish(false, reason)
+  }
+
+  /**
+   * 시험 입력(dry-run)을 취소하고 끝낸다. 뒤로 키로 키패드에서 빠져나온 뒤,
+   * 혹시 결제가 끝나 버렸는지(성공 문구) 한 번 확인해 사용자에게 알린다
+   */
+  const cancelDryRun = async (typed: number): Promise<PayResult> => {
+    if (deps.phones.back) {
+      try {
+        await deps.phones.back(req.serial)
+      } catch {
+        // 뒤로 키가 듣지 않아도 아래 확인은 그대로 한다(사용자가 화면을 보고 닫을 수 있게)
+      }
+    }
+    await (deps.sleep ?? defaultSleep)(PAY_POLL_MS)
+    let after: PhoneScreen | null = null
+    try {
+      after = await deps.phones.screen(req.serial)
+    } catch {
+      after = null
+    }
+    if (after && hasText(after, spec.successHint)) {
+      // 반만 눌렀는데 결제 완료 문구가 보인다 — 그냥 넘기지 않고 곧바로 알린다
+      deps.onStep(tr('phone.payDryRunSucceeded'), false)
+      deps.notify(tr('phone.payDryRunSucceeded'))
+    } else {
+      deps.onStep(tr('phone.payDryRunCancelled', { digits: typed }), true)
+    }
+    return finish(false, 'dry-run', `typed ${typed} digits then cancelled`)
   }
 
   /** 키패드를 못 읽으면 누르지 않고 사람에게 넘긴다(캡차 넘김 카드 재사용) */
@@ -574,7 +620,18 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
       else passwordTried = true
       const layout = await resolveKeypad(deps, screen, req.serial, (v) => (usedVisual = v))
       if (!layout) return handOff(screen)
+      // 시험 입력은 결제 비밀번호에만 건다 — 앱 잠금(토스)은 끝까지 풀어야 결제 화면에 닿는다
+      const dryRun = !unlocking && req.dryRunDigits !== undefined
+      let typedDigits = req.dryRunDigits ?? 0
       const r = await tapPassword({
+        ...(dryRun && req.dryRunDigits !== undefined
+          ? {
+              maxDigits: req.dryRunDigits,
+              onTyped: (n: number) => {
+                typedDigits = n
+              }
+            }
+          : {}),
         vault: deps.vault,
         accountId: req.accountId,
         provider: PAY_APP_TO_PAYMENT_PROVIDER[req.provider],
@@ -585,6 +642,8 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
         onStep: deps.onStep
       })
       if (r !== 'ok') return fail(SECRET_FAIL[r], screen)
+      // 시험 입력이면 여기서 끝난다 — 이어서 누르지도, 완료를 기다리지도 않는다
+      if (dryRun) return cancelDryRun(typedDigits)
       // 잠금을 풀었으면 결제 화면을 마저 따라간다. 결제 비밀번호였으면 완료를 기다린다
       state = unlocking ? 'app_steps' : 'verify'
       lastTapped = null

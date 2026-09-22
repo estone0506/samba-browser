@@ -50,6 +50,13 @@ export async function tapPaymentPassword(deps: {
   layout: KeypadLayout
   tap: (serial: string, x: number, y: number) => Promise<void>
   onStep: (label: string, ok: boolean) => void
+  /**
+   * 시험 입력(dry-run): 앞에서 이 자리수만 누르고 멈춘다. 지정하면 절대 끝까지 누르지 않는다 —
+   * 값보다 짧게 잡히도록 (자리수 − 1) 로 한 번 더 조인다(3자리 비밀번호에 3을 줘도 결제되지 않는다)
+   */
+  maxDigits?: number
+  /** 실제로 누른 자리수. 값이 아니라 개수만 알린다(호출부는 비밀번호 길이를 모른다) */
+  onTyped?: (typed: number) => void
 }): Promise<PaySecretResult> {
   if (deps.vault.state() !== 'unlocked') return 'locked'
   // 금고 항목 종류 'password' = 결제 비밀번호(2단계 LEGACY_TYPE_MAP: payment_password → password).
@@ -65,12 +72,24 @@ export async function tapPaymentPassword(deps: {
   const digits = found.value.split('')
   // 배치가 불완전하면 누르지 않는다 — 잘못 누르면 계정이 잠긴다
   if (digits.some((d) => deps.layout.digits[d] === undefined)) return 'layout-incomplete'
-  for (const d of digits) {
+  // 시험 입력이면 끝까지 누르지 않는다 — 요청 자리수와 (자리수 − 1) 중 작은 쪽까지만
+  const limit =
+    deps.maxDigits === undefined
+      ? digits.length
+      : Math.max(0, Math.min(deps.maxDigits, digits.length - 1))
+  const typed = digits.slice(0, limit)
+  for (const d of typed) {
     const point = deps.layout.digits[d]
     await deps.tap(deps.serial, point.x, point.y)
   }
+  deps.onTyped?.(typed.length)
   // 라벨에는 자리수만 남긴다
-  deps.onStep(tr('phone.payPasswordEntered', { digits: digits.length }), true)
+  deps.onStep(
+    deps.maxDigits === undefined
+      ? tr('phone.payPasswordEntered', { digits: typed.length })
+      : tr('phone.payPasswordPartial', { digits: typed.length }),
+    true
+  )
   return 'ok'
 }
 

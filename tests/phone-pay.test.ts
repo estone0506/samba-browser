@@ -83,9 +83,11 @@ interface Harness {
   deps: PayRunDeps
   screens: PhoneScreen[]
   taps: Array<[string, number, number]>
+  /** 뒤로 키를 누른 폰 목록(시험 입력 취소) */
+  backs: string[]
   confirm: ReturnType<typeof vi.fn>
   tapPassword: ReturnType<typeof vi.fn>
-  records: Array<{ kind: string; ok: boolean }>
+  records: Array<{ kind: string; ok: boolean; dryRunDigits?: number }>
   notices: Array<{ message: string; hasImage: boolean }>
   steps: Array<{ label: string; ok: boolean }>
 }
@@ -105,7 +107,8 @@ function harness(
 ): Harness {
   const screens = opts.screens ?? [screen('viva.republica.toss')]
   const taps: Array<[string, number, number]> = []
-  const records: Array<{ kind: string; ok: boolean }> = []
+  const backs: string[] = []
+  const records: Array<{ kind: string; ok: boolean; dryRunDigits?: number }> = []
   const notices: Array<{ message: string; hasImage: boolean }> = []
   const steps: Array<{ label: string; ok: boolean }> = []
   const confirm = vi.fn(async () => opts.confirmResult ?? true)
@@ -122,7 +125,10 @@ function harness(
       screenshot: async () =>
         opts.screenshotSecret
           ? { png: Buffer.alloc(0), secret: true }
-          : { png: Buffer.from([1, 2, 3]), secret: false }
+          : { png: Buffer.from([1, 2, 3]), secret: false },
+      back: async (serial) => {
+        backs.push(serial)
+      }
     },
     launchApp: vi.fn(async () => {}),
     confirm,
@@ -136,14 +142,19 @@ function harness(
       fromVisual: async () => opts.visualKeypad ?? null
     },
     webSuccess: async () => opts.webSuccess ?? true,
-    record: (e) => records.push({ kind: e.kind, ok: e.ok }),
+    record: (e) =>
+      records.push({
+        kind: e.kind,
+        ok: e.ok,
+        ...(e.dryRunDigits === undefined ? {} : { dryRunDigits: e.dryRunDigits })
+      }),
     notify: (message, png) => notices.push({ message, hasImage: png !== undefined }),
     onStep: (label, ok) => steps.push({ label, ok }),
     now: () => (clock += 10),
     sleep: async () => {},
     tapPassword
   }
-  return { deps, screens, taps, confirm, tapPassword, records, notices, steps }
+  return { deps, screens, taps, backs, confirm, tapPassword, records, notices, steps }
 }
 
 describe('PAY_APP_TO_PAYMENT_PROVIDER', () => {
@@ -360,6 +371,80 @@ describe('runPayApproval', () => {
   })
 })
 
+describe('runPayApproval — 시험 입력(dry-run)', () => {
+  // 결제 화면 → 비밀번호 화면 → (취소 뒤) 다시 결제 화면
+  const dryScreens = [
+    screen('viva.republica.toss', [
+      el(1, '결제하기'),
+      el(90, '결제수단 변경 ・ 설정', { clickable: false })
+    ]),
+    screen('viva.republica.toss', [el(2, '간편비밀번호', { clickable: false })]),
+    screen('viva.republica.toss', [
+      el(1, '결제하기'),
+      el(90, '결제수단 변경 ・ 설정', { clickable: false })
+    ])
+  ]
+
+  it('지정한 자리수만 누르고 뒤로 키로 빠져나온 뒤 dry-run 으로 끝낸다', async () => {
+    const h = harness({ screens: dryScreens })
+    const r = await runPayApproval(h.deps, request({ dryRunDigits: 3 }))
+
+    expect(r).toEqual({
+      ok: false,
+      reason: 'dry-run',
+      detail: 'typed 3 digits then cancelled'
+    })
+    // 비밀번호 입력기에 자리수 상한이 그대로 전달된다(재시도 없이 1회)
+    expect(h.tapPassword).toHaveBeenCalledTimes(1)
+    expect(h.tapPassword.mock.calls[0][0]).toMatchObject({ maxDigits: 3 })
+    // 키패드에서 빠져나온다
+    expect(h.backs).toEqual([SERIAL])
+    // 확인 카드는 시험 입력에서도 그대로 1회
+    expect(h.confirm).toHaveBeenCalledTimes(1)
+    // 결과 이벤트에 시험 입력 자리수가 남는다(성공은 아니다)
+    expect(h.records).toEqual([{ kind: 'app_approve', ok: false, dryRunDigits: 3 }])
+    expect(h.steps.some((x) => x.label.includes('시험 입력 취소') && x.ok)).toBe(true)
+  })
+
+  it('취소했는데 결제 완료 문구가 보이면 곧바로 알린다', async () => {
+    const h = harness({
+      screens: [
+        dryScreens[0],
+        dryScreens[1],
+        screen('viva.republica.toss', [el(3, '결제가 완료되었습니다', { clickable: false })])
+      ]
+    })
+    const r = await runPayApproval(h.deps, request({ dryRunDigits: 3 }))
+
+    expect(r.reason).toBe('dry-run')
+    expect(h.notices).toHaveLength(1)
+    expect(h.notices[0].message).toContain('결제 완료 문구')
+    // 비밀번호 화면 근처의 통지에는 이미지를 붙이지 않는다
+    expect(h.notices[0].hasImage).toBe(false)
+    expect(h.steps.some((x) => !x.ok && x.label.includes('결제 완료 문구'))).toBe(true)
+  })
+
+  it('앱 잠금 화면(토스)의 비밀번호는 끝까지 풀고 결제 비밀번호만 절반 누른다', async () => {
+    const lock = screen('viva.republica.toss', [
+      el(2, '앱을 켜려면 비밀번호를 눌러주세요', { clickable: false })
+    ])
+    const h = harness({ screens: [lock, dryScreens[0], dryScreens[1], dryScreens[2]] })
+    const r = await runPayApproval(h.deps, request({ dryRunDigits: 3 }))
+
+    expect(r.reason).toBe('dry-run')
+    expect(h.tapPassword).toHaveBeenCalledTimes(2)
+    // 잠금 해제에는 자리수 상한이 없고, 결제 비밀번호에만 걸린다
+    expect(h.tapPassword.mock.calls[0][0].maxDigits).toBeUndefined()
+    expect(h.tapPassword.mock.calls[1][0]).toMatchObject({ maxDigits: 3 })
+  })
+
+  it('시험 입력이 아니면 뒤로 키를 누르지 않는다', async () => {
+    const h = harness({ screens: dryScreens })
+    await runPayApproval(h.deps, request())
+    expect(h.backs).toEqual([])
+  })
+})
+
 describe('phone_approve_payment 도구', () => {
   interface ToolStub {
     name: string
@@ -387,6 +472,32 @@ describe('phone_approve_payment 도구', () => {
     merchant: '삼바상회',
     methodLabel: '토스페이'
   }
+
+  it('dryRunDigits 는 1~3 만 받고, 실행기에 그대로 넘긴다', async () => {
+    const built = buildTool({
+      result: { ok: false, reason: 'dry-run', detail: 'typed 3 digits then cancelled' }
+    })
+    const shape = built.tool.schema as Record<
+      string,
+      { safeParse: (v: unknown) => { success: boolean } }
+    >
+    expect(shape.dryRunDigits.safeParse(3).success).toBe(true)
+    expect(shape.dryRunDigits.safeParse(1).success).toBe(true)
+    expect(shape.dryRunDigits.safeParse(0).success).toBe(false)
+    expect(shape.dryRunDigits.safeParse(4).success).toBe(false)
+    expect(shape.dryRunDigits.safeParse(1.5).success).toBe(false)
+    expect(shape.dryRunDigits.safeParse(undefined).success).toBe(true)
+
+    const r = await built.tool.handler({ ...args, dryRunDigits: 3 })
+    expect(built.run).toHaveBeenCalledWith(expect.objectContaining({ dryRunDigits: 3 }))
+    expect(r.content[0].text).toBe('refused: dry-run (typed 3 digits then cancelled)')
+  })
+
+  it('dryRunDigits 를 주지 않으면 실행기에도 넘기지 않는다', async () => {
+    const built = buildTool()
+    await built.tool.handler({ ...args })
+    expect(built.run.mock.calls[0][0]).not.toHaveProperty('dryRunDigits')
+  })
 
   it('도구 이름은 phone_approve_payment 이며 폰 도구 목록과 분리돼 있다', () => {
     expect(buildTool().tool.name).toBe(PAY_TOOL_NAME)

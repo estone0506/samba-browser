@@ -160,6 +160,12 @@ export const KEYPAD_ALREADY_TRIED =
   'refused: the app already entered the payment password once in this window during this task. ' +
   'Do NOT retry - a wrong password locks the pay method after 5 tries. Read the page: if it says the password ' +
   'is wrong, stop and tell the user which pay method and provider you used; otherwise continue.'
+// 시험 입력(dry-run)으로 키패드를 절반만 누르고 결제창을 닫았을 때. 결제는 하지 않았다
+export const KEYPAD_DRY_RUN = (digits: number, closed: string): string =>
+  `refused: DRY_RUN — typed ${digits} digits then closed (${closed}). ` +
+  'Nothing was paid. Report to the user that the keypad auto-fill works and stop here.'
+// 시험 입력 뒤 누를 취소·닫기 버튼 문구
+const KEYPAD_CANCEL_RE = /^(취소|닫기|뒤로|cancel|close)$/i
 // 결제창(PG 팝업)의 계정을 여는 탭에서 찾을 수 없을 때
 const KEYPAD_ACCOUNT_UNKNOWN =
   'account not found: the payment window is not linked to a saved account; ' +
@@ -812,7 +818,9 @@ ${raw}`
   const keypadEnter = async (
     tab: Tab,
     accountLabel: string | undefined,
-    provider: PaymentProvider | undefined
+    provider: PaymentProvider | undefined,
+    // 시험 입력(dry-run) 자리수. 주면 이 자리수만 누르고 결제창을 닫는다(결제하지 않는다)
+    dryRunDigits: number | undefined
   ): Promise<string> => {
     const blocked = gateRefusal(currentUrl(tab))
     if (blocked) return blocked
@@ -852,7 +860,9 @@ ${raw}`
     if (keypadAttempts.has(attemptKey)) return KEYPAD_ALREADY_TRIED
     const layout = await pageBridge.keypadLayout(tab).catch(() => null)
     if (!layout) return await keypadHandoff(tab)
-    keypadAttempts.add(attemptKey)
+    // 시험 입력은 끝까지 누르지 않으므로 1회 제한을 쓰지 않는다 — 진짜 입력 기회를 남겨 둔다
+    if (dryRunDigits === undefined) keypadAttempts.add(attemptKey)
+    let typedDigits = dryRunDigits ?? 0
     const frameIndex = layout.frameIndex
     const result: WebKeypadResult = await enterWebPaymentPassword({
       vault: v,
@@ -872,8 +882,20 @@ ${raw}`
         return point ? pageBridge.clickAt(tab, point.x, point.y) : false
       },
       filled: () => pageBridge.keypadFilled(tab, frameIndex),
-      onStep: ctx.onStep
+      onStep: ctx.onStep,
+      ...(dryRunDigits === undefined
+        ? {}
+        : {
+            maxDigits: dryRunDigits,
+            onTyped: (n: number) => {
+              typedDigits = n
+            }
+          })
     })
+    // 시험 입력이면 누른 뒤 결제창을 닫고 끝낸다 — 확인 버튼도 누르지 않는다
+    if (result === 'ok' && dryRunDigits !== undefined) {
+      return KEYPAD_DRY_RUN(typedDigits, await closeKeypadWindow(tab))
+    }
     if (result === 'ok') return KEYPAD_ENTERED_NEXT
     if (result === 'ambiguous') return PAYMENT_PROVIDER_AMBIGUOUS
     if (result === 'not-found') {
@@ -881,6 +903,31 @@ ${raw}`
     }
     // 금고가 잠겼거나, 배치를 못 읽었거나, 눌러도 자리수가 늘지 않았다 — 사람에게 넘긴다
     return await keypadHandoff(tab)
+  }
+
+  /**
+   * 시험 입력을 끝낸 뒤 결제창을 닫는다. 팝업이면 창째로 닫고, 탭 안의 키패드면 취소·닫기 버튼을
+   * 눌러 본다. 어느 쪽도 못 하면 사용자가 직접 닫도록 그대로 알린다
+   */
+  const closeKeypadWindow = async (tab: Tab): Promise<string> => {
+    const target = targetList().find((t) => t.id === tab.id)
+    if (target?.kind === 'popup') {
+      closeTargetOf(ctx.tabs, tab.id)
+      return 'popup closed'
+    }
+    try {
+      const snapshot = await pageBridge.snapshot(tab)
+      const cancel = snapshot.elements.find((e) =>
+        KEYPAD_CANCEL_RE.test((e.text || e.name || '').trim())
+      )
+      if (cancel) {
+        await pageBridge.click(tab, cancel.id)
+        return 'cancel button clicked'
+      }
+    } catch {
+      // 페이지를 못 읽어도 시험 입력 자체는 끝났다 — 사용자가 닫도록 알리기만 한다
+    }
+    return 'not closed - close the payment window yourself'
   }
 
   /**
@@ -1575,6 +1622,16 @@ overlays left: ${after.length}${kept}`
         .enum(PAYMENT_PROVIDER_NAMES)
         .optional()
         .describe('payment method for itemType "password"'),
+      dryRunDigits: z
+        .number()
+        .int()
+        .min(1)
+        .max(3)
+        .optional()
+        .describe(
+          'DRY RUN on a payment-password keypad: press only this many digits, then close the payment window. ' +
+            'Nothing is paid - the tool answers "refused: DRY_RUN". Pass it only when the user asked to test the keypad.'
+        ),
       format: z
         .enum(FILL_FORMATS)
         .optional()
@@ -1582,7 +1639,7 @@ overlays left: ${after.length}${kept}`
           'reshape the saved value for this input: yymmdd (birth date as 6 digits, e.g. 910101), yyyymmdd, or digits (strip hyphens/spaces from a phone or card number)'
         )
     },
-    ({ elementId, itemType, field, accountLabel, provider, format }) =>
+    ({ elementId, itemType, field, accountLabel, provider, format, dryRunDigits }) =>
       guard(`입력: ${itemType}${field ? `.${field}` : ''} (#${elementId})`, async () => {
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
@@ -1591,7 +1648,7 @@ overlays left: ${after.length}${kept}`
         // 결제 비밀번호가 아닌 항목을 키패드 화면에서 부르면 넘긴다(넣을 곳이 없다)
         if (await secretKeypadGate.check(tab)) {
           if (itemType !== 'password') return await keypadHandoff(tab)
-          return await keypadEnter(tab, accountLabel, provider)
+          return await keypadEnter(tab, accountLabel, provider, dryRunDigits)
         }
         const host = currentHost(tab)
         // 평문(http) 페이지에는 비밀값을 절대 채우지 않는다(네트워크 도청·다운그레이드 방어)
