@@ -212,10 +212,15 @@ async function pullAccounts(
   for (const raw of rows) {
     const remote = accountFromRemote(raw)
     seen.push({ updatedAt: remote.updatedAt, id: raw.id })
-    // 원격 id 로 먼저 찾고, 처음 합치는 기기라면 (host, username) 으로 짝을 맞춘다
+    // 원격 id 로 먼저 찾고, 처음 합치는 기기라면 (host, username) 으로 짝을 맞춘다.
+    // 단 삭제 표식은 원격 id 로만 짝을 맞춘다 — (host, username) 폴백이 방금 새로 만든(또는 합치며 이름을
+    // 바꾼) 살아 있는 계정에 걸려 그 계정까지 지워 버렸다(실기: a-rt.com 합치기 뒤 계정 3개 실종)
+    const byRemote = remote.remoteId ? local.accountIdByRemote(remote.remoteId) : null
     const localId =
-      (remote.remoteId ? local.accountIdByRemote(remote.remoteId) : null) ??
-      local.accountIdByHostUsername(remote.host, remote.username)
+      byRemote ??
+      (remote.deletedAt === null
+        ? local.accountIdByHostUsername(remote.host, remote.username)
+        : null)
 
     if (localId === null) {
       // 원격에서 이미 지워진 행은 로컬에 되살리지 않는다
