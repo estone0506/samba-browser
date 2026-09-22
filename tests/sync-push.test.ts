@@ -83,6 +83,22 @@ describe('pushAll', () => {
     db.close()
   })
 
+  it('마스터 키 재료가 서버와 다르면(skipVaultItems) vault_items 는 보류하고 나머지만 보낸다', async () => {
+    const account = vault.upsertAccount({
+      host: 'example.com',
+      label: 'a',
+      username: 'u',
+      isDefault: true
+    })
+    vault.putItem({ accountId: account.id, type: 'login', label: 'L', value: 's' })
+    const result = await pushAll(deps, { skipVaultItems: true })
+    expect(backend.rows('accounts_sync')).toHaveLength(1)
+    expect(backend.rows('vault_items_sync')).toHaveLength(0)
+    expect(result.skipped).toBeGreaterThan(0)
+    // 보류된 항목은 대기열에 남아 다음에(재키 뒤) 올라간다
+    expect(outbox.pendingFor('vault_items').length).toBeGreaterThan(0)
+  })
+
   it('계정을 보내고 remote_id 를 로컬에 적는다', async () => {
     const account = vault.upsertAccount({ host: 'example.com', username: 'me' })
     const result = await pushAll(deps)

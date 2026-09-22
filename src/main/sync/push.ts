@@ -99,7 +99,16 @@ const PUSH_ORDER: SyncTable[] = [
   'settings'
 ]
 
-export async function pushAll(deps: PushDeps): Promise<PushResult> {
+export async function pushAll(
+  deps: PushDeps,
+  opts: {
+    /**
+     * 서버의 마스터 키 재료가 이 PC 와 다를 때 true. 그 상태에서 올린 항목은 다른 PC 가 못 푸는
+     * 암호문이라 vault_items 는 통째로 보류한다(재키 뒤에 올라간다)
+     */
+    skipVaultItems?: boolean
+  } = {}
+): Promise<PushResult> {
   const result: PushResult = { sent: 0, failed: 0, skipped: 0 }
   const local = new SyncLocal(deps.db)
   const ctxOf = workspaceResolver(deps)
@@ -107,6 +116,10 @@ export async function pushAll(deps: PushDeps): Promise<PushResult> {
   for (const table of PUSH_ORDER) {
     const entries = deps.outbox.pendingFor(table)
     if (entries.length === 0) continue
+    if (table === 'vault_items' && opts.skipVaultItems) {
+      result.skipped += entries.length
+      continue
+    }
     if (table === 'settings') {
       await pushSettings(deps, local, ctxOf, entries, result)
       continue

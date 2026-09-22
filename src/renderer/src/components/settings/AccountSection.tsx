@@ -3,6 +3,8 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@renderer/stores/authStore'
 import { useSyncStore } from '@renderer/stores/syncStore'
+import { useVaultStore } from '@renderer/stores/vaultStore'
+import { VAULT_KEY_MISMATCH_ERROR } from '@shared/sync'
 import { isSupabaseAnonKey, isSupabaseProjectUrl, maskSupabaseKey } from '@shared/sync'
 import { DeviceList } from './DeviceList'
 import {
@@ -400,7 +402,7 @@ function SyncStatusCard(): React.JSX.Element {
           label={t('sync.lastPulledAt')}
           value={status?.lastPulledAt ? new Date(status.lastPulledAt).toLocaleString() : '-'}
         />
-        {status?.lastError && (
+        {status?.lastError && status.lastError !== VAULT_KEY_MISMATCH_ERROR && (
           <p className="text-[12px] text-[#b91c1c]">
             {t('sync.lastError')}: {status.lastError}
           </p>
@@ -409,7 +411,50 @@ function SyncStatusCard(): React.JSX.Element {
       <PrimaryButton disabled={sync.syncing} onClick={() => void sync.syncNow()}>
         {sync.syncing ? t('sync.syncing') : t('sync.syncNow')}
       </PrimaryButton>
+      {status?.lastError === VAULT_KEY_MISMATCH_ERROR && <VaultRekeyCard />}
     </SettingsSection>
+  )
+}
+
+// 이 PC 의 키마스터가 계정과 다른 마스터 비밀번호로 잠겨 있을 때 — 계정 마스터로 다시 잠가 동기화한다.
+// 그 전까지 이 PC 의 항목은 서버로 올라가지 않고(다른 PC 가 못 푸는 암호문이라), 서버 항목도 여기서 안 풀린다
+function VaultRekeyCard(): React.JSX.Element {
+  const { t } = useTranslation()
+  const vault = useVaultStore()
+  const sync = useSyncStore()
+  const [master, setMaster] = useState('')
+  const [result, setResult] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const submit = async (): Promise<void> => {
+    setBusy(true)
+    const r = await vault.rekeyToAccount(master)
+    setBusy(false)
+    setResult(r)
+    setMaster('')
+    if (r === 'ok') void sync.syncNow()
+  }
+  return (
+    <div className="mt-3 flex flex-col gap-2 rounded-[10px] border border-[#b91c1c] p-3">
+      <p className="text-[12.5px] font-medium text-[#b91c1c]">{t('sync.rekey.title')}</p>
+      <p className="text-[11.5px] text-[var(--text2)]">{t('sync.rekey.desc')}</p>
+      <SettingsRow label={t('sync.rekey.master')}>
+        <TextInput value={master} onChange={setMaster} type="password" autoComplete="off" />
+      </SettingsRow>
+      <div className="flex items-center gap-2">
+        <PrimaryButton disabled={busy || master.length === 0} onClick={() => void submit()}>
+          {t('sync.rekey.submit')}
+        </PrimaryButton>
+        {result && (
+          <span
+            className={
+              result === 'ok' ? 'text-[12px] text-[var(--text2)]' : 'text-[12px] text-[#b91c1c]'
+            }
+          >
+            {t(`sync.rekey.result.${result}`)}
+          </span>
+        )}
+      </div>
+    </div>
   )
 }
 

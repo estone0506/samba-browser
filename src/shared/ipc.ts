@@ -33,6 +33,7 @@ export const IPC = {
   vaultSetup: 'vault:setup',
   vaultUnlock: 'vault:unlock',
   vaultLock: 'vault:lock',
+  vaultRekeyToAccount: 'vault:rekeyToAccount', // 이 PC 금고를 계정(서버) 마스터 키에 맞춘다
   vaultSites: 'vault:sites',
   vaultAccounts: 'vault:accounts',
   vaultItems: 'vault:items',

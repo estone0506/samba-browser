@@ -463,6 +463,10 @@ export function registerIpc(
   handleFromRenderer(IPC.vaultSetup, (master: string) => vault.setup(master))
   handleFromRenderer(IPC.vaultUnlock, (master: string) => vault.unlock(master))
   handleFromRenderer(IPC.vaultLock, () => vault.lock())
+  // 서버(계정) 마스터 키 재료와 이 PC 가 다를 때 — 계정 마스터로 모든 항목을 다시 잠근다
+  handleFromRenderer(IPC.vaultRekeyToAccount, (master: string) =>
+    vault.rekeyToRemote(String(master ?? ''))
+  )
   // 복구 키 — 발급 응답만 평문을 돌려주고, 확인을 통과해야 감싼 키가 저장된다
   handleFromRenderer(IPC.vaultRecoveryCreate, () => vault.createRecoveryKey())
   handleFromRenderer(IPC.vaultRecoveryConfirm, (input: string) => vault.confirmRecoveryKey(input))

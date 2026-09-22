@@ -944,7 +944,21 @@
     "lastPulledAt": "Last pulled",
     "lastError": "Last error",
     "syncNow": "Sync now",
-    "syncing": "Syncing"
+    "syncing": "Syncing",
+    "rekey": {
+      "title": "KeyMaster on this PC is locked with a different master password than the account",
+      "desc": "Enter the account master password (set first on another PC) to re-lock every item on this PC with that key and sync. Until then, items on this PC are not uploaded and server items cannot be opened here. The recovery key must be registered again",
+      "master": "Account master password",
+      "submit": "Re-lock with account key",
+      "result": {
+        "ok": "Done, syncing now",
+        "locked": "Unlock KeyMaster with this PC master password first",
+        "no-remote": "No account key material yet, or already identical",
+        "wrong-master": "Account master password is incorrect",
+        "decrypt-failed": "Some items could not be decrypted; nothing was changed",
+        "error": "Failed"
+      }
+    }
   },
   "ai": {
     "claudeSubscriptionDesc": "Reuses the Claude Code login already on this PC",
