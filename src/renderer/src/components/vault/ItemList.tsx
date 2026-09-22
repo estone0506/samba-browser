@@ -8,12 +8,13 @@ import {
   Clock,
   ChevronRight,
   ChevronDown,
+  Merge,
   X
 } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import { useVaultStore } from '@renderer/stores/vaultStore'
 import { useBrowserStore } from '@renderer/stores/browserStore'
-import { normalizeHost } from '@shared/host'
+import { normalizeHost, isSeparateLoginDomain } from '@shared/host'
 import { VAULT_ITEM_TYPES } from '@shared/vault'
 import type { AccountDto, VaultItemMeta, VaultItemType } from '@shared/ipc'
 import { groupByDomain, type DomainGroup } from '@renderer/lib/vault-groups'
@@ -25,6 +26,12 @@ const GLOBAL_TYPES = new Set<VaultItemType>(['card', 'note', 'identity', 'docume
 
 // 사이트 그룹 삭제 확인이 자동으로 취소되기까지의 시간(ms)
 const GROUP_DELETE_CONFIRM_MS = 2000
+
+// 한 사이트 안에서 같은 아이디가 여러 서브도메인에 흩어져 있는 개수(합치면 사라질 계정 수)
+function duplicateCount(group: DomainGroup): number {
+  if (isSeparateLoginDomain(group.key)) return 0
+  return group.accounts.length - new Set(group.accounts.map((a) => a.username)).size
+}
 
 // 아이디는 사용자 본인 화면이므로 크롬 비밀번호 관리자처럼 가리지 않고 그대로 보여 준다(비밀번호는 목록에 없다)
 function displayUsername(u: string): string {
@@ -64,6 +71,7 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
   const select = useVaultStore((s) => s.select)
   const selectGlobalItem = useVaultStore((s) => s.selectGlobalItem)
   const deleteAccounts = useVaultStore((s) => s.deleteAccounts)
+  const mergeDomain = useVaultStore((s) => s.mergeDomain)
   // 현재 활성 탭을 구독한다 — 탭이 바뀌면 추천 섹션이 자동으로 갱신된다
   const activeTab = useBrowserStore((s) => s.activeTab)
 
@@ -308,6 +316,17 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
                     <ChevronRight className="h-4 w-4 shrink-0 text-[var(--text3)]" />
                   )}
                 </button>
+                {duplicateCount(group) > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => void mergeDomain(group.key)}
+                    title={t('vault.list.mergeTitle', { domain: group.key })}
+                    className="absolute right-8 flex h-6 items-center gap-1 rounded-[7px] px-1.5 text-[11px] text-[var(--text3)] opacity-0 hover:bg-black/10 focus-visible:opacity-100 group-hover:opacity-100"
+                  >
+                    <Merge className="h-3.5 w-3.5" />
+                    {t('vault.list.merge', { count: duplicateCount(group) })}
+                  </button>
+                )}
                 <GroupDeleteButton
                   accountIds={group.accounts.map((a) => a.id)}
                   onDelete={(ids) => void deleteAccounts(ids)}

@@ -118,3 +118,13 @@ export function registrableDomain(urlOrHost: string): string {
   if (MULTI_PART_SUFFIXES.has(lastTwo)) return parts.slice(-3).join('.')
   return lastTwo
 }
+
+/**
+ * 서브도메인마다 실제로 다른 계정(아이디·비밀번호)이 쓰이는 사이트 — 네이버는 nid(개인)·accounts.commerce(판매자)·
+ * mail 이 같은 아이디라도 별개다. 이런 도메인은 "서브도메인 계정 합치기" 대상에서 뺀다
+ */
+const SEPARATE_LOGIN_DOMAINS = new Set(['naver.com'])
+
+export function isSeparateLoginDomain(domain: string): boolean {
+  return SEPARATE_LOGIN_DOMAINS.has(registrableDomain(domain) || domain)
+}

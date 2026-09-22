@@ -55,6 +55,8 @@ export interface SyncConnectionDeps {
   workspace: () => WorkspaceRef
   /** 기기 표시 정보 — 테스트에서는 주입한다 */
   device: { hostname: () => string; osLabel: () => string; appVersion: () => string }
+  /** 서버 키 재료가 이 PC 와 다를 때(주기마다) — 계정 서비스가 비밀번호로 자동으로 맞춘다 */
+  onVaultKeyMismatch?: () => void
 }
 
 export class SyncConnection {
@@ -183,7 +185,10 @@ export class SyncConnection {
         onAfterPull: (pulled) => {
           // 키 재료 불일치면 setup 이 미리 넣어 둔 salt/verifier 항목도 걷어낸다 —
           // 그대로 푸시하면 첫 PC 의 금고를 다른 PC 에서 못 열게 된다(4차 리뷰 N1)
-          if (pulled.vaultKeyMismatch) this.outbox.dropPendingSettingKeys(VAULT_KEY_SYNC_KEYS)
+          if (pulled.vaultKeyMismatch) {
+            this.outbox.dropPendingSettingKeys(VAULT_KEY_SYNC_KEYS)
+            this.deps.onVaultKeyMismatch?.()
+          }
           this.runBackfill((db, ws, vault) =>
             backfillSettings(db, ws, vault, { skipKeyMaterial: pulled.vaultKeyMismatch })
           )

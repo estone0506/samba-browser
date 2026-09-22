@@ -36,6 +36,11 @@ export interface AccountDeps {
   /** 비밀번호를 메모리에 두는 최대 시간(ms). 기본 10분 */
   credentialTtlMs?: number
   now?: () => number
+  /**
+   * 키마스터. 계정 비밀번호가 곧 열쇠다 — 데이터 프로젝트에 로그인이 되는 순간 이 PC 금고를 그 비밀번호에
+   * 맞추고, 서버 키 재료와 어긋나면(다른 PC 가 먼저 만든 금고) 자동으로 다시 잠근다. 없으면 아무것도 하지 않는다
+   */
+  vault?: { adoptAccountPassword: (password: string) => Promise<string> }
 }
 
 /** 디렉터리 쪽 상태. AuthState.account 로 렌더러에 나간다 — 토큰·비밀번호 없음 */
@@ -63,6 +68,8 @@ export class AccountService {
   /** 데이터 프로젝트 로그인에 한 번 더 쓸 자격. 주소 설정을 기다리는 동안만 산다 */
   private pendingCredential: { email: string; password: string; expiresAt: number } | null = null
   private currentUrl = ''
+  /** 로그인에 쓴 계정 비밀번호 — 키마스터를 맞출 때만 쓴다. 메모리에만 있고 로그아웃 때 지운다 */
+  private accountPassword: string | null = null
 
   constructor(deps: AccountDeps) {
     this.deps = deps
@@ -142,7 +149,10 @@ export class AccountService {
     }
     this.attachData(config)
     const cred = this.takeCredential()
-    if (cred) await this.signInData(cred.email, cred.password)
+    if (cred) {
+      await this.signInData(cred.email, cred.password)
+      await this.adoptVault(cred.password)
+    }
     return this.deps.auth.state()
   }
 
@@ -164,6 +174,7 @@ export class AccountService {
 
   async signOut(): Promise<AuthState> {
     this.pendingCredential = null
+    this.accountPassword = null
     const state = await this.deps.auth.signOut()
     const dir = this.directory()
     if (dir) {
@@ -191,9 +202,13 @@ export class AccountService {
   ): Promise<AuthState> {
     const dir = this.directory()
     if (!dir) {
-      return mode === 'signIn'
-        ? this.deps.auth.signIn(email, password)
-        : this.deps.auth.signUp(email, password)
+      const state =
+        mode === 'signIn'
+          ? await this.deps.auth.signIn(email, password)
+          : await this.deps.auth.signUp(email, password)
+      // 디렉터리 없는 빌드도 계정 비밀번호가 키마스터 열쇠다
+      await this.adoptVault(password)
+      return state
     }
     if (mode === 'signIn') await dir.auth.signIn(email, password)
     else await dir.auth.signUp(email, password)
@@ -210,7 +225,27 @@ export class AccountService {
       return this.deps.auth.state()
     }
     if (!this.deps.auth.state().signedIn) await this.signInData(email, password)
+    await this.adoptVault(password)
     return this.deps.auth.state()
+  }
+
+  /** 데이터 프로젝트에 로그인된 뒤 이 PC 키마스터를 계정 비밀번호에 맞춘다. 실패해도 로그인은 그대로 둔다 */
+  private async adoptVault(password: string): Promise<void> {
+    this.accountPassword = password
+    if (!this.deps.vault || !this.deps.auth.state().signedIn) return
+    try {
+      const r = await this.deps.vault.adoptAccountPassword(password)
+      if (r === 'needs-old-master' || r === 'failed')
+        console.warn('키마스터 계정 비밀번호 맞추기', r)
+    } catch (e: unknown) {
+      console.warn('키마스터 계정 비밀번호 맞추기 실패', e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  /** 동기화가 "서버 키 재료가 다르다"고 알릴 때 — 비밀번호를 아는 동안은 자동으로 맞춘다 */
+  async onVaultKeyMismatch(): Promise<void> {
+    if (this.accountPassword === null) return
+    await this.adoptVault(this.accountPassword)
   }
 
   /** 디렉터리 로그인 뒤 공통: 주소를 읽어 상태를 올리고, 있으면 데이터 백엔드를 붙인다 */

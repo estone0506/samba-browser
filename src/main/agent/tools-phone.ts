@@ -415,6 +415,8 @@ export interface PayToolRequest {
   methodLabel: string
   /** 결제 앱 안에서 고를 카드 이름의 일부(예: "현대") */
   card?: string
+  /** 결제 앱 자체의 키마스터 계정(네이버페이면 naver.com 계정)의 아이디 또는 라벨 */
+  payAccount?: string
 }
 
 export interface PayToolContext {
@@ -448,6 +450,14 @@ export function createPayTool(ctx: PayToolContext): PhoneTool {
         .describe(
           'part of the card name to pay with inside the pay app, e.g. "현대" for 현대카드 or "LOCA" for 롯데카드. ' +
             'The tool switches the selected card to it before paying and refuses (card-not-found) if the app has no such card.'
+        ),
+      payAccount: z
+        .string()
+        .optional()
+        .describe(
+          '네이버페이 only: username or label of the naver.com account in KeyMaster to pay with (its payment password is used). ' +
+            'Required when several naver accounts have one - the refusal pay-account-ambiguous lists them; ' +
+            'if the user or instruction names which naver account to pay with, pass it here.'
         )
     },
     async (args): Promise<{ content: TextBlock[] }> => {
@@ -467,10 +477,14 @@ export function createPayTool(ctx: PayToolContext): PhoneTool {
           amountKrw: args.amountKrw,
           merchant: args.merchant,
           methodLabel: args.methodLabel,
-          ...(args.card === undefined ? {} : { card: args.card })
+          ...(args.card === undefined ? {} : { card: args.card }),
+          ...(args.payAccount === undefined ? {} : { payAccount: args.payAccount })
         })
-        // 사유는 상태 이름뿐이다 — 화면 값은 담지 않는다(진행 로그는 실행기가 남긴다)
-        return text(r.ok ? 'ok' : `refused: ${r.reason ?? 'failed'}`)
+        // 사유는 상태 이름뿐이다 — 화면 값은 담지 않는다(진행 로그는 실행기가 남긴다).
+        // detail 은 실행기가 고른 덧붙임(계정 아이디 목록 등)이라 그대로 전한다
+        return text(
+          r.ok ? 'ok' : `refused: ${r.reason ?? 'failed'}${r.detail ? ` (${r.detail})` : ''}`
+        )
       } catch (e) {
         ctx.onStep(label, false)
         return text(`error: ${e instanceof Error ? e.message : String(e)}`)

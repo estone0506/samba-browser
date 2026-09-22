@@ -23,7 +23,14 @@ function authFor(backend: SyncBackend | null): AuthService {
   })
 }
 
-function setup(opts: { directory?: boolean; seedConfig?: boolean; data?: SyncBackend } = {}): {
+function setup(
+  opts: {
+    directory?: boolean
+    seedConfig?: boolean
+    data?: SyncBackend
+    vault?: { adoptAccountPassword: (password: string) => Promise<string> }
+  } = {}
+): {
   account: AccountService
   directory: ReturnType<typeof createFakeBackend> | null
   data: SyncBackend
@@ -70,7 +77,8 @@ function setup(opts: { directory?: boolean; seedConfig?: boolean; data?: SyncBac
       set: (patch) => Object.assign(settings, patch)
     },
     applyEnv,
-    now: () => 5000
+    now: () => 5000,
+    ...(opts.vault ? { vault: opts.vault } : {})
   })
   return { account, directory, data, auth, settings, onDataBackend, applyEnv }
 }
@@ -395,5 +403,42 @@ describe('디렉터리와 데이터가 같은 프로젝트일 때', () => {
     await account.restore()
     expect(auth.state()).toMatchObject({ signedIn: true, email: 'me@example.com' })
     expect(await data.currentUser()).toMatchObject({ email: 'me@example.com' })
+  })
+})
+
+describe('AccountService — 계정 비밀번호가 키마스터 열쇠', () => {
+  it('데이터 프로젝트에 로그인되면 그 비밀번호로 키마스터를 맞춘다', async () => {
+    const adopt = vi.fn(async () => 'setup')
+    const h = setup({ directory: false, vault: { adoptAccountPassword: adopt } })
+    await h.account.signIn('me@example.com', 'pw-1')
+    expect(adopt).toHaveBeenCalledWith('pw-1')
+  })
+
+  it('서버 키 재료가 다르다는 알림이 오면 기억한 비밀번호로 다시 맞추고, 로그아웃 뒤에는 하지 않는다', async () => {
+    const adopt = vi.fn(async () => 'rekeyed-to-remote')
+    const h = setup({ directory: false, vault: { adoptAccountPassword: adopt } })
+    await h.account.onVaultKeyMismatch()
+    expect(adopt).not.toHaveBeenCalled()
+    await h.account.signIn('me@example.com', 'pw-1')
+    adopt.mockClear()
+    await h.account.onVaultKeyMismatch()
+    expect(adopt).toHaveBeenCalledWith('pw-1')
+    await h.account.signOut()
+    adopt.mockClear()
+    await h.account.onVaultKeyMismatch()
+    expect(adopt).not.toHaveBeenCalled()
+  })
+
+  it('키마스터 맞추기가 실패해도 로그인은 그대로다', async () => {
+    const h = setup({
+      directory: false,
+      vault: {
+        adoptAccountPassword: async () => {
+          throw new Error('boom')
+        }
+      }
+    })
+    await h.account.signIn('me@example.com', 'pw-1')
+    expect(h.auth.state().signedIn).toBe(true)
   })
 })

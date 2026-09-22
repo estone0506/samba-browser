@@ -3,6 +3,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { SetupScreen } from '@renderer/components/vault/SetupScreen'
 import { UnlockScreen } from '@renderer/components/vault/UnlockScreen'
+import { useAuthStore } from '@renderer/stores/authStore'
 import { ItemList } from '@renderer/components/vault/ItemList'
 import { ItemDetail } from '@renderer/components/vault/ItemDetail'
 import { ItemEditor } from '@renderer/components/vault/ItemEditor'
@@ -39,12 +40,14 @@ export function PersonalInfoPage(): React.JSX.Element {
     return window.samba.vault.onStateChanged(() => void refreshState())
   }, [refreshState])
 
+  const accountConfigured = useAuthStore((st) => st.state?.account?.configured === true)
   // 잠금 해제 상태가 되면 전역 항목(계정 없는 항목) 목록을 함께 불러온다
   useEffect(() => {
     if (state === 'unlocked') void loadItems(null)
   }, [state, loadItems])
 
-  if (state === 'uninitialized') return <SetupScreen />
+  // 계정 로그인 빌드에서는 로그인이 곧 키마스터 설정이다 — 로그인 직후 잠깐 'uninitialized' 가 보일 수 있다
+  if (state === 'uninitialized') return accountConfigured ? <PreparingNote /> : <SetupScreen />
   if (state === 'locked') return <UnlockScreen />
 
   const editingAccount = accounts.find((a) => a.id === selectedAccountId)
@@ -108,6 +111,16 @@ function UndoToast(): React.JSX.Element | null {
           {t('vault.list.undo')}
         </button>
       </div>
+    </div>
+  )
+}
+
+// 로그인 직후 키마스터가 계정 비밀번호로 준비되는 짧은 순간
+function PreparingNote(): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <div className="flex h-full items-center justify-center text-[13px] text-[var(--text2)]">
+      {t('vault.preparing')}
     </div>
   )
 }

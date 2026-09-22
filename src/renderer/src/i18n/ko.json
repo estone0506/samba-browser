@@ -438,7 +438,9 @@
       "deleteSite": "이 사이트의 계정 모두 삭제",
       "deleteConfirm": "{{count}}개 계정 삭제?",
       "deleted": "삭제됨",
-      "undo": "되돌리기"
+      "undo": "되돌리기",
+      "merge": "중복 {{count}}개 합치기",
+      "mergeTitle": "같은 아이디 계정을 하나로 합치고 {{domain}} 의 모든 서브도메인에 쓴다"
     },
     "settings": {
       "title": "키마스터 설정",
@@ -535,7 +537,8 @@
       "generate": "생성",
       "keepHint": "비워두면 기존 값을 유지해요",
       "showSecret": "입력한 값 보이기",
-      "hideSecret": "입력한 값 가리기"
+      "hideSecret": "입력한 값 가리기",
+      "paymentAccountHint": "{{host}} 계정의 결제 비밀번호를 씁니다. 비밀번호는 그 계정의 결제 비밀번호 항목에 넣어 두세요"
     },
     "import": {
       "title": "가져오기",
@@ -677,7 +680,8 @@
       "passport": "여권번호",
       "idCard": "신분증번호",
       "note": "메모",
-      "paymentProvider": "결제 수단"
+      "paymentProvider": "결제 수단",
+      "paymentAccount": "결제할 앱 계정"
     },
     "paymentProvider": {
       "site": "사이트 자체 결제(무신사머니 등)",
@@ -689,7 +693,9 @@
       "samsung": "삼성페이",
       "apple": "애플페이",
       "other": "기타"
-    }
+    },
+    "preparing": "키마스터를 계정 비밀번호로 준비하는 중…",
+    "accountUnlockHint": "계정 비밀번호가 키마스터 열쇠예요. 로그인 비밀번호를 넣어 주세요"
   },
   "settingsPage": {
     "title": "설정",
