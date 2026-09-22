@@ -15,8 +15,15 @@
 내지 않는다 · 결제 비밀번호·카드번호는 `fill_secret` 과 `phone_approve_payment` 가 채우며 값은
 절대 상태에 담지 않는다.
 
-## 4. 쓰는 도구
+## 4. 도구 인자(앱 스키마와 1:1)
+- `fill_secret`: `elementId`(find_elements 로 찾은 정수)와 `itemType` 이 필수다. 신원정보는 `identity`.
+- `phone_approve_payment`: `provider`(toss·payco·kakaopay·naverpay) · `amountKrw`(양의 정수) ·
+  `merchant` · `methodLabel` 이 필수, `card` 는 결제 앱 안에서 고를 카드 이름의 일부다.
+  거절은 `refused: <PayFailReason>` 으로 돌아온다 — 재시도하지 않고 사람에게 넘긴다.
+- 결제 앱이나 금액을 알 수 없으면 결제를 시작하지 않는다.
+
+## 5. 쓰는 도구
 등록부 `tools` 목록만. 상품 선택·장바구니 담기는 이 에이전트가 하지 않는다(구매 에이전트 담당).
 
-## 5. 판단마다 남길 근거(reason)
+## 6. 판단마다 남길 근거(reason)
 결제수단·카드 확정 · 승인 요청 · 결과 확인 — 세 가지는 한 문장씩 근거를 남긴다.

@@ -90,3 +90,60 @@ def test_run_agent_는_실패를_결과로_바꾼다():
     got = run_agent(boom)
     assert (got.status, got.fail_reason) == ('fail', FailReason.OUT_OF_STOCK)
     assert got.reason == '품절이다'
+
+
+@pytest.mark.parametrize(
+    ('result', 'status', 'reason'),
+    [
+        # 앱의 HTTP 200 거절 문자열(src/main/agent/tools.ts, tools-phone.ts)
+        ('refused: KeyMaster access policy is Never', 'fail', FailReason.PERMISSION_DENIED),
+        ('refused: host is excluded from KeyMaster', 'fail', FailReason.PERMISSION_DENIED),
+        (
+            'refused: HOST_MISMATCH — page moved to another domain',
+            'fail',
+            FailReason.PERMISSION_DENIED,
+        ),
+        ('refused: read-only mode', 'fail', FailReason.PERMISSION_DENIED),
+        ('refused: no saved script named "checkout_enter"', 'fail', FailReason.PERMISSION_DENIED),
+        ('refused: insecure page (https required)', 'fail', FailReason.PERMISSION_DENIED),
+        # 금고 잠김 — 재시도해도 같다(permission_denied), 사람이 풀어야 한다
+        ('refused: vault-locked', 'needs_human', FailReason.PERMISSION_DENIED),
+        # 비밀 화면은 사람이 봐야 한다
+        ('refused: secret screen', 'needs_human', FailReason.CAPTCHA),
+        # PayFailReason 값(src/main/phone/pay.ts)
+        ('refused: card-not-found', 'fail', FailReason.CARD_MISSING),
+        ('refused: card-required - call again with card set', 'fail', FailReason.CARD_MISSING),
+        ('refused: pay-account-ambiguous (a, b)', 'needs_human', FailReason.UNKNOWN),
+        ('refused: no-phone', 'needs_human', FailReason.UNKNOWN),
+        ('refused: stuck', 'needs_human', FailReason.UNKNOWN),
+    ],
+)
+@respx.mock
+def test_앱의_거절_문자열을_성공으로_읽지_않는다(result, status, reason):
+    # 리뷰 지적 — I5: HTTP 200 + 'refused: …' 를 성공으로 읽고 있었다
+    respx.post(f'{URL}/tool/get_page').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'result': result, 'steps': []})
+    )
+    with pytest.raises(AgentFailure) as e:
+        base().tool('get_page')
+    assert (e.value.status, e.value.fail_reason) == (status, reason)
+    # 사람이 무엇 때문인지 알 수 있게 사유 원문(비밀 없음)이 남는다
+    assert result.removeprefix('refused:').strip()[:15] in e.value.reason
+
+
+def test_권한_부족_거절은_재시도_대상이_아니다():
+    # 키마스터 잠김·접근 정책은 다시 해도 같다(스펙 §6)
+    from samba_agent.supervisor.policy import NO_RETRY_REASONS
+
+    assert FailReason.PERMISSION_DENIED in NO_RETRY_REASONS
+    assert FailReason.CARD_MISSING in NO_RETRY_REASONS
+
+
+@respx.mock
+def test_거절이_아닌_응답은_그대로_돌려준다():
+    respx.post(f'{URL}/tool/get_page').mock(
+        return_value=httpx.Response(
+            200, json={'ok': True, 'result': '주문이 refused 된 적 없음', 'steps': []}
+        )
+    )
+    assert base().tool('get_page') == '주문이 refused 된 적 없음'

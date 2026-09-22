@@ -11,9 +11,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from samba_agent.agents.contracts import AgentResult, Evidence
+from samba_agent.agents.refusal import classify_refusal
 from samba_agent.agents.registry import AgentSpec
 from samba_agent.bridge.client import BridgeClient, BridgeError
 from samba_agent.failures import FailReason
+from samba_agent.ops.masking import mask_text
 
 # 앱 도구가 캡차·2단계 인증에서 돌려주는 표시(docs/bridge.md)
 NEEDS_USER_MARKERS = ('needs_user', '캡차', 'captcha')
@@ -63,6 +65,14 @@ class AgentBase:
             raise AgentFailure('fail', str(e), e.reason) from e
         if any(m in out.result for m in NEEDS_USER_MARKERS):
             raise AgentFailure('needs_human', f'사람 확인 필요: {name}', FailReason.CAPTCHA)
+        # 앱은 거절을 HTTP 오류가 아니라 200 + 'refused: …' 로 돌려준다 — 성공으로 읽으면
+        # 잠긴 금고·읽기 전용 모드에서도 다음 단계로 넘어간다(리뷰 지적 — I5)
+        verdict = classify_refusal(out.result)
+        if verdict is not None:
+            status, reason = verdict
+            raise AgentFailure(
+                status, f'{name} 거절: {mask_text(out.result.strip()[:120])}', reason
+            )
         return out.result
 
     def json_tool(self, name: str, /, **args: object) -> dict[str, object]:

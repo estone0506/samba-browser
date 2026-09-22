@@ -16,16 +16,23 @@ from samba_agent.ops.masking import mask_text
 # 결제 성공을 확인하는 문구. 이걸 보기 전에는 ok 를 내지 않는다(브리프 §완료조건)
 PAY_SUCCESS_MARKERS = ('결제 완료', '결제완료', '주문완료', '주문 완료', 'approved')
 
-# 앱의 phone_approve_payment 가 거절을 돌려줄 때 붙이는 접두사(src/main/agent/tools-phone.ts).
-# 'refused: <reason>' 꼴이고, 성공이면 'ok' 다
-REFUSED_PREFIX = 'refused:'
-
-# refused: 뒤 사유 중 "카드 자체가 없다"에 해당하는 것 — 시작 전 카드 누락과 같은 사유로 묶는다
-CARD_REFUSAL_MARKERS = ('card-required', 'card-not-found')
-
-# refused: 뒤 사유 없이도(과거 형식) 거절로 보는 표시 — pay-account-*, no-account,
-# vault-locked, verify-failed, stuck, handoff, declined, 거절 등은 전부 이쪽(사람이 봐야 한다)
+# 'refused: <reason>' 응답은 공통 껍데기(agents/base.tool)가 사유로 옮긴다(리뷰 지적 — I5).
+# 여기서는 접두사 없이 오는 과거 형식만 한 번 더 본다
 DECLINED_MARKERS = ('declined', '거절')
+
+# 결제창의 신원정보(주문자) 입력칸을 찾는 검색어 — find_elements 로 elementId 를 얻는다
+IDENTITY_QUERY = '주문자'
+
+# find_elements 응답 한 줄 형식: `[12] textbox "주문자 이름"`(src/shared/snapshot.ts)
+ELEMENT_ID_RE = re.compile(r'^\[(\d+)\]', re.MULTILINE)
+
+# 결제수단 이름 → 폰 결제 앱(provider enum, src/main/phone/pay.ts PAY_PROVIDERS)
+PAY_PROVIDER_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ('toss', ('토스', 'toss')),
+    ('payco', ('페이코', 'payco')),
+    ('kakaopay', ('카카오', 'kakao')),
+    ('naverpay', ('네이버', 'naver')),
+)
 
 # 소싱처별 "결제창 진입" 저장 스크립트 이름. buyer.py 의 소싱처 키(무신사·29CM·ABC마트·롯데온)를
 # 그대로 쓴다 — 등록부 match.source 값과 같다. 매핑에 없는 소싱처는 기본 checkout_enter 로 진입한다
@@ -46,25 +53,31 @@ DRY_RUN_BLOCKED_TOOLS = frozenset({'fill_secret', 'phone_approve_payment'})
 SOURCE_ORDER_NO_RE = re.compile(r'주문\s?번호[^0-9A-Za-z]{0,4}([A-Za-z0-9][A-Za-z0-9-]{4,31})')
 
 
-def _classify_refusal(result: str) -> str | None:
-    """phone_approve_payment 응답을 분류한다.
-
-    'card_missing' — 카드를 요구했거나(card-required) 찾지 못했다(card-not-found)
-    'needs_human' — 계정 모호·불일치·금고 잠김·인증 실패·거절 등, 사람이 봐야 한다
-    None — 승인 성공(거절 표시가 없다)
-    """
-    text = result.strip()
-    if text.startswith(REFUSED_PREFIX):
-        body = text[len(REFUSED_PREFIX) :].strip()
-        if any(body.startswith(m) for m in CARD_REFUSAL_MARKERS):
-            return 'card_missing'
-        # refused: 로 시작하는 나머지 사유는 전부 사람에게 넘긴다(pay-account-*, no-account,
-        # vault-locked, verify-failed, stuck, handoff, declined, 거절 포함)
-        return 'needs_human'
-    if any(m in text for m in DECLINED_MARKERS):
-        # refused: 접두사 없는 과거 형식과도 호환한다
-        return 'needs_human'
+def _pay_provider(*candidates: object) -> str | None:
+    """결제수단 이름에서 폰 결제 앱을 고른다. 못 고르면 None — 결제하지 않는다."""
+    for candidate in candidates:
+        text = str(candidate or '').lower()
+        if not text:
+            continue
+        for provider, keywords in PAY_PROVIDER_KEYWORDS:
+            if any(k in text for k in keywords):
+                return provider
     return None
+
+
+def _element_id(found: str) -> int | None:
+    """find_elements 응답에서 첫 요소 번호를 뽑는다. 없으면 None."""
+    m = ELEMENT_ID_RE.search(found)
+    return int(m.group(1)) if m else None
+
+
+def _amount_krw(value: object) -> int | None:
+    """결제 금액(원 단위 양의 정수). 모르거나 0 이하면 None — 앱 스키마가 거절한다."""
+    try:
+        amount = round(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return amount if amount > 0 else None
 
 
 def _source_order_no(page: str) -> str | None:
@@ -129,27 +142,46 @@ class PayerAgent(AgentBase):
                 FailReason.PAY_INTERRUPTED,
             )
 
+        # 폰 승인에 필요한 값을 먼저 갖춘다 — 하나라도 없으면 결제 자체를 시작하지 않는다.
+        # 앱 스키마(tools-phone.ts)가 provider enum 과 양의 정수 amountKrw 를 요구한다(I7)
+        provider = _pay_provider(card, a.options.get('pay_provider'), a.handoff.get('pay_provider'))
+        if provider is None:
+            raise AgentFailure(
+                'needs_human',
+                f'어느 결제 앱으로 승인할지 정할 수 없다: {card}',
+                FailReason.UNKNOWN,
+            )
+        amount = _amount_krw(a.handoff.get('cost'))
+        if amount is None:
+            raise AgentFailure(
+                'needs_human',
+                '결제 금액을 모른다 — 확인 전에는 결제하지 않는다',
+                FailReason.UNKNOWN,
+            )
+
         self.step('payer: 신원정보 입력')
-        # 값은 앱이 직접 채운다 — 여기서는 어떤 비밀값도 보내거나 받지 않는다
-        self.tool('fill_secret', field='identity', provider='site')
+        # 값은 앱이 직접 채운다 — 여기서는 어떤 비밀값도 보내거나 받지 않는다.
+        # 앱 스키마는 elementId(정수)와 itemType 이 필수다(리뷰 지적 — I6)
+        found = self.tool('find_elements', query=IDENTITY_QUERY)
+        element_id = _element_id(found)
+        if element_id is None:
+            raise AgentFailure('needs_human', '신원정보 입력칸을 찾지 못했다', FailReason.UNKNOWN)
+        self.tool('fill_secret', elementId=element_id, itemType='identity')
 
         self.step('payer: 폰 승인')
+        # 카드 이름 자체가 결제 앱을 가리키면(예: 토스페이) 앱 안에서 고를 카드가 아니다
+        card_hint = None if _pay_provider(card) else card
         approved = self.tool(
             'phone_approve_payment',
+            provider=provider,
+            amountKrw=amount,
             merchant=a.order.source,
             methodLabel=card,
-            card=card,
+            **({'card': card_hint} if card_hint else {}),
         )
         self.note('폰 승인', mask_text(approved[:200]))
-        outcome = _classify_refusal(approved)
-        if outcome == 'card_missing':
-            raise AgentFailure(
-                'fail',
-                f'카드를 찾지 못했다: {mask_text(approved[:100])}',
-                FailReason.CARD_MISSING,
-            )
-        if outcome == 'needs_human':
-            # 재시도 없음 — 그대로 사람에게 넘긴다(재결제 위험). 사유 문자열을 그대로 담는다
+        if any(m in approved for m in DECLINED_MARKERS):
+            # 'refused:' 접두사 없는 과거 형식. 재시도 없음 — 그대로 사람에게 넘긴다(재결제 위험)
             raise AgentFailure(
                 'needs_human',
                 f'폰 승인 실패: {mask_text(approved[:100])}',

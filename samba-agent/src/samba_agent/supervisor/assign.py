@@ -12,7 +12,7 @@ from samba_agent.agents.registry import AgentSpec, Registry
 from samba_agent.supervisor.state import RunState
 
 # 구매 결과에서 다음 단계가 일하는 데 필요한 값 — 대조용이 아니라 인계용이다
-BUYER_HANDOFF_FIELDS = ('card', 'account', 'cost', 'margin_pct', 'option')
+BUYER_HANDOFF_FIELDS = ('card', 'account', 'cost', 'margin_pct', 'option', 'pay_provider')
 
 
 def build_assignment(reg: Registry, spec: AgentSpec, state: RunState) -> Assignment:
