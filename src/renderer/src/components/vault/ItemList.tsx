@@ -14,7 +14,7 @@ import {
 import { cn } from '@renderer/lib/utils'
 import { useVaultStore } from '@renderer/stores/vaultStore'
 import { useBrowserStore } from '@renderer/stores/browserStore'
-import { normalizeHost, isSeparateLoginDomain } from '@shared/host'
+import { normalizeHost } from '@shared/host'
 import { VAULT_ITEM_TYPES } from '@shared/vault'
 import type { AccountDto, VaultItemMeta, VaultItemType } from '@shared/ipc'
 import { groupByDomain, type DomainGroup } from '@renderer/lib/vault-groups'
@@ -26,7 +26,6 @@ const GLOBAL_TYPES = new Set<VaultItemType>(['card', 'note', 'identity', 'docume
 
 // 한 사이트 안에서 같은 아이디가 여러 서브도메인에 흩어져 있는 개수(합치면 사라질 계정 수)
 function duplicateCount(group: DomainGroup): number {
-  if (isSeparateLoginDomain(group.key)) return 0
   return group.accounts.length - new Set(group.accounts.map((a) => a.username)).size
 }
 

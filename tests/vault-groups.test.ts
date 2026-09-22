@@ -48,14 +48,15 @@ describe('registrableDomain', () => {
 })
 
 describe('groupByDomain', () => {
-  it('같은 등록 도메인의 계정을 한 그룹으로 모으고 도메인순으로 정렬한다', () => {
+  it('같은 사이트 그룹의 계정을 모으고 이름순으로 정렬한다 — 네이버 커머스는 별개 그룹', () => {
     const groups = groupByDomain([
       account(1, 'nid.naver.com'),
       account(2, 'shop.example.com'),
-      account(3, 'accounts.commerce.naver.com')
+      account(3, 'accounts.commerce.naver.com'),
+      account(4, 'mail.naver.com')
     ])
-    expect(groups.map((g) => g.key)).toEqual(['example.com', 'naver.com'])
-    expect(groups[1].accounts.map((a) => a.id)).toEqual([1, 3])
+    expect(groups.map((g) => g.key)).toEqual(['commerce.naver.com', 'example.com', 'naver.com'])
+    expect(groups[2].accounts.map((a) => a.id)).toEqual([1, 4])
   })
 
   it('빈 목록이면 그룹도 없다', () => {

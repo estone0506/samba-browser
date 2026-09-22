@@ -120,11 +120,21 @@ export function registrableDomain(urlOrHost: string): string {
 }
 
 /**
- * 서브도메인마다 실제로 다른 계정(아이디·비밀번호)이 쓰이는 사이트 — 네이버는 nid(개인)·accounts.commerce(판매자)·
- * mail 이 같은 아이디라도 별개다. 이런 도메인은 "서브도메인 계정 합치기" 대상에서 뺀다
+ * 등록 도메인 안에서도 실제로 다른 계정(아이디·비밀번호)이 쓰이는 서브도메인 무리.
+ * 네이버는 개인 계정(nid·mail·pay …)과 판매자 계정(accounts.commerce.naver.com — 네이버 커머스)이 별개다.
+ * 여기 적힌 무리는 그 자체를 하나의 사이트(그룹)로 본다 — 합치기·자동채움 후보·목록 그룹 모두
  */
-const SEPARATE_LOGIN_DOMAINS = new Set(['naver.com'])
+const SEPARATE_ACCOUNT_GROUPS = ['commerce.naver.com']
 
-export function isSeparateLoginDomain(domain: string): boolean {
-  return SEPARATE_LOGIN_DOMAINS.has(registrableDomain(domain) || domain)
+/**
+ * 키마스터에서 "같은 사이트"로 묶는 키. 보통은 등록 도메인(nid.naver.com·mail.naver.com → naver.com)이고,
+ * SEPARATE_ACCOUNT_GROUPS 에 속한 서브도메인은 그 무리 이름(accounts.commerce.naver.com → commerce.naver.com)
+ */
+export function accountGroupKey(urlOrHost: string): string {
+  const host = normalizeHost(urlOrHost)
+  if (!host) return ''
+  for (const group of SEPARATE_ACCOUNT_GROUPS) {
+    if (host === group || host.endsWith(`.${group}`)) return group
+  }
+  return registrableDomain(host)
 }

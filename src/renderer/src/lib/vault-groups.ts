@@ -1,7 +1,7 @@
 // 키마스터 목록의 도메인 그룹 계산 순수 함수.
 // 컴포넌트와 분리해 두어 단위 테스트가 가능하다.
 
-import { registrableDomain } from '@shared/host'
+import { accountGroupKey } from '@shared/host'
 import type { AccountDto } from '@shared/ipc'
 
 export interface DomainGroup {
@@ -11,13 +11,13 @@ export interface DomainGroup {
 }
 
 /**
- * 계정을 등록 가능 도메인(eTLD+1)으로 묶고 도메인 알파벳순으로 정렬한다.
- * nid.naver.com · accounts.commerce.naver.com 은 naver.com 하나로 모인다.
+ * 계정을 사이트 그룹 키(보통 등록 도메인)로 묶고 알파벳순으로 정렬한다.
+ * nid.naver.com · mail.naver.com 은 naver.com 으로, accounts.commerce.naver.com 은 commerce.naver.com 으로 따로 모인다.
  */
 export function groupByDomain(accounts: AccountDto[]): DomainGroup[] {
   const map = new Map<string, AccountDto[]>()
   for (const a of accounts) {
-    const key = registrableDomain(a.host) || a.host
+    const key = accountGroupKey(a.host) || a.host
     const list = map.get(key) ?? []
     list.push(a)
     map.set(key, list)

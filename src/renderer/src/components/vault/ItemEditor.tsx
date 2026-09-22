@@ -14,7 +14,7 @@ import { Input } from '@renderer/components/ui/input'
 import { Button } from '@renderer/components/ui/button'
 import { useVaultStore, type PutSectionInput } from '@renderer/stores/vaultStore'
 import { useBrowserStore } from '@renderer/stores/browserStore'
-import { normalizeHost, registrableDomain } from '@shared/host'
+import { normalizeHost, accountGroupKey } from '@shared/host'
 import { PasswordGenerator } from './PasswordGenerator'
 import {
   DEFAULT_PAYMENT_PROVIDER,
@@ -249,14 +249,14 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
       ? PAYMENT_PROVIDER_ACCOUNT_HOST[normalizePaymentProvider(values[PAYMENT_PROVIDER_FIELD_KEY])]
       : undefined
   const onAppSite =
-    appHost !== undefined && account !== undefined && registrableDomain(account.host) === appHost
+    appHost !== undefined && account !== undefined && accountGroupKey(account.host) === appHost
   const appAccounts = useMemo(
     () =>
       appHost === undefined || onAppSite
         ? []
         : // 결제 비밀번호를 넣어 둔 앱 계정만 고를 수 있다(없는 계정을 고르면 결제 때 못 찾는다)
           accounts.filter(
-            (a) => registrableDomain(a.host) === appHost && a.itemTypes.includes('password')
+            (a) => accountGroupKey(a.host) === appHost && a.itemTypes.includes('password')
           ),
     [accounts, appHost, onAppSite]
   )
