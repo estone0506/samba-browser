@@ -4,15 +4,20 @@
 needs_human 으로 두고 사람이 슬랙에서 승인할 때까지 기다린다(스펙 §10-1).
 """
 
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from samba_agent.agents.contracts import OrderRef
+from samba_agent.failures import FailReason
+from samba_agent.ops.masking import mask_text
 from samba_agent.queue.db import Job, JobQueue
 from samba_agent.supervisor.approval import resume_command
 
 THREAD_PREFIX = 'job:'
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -24,6 +29,8 @@ class WorkerDeps:
     version: str
     report: Callable[[Job, str], None]
     parse_order: Callable[[Job], OrderRef]
+    # settings.dry_run 이 아직 여기까지 안 들어와서 당장은 기본값 True 로 주입한다.
+    dry_run: bool = True
 
 
 class Worker:
@@ -37,16 +44,15 @@ class Worker:
         job = self.d.queue.claim()
         if job is None:
             return None
-        # queue/db.py(Task 9) 에는 harness_version 을 저장하는 메서드가 없다 — 보고 문구에만 남긴다.
+        self.d.queue.set_version(job.id, self.d.version)
         self.d.report(job, f'접수: {job.order_no} 처리 시작(하네스 {self.d.version})')
         state = {
             'order': self.d.parse_order(job),
             'options': {str(k): str(v) for k, v in job.options.items()},
             'job_id': job.id,
-            'dry_run': True,
+            'dry_run': self.d.dry_run,
         }
-        out = self.d.graph.invoke(state, self._config(job.id))
-        return self._apply(job, out)
+        return self._invoke(job, state)
 
     def resume(self, order_no: str, approved: bool, by: str) -> Job | None:
         """슬랙 승인 버튼 → 멈춘 그래프를 깨운다. 끝난 주문이면 None."""
@@ -58,17 +64,38 @@ class Worker:
         ):
             return None
         self.d.queue.finish(job.id, 'running')
-        out = self.d.graph.invoke(resume_command(approved, by), self._config(job.id))
-        return self._apply(job, out)
+        return self._invoke(job, resume_command(approved, by))
 
     def run_forever(self, stop: Callable[[], bool], interval_s: float = 2.0) -> None:
         """봇과 함께 도는 고리. stop() 이 참이 될 때까지 큐를 본다."""
         while not stop():
-            if self.tick() is None:
+            try:
+                caught_none = self.tick() is None
+            except Exception:  # noqa: BLE001 — 고리는 개별 tick 예외로 멈추지 않는다
+                _log.exception('tick 처리 중 예외 — 다음 주기로 계속한다')
+                caught_none = True
+            if caught_none:
                 time.sleep(interval_s)
 
     def _config(self, job_id: int) -> dict[str, object]:
         return {'configurable': {'thread_id': f'{THREAD_PREFIX}{job_id}'}}
+
+    def _invoke(self, job: Job, arg: object) -> Job:
+        """그래프를 부르고, 예외가 나면 사람에게 넘긴다(스펙 리뷰 지적 — Important 1)."""
+        try:
+            out = self.d.graph.invoke(arg, self._config(job.id))
+        except Exception as exc:  # noqa: BLE001 — 그래프 내부 예외는 감독자가 아니라 여기서 받는다
+            return self._on_exception(job, exc)
+        return self._apply(job, out)
+
+    def _on_exception(self, job: Job, exc: Exception) -> Job:
+        """그래프가 예외를 던지면 큐를 needs_human 으로 마감하고 사유를 남긴다."""
+        masked = mask_text(str(exc))
+        _log.exception('그래프 실행 중 예외 — %s', job.order_no)
+        self.d.queue.progress(job.id, agent=None, step=None)
+        self.d.queue.finish(job.id, 'needs_human', error=str(FailReason.UNKNOWN))
+        self.d.report(job, f'{job.order_no} 처리 중 오류로 사람에게 넘긴다 — {masked}')
+        return self.d.queue.get(job.order_no)  # type: ignore[return-value]
 
     def _apply(self, job: Job, out: dict) -> Job:
         """그래프 결과를 큐와 슬랙에 옮긴다."""
@@ -81,7 +108,7 @@ class Worker:
             self.d.queue.finish(job.id, 'needs_human')
             self.d.report(job, f'승인 요청\n{req["summary"]}')
             return self.d.queue.get(job.order_no)  # type: ignore[return-value]
-        outcome = out.get('outcome') or 'failed'
+        outcome = out['outcome']
         fail = out.get('fail_reason')
         self.d.queue.progress(job.id, agent=None, step=None)
         self.d.queue.finish(job.id, outcome, error=str(fail) if fail else None)

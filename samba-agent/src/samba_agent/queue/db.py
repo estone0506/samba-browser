@@ -175,6 +175,13 @@ class JobQueue:
             (state, error, _now(), job_id),
         )
 
+    def set_version(self, job_id: int, version: str) -> None:
+        """이 작업을 어느 하네스 버전이 돌렸는지 남긴다(claim 직후 실행기가 부른다)."""
+        self._db.execute(
+            'UPDATE jobs SET harness_version=?, updated_at=? WHERE id=?',
+            (version, _now(), job_id),
+        )
+
     def retry(self, job_id: int) -> Job:
         """`이어서` — 실패·사람 넘김 건을 다시 큐에 넣는다. 상한을 넘으면 거부한다."""
         row = self._db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()

@@ -78,6 +78,13 @@ def test_재시도는_상한을_넘지_못한다(q):
         q.retry(job.id)
 
 
+def test_하네스_버전을_기록한다(q):
+    job, _ = q.enqueue('A1', 'U1', {}, 'ts1')
+    q.claim()
+    q.set_version(job.id, 'v1.2.3')
+    assert q.get('A1').harness_version == 'v1.2.3'
+
+
 def test_취소는_살아_있는_건만(q):
     q.enqueue('A1', 'U1', {}, 'ts1')
     cancelled = q.cancel('A1')
