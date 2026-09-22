@@ -1,3 +1,5 @@
+import { isSupabaseAnonKey, isSupabaseProjectUrl, type AuthState } from '../../shared/sync'
+import type { SyncBackend } from '../sync/backend'
 import { ChatSessionStore } from '../agent/chat-session'
 import {
   app,
@@ -79,7 +81,13 @@ import { remapOnProviderChange, resolveModel, taskModelChoices } from '../ai/mod
 import { agentBackend, setApiKeyResolver, setAuthResolver } from '../agent/provider'
 // === AI 연결 끝 =======================================================================
 import { AuthService } from '../sync/auth'
-import { hasSupabaseEnv, setSupabaseEnvFromSettings } from '../sync/env'
+import {
+  hasDirectoryEnv,
+  hasSupabaseEnv,
+  readDirectoryEnv,
+  setSupabaseEnvFromSettings
+} from '../sync/env'
+import { AccountService } from '../sync/account'
 import { createSessionStore } from '../sync/session-store'
 import { createSupabaseBackend } from '../sync/supabase-backend'
 import { SyncConnection } from '../sync/connect'
@@ -884,22 +892,77 @@ export function registerIpc(
     configured: syncConfigured,
     openExternal: (url) => shell.openExternal(url)
   })
-  auth.onStateChanged((state) => send(IPC.authStateChanged, state))
+  // 계정 디렉터리(중앙 로그인). 빌드에 주소가 있으면 "로그인 먼저 → 설정은 계정에 따라옴"으로 돈다.
+  // 디렉터리 세션은 데이터 세션과 다른 파일에 둔다(프로젝트가 다르다)
+  const directoryConfigured = hasDirectoryEnv()
+  const directoryBackend = directoryConfigured
+    ? createSupabaseBackend(
+        createSessionStore(join(app.getPath('userData'), 'directory-session.bin'), safeStorage),
+        readDirectoryEnv()
+      )
+    : null
+  const directoryAuth = directoryBackend
+    ? new AuthService({
+        backend: directoryBackend,
+        configured: true,
+        openExternal: (url) => shell.openExternal(url)
+      })
+    : null
+  // 동기화 연결부는 아래에서 만들어진다 — 데이터 백엔드가 바뀌면 여기로 알린다
+  let onDataBackend: (backend: SyncBackend | null) => void = () => {}
+  const account = new AccountService({
+    directory: directoryBackend,
+    directoryAuth,
+    auth,
+    createDataBackend: (config) => createSupabaseBackend(sessionStore, config),
+    onDataBackend: (backend) => onDataBackend(backend),
+    settings: {
+      get: () => settings.get(),
+      set: (patch) => void settings.set(patch)
+    },
+    applyEnv: setSupabaseEnvFromSettings
+  })
+  // 렌더러에는 데이터 인증 상태 + 디렉터리 상태를 한 덩어리로 보낸다(토큰·비밀번호 없음)
+  const authStateWithAccount = (): AuthState => ({
+    ...auth.state(),
+    account: account.accountState()
+  })
+  auth.onStateChanged(() => send(IPC.authStateChanged, authStateWithAccount()))
+  account.onStateChanged(() => send(IPC.authStateChanged, authStateWithAccount()))
   // 구글 로그인을 기다리는 중에 창이 닫히면 루프백 서버가 최대 5분 남는다
-  win.once('closed', () => auth.dispose())
-  // 저장된 세션이 있으면 조용히 되살린다(실패는 로그아웃으로 본다)
-  void auth.restore()
+  win.once('closed', () => {
+    auth.dispose()
+    directoryAuth?.dispose()
+  })
 
-  handleFromRenderer(IPC.authState, () => auth.state())
-  handleFromRenderer(IPC.authSignUp, (email: string, password: string) =>
-    auth.signUp(email, password)
-  )
-  handleFromRenderer(IPC.authSignIn, (email: string, password: string) =>
-    auth.signIn(email, password)
-  )
+  handleFromRenderer(IPC.authState, () => authStateWithAccount())
+  handleFromRenderer(IPC.authSignUp, async (email: string, password: string) => {
+    await account.signUp(email, password)
+    return authStateWithAccount()
+  })
+  handleFromRenderer(IPC.authSignIn, async (email: string, password: string) => {
+    await account.signIn(email, password)
+    return authStateWithAccount()
+  })
   // 브라우저에서 구글 로그인을 마칠 때까지(최대 5분) 응답이 늦게 온다
-  handleFromRenderer(IPC.authSignInGoogle, () => auth.signInGoogle())
-  handleFromRenderer(IPC.authSignOut, () => auth.signOut())
+  handleFromRenderer(IPC.authSignInGoogle, async () => {
+    await account.signInGoogle()
+    return authStateWithAccount()
+  })
+  handleFromRenderer(IPC.authSignOut, async () => {
+    await account.signOut()
+    return authStateWithAccount()
+  })
+  // 로그인한 계정에 데이터 Supabase 주소를 저장하고 곧바로 붙는다(재시작 불필요)
+  handleFromRenderer(IPC.authSaveSupabase, async (raw: unknown) => {
+    const o = raw as { url?: unknown; anonKey?: unknown }
+    const url = typeof o?.url === 'string' ? o.url.trim() : ''
+    const anonKey = typeof o?.anonKey === 'string' ? o.anonKey.trim() : ''
+    if (!isSupabaseProjectUrl(url)) throw new Error(tr('auth.badSupabaseUrl'))
+    if (!isSupabaseAnonKey(anonKey)) throw new Error(tr('auth.badSupabaseKey'))
+    await account.saveSupabase({ url, anonKey })
+    return authStateWithAccount()
+  })
   // === 계정 인증 끝 ====================================================================
 
   // === 작업공간(브라우저 프로필) — 이 블록만 따로 추가한다 =============================
@@ -983,10 +1046,12 @@ export function registerIpc(
       appVersion: () => app.getVersion()
     }
   })
+  onDataBackend = (backend) => connection.setBackend(backend)
   // 수동 동기화는 연결을 거친다 — 최초 업로드가 놓친 행을 먼저 보충하고 한 주기를 돈다
   handleFromRenderer(IPC.syncNow, () => connection.syncNow())
-  // 세션 복구가 이 시점보다 먼저 끝났을 수 있다 — 지금 상태를 한 번 반영한다
-  void connection.refresh()
+  // 저장된 세션이 있으면 조용히 되살린다(디렉터리 → 주소 내려받기 → 데이터 세션). 실패는 로그아웃으로 본다.
+  // 연결부가 만들어진 뒤에 돌려야 새 백엔드 교체가 연결부까지 닿는다
+  void account.restore().then(() => connection.refresh())
   win.once('closed', () => connection.dispose())
 
   const requireDevices = (): DeviceService => {

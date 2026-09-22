@@ -100,6 +100,11 @@ export interface SyncBackend {
   upsertKeyed(table: string, rows: RemoteKeyedRow[]): Promise<void>
   /** 변경 알림 구독. 반환값을 호출하면 구독을 푼다 */
   subscribe(table: string, onChange: () => void): Promise<() => void>
+  /**
+   * 숫자 하나를 돌려주는 서버 함수(rpc). 함수가 없거나 권한이 없으면 null —
+   * 디렉터리의 가입 사용자 수처럼 "있으면 보여 주는" 값에 쓴다
+   */
+  rpcNumber(name: string): Promise<number | null>
 }
 
 /** 토큰 만료·기기 원격 로그아웃 — 호출부는 이 에러를 받으면 로그아웃하고 금고를 잠근다 */

@@ -26,7 +26,7 @@ export interface AuthDeps {
 const SIGNED_OUT = { signedIn: false as const, plan: 'free' as const, deviceId: null }
 
 export class AuthService {
-  private readonly deps: AuthDeps
+  private deps: AuthDeps
   private readonly listeners = new Set<(s: AuthState) => void>()
   private current: AuthState
   /** 진행 중인 구글 로그인 — 새로 시작하면 이전 것은 취소한다 */
@@ -39,6 +39,24 @@ export class AuthService {
 
   state(): AuthState {
     return { ...this.current }
+  }
+
+  hasBackend(): boolean {
+    return this.deps.backend !== null
+  }
+
+  currentBackend(): SyncBackend | null {
+    return this.deps.backend
+  }
+
+  /**
+   * 백엔드를 갈아 끼운다(계정에서 내려받은 데이터 Supabase 주소로 새로 붙일 때).
+   * 로그인 상태는 초기화한다 — 다른 프로젝트의 세션은 여기서 쓸 수 없다
+   */
+  setBackend(backend: SyncBackend | null): void {
+    this.cancelPending()
+    this.deps = { ...this.deps, backend, configured: backend !== null }
+    this.next({ ...SIGNED_OUT, configured: backend !== null })
   }
 
   onStateChanged(fn: (s: AuthState) => void): void {

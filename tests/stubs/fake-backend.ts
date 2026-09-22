@@ -168,6 +168,9 @@ export function createFakeBackend(): FakeBackend {
       const t = table(name)
       for (const id of ids) t.delete(id)
     },
+    async rpcNumber() {
+      return null
+    },
     async subscribe(name, onChange) {
       let set = listeners.get(name)
       if (!set) {

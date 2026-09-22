@@ -370,6 +370,9 @@ const api = {
     // 기본 브라우저가 열리고, 사용자가 구글 로그인을 마쳐야 응답이 온다(최대 5분)
     signInGoogle: (): Promise<IpcResult<AuthState>> => invoke(IPC.authSignInGoogle),
     signOut: (): Promise<IpcResult<AuthState>> => invoke(IPC.authSignOut),
+    // 로그인한 계정에 데이터 Supabase 주소를 저장하고 곧바로 붙인다
+    saveSupabase: (url: string, anonKey: string): Promise<IpcResult<AuthState>> =>
+      invoke(IPC.authSaveSupabase, { url, anonKey }),
     onStateChanged: (cb: (state: AuthState) => void): (() => void) => {
       const h = (_: unknown, state: AuthState): void => cb(state)
       ipcRenderer.on(IPC.authStateChanged, h)

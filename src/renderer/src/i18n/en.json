@@ -912,7 +912,12 @@
       "restartNeeded": "Saved. Restart the app to apply.",
       "optional": "Leave it empty to use this PC only, without sync. See the README to create a project",
       "envInUse": "Currently connected with the .env values in the project folder (dev setup), so these fields look empty. Values entered here take priority"
-    }
+    },
+    "directorySignInDesc": "Signing in brings this account’s Supabase settings with it. On first use, set up Supabase once after signing in",
+    "needsSupabaseTitle": "Supabase for this account",
+    "needsSupabaseDesc": "First sign-in for this account. Enter your own Supabase project so it is saved to the account and follows you to other PCs",
+    "userCount": "{{n}} registered users",
+    "accountSignedIn": "Account signed in"
   },
   "sync": {
     "title": "Sync",

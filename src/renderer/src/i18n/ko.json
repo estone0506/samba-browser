@@ -912,7 +912,12 @@
       "restartNeeded": "저장했습니다. 앱을 다시 시작하면 적용됩니다",
       "optional": "비워 두면 동기화 없이 이 PC 에서만 씁니다. 만드는 방법은 README 의 \"내 Supabase 만들기\" 참고",
       "envInUse": "지금은 프로젝트 폴더의 .env 값(개발용)으로 연결돼 있어 칸이 비어 보여요. 여기 값을 넣으면 그게 우선합니다"
-    }
+    },
+    "directorySignInDesc": "로그인하면 이 계정에 저장된 Supabase 설정이 따라옵니다. 처음이면 로그인 뒤 Supabase 를 한 번만 설정합니다",
+    "needsSupabaseTitle": "이 계정의 Supabase 설정",
+    "needsSupabaseDesc": "처음 로그인한 계정입니다. 데이터를 둘 내 Supabase 프로젝트 주소를 넣으면 계정에 저장돼 다른 PC 에서도 자동으로 붙습니다",
+    "userCount": "가입 사용자 {{n}}명",
+    "accountSignedIn": "계정 로그인됨"
   },
   "sync": {
     "title": "동기화",

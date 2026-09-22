@@ -38,6 +38,23 @@ export function readSupabaseEnv(): SupabaseEnv {
 
 /** 두 값이 모두 있어야 동기화 기능을 켤 수 있다 */
 export function hasSupabaseEnv(): boolean {
-  const e = readSupabaseEnv()
+  return isUsable(readSupabaseEnv())
+}
+
+function isUsable(e: SupabaseEnv): boolean {
   return e.url.startsWith('https://') && e.anonKey.length > 0
+}
+
+// === 계정 디렉터리(중앙 프로젝트) ===========================================
+// "로그인 먼저, 설정은 계정에 따라온다"의 중앙 서버 주소. 빌드에 심어 배포한다(anon 키는 공개용).
+// 비어 있으면 디렉터리 없이 예전처럼 데이터 프로젝트에 바로 로그인한다
+const DIRECTORY_URL_KEY = 'SAMBA_DIRECTORY_URL'
+const DIRECTORY_ANON_KEY = 'SAMBA_DIRECTORY_ANON_KEY'
+
+export function readDirectoryEnv(): SupabaseEnv {
+  return { url: readEnv(DIRECTORY_URL_KEY).trim(), anonKey: readEnv(DIRECTORY_ANON_KEY).trim() }
+}
+
+export function hasDirectoryEnv(): boolean {
+  return isUsable(readDirectoryEnv())
 }

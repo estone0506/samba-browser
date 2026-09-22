@@ -20,6 +20,8 @@ interface AuthStoreState {
   signInGoogle: () => Promise<boolean>
   cancelGoogle: () => void
   signOut: () => Promise<boolean>
+  /** 로그인한 계정에 데이터 Supabase 주소 저장 + 즉시 연결 */
+  saveSupabase: (url: string, anonKey: string) => Promise<boolean>
   loadDevices: () => Promise<void>
   revokeDevice: (id: string) => Promise<boolean>
   clearError: () => void
@@ -68,6 +70,8 @@ export const useAuthStore = create<AuthStoreState>((set, get) => {
     // IPC 취소 채널이 없으므로 화면에서 기다리기를 그만두는 것까지만 한다
     cancelGoogle: () => set({ pending: null }),
     signOut: () => run('signOut', () => window.samba.auth.signOut()),
+    saveSupabase: (url, anonKey) =>
+      run('signIn', () => window.samba.auth.saveSupabase(url, anonKey)),
 
     loadDevices: async () => {
       const devices = window.samba.devices
