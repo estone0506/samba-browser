@@ -12,7 +12,7 @@ import type { AgentEvent, HandoffKind } from '../../shared/ipc'
 import type { Settings } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
-import type { ToolContext } from './tools'
+import type { ToolContext, SambaMcpTool } from './tools'
 import { hasConnectedPhone } from './tools-phone'
 import type { PayToolRequest, PhoneToolContext, SmsCodeOutcome } from './tools-phone'
 import type { PayResult } from '../phone/pay'
@@ -54,31 +54,15 @@ export interface ToolSession {
   dispose(): void
 }
 
-// SDK 도구 객체에서 브릿지가 쓰는 부분만(이름·핸들러)
-interface SdkToolLike {
-  name: string
-  handler: (
-    args: Record<string, unknown>,
-    extra: unknown
-  ) => Promise<{ content: Array<{ type: string; text?: string }> }>
-}
-
 /**
  * createSambaTools() 가 돌려준 서버에서 이름→핸들러 목록을 뽑는다.
- * 실제 SDK(createSdkMcpServer) 는 `{ type, name, instance }` 만 주고 `.tools` 배열은
- * 노출하지 않는다 — 등록된 도구는 `instance._registeredTools` (MCP McpServer 내부 필드,
- * 공식 타입은 아니지만 SDK 버전 0.3.276 기준 유일한 접근로) 에 있다.
- * 테스트가 SDK 를 얇게 모킹해 서버 객체 자체에 `.tools` 배열을 남기는 경우(기존 도구 테스트들의
- * 관례)는 그쪽을 그대로 쓴다
+ * 서버 객체는 자신이 등록한 도구 배열을 `.tools` 로 그대로 들고 있다(createSambaTools 의
+ * 반환값 계약) — MCP 내부의 비공개 필드는 들여다보지 않는다
  */
-function extractSdkTools(server: unknown): SdkToolLike[] {
-  const s = server as {
-    tools?: SdkToolLike[]
-    instance?: { _registeredTools?: Record<string, { handler: SdkToolLike['handler'] }> }
-  }
-  if (Array.isArray(s.tools)) return s.tools
-  const registered = s.instance?._registeredTools ?? {}
-  return Object.entries(registered).map(([name, t]) => ({ name, handler: t.handler }))
+function extractSdkTools(server: unknown): SambaMcpTool[] {
+  const tools = (server as { tools?: unknown }).tools
+  if (!Array.isArray(tools)) throw new Error('도구 목록을 읽을 수 없음')
+  return tools as SambaMcpTool[]
 }
 
 // 확인 요청 응답 대기 상한 30분

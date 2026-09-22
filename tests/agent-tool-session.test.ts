@@ -63,8 +63,10 @@ describe('createToolSession', () => {
     const s = r.createToolSession({})
     await expect(r.run('아무 지시')).rejects.toThrow('브릿지 세션 사용 중')
     s.dispose()
-    // dispose 뒤에는 세션 검사에 걸리지 않는다(실제 실행은 연결이 없어 다른 이유로 끝난다)
-    await expect(r.createToolSession({})).not.toThrow
+    // dispose 뒤에는 세션 검사에 걸리지 않는다 — 새 세션을 실제로 만들어 도구 목록이 나오는지 본다
+    const again = r.createToolSession({})
+    expect(again.names()).toContain('get_page')
+    again.dispose()
   })
 
   it('도구 호출은 진행 로그를 onStep 으로 넘긴다', async () => {
