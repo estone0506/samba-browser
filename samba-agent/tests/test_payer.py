@@ -343,6 +343,8 @@ def _args(route) -> dict:
 def _full_pay_mocks(popup_url: str | None = TOSS_POPUP_URL):
     respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(popup_url))
+    # 팝업이 0개일 때만 실제로 불린다(리뷰 지적 — Minor 4) — 다른 시나리오에서는 그냥 등록만 해 둔다
+    respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
     respx.post(f'{URL}/tool/find_elements').mock(
         return_value=page('INTERACTIVE ELEMENTS:\n[12] textbox "주문자 이름"')
     )
@@ -401,12 +403,33 @@ def test_카드_브랜드는_결제앱_안에서_고를_카드로_넘긴다(reg)
 @respx.mock
 def test_카드_이름이_네이버페이면_결제창_없이_바로_정한다(reg):
     # 결제수단 문자열에 이미 앱 이름이 있으면(네이버페이) 결제창을 보지 않고 그것을 우선한다.
-    # 네이버페이는 앱이 계정 연결·검사를 스스로 하므로 payAccount 를 넘기지 않는다
+    # payAccount 관련 코드는 전부 제거했다(리뷰 지적 — Critical 1) — 앱이 쇼핑몰 계정에 연결된
+    # 네이버 계정으로 스스로 고른다. handoff 에 pay_account 값이 실려 와도(죽은 값) 절대
+    # phone_approve_payment 로 넘어가지 않는다(inert 방지 — 꺼져 있는 게 아니라 없는지 본다)
     _fill, pay = _full_pay_mocks(popup_url=None)
-    out = agent(reg)(assignment(reg, dry_run=False, card='네이버페이', handoff={'cost': 89000}))
+    a = assignment(
+        reg, dry_run=False, card='네이버페이', handoff={'cost': 89000, 'pay_account': 'acc-a'}
+    )
+    out = agent(reg)(a)
     assert out.status == 'ok'
     args = _args(pay)
     assert args['provider'] == 'naverpay'
+    assert 'payAccount' not in args
+
+
+@respx.mock
+def test_토스여도_handoff에_pay_account가_있어도_넘기지_않는다(reg):
+    # payAccount 는 앱 스키마상 네이버페이 전용이지만, 어떤 provider 에도 넘기지 않는 게
+    # 사용자 결정이다(리뷰 지적 — Critical 1) — 토스에서도 죽은 값이 새 나가지 않는지 본다
+    _fill, pay = _full_pay_mocks(popup_url=None)
+    out = agent(reg)(
+        assignment(
+            reg, dry_run=False, card='토스페이', handoff={'cost': 89000, 'pay_account': 'acc-b'}
+        )
+    )
+    assert out.status == 'ok'
+    args = _args(pay)
+    assert args['provider'] == 'toss'
     assert 'payAccount' not in args
 
 
@@ -460,3 +483,193 @@ def test_신원정보_입력칸을_못_찾으면_사람에게_넘긴다(reg):
     assert out.status == 'needs_human'
     assert not fill.called
     assert not pay.called
+
+
+@respx.mock
+def test_list_tabs_실패_사유는_원래_fail_reason을_그대로_남긴다(reg):
+    # 리뷰 지적 — Minor 3: list_tabs 의 AgentFailure 를 UNKNOWN 으로 재포장하지 않는다.
+    # 403 은 브릿지가 PERMISSION_DENIED 로 분류한다(client.py) — needs_human 으로 넘어가도
+    # 그 사유가 그대로 남아야 한다
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
+    respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
+    respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/list_tabs').mock(
+        return_value=httpx.Response(403, json={'error': 'forbidden'})
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=False, card='현대카드', handoff={'cost': 89000}))
+    assert out.status == 'needs_human'
+    assert out.fail_reason is FailReason.PERMISSION_DENIED
+    assert not pay.called
+
+
+@respx.mock
+def test_결제창이_아직_없으면_한번_기다렸다_다시_본다(reg):
+    # 리뷰 지적 — Minor 4: run_script checkout_enter_* 직후 팝업이 0개면 바로 웹 경로로
+    # 가지 않고 wait(2초) 후 list_tabs 를 한 번 더 본다. 두 번째에는 팝업이 잡힌다
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
+    respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    wait = respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
+    list_tabs = respx.post(f'{URL}/tool/list_tabs').mock(
+        side_effect=[list_tabs_page(None), list_tabs_page(TOSS_POPUP_URL)]
+    )
+    pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/get_page').mock(side_effect=[page('결제 진행 중'), page('결제 완료')])
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=False, card='현대카드', handoff={'cost': 89000}))
+    assert out.status == 'ok'
+    assert wait.calls.call_count == 1
+    assert json.loads(wait.calls.last.request.content.decode('utf-8'))['args'] == {'ms': 2000}
+    assert list_tabs.calls.call_count == 2
+    assert pay.called
+    assert _args(pay)['provider'] == 'toss'
+
+
+@respx.mock
+def test_결제창이_끝내_안_뜨면_한번만_기다리고_웹_경로로_간다(reg):
+    # 두 번째 list_tabs 도 팝업이 0개면 더 기다리지 않고(wait 는 딱 한 번) 웹 결제 경로로 간다
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
+    respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    wait = respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
+    list_tabs = respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(None))
+    pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/get_page').mock(side_effect=[page('결제 진행 중'), page('결제 완료')])
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=False, card='현대카드', handoff={'cost': 89000}))
+    assert out.status == 'ok'
+    assert wait.calls.call_count == 1
+    assert list_tabs.calls.call_count == 2
+    assert not pay.called
+
+
+def _list_tabs_with_two_popups(providers: tuple[str, str]) -> httpx.Response:
+    """서로 다른 결제 호스트를 가리키는 팝업 두 개를 흉내 낸다. openerId 가 't1' 인데 't1' 은
+    활성 탭이 아니다 — 활성 탭 우선 규칙으로 풀리지 않게 해서 provider 다름 판정을 본다."""
+    hosts = {'toss': TOSS_POPUP_URL, 'naverpay': 'https://pay.naver.com/checkout'}
+    targets: list[dict[str, object]] = [
+        {
+            'id': 't1',
+            'kind': 'tab',
+            'title': '무신사',
+            'url': 'https://www.musinsa.com',
+            'active': False,
+        },
+        {
+            'id': 'p1',
+            'kind': 'popup',
+            'title': '결제1',
+            'url': hosts[providers[0]],
+            'openerId': 't1',
+        },
+        {
+            'id': 'p2',
+            'kind': 'popup',
+            'title': '결제2',
+            'url': hosts[providers[1]],
+            'openerId': 't1',
+        },
+    ]
+    return page(json.dumps(targets, ensure_ascii=False))
+
+
+@respx.mock
+def test_매칭_팝업이_둘이고_서로_다른_provider면_사람에게_넘긴다(reg):
+    # 리뷰 지적 — Important 2: 팝업이 여럿이고 서로 다른 결제 앱을 가리키면 코드가 짐작하지
+    # 않고 사람에게 넘긴다. 근거에 두 호스트가 남는다
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
+    respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
+    respx.post(f'{URL}/tool/list_tabs').mock(
+        return_value=_list_tabs_with_two_popups(('toss', 'naverpay'))
+    )
+    pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=False, card='현대카드', handoff={'cost': 89000}))
+    assert out.status == 'needs_human'
+    assert not pay.called
+    assert 'pay.toss.im' in out.reason or 'tosspayments' in out.reason
+    assert 'pay.naver.com' in out.reason
+
+
+@respx.mock
+def test_매칭_팝업이_여러개면_활성_탭이_연_팝업을_우선한다(reg):
+    # 리뷰 지적 — Important 2: openerId 가 활성 탭인 팝업을 우선한다(같은 provider 중복이 아니라
+    # 마지막이 다른 provider 여도 활성 탭 쪽을 쓴다)
+    targets: list[dict[str, object]] = [
+        {
+            'id': 't1',
+            'kind': 'tab',
+            'title': '무신사',
+            'url': 'https://www.musinsa.com',
+            'active': False,
+        },
+        {
+            'id': 't2',
+            'kind': 'tab',
+            'title': '29CM',
+            'url': 'https://www.29cm.co.kr',
+            'active': True,
+        },
+        {'id': 'p1', 'kind': 'popup', 'title': '결제1', 'url': TOSS_POPUP_URL, 'openerId': 't1'},
+        {
+            'id': 'p2',
+            'kind': 'popup',
+            'title': '결제2',
+            'url': 'https://pay.naver.com/checkout',
+            'openerId': 't2',
+        },
+    ]
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
+    respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/list_tabs').mock(
+        return_value=page(json.dumps(targets, ensure_ascii=False))
+    )
+    pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/get_page').mock(side_effect=[page('결제 진행 중'), page('결제 완료')])
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=False, card='현대카드', handoff={'cost': 89000}))
+    assert out.status == 'ok'
+    assert _args(pay)['provider'] == 'naverpay'  # p2 를 연 t2 가 활성 탭이다
+
+
+@respx.mock
+def test_활성_탭이_연_팝업이_없으면_가장_최근_팝업을_쓴다(reg):
+    # 매칭 팝업 둘 다 같은 provider 이고(중복 팝업), 어느 openerId 도 활성 탭이 아니면
+    # 목록의 마지막(가장 최근에 뜬 것)을 쓴다
+    targets: list[dict[str, object]] = [
+        {
+            'id': 't1',
+            'kind': 'tab',
+            'title': '무신사',
+            'url': 'https://www.musinsa.com',
+            'active': True,
+        },
+        {'id': 't2', 'kind': 'tab', 'title': '숨은 탭', 'url': 'about:blank', 'active': False},
+        {'id': 'p1', 'kind': 'popup', 'title': '결제1', 'url': TOSS_POPUP_URL, 'openerId': 't2'},
+        {
+            'id': 'p2',
+            'kind': 'popup',
+            'title': '결제2(최근)',
+            'url': 'https://tosspayments.com/checkout',
+            'openerId': 't2',
+        },
+    ]
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
+    respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/list_tabs').mock(
+        return_value=page(json.dumps(targets, ensure_ascii=False))
+    )
+    pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/get_page').mock(side_effect=[page('결제 진행 중'), page('결제 완료')])
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=False, card='현대카드', handoff={'cost': 89000}))
+    assert out.status == 'ok'
+    assert _args(pay)['provider'] == 'toss'
+    assert _args(pay)['card'] == '현대카드'

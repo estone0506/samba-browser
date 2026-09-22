@@ -46,6 +46,10 @@ PAY_HOST_PROVIDERS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r'(^|\.)pay\.naver\.com$'), 'naverpay'),
 )
 
+# run_script checkout_enter_* 직후 결제창(팝업)이 아직 하나도 없을 때 한 번 더 보기 전 기다리는
+# 시간(ms) — 사이트가 팝업을 띄우는 타이밍과 어긋나 곧장 웹 결제 경로로 새지 않게 한다(리뷰 지적 — Minor 4)
+PAY_POPUP_WAIT_MS = 2000
+
 # list_tabs 응답에서 팝업 kind 만 그물망으로 건질 때 쓰는 보조 정규식.
 # 정상 응답은 JSON 배열(id·kind·title·url·…)이지만, 형식이 바뀌어도 최소한
 # "kind":"popup" 옆의 url 값은 이걸로 건진다(문자열 형식 대비)
@@ -82,20 +86,33 @@ def _pay_provider(*candidates: object) -> str | None:
     return None
 
 
-def _popup_urls(list_tabs_output: str) -> list[str]:
-    """list_tabs 출력(list_tabs, src/main/agent/tools.ts)에서 팝업 창의 URL 목록을 뽑는다.
-    결제창은 kind가 popup 인 창이다(주소 검색창 등 다른 팝업도 섞일 수 있어 호스트로 다시 거른다)."""
+def _popups_and_active_tabs(list_tabs_output: str) -> tuple[list[dict[str, object]], set[str]]:
+    """list_tabs 출력(list_tabs, src/main/agent/tools.ts)에서 팝업 창 목록과 활성 탭 id 집합을
+    뽑는다. 결제창은 kind가 popup 인 창이다(주소 검색창 등 다른 팝업도 섞일 수 있어 호스트로
+    다시 거른다). 팝업이 여럿일 때 우선순위를 매기려면 openerId(팝업을 연 탭)와 active(그 탭이
+    지금 활성 탭인지)가 있어야 하므로, 정상 JSON 응답에서만 그 값을 함께 돌려준다 — 형식이 바뀌어
+    문자열만 훑는 예비 경로에서는 URL만 남고 우선순위 정보는 없다."""
     try:
         targets = json.loads(list_tabs_output)
     except (json.JSONDecodeError, TypeError):
         targets = None
     if isinstance(targets, list):
-        return [
-            str(t['url'])
-            for t in targets
-            if isinstance(t, dict) and t.get('kind') == 'popup' and t.get('url')
+        popups = [
+            t for t in targets if isinstance(t, dict) and t.get('kind') == 'popup' and t.get('url')
         ]
-    return [m.group(1) for m in POPUP_URL_FALLBACK_RE.finditer(list_tabs_output) if m.group(1)]
+        active_tab_ids = {
+            str(t['id'])
+            for t in targets
+            if isinstance(t, dict)
+            and t.get('kind') == 'tab'
+            and t.get('active') is True
+            and t.get('id')
+        }
+        return popups, active_tab_ids
+    fallback = [
+        {'url': m.group(1)} for m in POPUP_URL_FALLBACK_RE.finditer(list_tabs_output) if m.group(1)
+    ]
+    return fallback, set()
 
 
 def _pay_provider_from_host(url: str) -> str | None:
@@ -152,24 +169,63 @@ class PayerAgent(AgentBase):
             )
         return super().tool(name, **args)
 
-    def _provider_from_payment_popup(self) -> str | None:
-        """지금 열린 결제창(팝업)의 호스트로 결제 앱을 고른다. 결제창이 없거나 아는 결제
-        앱의 호스트가 아니면 None — 그때는 phone_approve_payment 를 부르지 않는다.
-        list_tabs 자체가 실패하면(브릿지 오류 등) 결제창을 못 본 채로 찍어 승인하면 안 되므로
-        바로 사람에게 넘긴다."""
+    def _list_tabs_popups(self) -> tuple[list[dict[str, object]], set[str]]:
+        """list_tabs 를 불러 팝업 목록과 활성 탭 id 집합을 돌려준다. list_tabs 자체가 실패하면
+        (브릿지 오류 등) 결제창을 못 본 채로 찍어 승인하면 안 되므로 바로 사람에게 넘긴다 —
+        이때 사유를 UNKNOWN 으로 뭉개지 않고 브릿지가 준 fail_reason 을 그대로 살린다(리뷰 지적 — Minor 3)."""
         try:
             listed = self.tool('list_tabs')
         except AgentFailure as e:
             raise AgentFailure(
                 'needs_human',
                 f'결제창 목록을 확인할 수 없다: {e.reason}',
-                FailReason.UNKNOWN,
+                e.fail_reason,
             ) from e
-        for url in _popup_urls(listed):
-            provider = _pay_provider_from_host(url)
-            if provider is not None:
+        return _popups_and_active_tabs(listed)
+
+    def _provider_from_payment_popup(self) -> str | None:
+        """지금 열린 결제창(팝업)의 호스트로 결제 앱을 고른다. 결제창이 없거나 아는 결제
+        앱의 호스트가 아니면 None — 그때는 phone_approve_payment 를 부르지 않고 웹 결제
+        경로로 간다.
+
+        결제창이 하나도 없으면(팝업 0개) 사이트가 아직 못 띄웠을 수 있으니 wait 로 한 번만
+        기다렸다 다시 본다(리뷰 지적 — Minor 4). 그래도 없으면 웹 결제 경로다.
+
+        결제 호스트에 매칭되는 팝업이 여럿이면 그 팝업을 연 탭(openerId)이 지금 활성 탭인
+        것을 우선 쓴다 — 지금 사람이 보고 있는 흐름에서 뜬 결제창이라는 뜻이라 다른 팝업과
+        provider 가 갈려도 그것을 쓴다. 활성 탭이 연 팝업이 하나도 없으면, 모두 같은 결제
+        앱이면 목록의 마지막(가장 최근에 뜬 것)을 쓰지만 서로 다른 결제 앱을 가리키면 어느
+        쪽인지 코드가 짐작하지 않고 사람에게 넘긴다(근거에 호스트를 남긴다, 리뷰 지적 — Important 2)."""
+        popups, active_tab_ids = self._list_tabs_popups()
+        if not popups:
+            self.tool('wait', ms=PAY_POPUP_WAIT_MS)
+            popups, active_tab_ids = self._list_tabs_popups()
+        if not popups:
+            return None
+
+        matches = [
+            (str(p['url']), _pay_provider_from_host(str(p['url'])), p.get('openerId'))
+            for p in popups
+        ]
+        matches = [
+            (url, provider, opener) for url, provider, opener in matches if provider is not None
+        ]
+        if not matches:
+            return None
+
+        for url, provider, opener in matches:
+            if opener is not None and str(opener) in active_tab_ids:
                 return provider
-        return None
+
+        providers = {provider for _, provider, _ in matches}
+        if len(providers) > 1:
+            hosts = ', '.join(url for url, _, _ in matches)
+            raise AgentFailure(
+                'needs_human',
+                f'결제창이 여럿이고 서로 다른 결제 앱을 가리킨다 — 사람이 확인한다: {hosts}',
+                FailReason.UNKNOWN,
+            )
+        return matches[-1][1]
 
     def _pay(self, a: Assignment) -> AgentResult:
         self.evidence = []
@@ -239,9 +295,9 @@ class PayerAgent(AgentBase):
             self.step('payer: 폰 승인')
             # 카드 이름 자체가 결제 앱을 가리키면(예: 토스페이) 앱 안에서 고를 카드가 아니다
             card_hint = None if _pay_provider(card) else card
-            # 네이버페이는 앱이 네이버 계정 연결·결제창 계정 검사를 스스로 한다 —
-            # payAccount 를 넘기지 않는다(사용자 결정)
-            pay_account = a.handoff.get('pay_account') or a.options.get('pay_account')
+            # payAccount 는 앱 스키마상 네이버페이 전용이다. 사용자 결정 — 결제 앱이 쇼핑몰
+            # 계정에 연결된 네이버 계정으로 스스로 고르게 두고, 어떤 provider 에도 payAccount 를
+            # 넘기지 않는다(리뷰 지적 — Critical 1)
             approved = self.tool(
                 'phone_approve_payment',
                 provider=provider,
@@ -249,11 +305,6 @@ class PayerAgent(AgentBase):
                 merchant=a.order.source,
                 methodLabel=card,
                 **({'card': card_hint} if card_hint else {}),
-                **(
-                    {'payAccount': str(pay_account)}
-                    if pay_account and provider != 'naverpay'
-                    else {}
-                ),
             )
             self.note('폰 승인', mask_text(approved[:200]))
             if any(m in approved for m in DECLINED_MARKERS):
