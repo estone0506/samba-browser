@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -23,9 +23,6 @@ import { SiteFavicon } from './SiteFavicon'
 
 // 계정 없이도 존재할 수 있는(전역) 항목 종류
 const GLOBAL_TYPES = new Set<VaultItemType>(['card', 'note', 'identity', 'document'])
-
-// 사이트 그룹 삭제 확인이 자동으로 취소되기까지의 시간(ms)
-const GROUP_DELETE_CONFIRM_MS = 2000
 
 // 한 사이트 안에서 같은 아이디가 여러 서브도메인에 흩어져 있는 개수(합치면 사라질 계정 수)
 function duplicateCount(group: DomainGroup): number {
@@ -378,8 +375,7 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
 }
 
 /**
- * 사이트(도메인 그룹) 삭제 버튼.
- * 계정이 2개 이상이면 인라인 2단계 확인을 거치고, 2초 안에 다시 누르지 않으면 저절로 취소된다.
+ * 사이트(도메인 그룹) 삭제 버튼. 확인 없이 바로 지운다 — 되돌리기 토스트(60초)가 안전망이다
  */
 function GroupDeleteButton({
   accountIds,
@@ -389,37 +385,10 @@ function GroupDeleteButton({
   onDelete: (ids: number[]) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const [confirming, setConfirming] = useState(false)
-
-  useEffect(() => {
-    if (!confirming) return
-    const timer = setTimeout(() => setConfirming(false), GROUP_DELETE_CONFIRM_MS)
-    return () => clearTimeout(timer)
-  }, [confirming])
-
-  if (confirming) {
-    return (
-      <button
-        type="button"
-        onClick={() => {
-          setConfirming(false)
-          onDelete(accountIds)
-        }}
-        className="absolute right-1 rounded-[7px] bg-[#ff3b30] px-2 py-1 text-[11px] font-medium text-white"
-      >
-        {t('vault.list.deleteConfirm', { count: accountIds.length })}
-      </button>
-    )
-  }
-
   return (
     <button
       type="button"
-      onClick={() => {
-        // 계정이 하나뿐이면 확인 없이 바로 지운다(되돌리기 토스트가 안전망이다)
-        if (accountIds.length <= 1) onDelete(accountIds)
-        else setConfirming(true)
-      }}
+      onClick={() => onDelete(accountIds)}
       title={t('vault.list.deleteSite')}
       aria-label={t('vault.list.deleteSite')}
       className="absolute right-1 flex h-6 w-6 items-center justify-center rounded-[7px] text-[var(--text3)] opacity-0 hover:bg-black/10 focus-visible:opacity-100 group-hover:opacity-100"

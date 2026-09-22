@@ -436,7 +436,6 @@
       "accountCount": "{{count}} accounts",
       "deleteAccount": "Delete account",
       "deleteSite": "Delete all accounts for this site",
-      "deleteConfirm": "Delete {{count}} accounts?",
       "deleted": "Deleted",
       "undo": "Undo",
       "merge": "Merge {{count}} duplicates",
