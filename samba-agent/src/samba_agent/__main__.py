@@ -11,7 +11,6 @@ import threading
 from langgraph.checkpoint.sqlite import SqliteSaver
 from slack_bolt import App
 
-from samba_agent.agents.contracts import OrderRef
 from samba_agent.agents.factory import build_agents
 from samba_agent.agents.registry import Registry
 from samba_agent.api.server import build_app, serve
@@ -24,24 +23,13 @@ from samba_agent.ops.masking import mask_text
 from samba_agent.ops.releases import ReleaseStore
 from samba_agent.ops.tracing import configure_tracing
 from samba_agent.queue.db import Job, JobQueue
+from samba_agent.queue.orders import lookup_order
 from samba_agent.queue.worker import Worker, WorkerDeps
 from samba_agent.settings import load_settings
 from samba_agent.supervisor.graph import build_supervisor
 from samba_agent.version import harness_version
 
 log = logging.getLogger(__name__)
-
-
-def _parse_order(job: Job) -> OrderRef:
-    """큐 옵션 → OrderRef. 슬랙 명령에 없는 값은 등록부 조건에서 빠지지 않게 빈 문자열로 둔다."""
-    o = job.options
-    return OrderRef(
-        order_no=job.order_no,
-        source=str(o.get('source', '')),
-        seller=str(o.get('seller', '')),
-        sku=str(o.get('sku', '')),
-        qty=int(o.get('qty', 1)),
-    )
 
 
 def main() -> None:
@@ -86,7 +74,7 @@ def main() -> None:
             graph=graph,
             version=version_fn(),
             report=_report,
-            parse_order=_parse_order,
+            parse_order=lambda job: lookup_order(bridge, job.order_no, job.options),
             dry_run=settings.dry_run,
         )
     )
