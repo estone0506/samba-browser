@@ -218,6 +218,9 @@ export class VaultService {
   private undoBuffer = new Map<string, { snapshots: AccountSnapshot[]; timer: NodeJS.Timeout }>()
   // 동기화 변경 로그 훅. 주입하지 않으면 아무 일도 하지 않는다(동기화를 끈 상태)
   private outbox: OutboxRecorder | null = null
+  // 서버(계정)의 마스터 키 재료가 이 PC 의 금고와 다를 때 보관해 둔다 — 사용자가 계정 마스터
+  // 비밀번호를 넣으면 이 재료로 새 키를 유도해 모든 항목을 다시 잠근다(rekeyToRemote)
+  private pendingRemoteMaterial: RemoteKeyMaterial | null = null
 
   constructor(
     private readonly db: Db,
@@ -291,6 +294,8 @@ export class VaultService {
         salt.equals(parsed.salt) &&
         ct.equals(parsed.verifierCt) &&
         iv.equals(parsed.verifierIv)
+      if (!same) this.pendingRemoteMaterial = parsed
+      else this.pendingRemoteMaterial = null
       return same ? 'unchanged' : 'mismatch'
     }
 
@@ -302,6 +307,92 @@ export class VaultService {
     // 'uninitialized' → 'locked' 로 바뀐 것을 화면이 곧바로 따라오게 한다
     this.emit()
     return 'applied'
+  }
+
+  /** 서버(계정)의 키 재료가 이 PC 와 달라 재키가 필요한 상태인가 */
+  hasPendingRemoteKey(): boolean {
+    return this.pendingRemoteMaterial !== null
+  }
+
+  /**
+   * 이 PC 의 금고를 계정(서버) 마스터 키에 맞춘다.
+   * 계정 마스터 비밀번호로 서버 재료에서 키를 유도해 검증한 뒤, 모든 항목의 비밀 필드를 지금 키로 풀어
+   * 새 키로 다시 잠그고, 키 재료를 서버 것으로 바꾼다. 항목마다 변경 로그를 남겨 서버의 (다른 키로 잠긴)
+   * 사본을 덮어쓴다. 복구 키는 옛 키를 감싼 것이라 지운다(다시 등록해야 한다).
+   * - 'locked': 지금 키가 없어 항목을 풀 수 없다(먼저 이 PC 마스터로 열어야 한다)
+   * - 'no-remote': 서버 재료가 없거나 이미 같다
+   * - 'wrong-master': 계정 마스터 비밀번호가 틀렸다
+   * - 'decrypt-failed': 어떤 항목을 지금 키로 못 풀었다(아무것도 바꾸지 않았다)
+   */
+  async rekeyToRemote(
+    master: string
+  ): Promise<'ok' | 'locked' | 'no-remote' | 'wrong-master' | 'decrypt-failed'> {
+    const oldKey = this.key
+    if (!oldKey) return 'locked'
+    const remote = this.pendingRemoteMaterial
+    if (!remote) return 'no-remote'
+    if (master.length === 0) return 'wrong-master'
+    const newKey = await deriveKey(master, remote.salt, {
+      memoryKiB: remote.kdf.memoryKiB,
+      iterations: remote.kdf.iterations,
+      parallelism: remote.kdf.parallelism
+    })
+    if (!checkVerifier(newKey, { ciphertext: remote.verifierCt, iv: remote.verifierIv })) {
+      zeroize(newKey)
+      return 'wrong-master'
+    }
+    // 먼저 전부 풀어 본다 — 하나라도 못 풀면 아무것도 바꾸지 않는다
+    const rows = this.repo.listAllItemRows()
+    const rekeyed: Array<{ row: VaultItemRow; sections: StoredSection[] }> = []
+    try {
+      for (const row of rows) {
+        const sections: StoredSection[] = row.sections.map((section) => ({
+          ...section,
+          fields: section.fields.map((field): StoredField => {
+            if (!isSecretField(field)) return field
+            const plain = decrypt(
+              oldKey,
+              Buffer.from(field.ciphertext, 'base64'),
+              Buffer.from(field.iv, 'base64'),
+              aadFor(row.id, field)
+            )
+            const blob = encrypt(newKey, plain, newAad(row.id, field.key))
+            return {
+              key: field.key,
+              label: field.label,
+              kind: 'secret',
+              ciphertext: blob.ciphertext.toString('base64'),
+              iv: blob.iv.toString('base64')
+            }
+          })
+        }))
+        rekeyed.push({ row, sections })
+      }
+    } catch {
+      zeroize(newKey)
+      return 'decrypt-failed'
+    }
+    const now = Date.now()
+    this.repo.transaction(() => {
+      for (const { row, sections } of rekeyed) {
+        this.repo.updateItemFields(row.id, sections, row.label, row.type, now)
+        this.record('vault_items', row.id, 'upsert')
+      }
+      this.repo.setMeta(META_SALT, remote.salt)
+      this.repo.setMeta(META_KDF_PARAMS, Buffer.from(JSON.stringify(remote.kdf), 'utf8'))
+      this.repo.setMeta(META_VERIFIER_CT, remote.verifierCt)
+      this.repo.setMeta(META_VERIFIER_IV, remote.verifierIv)
+      // 복구 키·기기 키는 옛 키를 감싼 것 — 지운다(기기 키는 applyKey 가 새로 감싼다)
+      this.repo.deleteMeta(META_RECOVERY_SALT)
+      this.repo.deleteMeta(META_RECOVERY_CT)
+      this.repo.deleteMeta(META_RECOVERY_IV)
+      this.repo.deleteMeta(META_DEVICE_KEY)
+      return null
+    })
+    this.pendingRemoteMaterial = null
+    this.applyKey(newKey)
+    this.repo.insertAudit({ itemId: null, accountId: null, action: 'rekey', source: 'user' })
+    return 'ok'
   }
 
   /** 이 금고의 키 재료가 다른 PC 에서 내려온 것인가(잠금 해제 화면 안내 문구용) */
@@ -1427,6 +1518,13 @@ function fromBase64(value: unknown): Buffer | null {
  * 원격에서 받은 키 재료 세 키를 검사해 버퍼로 푼다.
  * 하나라도 빠졌거나 형식이 어긋나면 null — 반쪽만 심어 금고를 못 여는 상태를 만들지 않는다
  */
+interface RemoteKeyMaterial {
+  salt: Buffer
+  kdf: KdfParams
+  verifierCt: Buffer
+  verifierIv: Buffer
+}
+
 function parseKeyMaterial(values: Partial<Record<VaultKeySyncKey, string>>): {
   salt: Buffer
   kdf: KdfParams

@@ -70,7 +70,8 @@
       "instructions": "절차",
       "instructionsDesc": "AI 가 그대로 따를 절차를 마크다운으로 적어 주세요.",
       "length": "{{n}} / {{max}}자"
-    }
+    },
+    "updatedAt": "최근 수정 {{time}}"
   },
   "schedule": {
     "title": "예약",
@@ -783,6 +784,16 @@
       "siteMemoryCounts": "경로 {{recipes}}개 · 메모 {{notes}}개",
       "siteMemoryForget": "지우기"
     },
+    "behavior": {
+      "bridgeTitle": "하네스 브릿지",
+      "bridgeDesc": "밖에서 도는 주문처리 하네스(LangGraph)가 이 브라우저를 손발로 쓰게 여는 문이에요. 이 PC 안(127.0.0.1)에서만 열립니다. 브릿지를 켜면 토큰을 쥔 하네스는 현재 권한 모드 설정과 상관없이 항상 전체 권한으로 동작해요 — 확인 카드 없이 클릭·입력·로그인·결제 비밀번호 입력까지 사람 개입 없이 진행됩니다. 읽기 전용 모드에서는 브릿지를 쓸 수 없어요",
+      "bridgeEnabled": "브릿지 켜기",
+      "bridgePort": "포트",
+      "bridgeToken": "토큰",
+      "bridgeCopy": "복사",
+      "bridgeRegenerate": "새로 만들기",
+      "bridgeHint": "하네스의 .env 에 SAMBA_BRIDGE_URL=http://127.0.0.1:<포트> 와 SAMBA_BRIDGE_TOKEN=<토큰> 을 넣으세요. 브릿지가 도구를 쓰는 동안은 채팅창 AI 를 못 씁니다"
+    },
     "security": {
       "autofillTitle": "자동 채우기"
     },
@@ -933,7 +944,21 @@
     "lastPulledAt": "마지막 수신",
     "lastError": "마지막 오류",
     "syncNow": "지금 동기화",
-    "syncing": "동기화 중"
+    "syncing": "동기화 중",
+    "rekey": {
+      "title": "이 PC 의 키마스터가 계정과 다른 마스터 비밀번호로 잠겨 있어요",
+      "desc": "다른 PC 에서 먼저 설정된 계정 마스터 비밀번호를 넣으면 이 PC 의 모든 항목을 그 키로 다시 잠가 동기화합니다. 그 전까지는 이 PC 의 항목이 서버로 올라가지 않고, 서버 항목도 여기서 열리지 않습니다. 복구 키는 다시 등록해야 합니다",
+      "master": "계정 마스터 비밀번호",
+      "submit": "계정 키로 다시 잠그기",
+      "result": {
+        "ok": "완료 — 동기화를 시작합니다",
+        "locked": "먼저 이 PC 의 마스터 비밀번호로 키마스터를 열어 주세요",
+        "no-remote": "계정 키 재료가 아직 없거나 이미 같습니다",
+        "wrong-master": "계정 마스터 비밀번호가 맞지 않습니다",
+        "decrypt-failed": "일부 항목을 풀지 못해 아무것도 바꾸지 않았습니다",
+        "error": "실패했습니다"
+      }
+    }
   },
   "ai": {
     "claudeSubscriptionDesc": "이 PC 에 설치된 Claude Code 로그인을 그대로 써요",

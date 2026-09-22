@@ -70,7 +70,8 @@
       "instructions": "Steps",
       "instructionsDesc": "Write the steps the AI should follow, in Markdown.",
       "length": "{{n}} / {{max}} chars"
-    }
+    },
+    "updatedAt": "Last edited {{time}}"
   },
   "schedule": {
     "title": "Schedule",
@@ -783,6 +784,16 @@
       "siteMemoryCounts": "{{recipes}} paths · {{notes}} notes",
       "siteMemoryForget": "Clear"
     },
+    "behavior": {
+      "bridgeTitle": "Harness bridge",
+      "bridgeDesc": "Lets the external order-processing harness (LangGraph) drive this browser. Listens only on 127.0.0.1. While the bridge is on, any harness holding the token acts with full permission regardless of the permission mode setting — no confirmation cards; clicks, typing, login, and payment-password entry happen unattended. Read-only mode blocks the bridge",
+      "bridgeEnabled": "Enable bridge",
+      "bridgePort": "Port",
+      "bridgeToken": "Token",
+      "bridgeCopy": "Copy",
+      "bridgeRegenerate": "Regenerate",
+      "bridgeHint": "Put SAMBA_BRIDGE_URL=http://127.0.0.1:<port> and SAMBA_BRIDGE_TOKEN=<token> in the harness .env. While the bridge is using tools, the chat AI is unavailable"
+    },
     "security": {
       "autofillTitle": "Autofill"
     },
@@ -933,7 +944,21 @@
     "lastPulledAt": "Last pulled",
     "lastError": "Last error",
     "syncNow": "Sync now",
-    "syncing": "Syncing"
+    "syncing": "Syncing",
+    "rekey": {
+      "title": "KeyMaster on this PC is locked with a different master password than the account",
+      "desc": "Enter the account master password (set first on another PC) to re-lock every item on this PC with that key and sync. Until then, items on this PC are not uploaded and server items cannot be opened here. The recovery key must be registered again",
+      "master": "Account master password",
+      "submit": "Re-lock with account key",
+      "result": {
+        "ok": "Done, syncing now",
+        "locked": "Unlock KeyMaster with this PC master password first",
+        "no-remote": "No account key material yet, or already identical",
+        "wrong-master": "Account master password is incorrect",
+        "decrypt-failed": "Some items could not be decrypted; nothing was changed",
+        "error": "Failed"
+      }
+    }
   },
   "ai": {
     "claudeSubscriptionDesc": "Reuses the Claude Code login already on this PC",

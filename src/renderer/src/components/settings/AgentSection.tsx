@@ -11,6 +11,7 @@ import {
   SettingsRow,
   SettingsSection,
   SettingsToggleRow,
+  TextInput,
   type SectionProps
 } from './shared'
 
@@ -158,6 +159,50 @@ export function AgentSection({ settings, update }: SectionProps): React.JSX.Elem
             }))}
           />
         </SettingsRow>
+      </SettingsSection>
+
+      <SettingsSection
+        title={t('settingsPage.behavior.bridgeTitle')}
+        description={t('settingsPage.behavior.bridgeDesc')}
+      >
+        <SettingsToggleRow label={t('settingsPage.behavior.bridgeEnabled')}>
+          <Switch
+            checked={settings.bridgeEnabled}
+            onCheckedChange={(v) => update({ bridgeEnabled: v })}
+          />
+        </SettingsToggleRow>
+        <SettingsRow label={t('settingsPage.behavior.bridgePort')}>
+          <TextInput
+            value={String(settings.bridgePort)}
+            onChange={(v) => {
+              const n = Number(v.replace(/[^\d]/g, ''))
+              if (n >= 1024 && n <= 65535) update({ bridgePort: n })
+            }}
+          />
+        </SettingsRow>
+        <SettingsRow label={t('settingsPage.behavior.bridgeToken')}>
+          <div className="flex items-center gap-2">
+            <code className="truncate font-mono text-[12px] text-[var(--text2)]">
+              {settings.bridgeToken ? `${settings.bridgeToken.slice(0, 8)}…` : '-'}
+            </code>
+            <SecondaryButton
+              disabled={!settings.bridgeToken}
+              onClick={() => void navigator.clipboard.writeText(settings.bridgeToken)}
+            >
+              {t('settingsPage.behavior.bridgeCopy')}
+            </SecondaryButton>
+            <SecondaryButton
+              onClick={() =>
+                void window.samba.bridge
+                  .regenerateToken()
+                  .then((r) => r.ok && update({ bridgeToken: r.data.token }))
+              }
+            >
+              {t('settingsPage.behavior.bridgeRegenerate')}
+            </SecondaryButton>
+          </div>
+        </SettingsRow>
+        <p className="text-[11.5px] text-[var(--text2)]">{t('settingsPage.behavior.bridgeHint')}</p>
       </SettingsSection>
     </>
   )

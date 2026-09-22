@@ -21,6 +21,8 @@ import { ClosedTabStack, newProfileName, runGesture, type GestureDeps } from '..
 import { SettingsStore } from '../settings/store'
 import { setOcrEnabled } from '../agent/tools-ocr'
 import { AgentRunner } from '../agent/runner'
+import { BridgeServer } from '../bridge/server'
+import { applyBridgeSettings, newBridgeToken } from '../bridge/wiring'
 import { createAgentNotifier } from '../notify'
 import type { NotifyChannel } from '../../shared/notify'
 import type { Db } from '../db/client'
@@ -239,6 +241,24 @@ export function registerIpc(
   agent.setSiteMemory(siteMemory)
   // 한 번 통한 run_js 코드를 저장해 두고 재생한다(기기 로컬). 사이트 기억과 같은 스위치로 켜고 끈다
   agent.setSiteScripts(new SiteScriptStore(join(app.getPath('userData'), 'site-scripts.json')))
+  // 하네스 브릿지 — 밖의 LangGraph 하네스가 이 앱의 도구를 부르는 문. 설정으로 켜고 끈다
+  const bridge = new BridgeServer({
+    openSession: (onStep) => agent.createToolSession({ onStep }),
+    token: () => settings.get().bridgeToken
+  })
+  const applyBridge = (): Promise<void> =>
+    applyBridgeSettings(
+      bridge,
+      () => settings.get(),
+      (patch) => void settings.set(patch)
+    )
+  void applyBridge()
+  win.once('closed', () => void bridge.stop())
+  handleFromRenderer(IPC.bridgeRegenerateToken, async () => {
+    const token = newBridgeToken()
+    settings.set({ bridgeToken: token })
+    return { token }
+  })
   // 같은 대화의 다음 지시는 SDK 세션을 이어받아 앞선 지시·도구 결과를 기억한다(세션 연결은 이 PC 에만 남는다)
   agent.setChatSessions(
     new ChatSessionStore(join(app.getPath('userData'), 'chat-sessions.json')),
@@ -419,7 +439,7 @@ export function registerIpc(
   ipcMain.handle(IPC.settingsGet, (e) =>
     wrap(() => settingsForSender(settings.get(), win, e.sender))
   )
-  handleFromRenderer(IPC.settingsSet, (patch: Partial<Settings>) => {
+  handleFromRenderer(IPC.settingsSet, async (patch: Partial<Settings>) => {
     // 저장 폴더는 렌더러가 임의 경로를 넣지 못한다 — 폴더 선택 다이얼로그(메인)로만 자유롭다
     if (
       typeof patch.captureDir === 'string' &&
@@ -428,10 +448,12 @@ export function registerIpc(
       throw new Error(tr('ipc.saveFolderOutsideHome'))
     }
     const s = settings.set(patch)
+    // 브릿지 적용이 토큰을 새로 만들어 저장할 수 있다 — 끝난 뒤 다시 읽어 최신값을 돌려준다
+    if ('bridgeEnabled' in patch || 'bridgePort' in patch) await applyBridge()
     // 홈 주소·새 탭 주소·검색엔진이 바뀌면 tab-manager 도 즉시 반영한다
     applyBrowserDefaults(s)
     setOcrEnabled(s.ocrEnabled)
-    return s
+    return settings.get()
   })
 
   // --- 금고 ---------------------------------------------------------------
@@ -441,6 +463,10 @@ export function registerIpc(
   handleFromRenderer(IPC.vaultSetup, (master: string) => vault.setup(master))
   handleFromRenderer(IPC.vaultUnlock, (master: string) => vault.unlock(master))
   handleFromRenderer(IPC.vaultLock, () => vault.lock())
+  // 서버(계정) 마스터 키 재료와 이 PC 가 다를 때 — 계정 마스터로 모든 항목을 다시 잠근다
+  handleFromRenderer(IPC.vaultRekeyToAccount, (master: string) =>
+    vault.rekeyToRemote(String(master ?? ''))
+  )
   // 복구 키 — 발급 응답만 평문을 돌려주고, 확인을 통과해야 감싼 키가 저장된다
   handleFromRenderer(IPC.vaultRecoveryCreate, () => vault.createRecoveryKey())
   handleFromRenderer(IPC.vaultRecoveryConfirm, (input: string) => vault.confirmRecoveryKey(input))

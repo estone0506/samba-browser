@@ -354,6 +354,11 @@ export class VaultRepo {
     return row ? toItemRow(row) : null
   }
 
+  /** 작업공간과 무관하게 모든 항목 행. 마스터 키를 바꿀 때(재암호화) 전부 훑는 용도 */
+  listAllItemRows(): VaultItemRow[] {
+    return this.d.select().from(vaultItems).all().map(toItemRow)
+  }
+
   /** 전역 항목(accountId = null) 가운데 이 종류인 것 전부(만든 순서) */
   findGlobalItemRowsByType(type: VaultItemType): VaultItemRow[] {
     return this.d

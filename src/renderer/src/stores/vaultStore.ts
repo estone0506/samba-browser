@@ -107,6 +107,8 @@ interface VaultStoreState {
   // 이걸 unlock() 처럼 remember=false 로 부르면 기기 기억 설정이 영구적으로 꺼져버린다
   unlockOnly: (master: string) => Promise<boolean>
   lock: () => Promise<void>
+  /** 이 PC 금고를 계정 마스터 키에 맞춘다. 결과 코드를 돌려준다 */
+  rekeyToAccount: (master: string) => Promise<string>
   loadAccounts: () => Promise<void>
   select: (id: SelectedAccount) => void
   selectGlobalItem: (id: number) => void
@@ -277,6 +279,12 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
   lock: async () => {
     await window.samba.vault.lock()
     await get().refreshState()
+  },
+  rekeyToAccount: async (master) => {
+    const r = await window.samba.vault.rekeyToAccount(master)
+    if (!r.ok) return 'error'
+    await get().refreshState()
+    return r.data
   },
 
   loadAccounts: async () => {

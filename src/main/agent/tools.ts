@@ -497,7 +497,19 @@ export async function findLoginFieldsWithFallback(
   return fields
 }
 
-export function createSambaTools(baseCtx: ToolContext): ReturnType<typeof createSdkMcpServer> {
+// 브릿지 도구 세션(runner.ts 의 createToolSession)이 서버 객체에서 실제로 쓰는 부분만(이름·핸들러).
+// 도구마다 zod 스키마 타입이 달라 SdkMcpToolDefinition<Schema> 그대로는 배열 하나로 묶이지 않는다
+export interface SambaMcpTool {
+  name: string
+  handler: (
+    args: Record<string, unknown>,
+    extra: unknown
+  ) => Promise<{ content: Array<{ type: string; text?: string }> }>
+}
+
+export function createSambaTools(
+  baseCtx: ToolContext
+): ReturnType<typeof createSdkMcpServer> & { tools: SambaMcpTool[] } {
   // 사람을 기다리는 중인 호출 수 — 이 동안은 도구 제한 시간을 세지 않는다
   let humanWaits = 0
   const waitingForHuman = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -1927,39 +1939,42 @@ overlays left: ${after.length}${kept}`
     }
   )
 
-  return createSdkMcpServer({
-    name: 'samba',
-    version: '0.1.0',
-    tools: [
-      getPage,
-      findElements,
-      screenshot,
-      createOcrTool(ctx),
-      navigate,
-      click,
-      typeTool,
-      select,
-      scroll,
-      dismissOverlay,
-      runJs,
-      wait,
-      newTab,
-      listTabs,
-      switchTab,
-      closeTab,
-      listAccounts,
-      fillSecret,
-      login,
-      progress,
-      ...(ctx.siteMemory ? [rememberSite] : []),
-      ...(ctx.scripts ? [saveScript, runScript] : []),
-      ...(ctx.playbooks ? [listPlaybooks, updatePlaybook] : []),
-      done,
-      // 폰이 한 대도 붙어 있지 않으면 폰 도구를 아예 내보내지 않는다 —
-      // 목록에 있으면 모델이 웹 작업 중에도 phone_tap 을 부른다(실기에서 관찰)
-      ...(ctx.phone && hasConnectedPhone(ctx.phone) ? createPhoneTools(ctx.phone) : []),
-      ...(ctx.pay ? [createPayTool(ctx.pay)] : [])
-    ]
+  const tools = [
+    getPage,
+    findElements,
+    screenshot,
+    createOcrTool(ctx),
+    navigate,
+    click,
+    typeTool,
+    select,
+    scroll,
+    dismissOverlay,
+    runJs,
+    wait,
+    newTab,
+    listTabs,
+    switchTab,
+    closeTab,
+    listAccounts,
+    fillSecret,
+    login,
+    progress,
+    ...(ctx.siteMemory ? [rememberSite] : []),
+    ...(ctx.scripts ? [saveScript, runScript] : []),
+    ...(ctx.playbooks ? [listPlaybooks, updatePlaybook] : []),
+    done,
+    // 폰이 한 대도 붙어 있지 않으면 폰 도구를 아예 내보내지 않는다 —
+    // 목록에 있으면 모델이 웹 작업 중에도 phone_tap 을 부른다(실기에서 관찰)
+    ...(ctx.phone && hasConnectedPhone(ctx.phone) ? createPhoneTools(ctx.phone) : []),
+    ...(ctx.pay ? [createPayTool(ctx.pay)] : [])
+  ]
+  // 서버 객체에 도구 배열을 그대로 얹어 둔다 — 브릿지 도구 세션(runner.ts 의 createToolSession)이
+  // MCP 내부 필드에 기대지 않고 이 값을 그대로 읽는다.
+  // 도구마다 zod 스키마 타입이 달라 SdkMcpToolDefinition<Schema> 그대로는 하나의 배열 타입으로
+  // 못 묶는다(제네릭 분산) — 브릿지가 실제로 쓰는 부분(이름·핸들러)만 남긴 타입으로 한 번만 캐스팅한다
+  return Object.assign(createSdkMcpServer({ name: 'samba', version: '0.1.0', tools }), {
+    tools: tools as unknown as SambaMcpTool[]
   })
 }
 

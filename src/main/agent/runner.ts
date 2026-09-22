@@ -9,8 +9,10 @@ import { randomUUID } from 'crypto'
 import type { TabManager } from '../browser/tab-manager'
 import type { SettingsStore } from '../settings/store'
 import type { AgentEvent, HandoffKind } from '../../shared/ipc'
+import type { Settings } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
+import type { ToolContext, SambaMcpTool } from './tools'
 import { hasConnectedPhone } from './tools-phone'
 import type { PayToolRequest, PhoneToolContext, SmsCodeOutcome } from './tools-phone'
 import type { PayResult } from '../phone/pay'
@@ -41,6 +43,27 @@ import {
   type HandoffResult,
   type HandoffWatchDeps
 } from './handoff'
+
+/** 브릿지가 쓰는 도구 세션. 채팅 실행과 같은 도구를 이름으로 부른다(한 손발이라 동시에 못 돈다) */
+export interface ToolSession {
+  /** 부를 수 있는 도구 이름 */
+  names(): string[]
+  /** 도구 1건 호출. 도구가 돌려주는 본문 문자열. 없는 이름이면 throw */
+  call(name: string, args: Record<string, unknown>): Promise<string>
+  /** 세션 종료 — 이후 채팅 실행이 다시 가능해진다 */
+  dispose(): void
+}
+
+/**
+ * createSambaTools() 가 돌려준 서버에서 이름→핸들러 목록을 뽑는다.
+ * 서버 객체는 자신이 등록한 도구 배열을 `.tools` 로 그대로 들고 있다(createSambaTools 의
+ * 반환값 계약) — MCP 내부의 비공개 필드는 들여다보지 않는다
+ */
+function extractSdkTools(server: unknown): SambaMcpTool[] {
+  const tools = (server as { tools?: unknown }).tools
+  if (!Array.isArray(tools)) throw new Error('도구 목록을 읽을 수 없음')
+  return tools as SambaMcpTool[]
+}
 
 // 확인 요청 응답 대기 상한 30분
 const CONFIRM_TIMEOUT_MS = 30 * 60 * 1000
@@ -126,6 +149,8 @@ export class AgentRunner {
   // 실행 중인 작업이 쥔 금고 자동 잠금 보류 해제 함수. stop() 과 run() 의 finally 가
   // 겹쳐 불러도 되도록 해제 함수 자체가 여러 번 호출에 안전하다
   private releaseVaultHold: (() => void) | null = null
+  // 밖의 하네스가 쥔 도구 세션. 있는 동안은 채팅 실행(run)을 받지 않는다(한 손발이라 동시에 못 돈다)
+  private session: ToolSession | null = null
 
   constructor(
     private tabs: TabManager,
@@ -256,9 +281,9 @@ export class AgentRunner {
     }
   }
 
-  /** 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다) */
+  /** 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다). 브릿지 세션이 열려 있는 동안도 포함한다 */
   isRunning(): boolean {
-    return this.abort !== null
+    return this.abort !== null || this.session !== null
   }
 
   /**
@@ -394,6 +419,7 @@ export class AgentRunner {
     // AI 창에 붙여 넣은 이미지. 모델에만 실어 주고 대화 기록에는 남기지 않는다
     images?: AgentImage[]
   ): Promise<void> {
+    if (this.session) throw new Error('브릿지 세션 사용 중')
     // 이미 실행 중이면 세대 가드 없이 status 를 emit 하면 진행 중인 실행의 UI 를 덮어쓸 수 있다.
     // 핸들러가 throw 를 { ok: false, error } 로 ack 하므로 에러만 던진다.
     if (this.abort) {
@@ -511,75 +537,23 @@ export class AgentRunner {
       phones?.approvePayment
         ? phones.approvePayment(phoneCtx(), req)
         : Promise.resolve({ ok: false, reason: 'declined' as const })
-    const server = createSambaTools({
-      tabs: this.tabs,
-      vault: this.vault,
-      jobId,
-      dangerWords: s.dangerWords,
-      mode: s.permissionMode,
-      finalConfirm: s.finalConfirm,
-      vaultAccessPolicy: s.vaultAccessPolicy,
-      vaultAutoSubmit: s.vaultAutoSubmit,
-      vaultKeepSignedIn: s.vaultKeepSignedIn,
-      vaultExcludedHosts: s.vaultExcludedHosts,
-      tick: counter.tick,
-      onStep: (label, ok) => emit({ type: 'step', label, ok }),
-      // 행동 도구 호출만 넘어온다(관찰 도구는 오지 않는다)
-      onCall: (call) => calls.push(call),
-      onRunJs: (run) => runJsLog.push(run),
-      siteMemory: this.siteMemory
-        ? { remember: (host, note) => this.siteMemory?.remember(host, note) ?? '' }
-        : undefined,
-      scripts: scripts
-        ? {
-            find: (name) => scripts.find(name),
-            save: (input) => scripts.save(input),
-            ran: (name, ok) => scripts.ran(name, ok)
-          }
-        : undefined,
-      playbooks: this.playbookEditor
-        ? {
-            list: () => this.playbookEditor?.list() ?? [],
-            update: (id, instructions) =>
-              this.playbookEditor?.setInstructions(id, instructions) ?? null
-          }
-        : undefined,
-      onProgress: ({ done, total, label }) =>
-        emit(
-          label === undefined
-            ? { type: 'progress', kind: 'task', done, total }
-            : { type: 'progress', kind: 'task', done, total, label }
-        ),
-      confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit),
-      handoff: (req) => this.requestHandoff(req, emit),
-      // 폰 도구는 웹 도구와 같은 모드·상한·확인 카드를 공유한다
-      phone: phones
-        ? {
-            // 배선부의 두 실행기(waitForSmsCode/approvePayment)는 문맥을 한 겹 덧씌워
-            // 아래에서 따로 넣는다 — 그대로 펼치면 도구가 보는 모양과 어긋난다
-            phones: phones.phones,
-            assigned: phones.assigned,
-            mode: s.permissionMode,
-            tick: counter.tick,
-            onStep: (label, ok) => emit({ type: 'step', label, ok }),
-            confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit),
-            ...(phones.waitForSmsCode === undefined
-              ? {}
-              : { waitForSmsCode: (host?: string) => waitSms(host) })
-          }
-        : undefined,
-      // 결제는 금고를 보는 별도 문맥이다. 실행기(확인 카드·상한·재시도 0)는 wiring 이 쥔다
-      pay:
-        phones && phones.approvePayment
-          ? {
-              tick: counter.tick,
-              onStep: (label, ok) => emit({ type: 'step', label, ok }),
-              run: (req) => runPay(req),
-              // 지시문에 카드사가 적혀 있으면 card 없는 결제 호출을 거부한다(다른 카드로 나가지 않게)
-              ...(cardNamedIn(prompt) === undefined ? {} : { requiredCard: cardNamedIn(prompt) })
-            }
-          : undefined
-    })
+    const server = createSambaTools(
+      this.buildToolContext({
+        s,
+        jobId,
+        tick: counter.tick,
+        emit,
+        confirm: (action, kind = 'danger') => this.requestConfirm(action, kind, emit),
+        handoff: (req) => this.requestHandoff(req, emit),
+        onCall: (call) => calls.push(call),
+        onRunJs: (run) => runJsLog.push(run),
+        scripts,
+        phoneCtx,
+        waitSms,
+        runPay,
+        prompt
+      })
+    )
     emit({ type: 'status', state: 'running', toolCalls: 0 })
     // 어떤 플레이북이 적용됐는지 채팅에 한 줄로 알린다(절차 본문은 보내지 않는다)
     if (playbooks.length > 0) emit({ type: 'playbook', names: playbooks.map((p) => p.name) })
@@ -790,6 +764,161 @@ ${CODEX_NO_IMAGE_NOTE}`
         }, 0)
       }
     }
+  }
+
+  /**
+   * 도구 서버에 넘길 문맥. 채팅 실행(run)과 브릿지 세션(createToolSession)이 같은 조립을 쓴다 —
+   * 차이는 인자(권한 모드·확인 카드·상한)뿐이다
+   */
+  private buildToolContext(o: {
+    s: Settings
+    jobId: string
+    tick: () => string | null
+    emit: (e: AgentEvent) => void
+    confirm: ToolContext['confirm']
+    handoff: NonNullable<ToolContext['handoff']>
+    onCall: (call: AgentToolCall) => void
+    onRunJs: NonNullable<ToolContext['onRunJs']>
+    scripts: SiteScriptStore | null
+    phoneCtx: () => PhoneRunContext
+    waitSms: (host?: string) => Promise<SmsCodeOutcome>
+    runPay: (req: PayToolRequest) => Promise<PayResult>
+    prompt: string
+  }): ToolContext {
+    const { s, jobId, tick, emit, scripts, phoneCtx, waitSms, runPay, prompt } = o
+    const phones = this.phones
+    void phoneCtx
+    return {
+      tabs: this.tabs,
+      vault: this.vault,
+      jobId,
+      dangerWords: s.dangerWords,
+      mode: s.permissionMode,
+      finalConfirm: s.finalConfirm,
+      vaultAccessPolicy: s.vaultAccessPolicy,
+      vaultAutoSubmit: s.vaultAutoSubmit,
+      vaultKeepSignedIn: s.vaultKeepSignedIn,
+      vaultExcludedHosts: s.vaultExcludedHosts,
+      tick,
+      onStep: (label, ok) => emit({ type: 'step', label, ok }),
+      onCall: o.onCall,
+      onRunJs: o.onRunJs,
+      siteMemory: this.siteMemory
+        ? { remember: (host, note) => this.siteMemory?.remember(host, note) ?? '' }
+        : undefined,
+      scripts: scripts
+        ? {
+            find: (name) => scripts.find(name),
+            save: (input) => scripts.save(input),
+            ran: (name, ok) => scripts.ran(name, ok)
+          }
+        : undefined,
+      playbooks: this.playbookEditor
+        ? {
+            list: () => this.playbookEditor?.list() ?? [],
+            update: (id, instructions) =>
+              this.playbookEditor?.setInstructions(id, instructions) ?? null
+          }
+        : undefined,
+      onProgress: ({ done, total, label }) =>
+        emit(
+          label === undefined
+            ? { type: 'progress', kind: 'task', done, total }
+            : { type: 'progress', kind: 'task', done, total, label }
+        ),
+      confirm: o.confirm,
+      handoff: o.handoff,
+      phone: phones
+        ? {
+            phones: phones.phones,
+            assigned: phones.assigned,
+            mode: s.permissionMode,
+            tick,
+            onStep: (label, ok) => emit({ type: 'step', label, ok }),
+            confirm: o.confirm,
+            ...(phones.waitForSmsCode === undefined
+              ? {}
+              : { waitForSmsCode: (host?: string) => waitSms(host) })
+          }
+        : undefined,
+      pay:
+        phones && phones.approvePayment
+          ? {
+              tick,
+              onStep: (label, ok) => emit({ type: 'step', label, ok }),
+              run: (req) => runPay(req),
+              ...(cardNamedIn(prompt) === undefined ? {} : { requiredCard: cardNamedIn(prompt) })
+            }
+          : undefined
+    }
+  }
+
+  /**
+   * 밖의 하네스가 쓰는 도구 세션. 권한은 full, 확인 카드는 자동 승인(판단은 하네스가 했다),
+   * 캡차·2단계 인증 같은 넘김은 즉시 skipped 로 돌려 하네스가 needs_human 으로 처리하게 한다.
+   * 채팅 실행이 도는 동안은 만들 수 없고, 세션이 있는 동안 채팅 실행은 거부된다
+   */
+  createToolSession(opts: { onStep?: (label: string, ok: boolean) => void }): ToolSession {
+    if (this.abort) throw new Error('이미 실행 중')
+    if (this.session) throw new Error('브릿지 세션 사용 중')
+    if (this.settings.get().permissionMode === 'read_only') {
+      throw new Error('읽기 전용 모드에서는 브릿지를 쓸 수 없음')
+    }
+    const s = this.settings.get()
+    const jobId = randomUUID()
+    const emit = (e: AgentEvent): void => {
+      if (e.type === 'step') opts.onStep?.(e.label, e.ok)
+    }
+    const phones = this.phones
+    const phoneCtx = (): PhoneRunContext => ({
+      jobId,
+      confirm: async () => true,
+      onStep: (label, ok) => emit({ type: 'step', label, ok }),
+      handoff: async (req) => ({ outcome: 'skipped', url: req.currentUrl() }),
+      cancelled: () => false
+    })
+    const server = createSambaTools(
+      this.buildToolContext({
+        s: { ...s, permissionMode: 'full', finalConfirm: false },
+        jobId,
+        tick: () => null,
+        emit,
+        confirm: async () => true,
+        handoff: async (req) => ({ outcome: 'skipped', url: req.currentUrl() }),
+        onCall: () => {},
+        onRunJs: () => {},
+        scripts: this.siteScripts,
+        phoneCtx,
+        waitSms: (host) =>
+          phones?.waitForSmsCode
+            ? phones.waitForSmsCode(phoneCtx(), host)
+            : Promise.resolve({ filled: false, digits: 0 }),
+        runPay: (req) =>
+          phones?.approvePayment
+            ? phones.approvePayment(phoneCtx(), req)
+            : Promise.resolve({ ok: false, reason: 'declined' as const }),
+        prompt: ''
+      })
+    )
+    const tools = extractSdkTools(server).filter((t) => t.name !== 'done')
+    // 브릿지 세션이 열려 있는 동안은 금고 자동 잠금을 보류한다(run() 과 같은 패턴). 두 번 풀려도 안전하다
+    let releaseVaultHold: (() => void) | null = this.vault?.holdAutoLock('bridge session') ?? null
+    const session: ToolSession = {
+      names: () => tools.map((t) => t.name),
+      call: async (name, args) => {
+        const t = tools.find((x) => x.name === name)
+        if (!t) throw new Error(`unknown tool: ${name}`)
+        const r = await t.handler(args, {})
+        return r.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n')
+      },
+      dispose: () => {
+        if (this.session === session) this.session = null
+        releaseVaultHold?.()
+        releaseVaultHold = null
+      }
+    }
+    this.session = session
+    return session
   }
 
   /**

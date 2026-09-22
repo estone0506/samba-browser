@@ -112,7 +112,7 @@ export class SyncEngine {
       // 먼저 받고(pull) 나서 보낸다(push) — 로컬 변경이 원격 최신본 위에 얹히도록
       const pulled = await pullAll(this.deps)
       this.deps.onAfterPull?.(pulled)
-      await pushAll(this.deps)
+      await pushAll(this.deps, { skipVaultItems: pulled.vaultKeyMismatch })
       this.online = true
       // 키 재료 불일치는 통신 실패가 아니다 — 연결은 살아 있고 경고만 상태에 싣는다
       this.lastError = pulled.vaultKeyMismatch ? VAULT_KEY_MISMATCH_ERROR : undefined

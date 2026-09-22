@@ -238,6 +238,9 @@ const api = {
     get: (): Promise<IpcResult<Settings>> => invoke(IPC.settingsGet),
     set: (patch: Partial<Settings>): Promise<IpcResult<Settings>> => invoke(IPC.settingsSet, patch)
   },
+  bridge: {
+    regenerateToken: (): Promise<IpcResult<{ token: string }>> => invoke(IPC.bridgeRegenerateToken)
+  },
   // 금고 — reveal 만이 평문을 돌려준다. 나머지는 상태·메타뿐이다
   vault: {
     state: (): Promise<IpcResult<VaultState>> => invoke(IPC.vaultState),
@@ -246,6 +249,11 @@ const api = {
     setup: (master: string): Promise<IpcResult<void>> => invoke(IPC.vaultSetup, master),
     unlock: (master: string): Promise<IpcResult<boolean>> => invoke(IPC.vaultUnlock, master),
     lock: (): Promise<IpcResult<void>> => invoke(IPC.vaultLock),
+    // 이 PC 금고가 계정과 다른 마스터로 잠겨 있을 때: 계정 마스터로 다시 잠근다
+    rekeyToAccount: (
+      master: string
+    ): Promise<IpcResult<'ok' | 'locked' | 'no-remote' | 'wrong-master' | 'decrypt-failed'>> =>
+      invoke(IPC.vaultRekeyToAccount, master),
     // 복구 키 — create 응답의 평문은 화면에 보여 준 뒤 확인 완료 즉시 렌더러 상태에서 버린다
     recoveryCreate: (): Promise<IpcResult<string>> => invoke(IPC.vaultRecoveryCreate),
     recoveryConfirm: (input: string): Promise<IpcResult<boolean>> =>
