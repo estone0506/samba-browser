@@ -131,6 +131,13 @@ export const DEFAULT_SETTINGS = {
   // 에이전트 동작
   agentNotify: true,
   agentSound: false,
+  // === 하네스 브릿지 ==========================================================
+  // 밖의 LangGraph 하네스가 이 앱의 도구를 HTTP 로 부르게 여는 문. 기본 꺼짐.
+  // 포트·토큰은 이 PC 의 값이라 동기화하지 않는다(SYNCED_SETTING_KEYS 에 없음)
+  bridgeEnabled: false,
+  bridgePort: 47811,
+  // 32바이트 hex. 비어 있으면 켤 때 만든다
+  bridgeToken: '',
   // 에이전트가 연 탭을 몇 분 뒤 정리할지(0 이면 정리 안 함)
   agentTabCleanupMinutes: 15,
   // 작업공간(기기 로컬 — 동기화하지 않는다)
@@ -317,6 +324,9 @@ export const settingsSchema = z.object({
     .catch(DEFAULT_SETTINGS.taskModels),
   agentNotify: z.boolean().catch(DEFAULT_SETTINGS.agentNotify),
   agentSound: z.boolean().catch(DEFAULT_SETTINGS.agentSound),
+  bridgeEnabled: z.boolean().catch(DEFAULT_SETTINGS.bridgeEnabled),
+  bridgePort: z.number().int().min(1024).max(65535).catch(DEFAULT_SETTINGS.bridgePort),
+  bridgeToken: z.string().max(128).catch(DEFAULT_SETTINGS.bridgeToken),
   agentTabCleanupMinutes: z.number().int().min(0).catch(DEFAULT_SETTINGS.agentTabCleanupMinutes),
   activeWorkspaceId: z.number().int().min(0).catch(DEFAULT_SETTINGS.activeWorkspaceId),
   extensionPaths: z.array(z.string()).catch(DEFAULT_SETTINGS.extensionPaths),
