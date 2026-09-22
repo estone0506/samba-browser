@@ -7,6 +7,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from samba_agent.agents.contracts import AgentResult, OrderRef
 from samba_agent.agents.registry import Registry
 from samba_agent.failures import FailReason
+from samba_agent.ops.events import EventLog
+from samba_agent.ops.gate import _observe_ok
 from samba_agent.queue.db import JobQueue
 from samba_agent.queue.worker import Worker, WorkerDeps
 from samba_agent.settings import DEFAULT_ROOT
@@ -311,3 +313,28 @@ def test_결제_중_죽어도_재시작_뒤_결제를_다시_하지_않는다(tm
     )
     assert w2.tick() is None  # 집을 게 없다 — payer 가 다시 불리지 않는다
     assert paid['n'] == 1
+
+
+def test_실행마다_추적_이벤트를_남긴다(tmp_path):
+    # 리뷰 지적 — I3: Observe 가 실행 경로에 배선돼 있어야 gate 의 observe 조건이 선다
+    reg = Registry.load(DEFAULT_ROOT)
+    q = JobQueue(tmp_path / 'jobs.sqlite')
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    events = EventLog(tmp_path / 'events.sqlite')
+    graph = build_supervisor(reg, agents([]), checkpointer=MemorySaver(), gate=False)
+    w = Worker(
+        WorkerDeps(
+            queue=q,
+            graph=graph,
+            version='vtest',
+            report=lambda j, s: None,
+            parse_order=order_of,
+            events=events,
+            env='dev',
+            prompt_commit='c0ffee',
+        )
+    )
+    job = w.tick()
+    rows = events.of_job(job.id)
+    assert rows, '실행 경로에서 이벤트가 하나도 남지 않았다'
+    assert _observe_ok(rows, version='vtest')

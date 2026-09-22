@@ -13,13 +13,13 @@
 import argparse
 import json
 from collections.abc import Sequence
-from pathlib import Path
 
 from samba_agent.ops.datasets import load_seed, seed_counts
 from samba_agent.ops.evaluators import EVALUATORS
-from samba_agent.settings import load_settings
+from samba_agent.settings import default_report_dir, load_settings
 
-REPORT_DIR = Path(__file__).resolve().parent / 'reports'
+# 판정·실험 산출물은 설정 한 곳(SAMBA_REPORT_DIR, 기본 root/ops/reports)에 모은다
+REPORT_DIR = default_report_dir()
 
 # 참조 재생기는 reason 필드를 채우지 않아 reason_quality 가 항상 0으로 나온다 — 실제 에이전트
 # 결과가 아니라는 것을 숫자만 보고 오해하지 않도록 요약 JSON에 적어 둔다(Task 13 리뷰 지적 5)

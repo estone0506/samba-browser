@@ -24,11 +24,13 @@ from samba_agent.ops.diagnose import Diagnosis
 from samba_agent.ops.masking import find_leaks
 from samba_agent.ops.releases import Release, ReleaseStore
 from samba_agent.ops.tracing import REQUIRED_METADATA
+from samba_agent.settings import default_report_dir
 
 log = logging.getLogger(__name__)
 
 GATE_RULES = ('observe', 'accuracy', 'regression', 'dry_run', 'review_queue', 'approval')
-REPORT_DIR = Path(__file__).resolve().parent / 'reports'
+# 판정·실험 산출물은 설정 한 곳(SAMBA_REPORT_DIR, 기본 root/ops/reports)에 모은다
+REPORT_DIR = default_report_dir()
 
 # `--version` 은 파일명(`ops/reports/<version>.md`·`.eval.json`)으로 그대로 쓰인다.
 # 경로 조작(`../`)·공백·구분자 등을 막는다.

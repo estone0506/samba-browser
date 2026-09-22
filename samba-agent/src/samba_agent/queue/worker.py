@@ -11,7 +11,9 @@ from dataclasses import dataclass
 
 from samba_agent.agents.contracts import OrderRef
 from samba_agent.failures import FailReason
+from samba_agent.ops.events import EventLog
 from samba_agent.ops.masking import mask_text
+from samba_agent.ops.tracing import run_metadata, traced
 from samba_agent.queue.db import PAY_STARTED_STEP, Job, JobQueue
 from samba_agent.supervisor.approval import resume_command
 
@@ -40,6 +42,11 @@ class WorkerDeps:
     approval_report: Callable[[Job, str, str, str], None] | None = None
     # settings.dry_run 이 아직 여기까지 안 들어와서 당장은 기본값 True 로 주입한다.
     dry_run: bool = True
+    # 관측(스펙 §4.5 1단계) — 주입하면 실행 1건이 LangSmith span + 로컬 이벤트로 남는다.
+    # 없으면 추적 없이 그냥 돈다(테스트·오프라인)
+    events: EventLog | None = None
+    env: str = 'dev'
+    prompt_commit: str = '-'
 
     def __post_init__(self) -> None:
         if isinstance(self.version, str):
@@ -111,10 +118,43 @@ class Worker:
     def _config(self, job_id: int) -> dict[str, object]:
         return {'configurable': {'thread_id': f'{THREAD_PREFIX}{job_id}'}}
 
+    def _source_of(self, job: Job, arg: object) -> str:
+        """추적 메타데이터용 소싱처. 새 실행은 입력 state 에, 재개는 체크포인트에 있다."""
+        if isinstance(arg, dict):
+            order = arg.get('order')
+            if order is not None:
+                return str(getattr(order, 'source', '-'))
+        get_state = getattr(self.d.graph, 'get_state', None)
+        if callable(get_state):
+            try:
+                values = get_state(self._config(job.id)).values
+                return str(getattr(values.get('order'), 'source', '-'))
+            except Exception:  # noqa: BLE001 — 추적 메타데이터 때문에 실행을 막지 않는다
+                _log.debug('체크포인트에서 소싱처를 읽지 못했다', exc_info=True)
+        return '-'
+
+    def _runner(self, job: Job, arg: object) -> Callable[..., object]:
+        """그래프 호출을 추적으로 감싼다(리뷰 지적 — I3). events 가 없으면 그대로 부른다."""
+        if self.d.events is None:
+            return self.d.graph.invoke
+        metadata = run_metadata(
+            job_id=job.id,
+            order_no=job.order_no,
+            source=self._source_of(job, arg),
+            requester=job.requester,
+            agent='supervisor',
+            version=self.d.version(),
+            env=self.d.env,
+            prompt_commit=self.d.prompt_commit,
+        )
+        return traced('supervisor.run', metadata=metadata, events=self.d.events)(
+            self.d.graph.invoke
+        )
+
     def _invoke(self, job: Job, arg: object) -> Job:
         """그래프를 부르고, 예외가 나면 사람에게 넘긴다(스펙 리뷰 지적 — Important 1)."""
         try:
-            out = self.d.graph.invoke(arg, self._config(job.id))
+            out = self._runner(job, arg)(arg, self._config(job.id))
         except Exception as exc:  # noqa: BLE001 — 그래프 내부 예외는 감독자가 아니라 여기서 받는다
             return self._on_exception(job, exc)
         return self._apply(job, out)

@@ -8,7 +8,6 @@ import math
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 
 from samba_agent.failures import FailReason
 from samba_agent.ops.events import EventLog
@@ -150,7 +149,7 @@ def diagnose(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    from samba_agent.settings import load_settings
+    from samba_agent.settings import default_report_dir, load_settings
 
     parser = argparse.ArgumentParser(prog='ops.diagnose')
     parser.add_argument('--version', required=True)
@@ -159,7 +158,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = load_settings()
     events = EventLog(settings.root / 'events.sqlite')
     report = diagnose(events, version=args.version, since_days=args.since)
-    out = Path(__file__).resolve().parent / 'reports' / f'{args.version}.diagnose.md'
+    # 판정·실험과 같은 폴더를 쓴다(리뷰 지적 — I4)
+    out = default_report_dir() / f'{args.version}.diagnose.md'
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(report.to_markdown(), encoding='utf-8')
     print(report.to_markdown())

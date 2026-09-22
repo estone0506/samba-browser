@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from samba_agent.ops.events import EventLog
+from samba_agent.ops.gate import _observe_ok
 from samba_agent.ops.tracing import REQUIRED_METADATA, configure_tracing, run_metadata, traced
 from samba_agent.settings import Settings
 
@@ -133,3 +134,22 @@ def test_오래된_이벤트는_정리된다(tmp_path, monkeypatch):
     assert deleted == 1
     remaining_kinds = {row['kind'] for row in log.since(3650)}
     assert remaining_kinds == {'boundary', 'fresh'}
+
+
+def test_traced_는_payload_에_메타데이터를_남긴다(tmp_path):
+    # 리뷰 지적 — I3: gate._observe_ok 가 payload.metadata 에서 필수 키를 찾는다
+    events = EventLog(tmp_path / 'events.sqlite')
+    meta = run_metadata(
+        job_id=1,
+        order_no='A1',
+        source='무신사',
+        requester='U1',
+        agent='supervisor',
+        version='vtest',
+        env='dev',
+        prompt_commit='c0ffee',
+    )
+    traced('supervisor.run', metadata=meta, events=events)(lambda: 'ok')()
+    row = events.of_job(1)[-1]
+    assert row['payload']['metadata'] == meta
+    assert _observe_ok([row], version='vtest')

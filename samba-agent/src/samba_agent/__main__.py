@@ -101,6 +101,10 @@ def main() -> None:
             parse_order=lambda job: lookup_order(bridge, job.order_no, job.options),
             approval_report=_approval_report,
             dry_run=settings.dry_run,
+            # 관측 배선 — 실행 1건이 LangSmith span + 로컬 이벤트로 남는다(리뷰 지적 — I3)
+            events=events,
+            env=settings.harness_env,
+            prompt_commit=settings.prompt_commit,
         )
     )
 
@@ -114,7 +118,14 @@ def main() -> None:
 
     bot = SambaBot(slack_app, worker, queue, settings, _diagnose_text)
 
-    app = build_app(reg=reg, queue=queue, releases=releases, root=settings.root, version=version_fn)
+    app = build_app(
+        reg=reg,
+        queue=queue,
+        releases=releases,
+        root=settings.root,
+        version=version_fn,
+        report_dir=settings.report_dir,
+    )
 
     # 이벤트 하나로 통일한다(리뷰 지적 — Minor) — SIGINT/SIGTERM 이 이걸 세우면
     # 워커 고리와(봇 없을 때의) 대기가 함께 풀린다.

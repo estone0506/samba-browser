@@ -125,6 +125,10 @@ def traced(name: str, *, metadata: Mapping[str, str], events: EventLog | None = 
             finally:
                 if events is not None:
                     payload: dict[str, object] = {
+                        # 판정(ops.gate._observe_ok)이 필수 메타데이터를 여기서 찾는다.
+                        # events 테이블 컬럼만으로는 order_no·source·requester·prompt_commit
+                        # 이 비어 관측 조건이 서지 않는다(리뷰 지적 — I3)
+                        'metadata': dict(metadata),
                         'ok': ok,
                         'duration_ms': int((time.monotonic() - started) * 1000),
                         'args': mask_value(list(args)),

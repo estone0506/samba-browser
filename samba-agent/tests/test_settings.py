@@ -42,3 +42,15 @@ def test_실패_사유는_스펙_9종에_결제_중단을_더한_10종이다():
         'unknown',
         'pay_interrupted',
     }
+
+
+def test_판정_산출물_위치는_설정_하나로_정해진다(monkeypatch, tmp_path):
+    # 리뷰 지적 — I4: gate 는 패키지 안, API 는 root 밑을 보고 있었다
+    from samba_agent.ops import eval as eval_mod
+    from samba_agent.ops import gate as gate_mod
+    from samba_agent.settings import DEFAULT_ROOT, default_report_dir
+
+    assert gate_mod.REPORT_DIR == eval_mod.REPORT_DIR == default_report_dir()
+    assert default_report_dir() == DEFAULT_ROOT / 'ops' / 'reports'
+    monkeypatch.setenv('SAMBA_REPORT_DIR', str(tmp_path / 'r'))
+    assert default_report_dir() == tmp_path / 'r'

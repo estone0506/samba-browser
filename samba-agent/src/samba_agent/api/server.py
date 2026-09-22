@@ -28,8 +28,11 @@ def build_app(
     releases: ReleaseStore,
     root: Path,
     version: Callable[[], str],
+    report_dir: Path | None = None,
 ) -> Callable:
     """WSGI 앱. 라우팅이 4개뿐이라 프레임워크를 들이지 않는다."""
+    # 판정 산출물 위치는 gate·eval 과 같은 설정 하나로 정해진다(리뷰 지적 — I4)
+    reports = report_dir if report_dir is not None else root / 'ops' / 'reports'
 
     def app(environ, start_response):  # type: ignore[no-untyped-def]
         req = Request(environ)
@@ -39,7 +42,7 @@ def build_app(
         elif req.method == 'GET' and path == '/jobs':
             resp = _get_jobs(queue)
         elif req.method == 'GET' and path == '/releases':
-            resp = _get_releases(releases, version, root)
+            resp = _get_releases(releases, version, reports)
         elif req.method == 'PUT' and path.startswith('/graph/rules/'):
             resp = _put_rules(reg, root, version, path[len('/graph/rules/') :], req)
         else:
@@ -89,13 +92,13 @@ def _get_jobs(queue: JobQueue) -> Response:
     )
 
 
-def _get_releases(releases: ReleaseStore, version: Callable[[], str], root: Path) -> Response:
+def _get_releases(releases: ReleaseStore, version: Callable[[], str], reports: Path) -> Response:
     current = releases.current_prod()
     return _json(
         {
             'current': current.__dict__ if current else None,
             'history': [r.__dict__ for r in releases.history()],
-            'candidate': _candidate(root, version()),
+            'candidate': _candidate(reports, version()),
         }
     )
 
@@ -150,13 +153,13 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
-def _candidate(root: Path, version: str) -> dict[str, object] | None:
+def _candidate(reports: Path, version: str) -> dict[str, object] | None:
     """후보 버전의 판정 요약. 아직 판정 파일이 없으면 None.
 
-    ``ops.gate.REPORT_DIR`` 은 패키지 고정 경로라 테스트에서 격리할 수 없었다
-    (리뷰 지적 — Minor 5). 대신 ``root`` 기준 경로를 본다.
+    경로는 호출부가 설정(SAMBA_REPORT_DIR, 기본 root/ops/reports)에서 받아 넘긴다 —
+    gate·eval 과 같은 폴더여야 판정 파일을 찾는다(리뷰 지적 — I4·Minor 5).
     """
-    path = root / 'ops' / 'reports' / f'{version}.md'
+    path = reports / f'{version}.md'
     if not path.exists():
         return None
     return {'version': version, 'report': path.read_text(encoding='utf-8')}

@@ -3,5 +3,12 @@
 *.sqlite
 *.sqlite-*
 __pycache__/
+# 판정·실험·진단 산출물(SAMBA_REPORT_DIR, 기본 ops/reports)
+ops/reports/*.md
+ops/reports/*.eval.json
+ops/reports/*.approval.json
+!ops/reports/.gitkeep
+# 예전 위치(패키지 안) — 남아 있는 파일도 커밋되지 않게 둔다
 src/samba_agent/ops/reports/*.md
+src/samba_agent/ops/reports/*.eval.json
 !src/samba_agent/ops/reports/.gitkeep
