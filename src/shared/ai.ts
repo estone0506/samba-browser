@@ -65,6 +65,29 @@ export interface AiProviderStatus {
   connected?: boolean
 }
 
+/**
+ * 구독 사용량 한 줄. 5시간 세션·주간 전체·모델별 주간(Fable 등) 한도가 각각 한 줄이다.
+ * 계정이 둘일 때 "어느 계정이 붙어 있고 얼마나 썼나"를 앱에서 바로 보게 한다 —
+ * 한도 소진 계정이 붙은 줄 모르고 실행이 중간에 끊기던 문제(실기)
+ */
+export interface AiUsageLimit {
+  kind: 'session' | 'weekly_all' | 'weekly_scoped'
+  /** 0~100 */
+  percent: number
+  /** ISO 시각. 없으면 null */
+  resetsAt: string | null
+  /** 모델별 한도일 때 모델 표시 이름(예: Fable) */
+  model?: string
+}
+
+export interface AiUsage {
+  limits: AiUsageLimit[]
+  fetchedAt: number
+}
+
+/** 이 비율부터 카드에 경고를 띄운다 */
+export const AI_USAGE_WARN_PERCENT = 90
+
 /** 연결 시도 결과. 자격이 없으면 이유만 돌려주고 안내 다이얼로그를 띄운다 */
 export interface AiConnectResult {
   ok: boolean

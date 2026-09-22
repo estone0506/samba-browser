@@ -1,6 +1,7 @@
 import { create } from 'zustand'
-import type { AgentEvent, ChatDto, ChatMessageDto } from '@shared/ipc'
+import type { AgentEvent, ChatDto, ChatMessageDto, HandoffKind } from '@shared/ipc'
 import { RECENT_CHAT_LIMIT, titleFromMessage } from '@shared/chat'
+import { agentImageDataUrl, type AgentImage } from '@shared/agent-image'
 import { DEFAULT_SETTINGS, type AgentEffort } from '@shared/settings'
 
 export interface ChatMessage {
@@ -8,6 +9,8 @@ export interface ChatMessage {
   role: 'user' | 'ai'
   text: string
   steps?: Step[]
+  // 사용자가 붙여 넣은 이미지 미리보기(data URL). 이 세션 화면에만 있고 저장되지 않는다
+  images?: string[]
 }
 export interface Step {
   label: string
@@ -19,6 +22,8 @@ export interface Step {
 // 캡차·2FA 사용자 넘김 카드 상태
 export interface Handoff {
   requestId: string
+  // 카드 종류(captcha = 캡차·2FA, keypad = 결제 비밀번호 키패드). 문구가 달라진다
+  kind: HandoffKind
   matched: string
   url: string
 }
@@ -73,7 +78,7 @@ interface ChatState {
   // 대화를 지운다(삭제 표식). 화면에 열려 있었으면 새 대화로 돌아간다
   removeChat: (chatId: number) => Promise<void>
   /** scheduleToken 은 예약이 보낸 실행임을 메인에 알리는 표식이다(사용자 입력에는 없다) */
-  send: (text: string, scheduleToken?: string) => Promise<void>
+  send: (text: string, scheduleToken?: string, images?: AgentImage[]) => Promise<void>
   stop: () => Promise<void>
   reply: (requestId: string, approved: boolean) => void
   // 넘김 카드 응답 — skip=true 는 건너뛰고 계속, false 는 작업 중단
@@ -161,13 +166,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((s) => ({ chats: s.chats.filter((c) => c.id !== chatId) }))
     if (get().activeChatId === chatId) get().newChat()
   },
-  send: async (text, scheduleToken) => {
+  send: async (text, scheduleToken, images) => {
     if (get().status === 'running') return
     const seq = get().runSeq + 1
+    const previews = images && images.length > 0 ? images.map(agentImageDataUrl) : undefined
     set((s) => ({
       messages: [
         ...s.messages,
-        { id: nid(), role: 'user', text },
+        { id: nid(), role: 'user', text, ...(previews ? { images: previews } : {}) },
         { id: nid(), role: 'ai', text: '', steps: [] }
       ],
       runSeq: seq,
@@ -200,7 +206,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? [text]
           : [text, chatId]
         : [text, chatId ?? undefined, scheduleToken]
-    const r = await window.samba.agent.run(...args)
+    // 이미지가 있을 때만 네 번째 인자를 붙인다(평소 경로의 호출 모양을 그대로 둔다)
+    const r =
+      images && images.length > 0
+        ? await window.samba.agent.run(text, chatId ?? undefined, scheduleToken, images)
+        : await window.samba.agent.run(...args)
     if (!r.ok && get().runSeq === seq) set({ status: 'failed', currentLabel: r.error, retry: null })
   },
   stop: async () => {
@@ -243,7 +253,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (e.type === 'confirm')
       set({ confirm: { requestId: e.requestId, action: e.action, kind: e.kind ?? 'danger' } })
     if (e.type === 'handoff') {
-      set({ handoff: { requestId: e.requestId, matched: e.matched, url: e.url } })
+      set({ handoff: { requestId: e.requestId, kind: e.kind, matched: e.matched, url: e.url } })
       if (last?.role === 'ai') {
         patchLast({
           steps: [...(last.steps ?? []), { label: '', ok: true, key: 'handoff.waiting' }]

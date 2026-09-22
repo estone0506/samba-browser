@@ -7,8 +7,6 @@ const START_CODE_4 = Buffer.from([0, 0, 0, 1])
 
 /** SPS(시퀀스 파라미터) NAL 타입 */
 export const NAL_SPS = 7
-/** PPS(픽처 파라미터) NAL 타입 */
-export const NAL_PPS = 8
 /** IDR(키프레임 조각) NAL 타입 */
 export const NAL_IDR = 5
 

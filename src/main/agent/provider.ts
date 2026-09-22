@@ -1,10 +1,19 @@
-import { query, startup, type Options, type Query } from '@anthropic-ai/claude-agent-sdk'
-import type { AgentEffort } from '../../shared/settings'
+import {
+  query,
+  startup,
+  type Options,
+  type Query,
+  type SDKUserMessage
+} from '@anthropic-ai/claude-agent-sdk'
+import type { AgentImage } from '../../shared/agent-image'
+import { MAX_TOOL_CALLS, type AgentEffort } from '../../shared/settings'
 import type { AgentAuth } from '../ai/auth-route'
 import { runCodex, type CodexEvent, type CodexInput } from './provider-codex'
 
 export interface ProviderInput {
   prompt: string
+  // 지시문과 함께 보낼 이미지(AI 창에 붙여 넣은 스크린샷). 없으면 문자열 프롬프트 그대로
+  images?: AgentImage[]
   systemPrompt: string
   model: string
   mcpServers: Options['mcpServers']
@@ -12,6 +21,8 @@ export interface ProviderInput {
   abort: AbortController
   // 추론 강도. SDK Options.effort('low'|'medium'|'high'|…)와 값이 같다
   effort?: AgentEffort
+  /** 이어받을 SDK 세션 id(같은 대화의 앞선 실행). 없으면 새 세션 */
+  resume?: string
 }
 
 // 사용자가 설정에 넣어 둔 내 API 키를 읽는 함수. 메인 프로세스가 주입한다.
@@ -84,8 +95,13 @@ export function buildQueryOptions(
     // 사용자/프로젝트 설정(훅·CLAUDE.md)을 상속하지 않음
     settingSources: [],
     permissionMode: 'default',
-    maxTurns: 60,
-    abortController: input.abort
+    // 실제 상한은 도구 호출 수(설정 maxToolCalls, 러너의 counter)다. 턴 상한이 그보다 먼저 걸리면
+    // 도구를 95회밖에 안 썼는데 "maximum number of turns (60)" 로 죽는다(실기: 결제 키패드 앞에서 중단).
+    // 도구 상한 최대값보다 넉넉히 잡아, 멈추는 기준을 한 곳으로 모은다
+    maxTurns: MAX_TOOL_CALLS + 50,
+    abortController: input.abort,
+    // 같은 대화의 앞선 실행을 이어받는다 — 앞선 지시·도구 결과를 기억한 채로 돈다
+    ...(input.resume === undefined ? {} : { resume: input.resume })
   }
 }
 
@@ -153,6 +169,34 @@ export async function askText(input: AskTextInput): Promise<string | null> {
 }
 
 // Claude Agent SDK 호출. 연결된 Claude 구독 또는 내 API 키(ANTHROPIC_API_KEY)를 쓴다
+/**
+ * 이미지가 붙었으면 SDK 가 받는 사용자 메시지 스트림(텍스트 + 이미지 블록)으로 만든다.
+ * 이미지가 없으면 문자열 그대로 — 기존 경로를 건드리지 않는다
+ */
+export function promptInputOf(
+  prompt: string,
+  images?: AgentImage[]
+): string | AsyncIterable<SDKUserMessage> {
+  if (!images || images.length === 0) return prompt
+  const message: SDKUserMessage = {
+    type: 'user',
+    parent_tool_use_id: null,
+    message: {
+      role: 'user',
+      content: [
+        ...images.map((img) => ({
+          type: 'image' as const,
+          source: { type: 'base64' as const, media_type: img.mediaType, data: img.data }
+        })),
+        { type: 'text' as const, text: prompt }
+      ]
+    }
+  }
+  return (async function* () {
+    yield message
+  })()
+}
+
 export function runQuery(input: ProviderInput): Query {
   const auth = currentAuth()
   // 연결된 경로가 없으면 SDK 를 아예 부르지 않는다 —
@@ -162,7 +206,7 @@ export function runQuery(input: ProviderInput): Query {
   // 키 경로인데 키가 사라졌으면 구독 자격으로 조용히 넘어가지 않고 멈춘다
   if (auth.mode === 'api_key' && !env) throw new Error(NOT_CONNECTED_ERROR)
   return query({
-    prompt: input.prompt,
+    prompt: promptInputOf(input.prompt, input.images),
     options: buildQueryOptions(input, env)
   })
 }

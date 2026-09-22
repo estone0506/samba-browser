@@ -3,7 +3,12 @@ import { AI_PROVIDERS, type AiConnections, type AiProviderId, type TaskModels } 
 import { DEFAULT_DANGER_WORDS, mergeDangerWords } from './danger'
 import { EXTENSION_SOURCES, type ExtensionSource } from './extensions'
 import { defaultMouseGestures, GESTURE_ACTIONS } from './gestures'
-import { DEFAULT_PAYMENT_LIMIT_KRW, type ScreenFps, type ScreenSize } from './phone'
+import {
+  DEFAULT_PAYMENT_LIMIT_KRW,
+  FIRST_RUN_LIMIT_KRW,
+  type ScreenFps,
+  type ScreenSize
+} from './phone'
 import { DEFAULT_TRANSLATE_LANG, TRANSLATE_LANGS, type TranslateLang } from './translate'
 import {
   CAPTURE_FORMATS,
@@ -21,7 +26,8 @@ import { RECOMMEND_MAX, type DismissedRecommendation } from './activity-patterns
 
 // 도구 호출 상한 허용 범위
 export const MIN_TOOL_CALLS = 1
-export const MAX_TOOL_CALLS = 200
+// 계정 두 개로 주문서를 각각 만들어 원가를 비교하면 한 건에 200회를 넘긴다
+export const MAX_TOOL_CALLS = 400
 
 // 오른쪽 패널 폭 허용 범위
 // 패널 폭 한계(렌더러 uiStore 와 공유)
@@ -81,9 +87,9 @@ export const DEFAULT_SETTINGS = {
   sidebarWidth: 232,
   lastUrl: NEW_TAB_URL,
   dangerWords: DEFAULT_DANGER_WORDS,
-  // 한 작업에서 허용하는 도구 호출 수. 주문 흐름(로그인→검색→옵션→장바구니→주문서)은
-  // 40회로는 중간에 끊겨서 80회로 잡는다(상한은 MAX_TOOL_CALLS)
-  maxToolCalls: 120,
+  // 한 작업에서 허용하는 도구 호출 수. 주문 흐름(로그인→검색→옵션→장바구니→주문서→쿠폰→
+  // 결제수단 비교)은 120회로도 계정 비교 도중에 끊겼다(실기). 200회로 잡는다(상한은 MAX_TOOL_CALLS)
+  maxToolCalls: 200,
   permissionMode: 'guard' as const,
   finalConfirm: false,
   // Aside 방식: 자동 잠금 기본 1주(10080분), 이 PC 에서 기억 기본 켬
@@ -165,8 +171,14 @@ export const DEFAULT_SETTINGS = {
   phoneScreenFps: 15 as ScreenFps,
   // 끊겼을 때 kill-server/start-server 로 1회 자동 복구할지
   phoneAutoReconnect: true,
+  // 사용자가 목록에서 지운 폰의 시리얼. 같은 와이파이에 있으면 5초 검색이 다시 찾아오므로 여기 적어 건너뛴다.
+  // 주소 연결·페어링을 직접 하면 비운다. 이 PC 의 사정이라 SYNCED_SETTING_KEYS 에 넣지 않는다
+  phoneIgnoredSerials: [] as string[],
   // 결제 상한(원). 초과하면 권한 모드와 무관하게 사람 확인을 받는다
   paymentLimitKrw: DEFAULT_PAYMENT_LIMIT_KRW,
+  // 새 (사이트 × 결제수단) 조합의 첫 자동 결제에만 거는 소액 상한. 0 이면 따로 두지 않고 결제 상한만 본다.
+  // 결제 확인 카드는 이 값과 무관하게 매번 뜬다
+  firstPaymentLimitKrw: FIRST_RUN_LIMIT_KRW,
   // 결제 비밀번호 키패드 배치를 외부 AI(Visual)에게 물어볼지.
   // 켜면 키패드 화면 원본이 AI 제공자로 전송되므로 기본은 꺼짐이고,
   // 꺼져 있으면 UI 트리로 못 읽은 키패드는 사람에게 넘긴다
@@ -350,7 +362,9 @@ export const settingsSchema = z.object({
     .union([z.literal(10), z.literal(15), z.literal(30)])
     .catch(DEFAULT_SETTINGS.phoneScreenFps),
   phoneAutoReconnect: z.boolean().catch(DEFAULT_SETTINGS.phoneAutoReconnect),
+  phoneIgnoredSerials: z.array(z.string().max(120)).max(50).catch([]),
   paymentLimitKrw: z.number().int().min(0).catch(DEFAULT_SETTINGS.paymentLimitKrw),
+  firstPaymentLimitKrw: z.number().int().min(0).catch(DEFAULT_SETTINGS.firstPaymentLimitKrw),
   phoneKeypadVisual: z.boolean().catch(DEFAULT_SETTINGS.phoneKeypadVisual),
   // === 폰 연동 끝 =============================================================
   // === 마우스 제스처 ==========================================================

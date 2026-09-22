@@ -18,6 +18,7 @@ export function createTabPagePort(tabs: TabManager): PagePort {
       const tab = active()
       return tab ? normalizeHost(tab.view.webContents.getURL()) : ''
     },
+    profile: () => active()?.profile ?? '',
     activeTabId: () => active()?.id ?? null,
     snapshot: async () => {
       const tab = active()

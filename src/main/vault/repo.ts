@@ -3,6 +3,7 @@
 
 import { eq, and, or, isNull, desc, type SQL } from 'drizzle-orm'
 import type { Db } from '../db/client'
+import { tr } from '../i18n'
 import { sites, accounts, vaultItems, vaultMeta, auditLog } from '../db/schema'
 import type {
   AgentAccess,
@@ -276,7 +277,7 @@ export class VaultRepo {
         .run()
       this.db.scheduleSave()
       const updated = this.getAccount(existing.id)
-      if (!updated) throw new Error('계정을 찾을 수 없습니다')
+      if (!updated) throw new Error(tr('vault.accountNotFound'))
       return updated
     }
 
@@ -300,7 +301,7 @@ export class VaultRepo {
       .all()
     this.db.scheduleSave()
     const created = this.getAccount(inserted[0].id)
-    if (!created) throw new Error('계정을 만들지 못했습니다')
+    if (!created) throw new Error(tr('vault.accountCreateFailed'))
     return created
   }
 
@@ -351,6 +352,23 @@ export class VaultRepo {
   getItemRow(id: number): VaultItemRow | null {
     const row = this.d.select().from(vaultItems).where(eq(vaultItems.id, id)).get()
     return row ? toItemRow(row) : null
+  }
+
+  /** 전역 항목(accountId = null) 가운데 이 종류인 것 전부(만든 순서) */
+  findGlobalItemRowsByType(type: VaultItemType): VaultItemRow[] {
+    return this.d
+      .select()
+      .from(vaultItems)
+      .where(
+        and(
+          isNull(vaultItems.accountId),
+          eq(vaultItems.type, type),
+          isNull(vaultItems.deletedAt),
+          this.scopeWhere(vaultItems.workspaceId)
+        )
+      )
+      .all()
+      .map(toItemRow)
   }
 
   // 전역 항목(accountId = null)은 (type, label) 조합으로 찾는다 — 같은 type 이라도

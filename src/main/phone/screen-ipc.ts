@@ -14,6 +14,7 @@ import {
 } from './screen'
 import { shellArgs } from './adb'
 import { createAdbRunner, createSpawner, type AdbRunner } from './process'
+import { tr } from '../i18n'
 import { ScreenStream } from './screen'
 import { ScrcpyWindows } from './scrcpy'
 
@@ -51,7 +52,7 @@ export const MAX_SWIPE_MS = 5000
 export function assertRatio(...values: number[]): void {
   for (const v of values) {
     if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1) {
-      throw new Error('화면 좌표가 올바르지 않습니다')
+      throw new Error(tr('phone.invalidCoords'))
     }
   }
 }
@@ -60,7 +61,7 @@ export function assertRatio(...values: number[]): void {
 export function assertSwipeMs(ms?: number): number | undefined {
   if (ms === undefined) return undefined
   if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0 || ms > MAX_SWIPE_MS) {
-    throw new Error('스와이프 시간이 올바르지 않습니다')
+    throw new Error(tr('phone.invalidSwipeDuration'))
   }
   return Math.round(ms)
 }
@@ -95,8 +96,8 @@ export function registerPhoneScreenIpc(deps: PhoneScreenIpcDeps): PhoneScreenIpc
       onClosed: (serial) => deps.send(IPC.phoneScreenMode, { serial, mode: stream.mode(serial) })
     })
 
-  deps.handle(IPC.phoneScreenStart, (serial: string): ScreenMode => {
-    stream.start(serial)
+  deps.handle(IPC.phoneScreenStart, (serial: string, mode?: string): ScreenMode => {
+    stream.start(serial, mode === 'still')
     // 방금 시작했으면 우선 video 로 보고, 폴백이 일어나면 phone:screenMode 로 알려 준다
     return stream.mode(serial) ?? 'video'
   })
@@ -146,7 +147,7 @@ export function registerPhoneScreenIpc(deps: PhoneScreenIpcDeps): PhoneScreenIpc
     }
   )
   deps.handle(IPC.phoneKey, async (serial: string, key: string) => {
-    if (!isPhoneKey(key)) throw new Error(`알 수 없는 키: ${key}`)
+    if (!isPhoneKey(key)) throw new Error(tr('phone.unknownKey', { key }))
     await pressKey(adb, serial, key)
   })
 

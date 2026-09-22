@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { DeviceManager, type DeviceRepo, type PhoneRowLike } from '../src/main/phone/devices'
-import { DEVICE_POLL_INTERVAL_MS, PHONE_LIMIT, type PhoneDto } from '../src/shared/phone'
+import { DEVICE_POLL_INTERVAL_MS, type PhoneDto } from '../src/shared/phone'
 import { ADB_CANDIDATES } from '../src/main/phone/adb'
 import { PhoneService, type PhoneServiceRepo } from '../src/main/phone/service'
 import { DEFAULT_SETTINGS, type Settings } from '../src/shared/settings'
@@ -210,16 +210,38 @@ describe('DeviceManager 실패 내성', () => {
 })
 
 describe('DeviceManager 끊김 복구', () => {
-  it('recover() 는 kill-server → start-server → devices 를 정확히 1회씩 부르고 재시도하지 않는다', async () => {
+  it('recover(): 붙어 있는 다른 폰이 없을 때만 adb 서버를 껐다 켠다(마지막 수단, 재시도 없음)', async () => {
     const h = makeHarness({ autoReconnect: false })
     h.adb.reply('devices -l', NONE)
     const ok = await h.manager.recover('R3CRA05HY3R')
     expect(ok).toBe(false)
-    expect(h.adb.calls.map((c) => c.join(' '))).toEqual([
-      'kill-server',
-      'start-server',
-      'devices -l'
-    ])
+    const calls = h.adb.calls.map((c) => c.join(' '))
+    expect(calls).toContain('reconnect offline')
+    expect(calls.filter((c) => c === 'kill-server')).toHaveLength(1)
+    expect(calls.indexOf('reconnect offline')).toBeLessThan(calls.indexOf('kill-server'))
+  })
+
+  it('recover(): 다른 폰이 붙어 있으면 서버를 건드리지 않는다 — 그 폰의 연결·화면 전송이 끊기지 않게', async () => {
+    const h = makeHarness({ autoReconnect: false })
+    h.adb.reply('devices -l', 'List of devices attached\nOTHERPHONE device model:SM_F711N\n')
+    expect(await h.manager.recover('RF9X4021NHD')).toBe(false)
+    expect(h.adb.calls.some((c) => c[0] === 'kill-server')).toBe(false)
+  })
+
+  it('recover(): 같은 와이파이에서 발견되면 그 주소로 connect 해서 되살린다', async () => {
+    const h = makeHarness({ autoReconnect: false })
+    h.adb.reply(
+      'mdns services',
+      'List of discovered mdns services\nadb-RF9X4021NHD-iEPG7p\t_adb-tls-connect._tcp\t192.168.45.126:40449\n'
+    )
+    h.adb.reply(
+      'devices -l',
+      'List of devices attached\nadb-RF9X4021NHD-iEPG7p._adb-tls-connect._tcp device model:SM_A155N\n'
+    )
+    expect(await h.manager.recover('RF9X4021NHD')).toBe(true)
+    const calls = h.adb.calls.map((c) => c.join(' '))
+    expect(calls).toContain('connect 192.168.45.126:40449')
+    expect(calls).not.toContain('kill-server')
   })
 
   it('복구 후 폰이 보이면 true 를 돌려준다', async () => {
@@ -250,18 +272,17 @@ describe('DeviceManager 끊김 복구', () => {
 })
 
 describe('DeviceManager 상한과 와이파이', () => {
-  it('동시 연결 상한을 넘는 폰은 offline 으로 두고 경고를 함께 통지한다', async () => {
+  it('동시 연결 상한이 없다 — 붙어 있는 폰은 몇 대든 모두 online 이고 경고도 없다', async () => {
     const h = makeHarness()
     const lines = ['List of devices attached']
-    for (let i = 0; i < PHONE_LIMIT + 1; i++) {
+    for (let i = 0; i < 5; i++) {
       lines.push(`SERIAL${i} device usb:1-${i} model:SM_A54${i}`)
     }
     h.adb.reply('devices -l', `${lines.join('\n')}\n`)
     const list = await h.manager.refresh()
-    expect(list).toHaveLength(PHONE_LIMIT + 1)
-    expect(list.slice(0, PHONE_LIMIT).every((p) => p.state === 'online')).toBe(true)
-    expect(list[PHONE_LIMIT].state).toBe('offline')
-    expect(h.changes[0].warning).toBeTruthy()
+    expect(list).toHaveLength(5)
+    expect(list.every((p) => p.state === 'online')).toBe(true)
+    expect(h.changes[0].warning).toBeUndefined()
   })
 
   it('connectWifi 는 포트를 생략하면 5555 를 붙인다', async () => {
@@ -404,5 +425,212 @@ describe('PhoneService', () => {
     await s.service.refresh()
     s.service.setLabel(1, '업무용', 'XX')
     expect(s.repo.rows[0]).toMatchObject({ label: '업무용', country: 'KR' })
+  })
+})
+
+describe('와이파이 폰 자동 발견(adb mdns services)', () => {
+  const MDNS =
+    'List of discovered mdns services\n' +
+    'adb-R3CR50QEJJN\t_adb._tcp\t192.168.45.212:5555\n' +
+    'adb-R3CR50QEJJN-abc123\t_adb-tls-pairing._tcp\t192.168.45.212:37001\n'
+  const connects = (adb: FakeAdb): string[][] => adb.calls.filter((c) => c[0] === 'connect')
+
+  it('발견된 접속점이 목록에 없으면 connect 하고 목록을 다시 읽는다', async () => {
+    const h = makeHarness()
+    h.adb.reply('devices -l', 'List of devices attached\n')
+    h.adb.reply('mdns services', MDNS)
+    await h.manager.refresh()
+    expect(connects(h.adb)).toEqual([['connect', '192.168.45.212:5555']])
+    expect(deviceCalls(h.adb)).toHaveLength(2)
+  })
+
+  it('페어링 서비스에는 connect 하지 않는다', async () => {
+    const h = makeHarness()
+    h.adb.reply('devices -l', 'List of devices attached\n')
+    h.adb.reply('mdns services', MDNS)
+    await h.manager.refresh()
+    expect(connects(h.adb).some((c) => c[1].endsWith(':37001'))).toBe(false)
+  })
+
+  it('같은 폰이 USB 로 이미 붙어 있거나 이미 연결된 주소면 건너뛴다', async () => {
+    const usb = makeHarness()
+    usb.adb.reply('devices -l', 'List of devices attached\nR3CR50QEJJN device model:SM_A155N\n')
+    usb.adb.reply('mdns services', MDNS)
+    await usb.manager.refresh()
+    expect(connects(usb.adb)).toEqual([])
+
+    const wifi = makeHarness()
+    wifi.adb.reply('devices -l', 'List of devices attached\n192.168.45.212:5555 unauthorized\n')
+    wifi.adb.reply('mdns services', MDNS)
+    await wifi.manager.refresh()
+    expect(connects(wifi.adb)).toEqual([])
+  })
+
+  it('방금 시도한 주소는 쉬는 시간 동안 다시 두드리지 않는다', async () => {
+    const h = makeHarness()
+    h.adb.reply('devices -l', 'List of devices attached\n')
+    h.adb.reply('mdns services', MDNS)
+    await h.manager.refresh()
+    await h.manager.refresh()
+    expect(connects(h.adb)).toHaveLength(1)
+  })
+})
+
+describe('무선 디버깅 페어링(adb pair)', () => {
+  it('주소와 6자리 코드로 adb pair 를 부르고, 성공하면 목록을 다시 읽는다', async () => {
+    const h = makeHarness()
+    h.adb.reply(
+      'pair 192.168.45.212:37123',
+      'Successfully paired to 192.168.45.212:37123 [guid=adb-X]'
+    )
+    h.adb.reply('devices -l', 'List of devices attached\n')
+    const r = await h.manager.pairWifi(' 192.168.45.212:37123 ', '123 456')
+    expect(r.ok).toBe(true)
+    expect(h.adb.calls.find((c) => c[0] === 'pair')).toEqual([
+      'pair',
+      '192.168.45.212:37123',
+      '123456'
+    ])
+    expect(deviceCalls(h.adb).length).toBeGreaterThan(0)
+  })
+
+  it('주소·코드 형식이 틀리면 adb 를 부르지 않는다', async () => {
+    const h = makeHarness()
+    expect((await h.manager.pairWifi('192.168.45.212', '123456')).ok).toBe(false)
+    expect((await h.manager.pairWifi('192.168.45.212:37123', '12345')).ok).toBe(false)
+    expect(h.adb.calls.some((c) => c[0] === 'pair')).toBe(false)
+  })
+
+  it('코드가 틀리면 실패와 adb 문구를 돌려준다', async () => {
+    const h = makeHarness()
+    h.adb.reply('pair 192.168.45.212:37123', 'Failed: Wrong password or connection was dropped.')
+    const r = await h.manager.pairWifi('192.168.45.212:37123', '000000')
+    expect(r).toEqual({ ok: false, message: 'Failed: Wrong password or connection was dropped.' })
+  })
+})
+
+describe('같은 폰의 여러 전송 이름을 한 줄로 합친다', () => {
+  const MDNS =
+    'List of discovered mdns services\n' +
+    'adb-RF9X4021NHD-iEPG7p\t_adb-tls-connect._tcp\t192.168.45.126:40449\n'
+  // 실기 그대로: 무선 디버깅 폰 한 대가 서비스 이름과 ip:port 두 이름으로 동시에 보인다
+  const DEVICES =
+    'List of devices attached\n' +
+    '192.168.45.126:40449 device product:a15ks model:SM_A155N\n' +
+    'adb-RF9X4021NHD-iEPG7p._adb-tls-connect._tcp device product:a15ks model:SM_A155N\n'
+
+  it('한 대로 세고, 저장은 실제 시리얼로, 명령용 serial 은 전송 이름으로 준다', async () => {
+    const h = makeHarness()
+    h.adb.reply('devices -l', DEVICES)
+    h.adb.reply('mdns services', MDNS)
+    const list = await h.manager.refresh()
+    expect(h.repo.rows.map((r) => r.serial)).toEqual(['RF9X4021NHD'])
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({
+      serial: 'adb-RF9X4021NHD-iEPG7p._adb-tls-connect._tcp',
+      state: 'online',
+      transport: 'wifi'
+    })
+    // 이미 붙어 있는 폰에 connect 를 또 걸지 않는다
+    expect(h.adb.calls.some((c) => c[0] === 'connect')).toBe(false)
+  })
+
+  it('USB 로 등록해 둔 줄(이름 붙인 폰)이 와이파이로 붙어도 그 줄 그대로 쓴다', async () => {
+    const h = makeHarness()
+    h.repo.upsertSeen({
+      serial: 'RF9X4021NHD',
+      model: 'SM A155N',
+      transport: 'usb',
+      state: 'online',
+      at: 1
+    })
+    h.repo.rows[0].label = '이가명'
+    h.adb.reply('devices -l', DEVICES)
+    h.adb.reply('mdns services', MDNS)
+    const list = await h.manager.refresh()
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({ label: '이가명', state: 'online' })
+  })
+
+  it('끊긴 옛 줄이 몇 개든 새로 붙은 폰은 바로 쓴다', async () => {
+    const h = makeHarness()
+    for (const s of ['OLD1', 'OLD2', 'OLD3'])
+      h.repo.upsertSeen({ serial: s, model: '', transport: 'usb', state: 'online', at: 1 })
+    h.adb.reply('devices -l', 'List of devices attached\nNEW1 device model:SM_F711N\n')
+    const list = await h.manager.refresh()
+    expect(list.find((p) => p.serial === 'NEW1')?.state).toBe('online')
+  })
+})
+
+describe('옛 포트로 남은 ip:port 줄 정리', () => {
+  it('같은 IP 의 주인을 알면 그 폰 줄로 합친다(무선 디버깅 포트는 매번 바뀐다)', async () => {
+    const h = makeHarness()
+    const merged: string[][] = []
+    ;(h.repo as unknown as { mergeAlias: (a: string, r: string) => void }).mergeAlias = (a, r) => {
+      merged.push([a, r])
+      const i = h.repo.rows.findIndex((row) => row.serial === a)
+      if (i >= 0) h.repo.rows.splice(i, 1)
+    }
+    h.repo.upsertSeen({
+      serial: 'RF9X4021NHD',
+      model: 'SM A155N',
+      transport: 'wifi',
+      state: 'online',
+      at: 1
+    })
+    h.repo.upsertSeen({
+      serial: '192.168.45.126:40449',
+      model: 'SM A155N',
+      transport: 'wifi',
+      state: 'online',
+      at: 1
+    })
+    h.adb.reply(
+      'devices -l',
+      'List of devices attached\nadb-RF9X4021NHD-iEPG7p._adb-tls-connect._tcp device model:SM_A155N\n'
+    )
+    h.adb.reply(
+      'mdns services',
+      'List of discovered mdns services\nadb-RF9X4021NHD-iEPG7p\t_adb-tls-connect._tcp\t192.168.45.126:41777\n'
+    )
+    const list = await h.manager.refresh()
+    expect(merged).toContainEqual(['192.168.45.126:40449', 'RF9X4021NHD'])
+    expect(list.map((p) => p.label)).toEqual(['SM A155N'])
+  })
+})
+
+describe('지운 폰은 다시 끌어오지 않는다', () => {
+  const MDNS = 'List of discovered mdns services\nadb-R3CR50QEJJN\t_adb._tcp\t192.168.45.212:5555\n'
+
+  it('무시 목록의 폰은 보여도 저장하지 않고, 발견돼도 connect 하지 않는다', async () => {
+    const adb = new FakeAdb()
+    const repo = new FakeRepo()
+    const manager = new DeviceManager({
+      adb,
+      repo,
+      now: () => 1_000,
+      autoReconnect: () => false,
+      ignored: () => ['R3CR50QEJJN'],
+      onChange: () => {}
+    })
+    adb.reply('devices -l', 'List of devices attached\n192.168.45.212:5555 unauthorized\n')
+    adb.reply('mdns services', MDNS)
+    const list = await manager.refresh()
+    expect(list).toEqual([])
+    expect(repo.rows).toEqual([])
+    expect(adb.calls.some((c) => c[0] === 'connect')).toBe(false)
+  })
+
+  it('disconnectAll 은 그 폰의 와이파이 전송만 끊는다', async () => {
+    const h = makeHarness()
+    h.adb.reply(
+      'devices -l',
+      'List of devices attached\nR3CRA05HY3R device model:SM_F711N\n192.168.45.212:5555 unauthorized\n'
+    )
+    h.adb.reply('mdns services', MDNS)
+    await h.manager.disconnectAll('R3CR50QEJJN')
+    expect(h.adb.calls.filter((c) => c[0] === 'disconnect')).toEqual([
+      ['disconnect', '192.168.45.212:5555']
+    ])
   })
 })

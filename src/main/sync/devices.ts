@@ -11,6 +11,7 @@ import type { DeviceDto } from '../../shared/sync'
 import type { RemoteRow, SyncBackend } from './backend'
 import { SyncLocal } from './local'
 import { fromIso, fromIsoOrNull, toIso } from './mappers'
+import { tr } from '../i18n'
 
 /** 원격 기기 표 이름. 다른 표와 달리 `_sync` 접미사가 없다 */
 export const DEVICES_TABLE = 'devices'
@@ -33,7 +34,7 @@ export interface DeviceDeps {
 /** 이 PC 의 기기 등록이 다른 기기에서 취소된 상태 — 호출부는 로그아웃·잠금으로 처리한다 */
 export class DeviceRevokedError extends Error {
   constructor() {
-    super('이 기기는 다른 기기에서 로그아웃됐어요')
+    super(tr('sync.deviceRevoked'))
     this.name = 'DeviceRevokedError'
   }
 }
@@ -91,7 +92,7 @@ export class DeviceService {
   /** 기기 하나를 원격 로그아웃시킨다. 그 PC 는 다음 동기화 주기에 스스로 나간다 */
   async revoke(deviceId: string): Promise<void> {
     const row = await this.fetch(deviceId)
-    if (!row) throw new Error('기기를 찾을 수 없습니다')
+    if (!row) throw new Error(tr('sync.deviceNotFound'))
     await this.deps.backend.upsert(DEVICES_TABLE, [{ ...row, revoked_at: toIso(Date.now()) }])
   }
 
@@ -126,7 +127,7 @@ export class DeviceService {
 function toDeviceDto(row: RemoteRow, currentId: string | null): DeviceDto {
   return {
     id: row.id,
-    name: asText(row.name) || '이름 없는 기기',
+    name: asText(row.name) || tr('sync.unnamedDevice'),
     os: asText(row.os),
     appVersion: asText(row.app_version),
     lastSeenAt: fromIso(row.last_seen_at),

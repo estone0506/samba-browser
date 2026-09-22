@@ -14,6 +14,8 @@ const ATTR_RE = /([\w:-]+)="([^"]*)"/g
 const BOUNDS_RE = /\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]/
 // 비밀 입력칸으로 보는 resource-id 패턴(웹 스냅샷의 isSecret 과 같은 취지)
 const SECRET_ID_RE = /(pin|passwd|password|pwd|keypad|secure)/i
+// 키패드의 숫자 키 라벨(한 글자 숫자)
+const KEYPAD_KEY_RE = /^\d$/
 // 덤프 파일은 폰 안에서만 쓰고 지우지 않는다(다음 덤프가 덮어쓴다)
 const DUMP_PATH = '/sdcard/samba-ui.xml'
 
@@ -59,7 +61,13 @@ export function parseUiXml(xml: string, serial: string, app: string): PhoneScree
     height = Math.max(height, bounds.b)
     const secret = isSecretNode(attrs)
     // 비밀 입력칸의 값은 여기서 버린다 — 이 함수 밖으로 나가지 않는다
-    const text = secret ? '' : (attrs.text ?? '').trim()
+    // 단, 키패드의 숫자 키 라벨은 입력값이 아니다 — 지우면 키패드 배치를 읽지 못한다
+    // (실기: 토스 키는 resource-id 가 password_btnNumberN 이라 비밀칸으로 분류돼 라벨이 전부 지워졌다)
+    const rawText = (attrs.text ?? '').trim()
+    const keyLabel = attrs.password !== 'true' && KEYPAD_KEY_RE.test(rawText)
+    // 같은 이유로 안내 문구("앱을 켜려면 비밀번호를…")도 남긴다 — 입력칸(password·EditText)의 값만 버린다
+    const isInput = attrs.password === 'true' || /EditText/.test(attrs.class ?? '')
+    const text = secret && isInput && !keyLabel ? '' : rawText
     const desc = secret ? '' : (attrs['content-desc'] ?? '').trim()
     const clickable = attrs.clickable === 'true'
     // 누를 수 있거나 읽을 거리가 있는 노드만 AI 에게 보인다
@@ -86,8 +94,14 @@ export function parseUiXml(xml: string, serial: string, app: string): PhoneScree
 
 /** dumpsys 출력에서 최상위 패키지명을 뽑는다(순수 함수 — 셸을 거치지 않는다) */
 export function parseCurrentApp(stdout: string): string {
-  const line = stdout.split(/\r?\n/).find((l) => l.includes('mCurrentFocus')) ?? ''
-  return /\s([A-Za-z0-9_.]+)\/[A-Za-z0-9_.$]+/.exec(line)?.[1] ?? ''
+  // 디스플레이가 여럿으로 잡히는 폰은 첫 줄이 `mCurrentFocus=null` 이다(실기: SM A426N — 토스가 앞에 떠 있는데도
+  // 앱 이름이 빈 값으로 읽혀 결제 흐름이 "앱이 아직 안 떴다"며 stuck 으로 끝났다). 패키지가 적힌 첫 줄을 쓴다
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.includes('mCurrentFocus')) continue
+    const app = /\s([A-Za-z0-9_.]+)\/[A-Za-z0-9_.$]+/.exec(line)?.[1]
+    if (app) return app
+  }
+  return ''
 }
 
 /**

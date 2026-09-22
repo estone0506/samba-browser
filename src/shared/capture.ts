@@ -38,10 +38,6 @@ export function isVideoCaptureMode(mode: CaptureMode): boolean {
 export const CAPTURE_FORMATS = ['png', 'jpg'] as const
 export type CaptureFormat = (typeof CAPTURE_FORMATS)[number]
 
-export function isCaptureFormat(v: unknown): v is CaptureFormat {
-  return typeof v === 'string' && (CAPTURE_FORMATS as readonly string[]).includes(v)
-}
-
 /** 비디오는 항상 webm(vp9), 이미지는 설정 형식을 따른다 */
 export function captureExtension(mode: CaptureMode, format: CaptureFormat): string {
   return isVideoCaptureMode(mode) ? 'webm' : format

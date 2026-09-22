@@ -155,7 +155,8 @@
     "save": "Save",
     "shortcutHint": "Ctrl+Alt+1–9 to switch",
     "switchedNotice": "Switched workspace. Already open tabs keep their old session; new tabs use the new one.",
-    "settingsHint": "Workspaces are managed from the sidebar"
+    "settingsHint": "Workspaces are managed from the sidebar",
+    "requestFailed": "Workspace request failed"
   },
   "address": {
     "placeholder": "Search or enter URL",
@@ -180,6 +181,10 @@
   "chat": {
     "title": "AI",
     "placeholder": "Type an instruction…",
+    "imagePasted": "{{n}} image(s) attached",
+    "imageRemove": "Remove image",
+    "imageTooLarge": "Images over 5MB cannot be attached",
+    "imageTooMany": "You can attach up to {{max}} images at once",
     "send": "Send",
     "stop": "Stop",
     "thinking": "Thinking…",
@@ -208,7 +213,8 @@
     "collapsePanel": "Collapse AI panel",
     "expandPanel": "Expand AI panel",
     "setupHint": "No AI provider is connected yet.",
-    "setupLink": "Settings → AI connection"
+    "setupLink": "Settings → AI connection",
+    "lockedWhileRunning": "You can’t switch chats while a task is running. Wait for it to finish or stop it first"
   },
   "confirm": {
     "title": "Confirmation required",
@@ -222,6 +228,9 @@
   "handoff": {
     "title": "The site needs your check",
     "body": "The site is asking for an extra check. Enter it on screen and the task continues",
+    "keypadTitle": "Enter the payment password yourself",
+    "keypadBody": "The app never taps a payment-password keypad for you. Enter the password on the on-screen keypad and press done; the task then continues to verify the payment",
+    "keypadSkip": "I’ll pay later myself",
     "skip": "Skip and continue",
     "abort": "Stop the task",
     "waiting": "Waiting for you to finish the check…",
@@ -243,7 +252,7 @@
     "finalConfirm": "Final confirmation"
   },
   "auth": {
-    "missing": "AI is not connected. Run claude login in a terminal or add an API key in Settings.",
+    "missing": "AI is not connected. Run claude auth login in a terminal or add an API key in Settings.",
     "limit": "You've reached the AI usage limit. Please try again later.",
     "notConnected": "No AI connection. Connect a subscription or add an API key in Settings > AI"
   },
@@ -323,7 +332,10 @@
     "shortcuts": "Shortcuts",
     "shortcutsDesc": "Alt+1 to Alt+6 by default. Leave blank to disable a shortcut",
     "shortcutInvalid": "That shortcut could not be read (for example: Alt+1)",
-    "recordingBusy": "Stop the current recording before starting another (image captures still work)"
+    "recordingBusy": "Stop the current recording before starting another (image captures still work)",
+    "regionNotFound": "Could not find the area to record",
+    "canvasFailed": "Could not create the canvas",
+    "recorderError": "An error occurred while recording"
   },
   "bookmark": {
     "title": "Bookmarks",
@@ -520,7 +532,9 @@
       "newTitle": "New {{type}}",
       "editItemTitle": "Edit {{type}}",
       "generate": "Generate",
-      "keepHint": "Leave empty to keep the saved value"
+      "keepHint": "Leave empty to keep the saved value",
+      "showSecret": "Show what you typed",
+      "hideSecret": "Hide what you typed"
     },
     "import": {
       "title": "Import",
@@ -653,6 +667,8 @@
       "expiry": "Expiry",
       "cvc": "CVC",
       "cardPassword": "Payment password",
+      "paymentPhone": "Phone for payment alerts (Toss Pay etc., optional)",
+      "paymentBirth": "Birth date, 6 digits (Toss Pay etc., optional)",
       "name": "Name",
       "birth": "Date of birth",
       "address": "Address",
@@ -664,6 +680,7 @@
     },
     "paymentProvider": {
       "site": "Site's own pay",
+      "musinsapay": "Musinsa Pay",
       "toss": "Toss Pay",
       "kakao": "KakaoPay",
       "naver": "Naver Pay",
@@ -714,7 +731,8 @@
       "ai": "AI connection",
       "automation": "Automation",
       "keymaster": "Key Master",
-      "notify": "Notifications"
+      "notify": "Notifications",
+      "phones": "Phones"
     },
     "general": {
       "searchTitle": "Search",
@@ -892,7 +910,8 @@
       "badUrl": "Enter a project URL that starts with https://",
       "badKey": "Enter an anon key starting with sb_publishable_ or eyJ. Never use a service_role key",
       "restartNeeded": "Saved. Restart the app to apply.",
-      "optional": "Leave it empty to use this PC only, without sync. See the README to create a project"
+      "optional": "Leave it empty to use this PC only, without sync. See the README to create a project",
+      "envInUse": "Currently connected with the .env values in the project folder (dev setup), so these fields look empty. Values entered here take priority"
     }
   },
   "sync": {
@@ -909,7 +928,7 @@
   "ai": {
     "claudeSubscriptionDesc": "Reuses the Claude Code login already on this PC",
     "claudeInstallHint": "Claude Code is not installed. Install it in a terminal and check again",
-    "claudeLoginHint": "Run claude login in a terminal",
+    "claudeLoginHint": "Run claude auth login in a terminal",
     "noKey": "No key saved",
     "keyPlaceholder": "Paste a key to save it right away",
     "testOk": "The key works",
@@ -938,6 +957,13 @@
     "loginNeededTitle": "Login required",
     "loginNeededDetail": "Log in from the terminal window, then press Reconnect. The app never types your credentials for you",
     "openTerminal": "Open terminal",
+    "switchAccount": "Switch account",
+    "usage": {
+      "session": "5-hour session",
+      "weeklyAll": "Weekly (all)",
+      "weeklyModel": "Weekly {{model}}",
+      "nearLimit": "You are close to the limit. Tasks may stop midway - switch accounts or pick another model"
+    },
     "retryConnect": "Reconnect",
     "close": "Close",
     "disconnectTitle": "Disconnect this subscription?",
@@ -967,7 +993,7 @@
   },
   "phone": {
     "title": "Phones",
-    "subtitle": "Handle verification texts and payment approvals on connected phones. Up to {{n}} phones.",
+    "subtitle": "Handle verification texts and payment approvals on connected phones.",
     "findNow": "Scan now",
     "wifiPlaceholder": "Wi-Fi address (e.g. 192.168.0.5:5555)",
     "wifiConnect": "Connect",
@@ -1034,8 +1060,6 @@
       "detectFailed": "Could not find the paths. Please enter them manually.",
       "listTitle": "Connected phones",
       "labelPlaceholder": "Nickname (e.g. Work Galaxy)",
-      "limitNote": "You can connect up to {{n}} phones at a time.",
-      "overLimit": "You are over the {{n}} phone limit. Disconnect the phones you are not using.",
       "qualityTitle": "Screen quality",
       "maxSize": "Resolution",
       "maxSizeDesc": "Pixels on the long edge. Lower is lighter.",
@@ -1043,14 +1067,16 @@
       "autoReconnect": "Auto reconnect",
       "autoReconnectDesc": "Try to reattach once when the connection drops.",
       "paymentTitle": "Payments",
-      "paymentDesc": "Payments above the limit always ask a human, whatever the permission mode.",
-      "paymentLimit": "Payment limit (KRW)",
+      "paymentDesc": "Set these only if you want an amount cap on phone-approved payments. Both are off (0) by default.",
+      "paymentLimit": "Payment limit (KRW, 0 = none)",
       "settingsOpen": "Phone settings",
-      "settingsClose": "Close phone settings"
+      "settingsClose": "Close phone settings",
+      "firstPaymentLimit": "First-payment limit (KRW, 0 = none)",
+      "firstPaymentLimitDesc": "A cap applied only to the first automatic payment for a new site and payment method. Off (0) by default."
     },
     "assign": {
       "label": "Assigned phone",
-      "open": "Choose a phone",
+      "open": "Change phone",
       "title": "Choose a phone",
       "desc": "Pick which phone receives verifications for this account. If you skip it, all connected phones are watched.",
       "none": "Not chosen",
@@ -1059,8 +1085,20 @@
       "save": "Save",
       "suggestion": "{{host}} was verified on {{phone}}. Make it the assigned phone?",
       "accept": "Assign",
-      "dismiss": "Not now"
-    }
+      "dismiss": "Not now",
+      "currentNone": "Not chosen — all connected phones are watched"
+    },
+    "showScreen": "Show screen",
+    "hideScreen": "Hide screen",
+    "pairTitle": "Register over Wi-Fi without USB (wireless debugging pairing)",
+    "pairHelp": "On the phone open Settings → Developer options → Wireless debugging → \"Pair device with pairing code\". Keep that dialog open and enter its address and 6-digit code below",
+    "pairAddressPlaceholder": "Pairing address (e.g. 192.168.0.5:37123)",
+    "pairCodePlaceholder": "6-digit code",
+    "pairButton": "Pair",
+    "pairDone": "Paired. The phone will connect automatically in a moment",
+    "pairFailed": "Could not pair: {{message}}",
+    "remove": "Remove",
+    "removeConfirm": "Click again to remove"
   },
   "extensions": {
     "title": "Extensions",

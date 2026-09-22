@@ -177,6 +177,51 @@ describe('detectOverlays — 문서에서 찾기', () => {
     expect(list[0].closeIds).toEqual([])
   })
 
+  it('이미 로그인된 화면의 로그인 유도 팝업은 닫아도 되는 레이어다(무신사 — 닫아야 구매 버튼이 풀린다)', () => {
+    document.body.innerHTML = `
+      <header><a href="/logout">로그아웃</a><a href="/my">마이</a></header>
+      <button>회원 전용</button>
+      <div role="dialog">
+        <h2>로그인하고 첫 구매 20% 쿠폰 받기</h2>
+        <button>로그인</button>
+        <button aria-label="닫기">✕</button>
+      </div>`
+    const list = detectOverlays()
+    expect(list).toHaveLength(1)
+    expect(list[0].sensitive).toBe(false)
+    expect(list[0].closeIds).toHaveLength(1)
+  })
+
+  it('로그인되지 않은 화면의 로그인 모달은 그대로 민감한 레이어다', () => {
+    document.body.innerHTML = `
+      <header><a href="/login">로그인</a></header>
+      <div role="dialog">
+        <h2>로그인이 필요합니다</h2>
+        <button aria-label="닫기">✕</button>
+      </div>`
+    const list = detectOverlays()
+    expect(list[0].sensitive).toBe(true)
+    expect(list[0].closeIds).toEqual([])
+  })
+
+  it('로그인 상태여도 비밀번호 칸이 있거나 결제·인증이 섞인 레이어는 닫지 않는다', () => {
+    document.body.innerHTML = `
+      <header><a href="/logout">로그아웃</a></header>
+      <div role="dialog">
+        <h2>로그인 후 본인 인증이 필요합니다</h2>
+        <button aria-label="닫기">✕</button>
+      </div>`
+    expect(detectOverlays()[0].sensitive).toBe(true)
+    document.body.innerHTML = `
+      <header><a href="/logout">로그아웃</a></header>
+      <div role="dialog">
+        <h2>다시 로그인해 주세요</h2>
+        <input type="password">
+        <button aria-label="닫기">✕</button>
+      </div>`
+    expect(detectOverlays()[0].sensitive).toBe(true)
+  })
+
   it('배경 dim 과 모달이 겹치면 안쪽 모달만 남긴다', () => {
     document.body.innerHTML = `
       <div id="dim" data-pos="fixed" data-z="1000">
@@ -240,6 +285,39 @@ describe('클릭 기준값 비교', () => {
     const before = readClickBaseline(el)
     el.setAttribute('class', 'selected')
     expect(baselineChanged(before, readClickBaseline(el))).toBe(true)
+  })
+
+  it('색(style)만 바뀌는 토글 버튼은 한 번만 눌린다 — 폴백이 다시 눌러 끄지 않는다', async () => {
+    // SAMBA-WAVE 까대기 버튼: 켜지면 background 색만 바뀐다(class·텍스트·포커스 그대로)
+    document.body.innerHTML = '<button id="t" style="background:#5a5a5a">까대기</button>'
+    buildSnapshot()
+    const el = document.getElementById('t') as HTMLElement
+    let on = false
+    let presses = 0
+    el.addEventListener('click', () => {
+      presses += 1
+      on = !on
+      el.style.background = on ? 'orange' : '#5a5a5a'
+    })
+    expect(await performClick(1)).toBe('ok')
+    expect(presses).toBe(1)
+    expect(on).toBe(true)
+  })
+})
+
+describe('새 탭을 여는 버튼 — 화면이 그대로여도 다시 누르지 않는다', () => {
+  it('메인이 새 탭 열림을 알리면 폴백 없이 한 번으로 끝난다(SAMBA-WAVE 원문링크)', async () => {
+    const { notePopupOpened } = await import('../src/preload/page-core')
+    document.body.innerHTML = '<button id="src">원문링크</button>'
+    buildSnapshot()
+    let presses = 0
+    document.getElementById('src')!.addEventListener('click', () => {
+      presses += 1
+      // window.open → 메인의 setWindowOpenHandler → page:popupOpened 알림(비동기)
+      setTimeout(notePopupOpened, 10)
+    })
+    expect(await performClick(1)).toBe('ok')
+    expect(presses).toBe(1)
   })
 })
 

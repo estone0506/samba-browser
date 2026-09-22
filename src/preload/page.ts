@@ -27,6 +27,7 @@ import {
   textOf,
   performClick,
   performType,
+  notePopupOpened,
   performSelect,
   performScroll,
   rectOf,
@@ -38,6 +39,8 @@ import {
   submitForm,
   isSecretField,
   keypadSignals,
+  keypadLayout,
+  pressOnce,
   detectOverlays,
   runAgentOp,
   installCaptureListener
@@ -97,6 +100,10 @@ if (!isExtensionDocument) {
     isSecretField: (id: number) => isSecretField(id),
     // 결제 비밀번호 키패드 판정용 신호(값은 담기지 않는다)
     keypadSignals: () => keypadSignals(),
+    // 결제 키패드 숫자 버튼 배치(앱이 키마스터 값을 넣을 때). 값은 담기지 않는다
+    keypadLayout: () => keypadLayout(),
+    // 키패드 버튼 단발 누름(폴백 없음)
+    pressOnce: (id: number) => pressOnce(id),
     // 화면을 덮고 있는 레이어(공지·쿠폰·앱 설치 배너·결제 확인창) 목록
     overlays: () => detectOverlays(),
     // 요소 가운데의 뷰포트 좌표. 메인 프로세스가 실제 마우스 클릭을 보낼 자리다
@@ -109,6 +116,7 @@ if (!isExtensionDocument) {
   // 메인이 이 프레임 안에서 동작 하나를 시킬 때 쓰는 통로.
   // 하위 프레임에는 executeJavaScriptInIsolatedWorld 가 없어서 코드 문자열 대신
   // 동작 이름만 받는다(shared/agent-op 의 AgentOp). 답은 같은 격리 월드에서만 나간다
+  ipcRenderer.on(PAGE_IPC.popupOpened, () => notePopupOpened())
   ipcRenderer.on(PAGE_IPC.agentCall, (_event, raw: unknown) => {
     if (typeof raw !== 'object' || raw === null) return
     const reqId = (raw as { reqId?: unknown }).reqId

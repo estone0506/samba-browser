@@ -116,7 +116,9 @@ describe('폰 설정', () => {
     expect(DEFAULT_SETTINGS.phoneScreenMaxSize).toBe(720)
     expect(DEFAULT_SETTINGS.phoneScreenFps).toBe(15)
     expect(DEFAULT_SETTINGS.phoneAutoReconnect).toBe(true)
-    expect(DEFAULT_SETTINGS.paymentLimitKrw).toBe(500_000)
+    // 결제 상한은 기본이 없음(0)이다 — 사용자가 적었을 때만 건다
+    expect(DEFAULT_SETTINGS.paymentLimitKrw).toBe(0)
+    expect(DEFAULT_SETTINGS.firstPaymentLimitKrw).toBe(0)
     // 결제 키패드 화면을 외부 AI 로 보내는 경로는 기본으로 꿫 둔다
     expect(DEFAULT_SETTINGS.phoneKeypadVisual).toBe(false)
   })
@@ -132,7 +134,7 @@ describe('폰 설정', () => {
     expect(s.adbPath).toBe('')
     expect(s.phoneScreenMaxSize).toBe(720)
     expect(s.phoneScreenFps).toBe(15)
-    expect(s.paymentLimitKrw).toBe(500_000)
+    expect(s.paymentLimitKrw).toBe(0)
   })
 
   it('경로는 기기별 값이라 동기화 대상이 아니다', () => {
@@ -186,5 +188,36 @@ describe('FakeAdb', () => {
     expect(chunks).toEqual([Buffer.from([1, 2, 3])])
     stop()
     expect(ended).toBe(0)
+  })
+})
+
+describe('parseMdnsServices', () => {
+  it('접속할 수 있는 서비스만 시리얼·주소로 뽑는다', async () => {
+    const { parseMdnsServices } = await import('../src/main/phone/adb')
+    const out = parseMdnsServices(
+      'List of discovered mdns services\r\n' +
+        'adb-R3CR50QEJJN\t_adb._tcp\t192.168.45.212:5555\r\n' +
+        'adb-R3CRA05HY3R-xYz12\t_adb-tls-connect._tcp\t192.168.45.10:41234\r\n' +
+        'adb-R3CRA05HY3R-xYz12\t_adb-tls-pairing._tcp\t192.168.45.10:39999\r\n' +
+        'garbage line\r\n'
+    )
+    expect(out).toEqual([
+      { serial: 'R3CR50QEJJN', address: '192.168.45.212:5555' },
+      { serial: 'R3CRA05HY3R', address: '192.168.45.10:41234' }
+    ])
+  })
+})
+
+describe('realSerialOf', () => {
+  it('서비스 이름·ip:port 를 실제 시리얼로 바꾼다', async () => {
+    const { realSerialOf } = await import('../src/main/phone/adb')
+    const services = [{ serial: 'R3CR50QEJJN', address: '192.168.45.212:5555' }]
+    expect(realSerialOf('adb-RF9X4021NHD-iEPG7p._adb-tls-connect._tcp', services)).toBe(
+      'RF9X4021NHD'
+    )
+    expect(realSerialOf('192.168.45.212:5555', services)).toBe('R3CR50QEJJN')
+    // 발견 목록에 없는 주소와 USB 시리얼은 그대로
+    expect(realSerialOf('10.0.0.9:5555', services)).toBe('10.0.0.9:5555')
+    expect(realSerialOf('R3CRA05HY3R', services)).toBe('R3CRA05HY3R')
   })
 })

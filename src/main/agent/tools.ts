@@ -6,7 +6,14 @@ import type { LoginFieldsResult } from '../browser/page-bridge'
 import { serializeSnapshot } from '../../shared/snapshot'
 import type { PageOverlay, PageSnapshot } from '../../shared/snapshot'
 import { diffLines } from '../../shared/snapshot-diff'
-import { runJsLabel, runSandbox, RUN_JS_MAX_CODE, type RunJsBridge } from './run-js'
+import {
+  runJsLabel,
+  runSandbox,
+  RUN_JS_MAX_CODE,
+  RUN_SCRIPT_TOTAL_TIMEOUT_MS,
+  type RunJsBridge
+} from './run-js'
+import { isScriptFailure, type SiteScript, type SiteScriptInput } from '../../shared/site-scripts'
 import { isDangerous } from '../../shared/danger'
 import type { PermissionMode, VaultAccessPolicy } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
@@ -34,6 +41,7 @@ import {
 } from './tools-phone'
 import { handoffToolResult, type HandoffResult } from './handoff'
 import { secretKeypadGate } from './secret-page'
+import { enterWebPaymentPassword, type WebKeypadResult } from '../vault/web-keypad'
 import { knownLoginUrl, isLikelyLoginUrl } from '../../shared/site-rules'
 import { BLOCKED_URL_MESSAGE, isInternalUrl } from '../../shared/url'
 import {
@@ -46,6 +54,8 @@ import {
 } from './target'
 import type { AgentTarget } from '../browser/targets'
 import type { AgentToolCall, SiteActionTool } from '../../shared/site-memory'
+import type { HandoffKind } from '../../shared/ipc'
+import { PLAYBOOK_INSTRUCTIONS_MAX, type PlaybookDto } from '../../shared/playbook'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -72,6 +82,26 @@ const PAYMENT_PROVIDER_AMBIGUOUS =
   '(site for the site own pay such as 무신사머니, toss, kakao, naver, payco, samsung, apple, other)'
 // guard 모드에서 추가 확인을 받아야 하는 민감 항목
 const CONFIRM_ITEM_TYPES: VaultItemType[] = ['password', 'card']
+// PG 결제창(토스·ePAY 팝업)에서 채우는 항목 — 그 창의 호스트가 아니라 창을 연 사이트의 계정을 쓴다
+const PAYMENT_POPUP_ITEM_TYPES: VaultItemType[] = ['identity', 'card', 'password']
+// fill_secret 의 format 인자 — 저장된 값을 입력칸이 원하는 모양으로 바꾼다
+export const FILL_FORMATS = ['yymmdd', 'yyyymmdd', 'digits'] as const
+export type FillFormat = (typeof FILL_FORMATS)[number]
+
+/**
+ * 저장된 값을 입력칸 모양에 맞춘다(순수 함수). 못 맞추면 null.
+ *  - yymmdd: 1991-01-01 / 19910101 / 910101 → 910101 (토스페이 생년월일 6자리)
+ *  - yyyymmdd: 1991-01-01 → 19910101
+ *  - digits: 010-1234-5678 → 01012345678
+ */
+export function formatFillValue(value: string, format?: FillFormat): string | null {
+  if (!format) return value
+  const digits = value.replace(/\D/g, '')
+  if (format === 'digits') return digits === '' ? null : digits
+  if (digits.length === 8) return format === 'yymmdd' ? digits.slice(2) : digits
+  if (digits.length === 6) return format === 'yymmdd' ? digits : null
+  return null
+}
 // fill_secret 대상 요소가 실제로 비밀 입력칸(type=password)이어야 하는 항목 종류.
 // 카드·신원정보는 번호칸이 평문 input 인 경우가 흔해 이 검사에서 제외한다
 const SECRET_TARGET_ITEM_TYPES: VaultItemType[] = ['login', 'password']
@@ -101,12 +131,32 @@ export const PAYMENT_KEYPAD_REFUSAL =
 export const SECRET_SCREEN_REFUSAL = 'refused: secret screen'
 // 비밀 키패드 화면에서 fill_secret 이 사람에게 넘길 때의 안내
 export const KEYPAD_HANDOFF_MESSAGE = '결제 비밀번호는 직접 눌러 주세요'
+// 사용자가 키패드 넘김을 건너뛴 뒤 모델이 할 일(같은 키패드에 다시 시도하지 않게)
+export const KEYPAD_SKIPPED_NEXT =
+  'user skipped: they will enter the payment password themselves later. Do NOT call fill_secret, ' +
+  'click or type on this keypad again. Call get_page once; if the payment finished, verify the order, ' +
+  'otherwise finish with done and tell the user the payment is waiting for their password.'
 // 넘김 카드에 표시할 근거 문구(값이 아니라 화면 종류만 담는다)
 const KEYPAD_HANDOFF_MATCHED = '결제 비밀번호 키패드'
+// 앱이 키패드에 결제 비밀번호를 다 넣었을 때. 확인·입력완료 버튼은 모델이 누른다
+export const KEYPAD_ENTERED_NEXT =
+  'ok: the app entered the payment password on the keypad. ' +
+  'Now call get_page and press the confirm/입력완료 button if the keypad has one; never press the digits yourself.'
+// 같은 결제창에 자동 입력을 이미 한 번 했을 때(연속 오답 → 결제 수단 잠금 방지)
+export const KEYPAD_ALREADY_TRIED =
+  'refused: the app already entered the payment password once in this window during this task. ' +
+  'Do NOT retry - a wrong password locks the pay method after 5 tries. Read the page: if it says the password ' +
+  'is wrong, stop and tell the user which pay method and provider you used; otherwise continue.'
+// 결제창(PG 팝업)의 계정을 여는 탭에서 찾을 수 없을 때
+const KEYPAD_ACCOUNT_UNKNOWN =
+  'account not found: the payment window is not linked to a saved account; ' +
+  'call list_accounts on the shop tab or pass accountLabel'
 // progress 도구가 말이 안 되는 숫자를 받았을 때 돌려주는 문자열
 export const PROGRESS_INVALID = 'refused: progress needs 0 <= done <= total and total >= 1'
 // 진행 라벨 표시 상한(상품명이 길어도 진행 배지가 무너지지 않게)
 const PROGRESS_LABEL_MAX = 80
+// 플레이북 수정 확인 카드에 보여 줄 덧붙일 글의 상한(카드가 무너지지 않게)
+const PLAYBOOK_PREVIEW_MAX = 400
 // diff 를 부탁했는데 직전 읽기와 똑같을 때 돌려주는 문자열
 const NO_CHANGE = 'no change since the last get_page'
 // 직전 스냅샷 문자열을 기억해 둘 탭 개수(diff 용)
@@ -162,6 +212,7 @@ const ITEM_TYPES = [
 // 결제 수단(도구 스키마용). shared/vault 의 PaymentProvider 와 단일 소스로 유지한다
 const PAYMENT_PROVIDER_NAMES = [
   'site',
+  'musinsapay',
   'toss',
   'kakao',
   'naver',
@@ -210,22 +261,109 @@ export function resolveAccount(
 // 도구 하나의 상한 시간. run_js 는 자체 30초 상한이 있으므로 그보다 넉넉히 둔다
 const TOOL_TIMEOUT_MS = 90_000
 
-async function withToolTimeout<T>(p: Promise<T>, ms: number): Promise<T | string> {
-  let timer: ReturnType<typeof setTimeout> | undefined
+// 도구가 실패를 알릴 때 쓰는 말. 결과 어디에 있든 실패로 보던 예전 판정은, 페이지 본문·플레이북 절차처럼
+// 남의 글을 그대로 돌려주는 도구에서 오탐을 냈다(실기: 플레이북 본문의 "error"·"locked" 때문에 읽기 성공이 ✗)
+const FAILURE_WORDS_RE = /not found|not set up|host unknown|refused|denied|error|locked|fail/i
+/** 본문을 돌려주는 도구의 실패 표식 — 우리 도구는 실패를 결과 맨 앞에 적는다 */
+const FAILURE_HEAD_RE =
+  /^\s*(refused|error|denied|locked|handoff|needs_user|no active tab|no element matches)\b|^\s*Error:/i
+
+/**
+ * 도구 결과가 성공인가(진행 로그의 ✓/✗ 와 사이트 기억의 성공 경로 판정에 쓴다).
+ * content 도구(페이지 읽기·요소 찾기·탭 목록·플레이북 읽기·run_js)는 결과에 남의 글이 섞이므로 앞머리만 본다.
+ * run_js 는 log() 출력 뒤에 `Error:` 줄이 올 수 있어 줄 머리도 본다
+ */
+export function isToolResultOk(raw: string, content = false): boolean {
+  if (!content) return !FAILURE_WORDS_RE.test(raw)
+  return !FAILURE_HEAD_RE.test(raw) && !/^(Error:|refused:)/m.test(raw)
+}
+
+/** 결제창 호스트 → 결제 수단. 결제창이 묻는 휴대폰·생년월일을 어느 결제 항목에서 찾을지 정한다 */
+const PAY_HOST_PROVIDERS: ReadonlyArray<[RegExp, PaymentProvider]> = [
+  [/(^|\.)toss\.im$|(^|\.)tosspayments\.com$/, 'toss'],
+  [/(^|\.)payco\.com$/, 'payco'],
+  [/(^|\.)kakaopay\.com$|(^|\.)kakao\.com$/, 'kakao'],
+  [/(^|\.)pay\.naver\.com$/, 'naver']
+]
+
+export function payProviderOfUrl(url: string): PaymentProvider | null {
+  let host = ''
+  try {
+    host = new URL(url).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+  return PAY_HOST_PROVIDERS.find(([re]) => re.test(host))?.[1] ?? null
+}
+
+/**
+ * 신원정보에서 못 찾은 휴대폰·생년월일을, 지금 결제창의 결제 수단 항목(payment.phone·payment.birth)에서 찾는다.
+ * 결제창이 아니거나 다른 필드면 null
+ */
+function paymentIdentityFallback(
+  vault: VaultService,
+  accountId: number,
+  itemType: VaultItemType,
+  fieldKey: string,
+  url: string,
+  jobId: string | undefined
+): string | null {
+  if (itemType !== 'identity') return null
+  const short = fieldKey.split('.').pop() ?? ''
+  if (short !== 'phone' && short !== 'birth') return null
+  const provider = payProviderOfUrl(url)
+  if (!provider) return null
+  return vault.getPaymentSecretForFill({
+    accountId,
+    provider,
+    fieldKey: `payment.${short}`,
+    ...(jobId === undefined ? {} : { jobId })
+  }).value
+}
+
+/** run_script 의 args(JSON 문자열)를 객체로 바꾼다. 비어 있으면 빈 객체, 객체가 아니면 null */
+export function parseScriptArgs(raw: string | undefined): Record<string, unknown> | null {
+  if (raw === undefined || raw.trim() === '') return {}
+  try {
+    const value: unknown = JSON.parse(raw)
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+    return value as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/** 제한 시간을 잴 때 시계를 확인하는 간격 */
+const TOOL_TIMEOUT_POLL_MS = 1_000
+
+/**
+ * 도구 하나의 제한 시간. 사람을 기다리는 동안(확인 카드·키패드 넘김)은 시간을 세지 않는다 —
+ * 사용자가 결제 비밀번호를 90초 넘게 누르고 있으면 도구가 "페이지 무응답"으로 끝나 버리고,
+ * 카드는 화면에 남은 채 모델이 다른 길로 새던 문제를 막는다
+ */
+export async function withToolTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  isWaitingForHuman: () => boolean = () => false,
+  pollMs: number = TOOL_TIMEOUT_POLL_MS
+): Promise<T | string> {
+  let timer: ReturnType<typeof setInterval> | undefined
   const timeout = new Promise<string>((resolve) => {
-    timer = setTimeout(
-      () =>
-        resolve(
-          `error: the page did not respond within ${Math.round(ms / 1000)}s (a dialog, a stuck popup or heavy loading). ` +
-            'Call list_tabs/get_page again, or switch to another tab.'
-        ),
-      ms
-    )
+    let spent = 0
+    timer = setInterval(() => {
+      if (isWaitingForHuman()) return
+      spent += pollMs
+      if (spent < ms) return
+      resolve(
+        `error: the page did not respond within ${Math.round(ms / 1000)}s (a dialog, a stuck popup or heavy loading). ` +
+          'Call list_tabs/get_page again, or switch to another tab.'
+      )
+    }, pollMs)
   })
   try {
     return await Promise.race([p, timeout])
   } finally {
-    if (timer) clearTimeout(timer)
+    if (timer) clearInterval(timer)
   }
 }
 
@@ -246,8 +384,22 @@ export interface ToolContext {
   // 행동 도구(click·type·select·scroll·switch_tab·dismiss_overlay·run_js) 호출 1건을 그대로 넘긴다.
   // 사이트 기억이 성공 경로를 뽑는 유일한 입구다 — 관찰 도구는 여기로 오지 않는다
   onCall?: (call: AgentToolCall) => void
+  // 통한(또는 실패한) run_js 코드 전문. 실행이 끝난 뒤 학습 단계가 이것으로 재생용 스크립트를 만든다.
+  // clicked 는 코드 안에서 번호로 누른 요소의 글자다(번호는 페이지마다 바뀌므로 글자로 바꿔 쓰게 한다)
+  onRunJs?: (run: { code: string; ok: boolean; url: string; clicked: string[] }) => void
   // 사이트 기억. 주입되지 않으면 remember_site 도구를 등록하지 않는다
   siteMemory?: { remember: (host: string, note: string) => string }
+  // 저장된 사이트 스크립트. 주입되지 않으면 save_script·run_script 도구를 등록하지 않는다
+  scripts?: {
+    find: (name: string) => SiteScript | undefined
+    save: (input: SiteScriptInput) => string
+    ran: (name: string, ok: boolean) => void
+  }
+  // 플레이북 읽기·절차 수정. 주입되지 않으면 list_playbooks·update_playbook 도구를 등록하지 않는다
+  playbooks?: {
+    list: () => PlaybookDto[]
+    update: (id: string, instructions: string) => PlaybookDto | null
+  }
   // 키마스터. 주입되지 않은 실행(구버전 호출부·테스트)에서는 금고 도구가 잠금으로 동작한다
   vault?: VaultService
   // 감사 로그에 남길 작업 식별자(실행 1건 = jobId 1개)
@@ -265,6 +417,7 @@ export interface ToolContext {
     matched: string
     currentUrl: () => string
     stillBlocked: () => Promise<boolean>
+    kind?: HandoffKind
   }) => Promise<HandoffResult>
   // 제외 도메인(정규화된 host 문자열). 미지정 시 빈 목록으로 동작한다
   vaultExcludedHosts?: string[]
@@ -344,7 +497,23 @@ export async function findLoginFieldsWithFallback(
   return fields
 }
 
-export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkMcpServer> {
+export function createSambaTools(baseCtx: ToolContext): ReturnType<typeof createSdkMcpServer> {
+  // 사람을 기다리는 중인 호출 수 — 이 동안은 도구 제한 시간을 세지 않는다
+  let humanWaits = 0
+  const waitingForHuman = async <T>(fn: () => Promise<T>): Promise<T> => {
+    humanWaits += 1
+    try {
+      return await fn()
+    } finally {
+      humanWaits -= 1
+    }
+  }
+  const baseHandoff = baseCtx.handoff
+  const ctx: ToolContext = {
+    ...baseCtx,
+    confirm: (action, kind) => waitingForHuman(() => baseCtx.confirm(action, kind)),
+    ...(baseHandoff ? { handoff: (o) => waitingForHuman(() => baseHandoff(o)) } : {})
+  }
   // 상한 도달 알림은 1회만 보낸다
   let limitNotified = false
 
@@ -353,7 +522,9 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
   const guard = async <T>(
     label: string | (() => string),
     fn: () => Promise<T>,
-    action?: SiteActionTool
+    action?: SiteActionTool,
+    // 결과에 페이지·문서 본문이 실리는 도구(앞머리만 보고 성공/실패를 가린다)
+    content = false
   ): Promise<ReturnType<typeof text>> => {
     const resolveLabel = (): string => (typeof label === 'string' ? label : label())
     // 호출 1건을 사이트 기억으로 넘긴다. 기억이 붙어 있지 않으면 아무 일도 하지 않는다
@@ -372,9 +543,9 @@ export function createSambaTools(ctx: ToolContext): ReturnType<typeof createSdkM
     try {
       // 페이지가 대화상자·무한 로딩으로 응답하지 않으면 실행 전체가 멈춘다(실기에서 14분 대기).
       // 도구 하나는 이 시간 안에 끝나야 하고, 넘기면 문구로 돌려줘 모델이 다른 길을 찾게 한다
-      const r = await withToolTimeout(fn(), TOOL_TIMEOUT_MS)
+      const r = await withToolTimeout(fn(), TOOL_TIMEOUT_MS, () => humanWaits > 0)
       const raw = typeof r === 'string' ? r : JSON.stringify(r)
-      const ok = !/not found|not set up|host unknown|refused|denied|error|locked|fail/i.test(raw)
+      const ok = isToolResultOk(raw, content)
       ctx.onStep(resolveLabel(), ok)
       note(ok, raw)
       // 실행 중 자동으로 닫은 페이지 대화상자가 있으면 그 문구를 결과 앞에 알려 준다
@@ -531,18 +702,151 @@ ${raw}`
   }
 
   /**
-   * 웹 결제 비밀번호 키패드를 사용자에게 넘긴다.
-   * 아직 웹 키패드에 자동으로 눌러 주는 경로는 없다 — 사용자가 직접 누르고 "계속" 하면 이어간다.
-   * 비밀값은 어디에도 오가지 않는다
+   * 결제창이 어느 사이트 계정의 것인지. 결제 키패드는 PG 도메인(NICE·KCP·페이코) 팝업이나
+   * iframe 에 뜨므로 그 창의 호스트로는 계정을 못 찾는다 — 팝업을 연 탭(opener)의 호스트로
+   * 되돌아가 찾는다. opener 도 없으면 현재 창 호스트 그대로다
+   */
+  // 이번 실행에서 키패드 자동 입력을 이미 한 결제창 호스트들
+  const keypadAttempts = new Set<string>()
+
+  const keypadAccountHosts = (tab: Tab): string[] => {
+    const hosts = [currentHost(tab)]
+    // opener 사슬을 팝업까지 따라간다(무신사머니 팝업 → 그 안에서 열린 ePAY 팝업). 탭 목록에는
+    // 팝업이 없어 list() 만 보면 결제창의 부모를 못 찾는다(실기: account not found)
+    const targets = targetList()
+    let openerId = tab.openerId
+    for (let depth = 0; depth < 4 && openerId; depth += 1) {
+      const opener = targets.find((t) => t.id === openerId)
+      if (!opener) break
+      hosts.push(normalizeHost(opener.url))
+      openerId = opener.openerId
+    }
+    return hosts.filter((h) => h !== '')
+  }
+
+  /**
+   * 결제 비밀번호를 넣을 계정. 같은 이름의 계정이 로그인 도메인별로 여럿일 수 있다
+   * (member.one.musinsa.com / my.musinsa.com / musinsa.com 의 alice) — 그중 결제 비밀번호를
+   * 가진 계정을 먼저 본다. 안 그러면 프로필 이름이 같은 다른 계정을 잡아 "not found" 로 끝난다(실기)
+   */
+  const keypadAccount = (
+    available: VaultService,
+    hosts: string[],
+    accountLabel: string | undefined,
+    profile: string,
+    wanted: VaultItemType = 'password'
+  ): AccountDto | null => {
+    const seen = new Set<number>()
+    const candidates: AccountDto[] = []
+    for (const host of hosts) {
+      for (const a of available.listAccounts(host)) {
+        if (seen.has(a.id)) continue
+        seen.add(a.id)
+        candidates.push(a)
+      }
+    }
+    const withItem = candidates.filter((a) => a.itemTypes.includes(wanted))
+    return (
+      resolveAccount(withItem, accountLabel, profile) ??
+      resolveAccount(candidates, accountLabel, profile)
+    )
+  }
+
+  /**
+   * 웹 결제 비밀번호 키패드에 키마스터 값을 앱이 넣는다. 값은 web-keypad 실행기 안에만 있고,
+   * 여기는 결과 문구만 받는다. 넣지 못했으면(배치 불완전·검증 실패) 사람에게 넘긴다.
+   * 계정 호스트 검사: 키패드가 계정 도메인 자체에 있거나, 계정 도메인 탭이 연 결제창(팝업)에
+   * 있어야 한다 — 아무 사이트의 키패드에나 결제 비밀번호를 넣지 않는다
+   */
+  const keypadEnter = async (
+    tab: Tab,
+    accountLabel: string | undefined,
+    provider: PaymentProvider | undefined
+  ): Promise<string> => {
+    const blocked = gateRefusal(currentUrl(tab))
+    if (blocked) return blocked
+    // 금고를 쓸 수 없으면(미설정·잠김) 예전처럼 사람에게 넘긴다 — 사용자가 직접 누르면 이어간다
+    const available = vaultAvailable()
+    if (typeof available === 'string') return await keypadHandoff(tab)
+    const hosts = keypadAccountHosts(tab)
+    const account = keypadAccount(available, hosts, accountLabel, tab.profile)
+    if (!account) return hosts.length > 1 ? KEYPAD_ACCOUNT_UNKNOWN : ACCOUNT_NOT_FOUND
+    const gate = await applyPolicy(available, effectiveAccess(account.agentAccess, globalPolicy()))
+    // 잠김·미설정은 사람에게 넘기고(직접 누르면 이어간다), 접근 정책 거부(never)는 그대로 알린다
+    if (gate === VAULT_LOCKED || gate === VAULT_NOT_SET_UP) return await keypadHandoff(tab)
+    if (typeof gate === 'string') return gate
+    const v = gate
+    // 결제창 호스트가 계정 도메인과 다르면 계정 도메인 탭이 연 팝업이어야 한다
+    // (제외 도메인·평문 페이지는 위 gateRefusal 이 이미 걸렀다)
+    const here = currentHost(tab)
+    const accountHost = account.host
+    if (!sameRegistrableDomain(here, accountHost)) {
+      const openedFromAccountSite = hosts
+        .slice(1)
+        .some((h) => sameRegistrableDomain(h, accountHost))
+      if (!openedFromAccountSite) return FILL_HOST_MISMATCH
+    }
+    // guard 모드는 결제 비밀번호 입력 전에 한 번 더 묻는다(fill_secret 의 평소 규칙과 같다).
+    // full 모드는 묻지 않는다 — 결제 직전 확인은 플레이북이 정한다
+    if (ctx.mode === 'guard') {
+      const ok = await ctx.confirm('키마스터 입력: 결제 비밀번호 키패드', 'danger')
+      if (!ok) return 'denied by user'
+    }
+    // 한 실행에서 키패드 자동 입력은 결제창(호스트)마다 1회뿐이다. 틀린 값을 모델이 다시 부르면
+    // 5회 오답으로 결제 수단이 잠긴다(실기: 3/5 까지 감). 두 번째부터는 앱이 거절하고 사람에게 맡긴다
+    const attemptKey = currentHost(tab)
+    if (keypadAttempts.has(attemptKey)) return KEYPAD_ALREADY_TRIED
+    const layout = await pageBridge.keypadLayout(tab).catch(() => null)
+    if (!layout) return await keypadHandoff(tab)
+    keypadAttempts.add(attemptKey)
+    const frameIndex = layout.frameIndex
+    const result: WebKeypadResult = await enterWebPaymentPassword({
+      vault: v,
+      accountId: account.id,
+      ...(provider === undefined ? {} : { provider }),
+      ...(ctx.jobId === undefined ? {} : { jobId: ctx.jobId }),
+      layout,
+      // 누를 때마다 숫자가 재배열되는 키패드가 있다 — 매 자리 직전에 배치를 다시 읽는다
+      relayout: () => pageBridge.keypadLayout(tab).catch(() => null),
+      // 일반 click 은 변화가 안 보이면 Enter·좌표로 다시 눌러 같은 숫자가 두세 번 들어간다 —
+      // 키패드는 폴백 없는 단발 누름만 쓴다
+      click: (id) => pageBridge.pressOnce(tab, id),
+      // 보안 키패드가 합성 클릭을 무시하면 요소 가운데 좌표에 진짜 마우스 클릭을 보낸다.
+      // 프레임 안 요소는 화면 좌표를 알 수 없어 rectOf 가 null 이다 — 그때는 폴백 없이 넘김으로 간다
+      clickNative: async (id) => {
+        const point = await pageBridge.rectOf(tab, id).catch(() => null)
+        return point ? pageBridge.clickAt(tab, point.x, point.y) : false
+      },
+      filled: () => pageBridge.keypadFilled(tab, frameIndex),
+      onStep: ctx.onStep
+    })
+    if (result === 'ok') return KEYPAD_ENTERED_NEXT
+    if (result === 'ambiguous') return PAYMENT_PROVIDER_AMBIGUOUS
+    if (result === 'not-found') {
+      return `not found: no payment password${provider ? ` (${provider})` : ''} saved for this account`
+    }
+    // 금고가 잠겼거나, 배치를 못 읽었거나, 눌러도 자리수가 늘지 않았다 — 사람에게 넘긴다
+    return await keypadHandoff(tab)
+  }
+
+  /**
+   * 웹 결제 비밀번호 키패드를 사용자에게 넘긴다(앱이 넣지 못했을 때).
+   * 사용자가 직접 누르고 "계속" 하면 이어간다. 비밀값은 어디에도 오가지 않는다
    */
   const keypadHandoff = async (tab: Tab): Promise<string> => {
     if (!ctx.handoff) return `handoff: ${KEYPAD_HANDOFF_MESSAGE}`
     try {
       const result = await ctx.handoff({
         matched: KEYPAD_HANDOFF_MATCHED,
+        kind: 'keypad',
         currentUrl: () => currentUrl(tab),
         stillBlocked: async () => (await secretKeypadGate.check(tab, { fresh: true })) !== null
       })
+      // '건너뛰고 계속'은 "지금은 안 누른다"는 뜻이다 — 같은 키패드에 fill_secret 을 다시 부르면
+      // 카드가 또 뜬다(실기에서 반복 관찰). 모델에게 다음 행동을 콕 집어 준다
+      if (result.outcome === 'skipped')
+        return `handoff: ${KEYPAD_HANDOFF_MESSAGE}
+${KEYPAD_SKIPPED_NEXT}`
       return `handoff: ${KEYPAD_HANDOFF_MESSAGE}
 ${handoffToolResult(result)}`
     } catch (e: unknown) {
@@ -693,20 +997,26 @@ ${handoffToolResult(result)}`
       'Pass diff=true to get only the lines that changed since your last get_page on this tab.',
     { query: z.string().optional(), selector: z.string().optional(), diff: z.boolean().optional() },
     ({ query, selector, diff }) =>
-      guard(query ? `페이지 읽기: ${query}` : '페이지 읽기', async () => {
-        const read = await readSnapshot({ query, selector })
-        if (typeof read === 'string') return read
-        const { tab, tree } = read
-        const prev = rememberSnapshot(snapshotCache, tab.id, tree)
-        // 사람의 추가 확인이 필요하면 **알리기만** 한다 — 읽기 도구가 최장 10분 막히면
-        // 모델이 다음 수를 두지 못한다. 실제 넘김·대기는 login 같은 행동 도구가 건다
-        const notice = await captchaNotice(tab)
-        // 화면을 덮는 레이어는 맨 앞에 알린다 — 뒤에 있는 버튼을 누르려다 실패하지 않게
-        const overlay = await overlayNotice(tab)
-        // diff 는 직전 읽기가 있을 때만 뜻이 있다 — 처음이면 트리 전체를 준다
-        const body = diff === true && prev !== undefined ? diffLines(prev, tree) || NO_CHANGE : tree
-        return [overlay, notice, body].filter((line) => line !== null).join('\n')
-      })
+      guard(
+        query ? `페이지 읽기: ${query}` : '페이지 읽기',
+        async () => {
+          const read = await readSnapshot({ query, selector })
+          if (typeof read === 'string') return read
+          const { tab, tree } = read
+          const prev = rememberSnapshot(snapshotCache, tab.id, tree)
+          // 사람의 추가 확인이 필요하면 **알리기만** 한다 — 읽기 도구가 최장 10분 막히면
+          // 모델이 다음 수를 두지 못한다. 실제 넘김·대기는 login 같은 행동 도구가 건다
+          const notice = await captchaNotice(tab)
+          // 화면을 덮는 레이어는 맨 앞에 알린다 — 뒤에 있는 버튼을 누르려다 실패하지 않게
+          const overlay = await overlayNotice(tab)
+          // diff 는 직전 읽기가 있을 때만 뜻이 있다 — 처음이면 트리 전체를 준다
+          const body =
+            diff === true && prev !== undefined ? diffLines(prev, tree) || NO_CHANGE : tree
+          return [overlay, notice, body].filter((line) => line !== null).join('\n')
+        },
+        undefined,
+        true
+      )
   )
 
   // 나열 상한(150개) 때문에 필요한 버튼이 목록에서 빠졌을 때 되찾는 통로.
@@ -716,18 +1026,23 @@ ${handoffToolResult(result)}`
     "Search interactive elements by visible text/name/href when read_page's list is truncated; returns matching element ids to use with click/type",
     { query: z.string() },
     ({ query }) =>
-      guard(`요소 찾기: ${query}`, async () => {
-        const tab = activeOr(ctx)
-        if (!tab) return 'no active tab'
-        const snapshot = await pageBridge.snapshot(tab, query)
-        const overlay = await overlayNotice(tab)
-        if (snapshot.elements.length === 0) {
-          const miss = `no element matches "${query}"`
-          return overlay === null ? miss : `${overlay}\n${miss}`
-        }
-        const listed = serializeSnapshot({ ...snapshot, text: '' })
-        return overlay === null ? listed : `${overlay}\n${listed}`
-      })
+      guard(
+        `요소 찾기: ${query}`,
+        async () => {
+          const tab = activeOr(ctx)
+          if (!tab) return 'no active tab'
+          const snapshot = await pageBridge.snapshot(tab, query)
+          const overlay = await overlayNotice(tab)
+          if (snapshot.elements.length === 0) {
+            const miss = `no element matches "${query}"`
+            return overlay === null ? miss : `${overlay}\n${miss}`
+          }
+          const listed = serializeSnapshot({ ...snapshot, text: '' })
+          return overlay === null ? listed : `${overlay}\n${listed}`
+        },
+        undefined,
+        true
+      )
   )
 
   // 화면 캡처: get_page 텍스트로는 알 수 없는 정보(이미지 캡차·그래프·레이아웃)가 필요할 때 사용.
@@ -918,7 +1233,18 @@ overlays left: ${after.length}${kept}`
     typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : 0
 
   /** 샌드박스가 부르는 동작 표. 실행 1건마다 새로 만든다(직전 스냅샷을 그 안에서만 기억) */
-  const makeRunJsBridge = (): RunJsBridge => {
+  /** 글자로 요소 번호를 찾는다. 글자가 정확히 같은 것을 먼저, 없으면 포함하는 것. 못 찾으면 -1 */
+  const idOfText = async (query: string, nth: number): Promise<number> => {
+    const read = await readSnapshot({ query })
+    if (typeof read === 'string') return -1
+    const want = query.trim()
+    const label = (e: { text: string; name?: string }): string => (e.text || e.name || '').trim()
+    const exact = read.snapshot.elements.filter((e) => label(e) === want)
+    const pool = exact.length > 0 ? exact : read.snapshot.elements
+    return pool[Math.max(nth, 0)]?.id ?? -1
+  }
+
+  const makeRunJsBridge = (clicked?: string[]): RunJsBridge => {
     let lastTree: string | undefined
     return async (name, args) => {
       runJsTick()
@@ -951,8 +1277,22 @@ overlays left: ${after.length}${kept}`
             elements: read.snapshot.elements.length
           }
         }
-        case 'page.click':
+        case 'page.click': {
+          // 학습용: 번호로 누른 요소가 무슨 글자였는지 남긴다
+          if (clicked) {
+            const tab = activeOr(ctx)
+            const text = tab ? await pageBridge.textOf(tab, asId(args[0])) : ''
+            clicked.push(`${asId(args[0])}=${text.slice(0, 40)}`)
+          }
           return doClick(asId(args[0]), asText(args[1]))
+        }
+        case 'page.idOf':
+          return idOfText(asText(args[0]), asId(args[1]))
+        case 'page.clickText': {
+          const id = await idOfText(asText(args[0]), asId(args[1]))
+          if (id < 0) return `not found: no element with text "${asText(args[0])}"`
+          return doClick(id, asText(args[0]))
+        }
         case 'page.type': {
           const tab = activeOr(ctx)
           if (!tab) return 'no active tab'
@@ -1008,6 +1348,17 @@ overlays left: ${after.length}${kept}`
           closeTargetOf(ctx.tabs, id)
           return `ok: closed ${target.kind} ${id}`
         }
+        case 'tabs.open': {
+          // new_tab 도구와 같은 규칙: 내부 페이지 금지, url 없으면 빈 페이지
+          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+          const raw = args[0]
+          const o = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
+          const url = typeof o.url === 'string' ? o.url : 'about:blank'
+          const profile = typeof o.profile === 'string' ? o.profile : undefined
+          if (isInternalUrl(url)) return `${BLOCKED_URL_MESSAGE} (${url})`
+          const t = ctx.tabs.create({ url, ...(profile ? { profile } : {}) })
+          return `ok: tab ${t.id}${profile ? ` (profile ${profile})` : ''}`
+        }
         default:
           return RUN_JS_NO_SECRET_TOOLS
       }
@@ -1020,12 +1371,25 @@ overlays left: ${after.length}${kept}`
       'The code runs in a sandbox in the browser process, not in the page - only these APIs exist: ' +
       'page.get({query,selector,interactive}) -> {tree,diff,total,elements}, page.click(id), ' +
       'page.type(id,text,submit), page.select(id,value), page.scroll(dir,id), page.text(id), ' +
-      'page.find(query), page.dismissOverlay(), page.url(), page.title(), ' +
-      'tabs.list()/switch(id)/close(id), sleep(ms), log(...). ' +
+      'page.find(query), page.idOf(text,nth) -> id or -1, page.clickText(text,nth), ' +
+      'page.dismissOverlay(), page.url(), page.title(), ' +
+      'tabs.list()/switch(id)/close(id)/open({url, profile}), sleep(ms), log(...). ' +
       'Use log() and return a value; both come back to you. ' +
       'fill_secret, login and the phone tools are NOT available here - call those tools directly.',
     { code: z.string().describe(`JavaScript, ${RUN_JS_MAX_CODE} characters or fewer`) },
-    ({ code }) => guard(runJsLabel(code), () => runSandbox(code, makeRunJsBridge()), 'run_js')
+    ({ code }) => {
+      const clicked: string[] = []
+      return guard(
+        runJsLabel(code),
+        async () => {
+          const result = await runSandbox(code, makeRunJsBridge(clicked))
+          ctx.onRunJs?.({ code, ok: isToolResultOk(result, true), url: currentUrl(), clicked })
+          return result
+        },
+        'run_js',
+        true
+      )
+    }
   )
 
   const wait = tool(
@@ -1060,7 +1424,7 @@ overlays left: ${after.length}${kept}`
       '(address search, payment); openerId says which tab opened it. ' +
       'Call switch_tab with its id to work inside a popup.',
     {},
-    () => guard('탭 목록', async () => JSON.stringify(targetList()))
+    () => guard('탭 목록', async () => JSON.stringify(targetList()), undefined, true)
   )
 
   const switchTab = tool(
@@ -1142,7 +1506,12 @@ overlays left: ${after.length}${kept}`
       'Use field for a specific field such as "card.number". ' +
       'For itemType "password" (a payment password) pass provider to say which checkout it is: ' +
       'site when the site pays with its own money such as 무신사머니 or SSG머니, ' +
-      'toss for 토스페이, kakao for 카카오페이, naver for 네이버페이, payco for 페이코.',
+      'musinsapay for 무신사페이 when the user saved a separate password for it (otherwise follow the playbook - many users share one password with site), ' +
+      'toss for 토스페이, kakao for 카카오페이, naver for 네이버페이, payco for 페이코. ' +
+      'When a pay popup (pay.toss.im, PAYCO ...) asks for the phone number or birth date, those are saved on ' +
+      'that payment item: itemType "password", the provider, field "payment.phone" or "payment.birth" ' +
+      '(format "digits" / "yymmdd"). The user’s own contact number for other forms (e.g. a shipping ' +
+      'address) is itemType "identity", field "identity.phone" - it may be saved once as a global item.',
     {
       elementId: z.number().int(),
       itemType: z.enum(ITEM_TYPES),
@@ -1151,15 +1520,25 @@ overlays left: ${after.length}${kept}`
       provider: z
         .enum(PAYMENT_PROVIDER_NAMES)
         .optional()
-        .describe('payment method for itemType "password"')
+        .describe('payment method for itemType "password"'),
+      format: z
+        .enum(FILL_FORMATS)
+        .optional()
+        .describe(
+          'reshape the saved value for this input: yymmdd (birth date as 6 digits, e.g. 910101), yyyymmdd, or digits (strip hyphens/spaces from a phone or card number)'
+        )
     },
-    ({ elementId, itemType, field, accountLabel, provider }) =>
+    ({ elementId, itemType, field, accountLabel, provider, format }) =>
       guard(`입력: ${itemType}${field ? `.${field}` : ''} (#${elementId})`, async () => {
         if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
         const tab = activeOr(ctx)
         if (!tab) return 'no active tab'
-        // 웹 결제 키패드에는 자동으로 넣을 수 있는 입력칸이 없다 — 사람에게 넘긴다
-        if (await secretKeypadGate.check(tab)) return await keypadHandoff(tab)
+        // 웹 결제 키패드: 입력칸이 아니라 숫자 버튼이다 — 앱이 키마스터 값을 눌러 넣는다.
+        // 결제 비밀번호가 아닌 항목을 키패드 화면에서 부르면 넘긴다(넣을 곳이 없다)
+        if (await secretKeypadGate.check(tab)) {
+          if (itemType !== 'password') return await keypadHandoff(tab)
+          return await keypadEnter(tab, accountLabel, provider)
+        }
         const host = currentHost(tab)
         // 평문(http) 페이지에는 비밀값을 절대 채우지 않는다(네트워크 도청·다운그레이드 방어)
         const blocked = gateRefusal(currentUrl(tab))
@@ -1167,8 +1546,15 @@ overlays left: ${after.length}${kept}`
         const available = vaultAvailable()
         if (typeof available === 'string') return available
         // 계정을 먼저 특정해야 계정별 접근 정책을 적용할 수 있다.
-        // 계정 목록 조회는 값(비밀번호)을 건드리지 않으므로 잠금 상태에서도 안전하다
-        const account = resolveAccount(available.listAccounts(host), accountLabel, tab.profile)
+        // 계정 목록 조회는 값(비밀번호)을 건드리지 않으므로 잠금 상태에서도 안전하다.
+        // 결제 관련 항목(신원정보·카드·결제 비밀번호)은 PG 결제창(토스·ePAY 팝업)에서 불리므로,
+        // 그 창의 호스트로 못 찾으면 창을 연 사이트(opener 사슬)의 계정을 쓴다
+        const direct = resolveAccount(available.listAccounts(host), accountLabel, tab.profile)
+        const viaOpener =
+          direct === null && PAYMENT_POPUP_ITEM_TYPES.includes(itemType)
+            ? keypadAccount(available, keypadAccountHosts(tab), accountLabel, tab.profile, itemType)
+            : null
+        const account = direct ?? viaOpener
         if (!account) return ACCOUNT_NOT_FOUND
         // 항목별 agentAccess 가 전역 정책을 override 한다
         const gate = await applyPolicy(
@@ -1179,7 +1565,10 @@ overlays left: ${after.length}${kept}`
         const v = gate
         // 비밀번호류는 대상 요소가 실제 비밀 입력칸(type=password)일 때만 채운다.
         // 최신 스냅샷을 신뢰하지 않고, 매번 페이지에서 직접 확인한다
-        if (SECRET_TARGET_ITEM_TYPES.includes(itemType)) {
+        // 기본 필드(value = 비밀번호 자체)만 해당한다 — 결제 항목의 부가 필드(payment.phone·payment.birth)는
+        // 결제창의 평범한 입력칸에 들어간다
+        const isMainSecret = (field ?? DEFAULT_FIELD_KEY) === DEFAULT_FIELD_KEY
+        if (SECRET_TARGET_ITEM_TYPES.includes(itemType) && isMainSecret) {
           const isSecret = await pageBridge.isSecretField(tab, elementId)
           if (!isSecret) return NOT_A_SECRET_FIELD
         }
@@ -1199,16 +1588,29 @@ overlays left: ${after.length}${kept}`
           })
           if (found.reason === 'ambiguous') return PAYMENT_PROVIDER_AMBIGUOUS
           if (found.value === null) {
-            return `not found: no payment password${provider ? ` (${provider})` : ''} saved for this account`
+            return fieldKey === DEFAULT_FIELD_KEY
+              ? `not found: no payment password${provider ? ` (${provider})` : ''} saved for this account`
+              : `not found: no ${fieldKey} saved in the ${provider ?? ''} payment item - skip this pay method`
           }
-          const movedPay = verifyFillTarget(account, tab)
+          const shaped = formatFillValue(found.value, format)
+          if (shaped === null)
+            return `refused: saved password.${fieldKey} cannot be shaped as ${format}`
+          const movedPay = viaOpener ? null : verifyFillTarget(account, tab)
           if (movedPay) return movedPay
-          return await pageBridge.fillValue(tab, elementId, found.value)
+          return await pageBridge.fillValue(tab, elementId, shaped)
         }
-        const value = v.getSecretForFill(account.id, itemType, fieldKey, ctx.jobId)
-        if (value === null) return `not found: no ${itemType}.${fieldKey} saved for this account`
-        // 확인 대기 사이에 페이지가 옮겨 갔을 수 있어 채우기 직전에 다시 검증한다
-        const moved = verifyFillTarget(account, tab)
+        const raw =
+          v.getSecretForFill(account.id, itemType, fieldKey, ctx.jobId) ??
+          // 결제창(토스·페이코…)이 묻는 휴대폰·생년월일은 그 결제 수단 항목에 적어 두는 값이다.
+          // 모델이 신원정보(identity)로만 찾다 멈추지 않게, 결제창 호스트로 수단을 짐작해 거기서도 찾는다
+          paymentIdentityFallback(v, account.id, itemType, fieldKey, currentUrl(tab), ctx.jobId)
+        if (raw === null) return `not found: no ${itemType}.${fieldKey} saved for this account`
+        const value = formatFillValue(raw, format)
+        if (value === null)
+          return `refused: saved ${itemType}.${fieldKey} cannot be shaped as ${format}`
+        // 확인 대기 사이에 페이지가 옮겨 갔을 수 있어 채우기 직전에 다시 검증한다.
+        // 결제창(opener 사슬로 찾은 계정)은 창을 연 사이트가 계정 도메인이면 통과시킨다
+        const moved = viaOpener ? null : verifyFillTarget(account, tab)
         if (moved) return moved
         // 평문은 여기서만 존재하고 반환값·step 라벨·로그 어디에도 남기지 않는다
         const filled = await pageBridge.fillValue(tab, elementId, value)
@@ -1361,6 +1763,151 @@ overlays left: ${after.length}${kept}`
       )
   )
 
+  // 한 번 통한 run_js 코드를 매개변수째 저장한다. 다음 실행은 run_script 한 번으로 같은 손놀림을 재생한다
+  const saveScript = tool(
+    'save_script',
+    'Save a run_js snippet that just WORKED so later runs can replay it with one run_script call ' +
+      '(no code tokens, fewer tool calls). Save steps you will need again for other orders/items: ' +
+      'searching a list, reading a row, filling a record form, reading totals. Take everything that ' +
+      'changes between runs from the global `args` object (args.orderNo, args.cost …) — never hardcode ' +
+      'order numbers, amounts or element ids that change; find elements by text inside the code. ' +
+      'Return a small JSON result the caller can verify. Saving under an existing name replaces it.',
+    {
+      name: z.string().describe('snake_case, e.g. samba_find_order'),
+      host: z.string().optional().describe('main site host, e.g. samba-wave.vercel.app'),
+      description: z.string().describe('what it does and what it returns, one or two sentences'),
+      params: z
+        .array(z.string())
+        .optional()
+        .describe('args it reads, e.g. ["orderNo — 상품주문번호", "cost — 실구매가 숫자"]'),
+      code: z.string().max(RUN_JS_MAX_CODE).describe('the run_js body; reads inputs from args')
+    },
+    (input) =>
+      guard(`스크립트 저장: ${input.name}`, async () =>
+        ctx.scripts ? ctx.scripts.save(input) : 'refused: saved scripts are off'
+      )
+  )
+
+  // 저장된 스크립트를 인자와 함께 실행한다. run_js 와 같은 샌드박스·같은 다리를 쓴다
+  const runScript = tool(
+    'run_script',
+    'Run a saved script by name with args (see "Saved scripts" in the system prompt). Same sandbox and ' +
+      'page/tabs API as run_js, up to 75s. Check the returned result against the page before relying on it.',
+    {
+      name: z.string(),
+      // 객체 스키마(z.record·z.unknown)는 SDK 의 도구 목록 변환에서 실패해 도구 전체가 빠진다(실기) —
+      // 다른 도구처럼 문자열만 받는다
+      args: z
+        .string()
+        .optional()
+        .describe('JSON object string with the values the script reads, e.g. {"orderNo":"…"}')
+    },
+    ({ name, args }) =>
+      guard(
+        `스크립트 실행: ${name}`,
+        async () => {
+          if (!ctx.scripts) return 'refused: saved scripts are off'
+          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+          const script = ctx.scripts.find(name)
+          if (!script) return `refused: no saved script named "${name}"`
+          const parsedArgs = parseScriptArgs(args)
+          if (parsedArgs === null) return 'refused: args must be a JSON object string'
+          const result = await runSandbox(script.code, makeRunJsBridge(), {
+            args: parsedArgs,
+            totalTimeoutMs: RUN_SCRIPT_TOTAL_TIMEOUT_MS
+          })
+          ctx.scripts.ran(name, !isScriptFailure(result))
+          return result
+        },
+        'run_js',
+        true
+      )
+  )
+
+  // 저장된 플레이북을 읽는다. id 를 주면 절차 본문까지, 아니면 이름·트리거 목록만 준다.
+  // 본문이 길어 목록에 다 싣지 않는다(9,000자 넘는 절차가 있다)
+  const listPlaybooks = tool(
+    'list_playbooks',
+    'List the saved playbooks (name, triggers, size). Pass an id to read that playbook’s full ' +
+      'instructions — do that before replacing them.',
+    { id: z.string().optional().describe('playbook id from a previous list_playbooks call') },
+    ({ id }) =>
+      guard(
+        '플레이북 읽기',
+        async () => {
+          if (!ctx.playbooks) return 'refused: playbooks are off'
+          const rows = ctx.playbooks.list()
+          if (id === undefined) {
+            return JSON.stringify(
+              rows.map((p) => ({
+                id: p.id,
+                name: p.name,
+                triggers: p.triggers,
+                enabled: p.enabled,
+                chars: p.instructions.length
+              }))
+            )
+          }
+          const found = rows.find((p) => p.id === id)
+          if (!found) return 'refused: no playbook with that id'
+          return JSON.stringify({
+            id: found.id,
+            name: found.name,
+            triggers: found.triggers,
+            instructions: found.instructions
+          })
+        },
+        undefined,
+        true
+      )
+  )
+
+  // 절차 본문만 바꾼다. 트리거·이름은 도구로 열지 않는다 —
+  // 트리거가 바뀌면 이 플레이북이 다른 요청까지 끌어오고, 그 변화는 사용자 눈에 잘 띄지 않는다.
+  // 저장 전에는 권한 모드와 무관하게 확인 카드를 1회 띄운다(페이지 글이 절차를 심는 것을 막는다)
+  const updatePlaybook = tool(
+    'update_playbook',
+    'Change a saved playbook’s instructions. Use append to add a step you just learned, or ' +
+      'instructions to replace the whole text (read it with list_playbooks first). The user has ' +
+      'to approve the change on a card before it is saved. Name and triggers cannot be changed here.',
+    {
+      id: z.string().describe('playbook id from list_playbooks'),
+      append: z.string().optional().describe('text to add at the end, e.g. one new step'),
+      instructions: z.string().optional().describe('full replacement text')
+    },
+    ({ id, append, instructions }) =>
+      guard('플레이북 수정', async () => {
+        if (!ctx.playbooks) return 'refused: playbooks are off'
+        if ((append === undefined) === (instructions === undefined)) {
+          return 'refused: pass exactly one of append or instructions'
+        }
+        const found = ctx.playbooks.list().find((p) => p.id === id)
+        if (!found) return 'refused: no playbook with that id'
+        const addition = append?.trim()
+        if (append !== undefined && (addition === undefined || addition === '')) {
+          return 'refused: append is empty'
+        }
+        const next =
+          addition === undefined
+            ? (instructions as string)
+            : `${found.instructions.trimEnd()}\n\n${addition}`
+        if (next.trim() === '') return 'refused: instructions are empty'
+        if (next.length > PLAYBOOK_INSTRUCTIONS_MAX) {
+          return `refused: playbook would be ${next.length} chars (max ${PLAYBOOK_INSTRUCTIONS_MAX})`
+        }
+        if (next === found.instructions) return 'ok: no change'
+        // 확인 카드에는 바뀌는 대목만 싣는다 — 덧붙이기는 덧붙일 글, 통째 교체는 길이 변화
+        const preview =
+          addition === undefined
+            ? `전체 교체 (${found.instructions.length}자 → ${next.length}자)`
+            : addition.slice(0, PLAYBOOK_PREVIEW_MAX)
+        const ok = await ctx.confirm(`플레이북 수정: ${found.name}\n${preview}`, 'danger')
+        if (!ok) return 'denied by user'
+        const saved = ctx.playbooks.update(id, next)
+        return saved ? `ok: updated (${next.length} chars)` : 'error: could not save the playbook'
+      })
+  )
+
   // done 은 guard 를 거치지 않으므로 도구 호출 상한(tick)에 계산되지 않는다.
   // 상한에 도달했을 때 "done 으로 마무리하라"고 안내하기 때문에, 마무리 호출까지 막으면 안 된다
   const done = tool(
@@ -1405,6 +1952,8 @@ overlays left: ${after.length}${kept}`
       login,
       progress,
       ...(ctx.siteMemory ? [rememberSite] : []),
+      ...(ctx.scripts ? [saveScript, runScript] : []),
+      ...(ctx.playbooks ? [listPlaybooks, updatePlaybook] : []),
       done,
       // 폰이 한 대도 붙어 있지 않으면 폰 도구를 아예 내보내지 않는다 —
       // 목록에 있으면 모델이 웹 작업 중에도 phone_tap 을 부른다(실기에서 관찰)
@@ -1437,6 +1986,12 @@ export const SAMBA_TOOL_NAMES = [
   'progress',
   // 사이트 기억이 붙지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
   'remember_site',
+  // 스크립트 저장소가 붙지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
+  'save_script',
+  'run_script',
+  // 플레이북이 붙지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
+  'list_playbooks',
+  'update_playbook',
   'done',
   // 폰 도구가 주입되지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
   ...PHONE_TOOL_NAMES,

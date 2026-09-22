@@ -56,10 +56,6 @@ export const EMAIL_RE =
 export const USERNAME_RE =
   /user.?(name|id|nm)|userid|login.?(id|name)|customer.?id|member.?id|account.?(id|name)|benutzer.?(name|id)|nickname|screen.?name|아이디|사용자.?(명|이름|아이디)|회원.?(아이디|번호)|계정/i
 
-// Chromium kPasswordRe (BSD-3) + 한국어
-export const PASSWORD_RE =
-  /pass(?:word|code)|pas(?:word|code)|pswrd|psw|pswd|pwd|parole|watchword|pasahitza|parol|lozinka|sifr|contrasenya|heslo|adgangskode|losen|wachtwoord|paswoord|salasana|passe|contrasinal|passwort|jelszo|sandi|signum|slaptazodis|kata|passord|haslo|senha|geslo|contrasena|khau|비밀.?번호|비번|암호/i
-
 // 신규 비밀번호(회원가입/변경) — 로그인 대상에서 제외한다
 export const NEW_PASSWORD_RE =
   /new.?pass|change.?pass|create.?pass|set.?pass|register.?pass|새.?비밀.?번호|신규.?비밀.?번호|비밀.?번호.?변경|비밀.?번호.?재설정/i
@@ -88,9 +84,6 @@ const HONEYPOT_RE = /honey|\btrap\b|nospam|no.?bot|bot.?field|fake.?(field|input
 // 로그인된 사용자에게만 보이는 링크·버튼 문구(ko/en)
 export const SIGNED_IN_RE =
   /로그아웃|마이\s?페이지|내\s?정보|내\s?계정|내\s?정보\s?관리|주문\s?내역|sign\s?out|log\s?out|logout|my\s?page|my\s?account|my\s?info|my\s?profile/i
-
-// 로그인 화면임을 알리는 문구. 이런 링크만 있으면 로그인된 상태로 보지 않는다
-export const SIGNED_OUT_RE = /로그인|회원가입|sign\s?in|sign\s?up|log\s?in|create\s?account/i
 
 // 사람이 직접 풀어야 하는 확인의 강한 징후 — 이 문구 하나로 넘김을 결정한다
 export const CAPTCHA_STRONG_RE =

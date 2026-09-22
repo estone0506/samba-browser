@@ -13,6 +13,7 @@
 
 import { timingSafeEqual } from 'node:crypto'
 import type { Db } from '../db/client'
+import { tr } from '../i18n'
 import {
   VaultRepo,
   type AuditRow,
@@ -355,8 +356,8 @@ export class VaultService {
   // --- 설정/해제 ---------------------------------------------------------
 
   async setup(master: string): Promise<void> {
-    if (this.isInitialized()) throw new Error('금고가 이미 설정되어 있습니다')
-    if (master.length === 0) throw new Error('마스터 비밀번호가 비어 있습니다')
+    if (this.isInitialized()) throw new Error(tr('vault.alreadyInitialized'))
+    if (master.length === 0) throw new Error(tr('vault.emptyMaster'))
 
     const salt = randomBytes(SALT_BYTES)
     // 환경변수 게이트는 crypto.resolveDefaultKdfParams() 안에만 있다 — 여기서 process.env 를
@@ -380,11 +381,11 @@ export class VaultService {
   }
 
   async unlock(master: string): Promise<boolean> {
-    if (!this.isInitialized()) throw new Error('금고가 아직 설정되지 않았습니다')
+    if (!this.isInitialized()) throw new Error(tr('vault.notInitialized'))
     const salt = this.repo.getMeta(META_SALT)
     const ct = this.repo.getMeta(META_VERIFIER_CT)
     const iv = this.repo.getMeta(META_VERIFIER_IV)
-    if (!salt || !ct || !iv) throw new Error('금고 메타데이터가 손상되었습니다')
+    if (!salt || !ct || !iv) throw new Error(tr('vault.metaCorrupted'))
 
     const params = this.readKdfParams()
     const key = await deriveKey(master, salt, {
@@ -637,7 +638,7 @@ export class VaultService {
    * 발급 값은 메모리에만 10분 머문다
    */
   createRecoveryKey(): string {
-    if (!this.key) throw new Error('금고가 잠겨 있습니다')
+    if (!this.key) throw new Error(tr('vault.locked'))
     const key = generateRecoveryKey()
     this.pendingRecovery = {
       compact: normalizeRecoveryKey(key),
@@ -850,7 +851,7 @@ export class VaultService {
       })
       return this.repo.itemMeta(id)
     })
-    if (!meta) throw new Error('항목을 저장하지 못했습니다')
+    if (!meta) throw new Error(tr('vault.itemSaveFailed'))
     this.record('vault_items', meta.id, 'upsert')
     this.touch()
     return meta
@@ -923,7 +924,7 @@ export class VaultService {
   private findExistingItem(input: PutItemInput): { id: number; sections: StoredSection[] } | null {
     if (input.id !== undefined) {
       const row = this.repo.getItemRow(input.id)
-      if (!row) throw new Error('항목을 찾을 수 없습니다')
+      if (!row) throw new Error(tr('vault.itemNotFound'))
       return row
     }
     if (input.accountId === null) return this.repo.findGlobalItemRow(input.type, input.label)
@@ -1001,12 +1002,62 @@ export class VaultService {
 
   // 사용자가 "보기" 를 눌렀을 때만 호출된다. 평문을 돌려주는 유일한 사용자 경로.
   // fieldKey 를 생략하면 단일 값 항목의 기본 필드('value')를 본다
+  /**
+   * 한 계정의 결제 비밀번호 항목들을 다른 계정으로 복사한다(같은 사람의 두 계정이 같은
+   * 결제 비밀번호를 쓸 때). 평문은 이 메서드 안에서 복호화 → 재암호화로만 흐르고 반환값·로그에
+   * 남지 않는다. 대상 계정에 같은 결제 수단 항목이 이미 있으면 건너뛴다. 복사한 개수를 돌려준다
+   */
+  copyPaymentItems(fromAccountId: number, toAccountId: number): number {
+    const key = this.requireKey()
+    if (fromAccountId === toAccountId) return 0
+    const sources = this.repo.listPaymentItemRows(fromAccountId)
+    const existing = new Set(
+      this.repo.listPaymentItemRows(toAccountId).map((r) => paymentProviderOfSections(r.sections))
+    )
+    let copied = 0
+    for (const row of sources) {
+      const provider = paymentProviderOfSections(row.sections)
+      if (existing.has(provider)) continue
+      const sections: PutSectionInput[] = row.sections.map((section) => ({
+        key: section.key,
+        label: section.label,
+        fields: section.fields.map((field): PutFieldInput => {
+          if (!isSecretField(field)) {
+            return {
+              key: field.key,
+              label: field.label,
+              kind: field.kind,
+              ...(field.value === undefined ? {} : { value: field.value })
+            }
+          }
+          const plain = decrypt(
+            key,
+            Buffer.from(field.ciphertext, 'base64'),
+            Buffer.from(field.iv, 'base64'),
+            aadFor(row.id, field)
+          )
+          return { key: field.key, label: field.label, kind: 'secret', value: plain }
+        })
+      }))
+      this.putItem({
+        accountId: toAccountId,
+        type: 'password',
+        label: row.label,
+        sections,
+        jobId: 'copy-payment'
+      })
+      existing.add(provider)
+      copied += 1
+    }
+    return copied
+  }
+
   reveal(id: number, fieldKey: string = DEFAULT_FIELD_KEY): string {
     const key = this.requireKey()
     const row = this.repo.getItemRow(id)
-    if (!row) throw new Error('항목을 찾을 수 없습니다')
+    if (!row) throw new Error(tr('vault.itemNotFound'))
     const field = findField(row.sections, fieldKey)
-    if (!field || !isSecretField(field)) throw new Error('비밀 필드를 찾을 수 없습니다')
+    if (!field || !isSecretField(field)) throw new Error(tr('vault.secretFieldNotFound'))
     const plain = decrypt(
       key,
       Buffer.from(field.ciphertext, 'base64'),
@@ -1043,8 +1094,16 @@ export class VaultService {
     }
     if (!this.key) return null
     const row = this.repo.findItemRow(accountId, type)
-    if (!row) return null
-    return this.decryptForFill(row, fieldKey, jobId, source)
+    const own = row ? this.decryptForFill(row, fieldKey, jobId, source) : null
+    if (own !== null) return own
+    // 신원정보는 "나"의 것이라 계정마다 같다 — 계정에 없으면 전역 신원정보에서 찾는다.
+    // (직배 배송지의 CS 연락처를 구매 계정마다 다시 적지 않게. 카드·로그인은 계정에 묶인 값이라 넘겨 쓰지 않는다)
+    if (type !== 'identity') return null
+    for (const shared of this.repo.findGlobalItemRowsByType(type)) {
+      const value = this.decryptForFill(shared, fieldKey, jobId, source)
+      if (value !== null) return value
+    }
+    return null
   }
 
   /**
@@ -1081,7 +1140,20 @@ export class VaultService {
   ): string | null {
     if (!this.key) return null
     const field = findField(row.sections, fieldKey)
-    if (!field || !isSecretField(field)) return null
+    if (!field) return null
+    // 비밀이 아닌 필드(신원정보의 휴대폰·생년월일·이름 등)는 평문으로 저장돼 있다 — 그대로 채운다.
+    // 토스페이 결제창이 휴대폰 번호·생년월일을 요구하는데, 이 경로가 없어 "not found" 로 끝났다(실기)
+    if (!isSecretField(field)) {
+      if (field.value === undefined || field.value === '') return null
+      this.repo.insertAudit({
+        itemId: row.id,
+        accountId: row.accountId,
+        action: 'fill',
+        source,
+        jobId
+      })
+      return field.value
+    }
     try {
       const plain = decrypt(
         this.key,
@@ -1213,7 +1285,7 @@ export class VaultService {
   }
 
   private requireKey(): Buffer {
-    if (!this.key) throw new Error('금고가 잠겨 있습니다')
+    if (!this.key) throw new Error(tr('vault.locked'))
     return this.key
   }
 
@@ -1240,6 +1312,7 @@ export class VaultService {
             aadFor(existing.id, existingField)
           )
         : null
+    // DB 에 저장·동기화되는 항목 이름이라 앱 언어와 무관하게 고정(가져오기·IPC 저장과 같은 값)
     const label =
       (existing ? this.repo.itemMeta(existing.id)?.label : undefined) ?? '로그인 비밀번호'
 

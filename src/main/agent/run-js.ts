@@ -21,6 +21,8 @@ export const RUN_JS_MAX_OUTPUT = 12000
 export const RUN_JS_SYNC_TIMEOUT_MS = 20000
 /** 전체 실행 상한(비동기 포함) */
 export const RUN_JS_TOTAL_TIMEOUT_MS = 30000
+/** 저장된 스크립트(run_script)의 실행 상한 — 여러 단계를 한 번에 돌리므로 run_js 보다 길다(도구 상한 90초 안) */
+export const RUN_SCRIPT_TOTAL_TIMEOUT_MS = 75000
 
 /** 코드가 너무 길 때 돌려주는 문자열 */
 export const RUN_JS_TOO_LONG = `refused: code must be ${RUN_JS_MAX_CODE} characters or fewer`
@@ -63,6 +65,13 @@ const BOOTSTRAP = `(() => {
     if (parsed.error) throw new Error(parsed.error)
     return parsed.value
   }
+  // 저장된 스크립트(run_script)가 받는 인자. run_js 에서는 빈 객체다
+  try {
+    g.args = typeof g.__args === 'string' ? JSON.parse(g.__args) : {}
+  } catch {
+    g.args = {}
+  }
+  delete g.__args
   g.__logs = []
   g.log = (...parts) => {
     g.__logs.push(
@@ -87,6 +96,9 @@ const BOOTSTRAP = `(() => {
     scroll: (dir, id) => invoke('page.scroll', [dir, id]),
     text: (id) => invoke('page.text', [id]),
     find: (query) => invoke('page.find', [query]),
+    // 글자로 요소를 찾는다 — 번호는 페이지를 읽을 때마다 바뀌므로, 다시 쓸 코드는 이걸로 쓴다
+    idOf: (text, nth) => invoke('page.idOf', [text, nth || 0]),
+    clickText: (text, nth) => invoke('page.clickText', [text, nth || 0]),
     dismissOverlay: () => invoke('page.dismissOverlay', []),
     url: () => invoke('page.url', []),
     title: () => invoke('page.title', [])
@@ -94,7 +106,9 @@ const BOOTSTRAP = `(() => {
   g.tabs = {
     list: () => invoke('tabs.list', []),
     switch: (id) => invoke('tabs.switch', [id]),
-    close: (id) => invoke('tabs.close', [id])
+    close: (id) => invoke('tabs.close', [id]),
+    // 계정별 프로필 탭을 한 턴에 여러 개 열 때 쓴다(계정 비교를 로그아웃 없이 병렬로)
+    open: (opts) => invoke('tabs.open', [opts])
   }
   // 전역 객체를 손에 쥐지 못하게 한다(마지막에 지운다 — 위에서는 g 로 썼다)
   delete g.globalThis
@@ -131,9 +145,16 @@ function combine(logs: string, value: string): string {
  * 모델 코드를 샌드박스에서 실행하고, 반환값과 log() 출력을 합친 문자열을 돌려준다.
  * 코드 오류는 `Error: …` 문자열로 돌려준다(던지지 않는다)
  */
-export async function runSandbox(code: string, bridge: RunJsBridge): Promise<string> {
+export async function runSandbox(
+  code: string,
+  bridge: RunJsBridge,
+  options: { args?: Record<string, unknown>; totalTimeoutMs?: number } = {}
+): Promise<string> {
   if (code.length > RUN_JS_MAX_CODE) return RUN_JS_TOO_LONG
+  const totalTimeoutMs = options.totalTimeoutMs ?? RUN_JS_TOTAL_TIMEOUT_MS
+  const timedOut = `Error: timed out after ${totalTimeoutMs} ms`
   const context = vm.createContext({
+    __args: JSON.stringify(options.args ?? {}),
     __bridge: (name: unknown, argsJson: unknown): Promise<string> =>
       bridgeCall(bridge, name, argsJson)
   })
@@ -160,11 +181,11 @@ export async function runSandbox(code: string, bridge: RunJsBridge): Promise<str
   }
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<string>((resolve) => {
-    timer = setTimeout(() => resolve(RUN_JS_TIMED_OUT), RUN_JS_TOTAL_TIMEOUT_MS)
+    timer = setTimeout(() => resolve(timedOut), totalTimeoutMs)
   })
   try {
     const raw = await Promise.race([Promise.resolve(pending) as Promise<unknown>, timeout])
-    if (raw === RUN_JS_TIMED_OUT) return combine(readLogs(), RUN_JS_TIMED_OUT)
+    if (raw === timedOut) return combine(readLogs(), timedOut)
     return combine(readLogs(), formatResult(raw))
   } finally {
     if (timer) clearTimeout(timer)

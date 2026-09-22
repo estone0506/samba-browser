@@ -3,15 +3,27 @@
 
 import {
   DEVICE_POLL_INTERVAL_MS,
-  PHONE_LIMIT,
   isPhoneCountry,
   type PhoneDto,
   type PhoneState,
   type PhoneTransport
 } from '../../shared/phone'
-import { isWifiSerial, parseDevices, type AdbRunner, type RawDevice } from './adb'
+import {
+  isWifiSerial,
+  parseDevices,
+  parseMdnsServices,
+  realSerialOf,
+  type AdbRunner,
+  type MdnsService,
+  type RawDevice
+} from './adb'
+import { tr } from '../i18n'
 
 const WIFI_DEFAULT_PORT = 5555
+/** 무선 디버깅 페어링 코드 자리수 */
+const PAIR_CODE_LENGTH = 6
+/** 발견된 와이파이 접속점에 다시 connect 를 시도하기까지 쉬는 시간 */
+const WIFI_CONNECT_COOLDOWN_MS = 30_000
 
 /**
  * 저장소가 돌려주는 폰 한 줄. 표 정의는 `phone/repo.ts`(Task 2) 에 있고
@@ -39,6 +51,11 @@ export interface DeviceRepo {
     at: number
   }) => PhoneRowLike
   list: () => PhoneRowLike[]
+  /**
+   * 전송 이름(ip:port·서비스 이름)으로 잘못 만들어진 줄을 실제 시리얼의 줄로 합친다.
+   * 실제 시리얼 줄이 없으면 그 줄의 시리얼만 바꾸고(이름·담당 계정 유지), 있으면 담당 계정을 옮긴 뒤 지운다
+   */
+  mergeAlias?: (aliasSerial: string, realSerial: string) => void
 }
 
 export interface DeviceManagerDeps {
@@ -46,6 +63,8 @@ export interface DeviceManagerDeps {
   repo: DeviceRepo
   now: () => number
   autoReconnect: () => boolean
+  /** 사용자가 지운 폰의 실제 시리얼 — 보여도 저장하지 않고, 발견돼도 붙이지 않는다 */
+  ignored?: () => readonly string[]
   // 경고 문구는 상한 초과처럼 사용자가 알아야 할 때만 함께 온다
   onChange: (phones: PhoneDto[], warning?: string) => void
   /**
@@ -58,18 +77,39 @@ export interface DeviceManagerDeps {
   clearInterval?: (handle: unknown) => void
 }
 
+/** 실제 시리얼이 붙은 장치 한 대 */
+export interface LiveDevice extends RawDevice {
+  realSerial: string
+}
+
+/** 같은 폰의 전송이 여럿이면 하나만 고른다: 승인된 것 먼저, 그다음 USB → adb 자동 연결 → ip:port */
+export function pickOnePerPhone(
+  raw: readonly RawDevice[],
+  services: readonly MdnsService[]
+): LiveDevice[] {
+  const rank = (d: RawDevice): number =>
+    (d.state === 'online' ? 0 : 10) + (d.transport === 'usb' ? 0 : isWifiSerial(d.serial) ? 2 : 1)
+  const best = new Map<string, LiveDevice>()
+  for (const d of raw) {
+    const realSerial = realSerialOf(d.serial, services)
+    const current = best.get(realSerial)
+    if (!current || rank(d) < rank(current)) best.set(realSerial, { ...d, realSerial })
+  }
+  return [...best.values()]
+}
+
 /** 표의 문자열 칸을 공용 타입으로 좁힌다(손상된 값은 기본값으로 본다) */
 function toTransport(value: string, serial: string): PhoneTransport {
   if (value === 'usb' || value === 'wifi') return value
   return isWifiSerial(serial) ? 'wifi' : 'usb'
 }
 
-function toDto(row: PhoneRowLike, live: RawDevice | undefined, overLimit: boolean): PhoneDto {
-  // 상한을 넘은 폰은 붙어 있어도 쓰지 않는다는 뜻으로 offline 으로 둔다
-  const state: PhoneState = overLimit ? 'offline' : (live?.state ?? 'disconnected')
+function toDto(row: PhoneRowLike, live: RawDevice | undefined): PhoneDto {
+  const state: PhoneState = live?.state ?? 'disconnected'
   return {
     id: row.id,
-    serial: row.serial,
+    // adb 명령(-s)은 전송 이름을 받는다. 붙어 있지 않으면 저장된 시리얼을 그대로 둔다
+    serial: live?.serial ?? row.serial,
     label: row.label || row.model || row.serial,
     country: isPhoneCountry(row.country) ? row.country : 'KR',
     transport: toTransport(live?.transport ?? row.transport, row.serial),
@@ -89,6 +129,8 @@ export class DeviceManager {
   private lastHash = ''
   // 이번 연결 주기에 이미 복구를 시도한 serial(끊겼다 붙으면 비운다)
   private recovered = new Set<string>()
+  // 발견된 와이파이 접속점(ip:port) → 다음 connect 시도 시각
+  private wifiRetryAt = new Map<string, number>()
 
   constructor(private deps: DeviceManagerDeps) {}
 
@@ -134,12 +176,34 @@ export class DeviceManager {
   private async scan(): Promise<PhoneDto[]> {
     // 경로가 비어 있으면 adb 를 부르지 않는다(부르면 곧바로 던진다)
     if (!this.hasAdb()) return this.phones
-    const res = await this.deps.adb.run(['devices', '-l'])
-    const raw = parseDevices(res.stdout)
+    const first = await this.deps.adb.run(['devices', '-l'])
+    const services = await this.discover()
+    // 같은 와이파이에서 발견된 폰은 주소를 몰라도 알아서 붙인다. 새로 붙인 게 있으면 목록을 다시 읽는다
+    const connected = await this.connectDiscovered(parseDevices(first.stdout), services)
+    const res = connected ? await this.deps.adb.run(['devices', '-l']) : first
+    // 한 폰이 여러 전송 이름으로 보이면 하나만 남긴다(저장은 실제 시리얼로, 명령은 전송 이름으로)
+    const seen = parseDevices(res.stdout)
+    // 고르지 않은 전송 이름으로 예전에 만들어진 줄도 실제 줄로 합친다(한 폰이 두 이름으로 동시에 보일 때)
+    for (const d of seen) {
+      const realSerial = realSerialOf(d.serial, services)
+      if (realSerial !== d.serial) this.deps.repo.mergeAlias?.(d.serial, realSerial)
+    }
+    // 지금은 안 보이지만 예전에 ip:port 로 저장된 줄도, 그 주소의 주인을 알면 합친다
+    for (const service of services) this.deps.repo.mergeAlias?.(service.address, service.serial)
+    // 무선 디버깅 포트는 접속할 때마다 바뀐다. 옛 포트로 남은 ip:port 줄은 같은 IP 의 주인에게 합친다
+    // (지금 그 이름으로 붙어 있는 장치는 건드리지 않는다)
+    for (const row of this.deps.repo.list()) {
+      if (!isWifiSerial(row.serial) || seen.some((d) => d.serial === row.serial)) continue
+      const ip = row.serial.split(':')[0]
+      const owner = services.find((s) => s.address.split(':')[0] === ip)
+      if (owner) this.deps.repo.mergeAlias?.(row.serial, owner.serial)
+    }
+    const ignored = this.deps.ignored?.() ?? []
+    const raw = pickOnePerPhone(seen, services).filter((d) => !ignored.includes(d.realSerial))
     const now = this.deps.now()
     for (const d of raw) {
       this.deps.repo.upsertSeen({
-        serial: d.serial,
+        serial: d.realSerial,
         model: d.model,
         transport: d.transport,
         state: d.state,
@@ -150,16 +214,13 @@ export class DeviceManager {
     }
     // 저장된 폰 중 이번에 안 보인 것은 끊김으로 본다
     const rows = this.deps.repo.list()
-    const next = rows.map((row, index) =>
+    // 동시 연결 상한은 두지 않는다 — 붙어 있는 폰은 모두 쓴다(사용자 요청, 예전에는 3대)
+    const next = rows.map((row) =>
       toDto(
         row,
-        raw.find((d) => d.serial === row.serial),
-        index >= PHONE_LIMIT
+        raw.find((d) => d.realSerial === row.serial)
       )
     )
-    const over = next.length - PHONE_LIMIT
-    const warning =
-      over > 0 ? `연결 상한(${PHONE_LIMIT}대)을 넘어 ${over}대를 쓰지 않습니다` : undefined
     // 끊긴 폰 자동 복구 1회
     if (this.deps.autoReconnect()) {
       for (const p of next) {
@@ -172,22 +233,81 @@ export class DeviceManager {
     const hash = next.map((p) => `${p.serial}:${p.state}`).join('|')
     if (hash !== this.lastHash) {
       this.lastHash = hash
-      this.deps.onChange(next, warning)
+      this.deps.onChange(next)
     }
     return next
   }
 
   /**
-   * 폰 카드의 "재연결" — kill-server && start-server 를 1회만 시도한다.
-   * 자동 복구는 refresh 안에서 기다리지 않고 부르므로 여기서도 던지지 않는다
+   * `adb mdns services` 로 발견된 접속점 가운데 아직 목록에 없는 것을 `adb connect` 한다.
+   * 예전에는 `adb devices` 만 봐서, 와이파이 폰은 사용자가 IP 를 직접 적어야 했고
+   * "지금 찾기"로는 영영 안 나왔다(실기: 같은 와이파이의 폰이 "끊김"으로만 보임).
+   *  - 같은 폰이 USB 로 이미 붙어 있으면 건너뛴다(한 폰이 두 줄로 보이지 않게)
+   *  - 실패한 주소는 잠시 쉬었다가 다시 시도한다(5초 폴링마다 두드리지 않는다)
+   * 새로 붙인 것이 있으면 true
+   */
+  private async discover(): Promise<MdnsService[]> {
+    try {
+      return parseMdnsServices((await this.deps.adb.run(['mdns', 'services'])).stdout)
+    } catch {
+      // mdns 를 지원하지 않는 adb·방화벽 — 발견 없이 기존 동작 그대로 간다
+      return []
+    }
+  }
+
+  private async connectDiscovered(current: RawDevice[], services: MdnsService[]): Promise<boolean> {
+    const now = this.deps.now()
+    let connected = false
+    const ignored = this.deps.ignored?.() ?? []
+    for (const service of services) {
+      if (ignored.includes(service.serial)) continue
+      // 이 폰이 어떤 이름으로든 이미 붙어 있으면(USB·ip:port·adb 가 스스로 붙인 무선 디버깅) 또 붙이지 않는다
+      if (current.some((d) => realSerialOf(d.serial, services) === service.serial)) continue
+      if ((this.wifiRetryAt.get(service.address) ?? 0) > now) continue
+      this.wifiRetryAt.set(service.address, now + WIFI_CONNECT_COOLDOWN_MS)
+      try {
+        await this.deps.adb.run(['connect', service.address], 10_000)
+        connected = true
+      } catch {
+        // 연결 실패는 다음 주기에 다시 본다
+      }
+    }
+    return connected
+  }
+
+  /**
+   * 폰 카드의 "재연결"·끊긴 폰 자동 복구. 그 폰만 다시 붙인다:
+   *  1) 같은 와이파이에서 발견되면 그 주소로 adb connect
+   *  2) adb reconnect offline (멈춘 전송만 다시 연다)
+   *  3) 그래도 안 되고 **붙어 있는 다른 폰이 하나도 없을 때만** kill-server → start-server
+   * 예전에는 곧바로 3)을 했는데, 폰이 여러 대면 한 대가 끊길 때마다 나머지 폰의 연결과 화면 전송까지
+   * 함께 끊겼다. 자동 복구는 refresh 안에서 기다리지 않고 부르므로 여기서도 던지지 않는다
    */
   async recover(serial: string): Promise<boolean> {
     if (!this.hasAdb()) return false
+    const isBack = async (): Promise<{ back: boolean; others: number }> => {
+      const services = await this.discover()
+      const live = pickOnePerPhone(
+        parseDevices((await this.deps.adb.run(['devices', '-l'])).stdout),
+        services
+      ).filter((d) => d.state === 'online')
+      const back = live.some((d) => d.realSerial === serial || d.serial === serial)
+      return { back, others: live.filter((d) => d.realSerial !== serial).length }
+    }
     try {
+      const service = (await this.discover()).find((sv) => sv.serial === serial)
+      if (service) {
+        await this.deps.adb.run(['connect', service.address], 10_000)
+        if ((await isBack()).back) return true
+      }
+      await this.deps.adb.run(['reconnect', 'offline'], 10_000)
+      const after = await isBack()
+      if (after.back) return true
+      // 다른 폰이 붙어 있으면 서버를 건드리지 않는다 — 이 폰은 다음 검색에서 다시 본다
+      if (after.others > 0) return false
       await this.deps.adb.run(['kill-server'])
       await this.deps.adb.run(['start-server'])
-      const res = await this.deps.adb.run(['devices', '-l'])
-      return parseDevices(res.stdout).some((d) => d.serial === serial && d.state === 'online')
+      return (await isBack()).back
     } catch {
       return false
     }
@@ -199,6 +319,40 @@ export class DeviceManager {
     const ok = /connected to/i.test(res.stdout) && !/failed|cannot|unable/i.test(res.stdout)
     if (ok) await this.refresh()
     return { ok, message: res.stdout.trim() || res.stderr.trim() }
+  }
+
+  /**
+   * 무선 디버깅 페어링(안드로이드 11+). 폰의 "페어링 코드로 기기 페어링" 화면에 뜬 주소와 6자리 코드로
+   * 이 PC 의 키를 폰에 등록한다 — USB 를 한 번도 꽂지 않은 폰은 이 길뿐이다.
+   * 코드는 폰이 그때그때 만드는 1회용이라 저장하지 않고 로그에도 남기지 않는다
+   */
+  async pairWifi(address: string, code: string): Promise<{ ok: boolean; message: string }> {
+    const target = address.trim()
+    const digits = code.replace(/\D/g, '')
+    if (!isWifiSerial(target)) return { ok: false, message: tr('phone.pairBadAddress') }
+    if (digits.length !== PAIR_CODE_LENGTH) return { ok: false, message: tr('phone.pairBadCode') }
+    const res = await this.deps.adb.run(['pair', target, digits], 15_000)
+    const ok = /successfully paired/i.test(res.stdout)
+    if (ok) {
+      // 페어링이 끝나면 접속점(_adb-tls-connect)이 곧 발견된다 — 쉬는 시간을 지우고 바로 찾는다
+      this.wifiRetryAt.clear()
+      await this.refresh()
+    }
+    return { ok, message: res.stdout.trim() || res.stderr.trim() }
+  }
+
+  /** 이 폰의 모든 전송(ip:port·서비스 이름)을 끊는다. USB 는 adb 가 끊지 못하므로 넘어간다 */
+  async disconnectAll(realSerial: string): Promise<void> {
+    const res = await this.deps.adb.run(['devices', '-l'])
+    const services = await this.discover()
+    for (const d of parseDevices(res.stdout)) {
+      if (d.transport !== 'wifi' || realSerialOf(d.serial, services) !== realSerial) continue
+      try {
+        await this.deps.adb.run(['disconnect', d.serial])
+      } catch {
+        // 이미 끊겼으면 그만이다
+      }
+    }
   }
 
   async disconnect(serial: string): Promise<void> {

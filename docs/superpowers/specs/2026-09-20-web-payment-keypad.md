@@ -19,5 +19,10 @@ NICE ePAY(`m.niceepay.com … pinCert.do`)·페이코 웹 등 결제 비밀번�
 4. `prompt.ts` 문구 갱신. 키패드 화면에서 모델의 click/type/screenshot 거부는 유지.
 5. 테스트: 배치 파싱(완전/중복/부족), 실행기(거부 시 클릭 0, 정상 6자리 순서, 검증 실패 되돌림, 호출 인자·라벨·반환값에 숫자 값 없음), fill_secret 분기.
 
+## 구현 결과(2026-09-21)
+- preload `keypadLayout()`(page-core.ts) → page-bridge `keypadLayout(tab)`·`keypadFilled(tab, frame)` → `src/main/vault/web-keypad.ts` `enterWebPaymentPassword` → `tools.ts fill_secret` 분기(`keypadEnter`).
+- 스펙과 다른 점: 확인 카드는 **guard 모드에서만** 1회(full 은 묻지 않는다 — fill_secret 의 평소 규칙과 같다). 계정은 결제창 호스트로 못 찾으면 **팝업을 연 탭(opener) 호스트**로 찾고, 계정 도메인 탭이 연 창이 아니면 넣지 않는다.
+- 실패(배치 불완전·검증 실패·금고 잠김)는 넘김 카드(kind 'keypad')로 떨어진다.
+
 ## 검증(실기, 사용자)
 무신사 주문서 → 무신사머니 → 결제하기 → 머니 결제하기 → NICE ePAY 화면에서 fill_secret(password, site) → 확인 카드 승인 → 6자리 입력됨 → 사용자가 확인 버튼.

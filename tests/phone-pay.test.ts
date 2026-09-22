@@ -1,6 +1,6 @@
 // 간편결제 앱 승인 흐름. 상한 검사·확인 카드·상태 전이와 "재시도 없음" 을 단언한다
 
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // SDK 의 tool() 을 얇게 대체해 도구 핸들러를 직접 부른다(다른 agent 테스트와 같은 방식)
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -16,16 +16,24 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 import {
   PAY_APP_TO_PAYMENT_PROVIDER,
   PAY_PROVIDERS,
+  cardPatternOf,
+  findPayNotification,
+  parseAppNotifications,
   checkPaymentGate,
   nextPayState,
   runPayApproval,
   type PayRequest,
   type PayResult,
-  type PayRunDeps
+  type PayRunDeps,
+  selectedCardOf
 } from '../src/main/phone/pay'
 import { createPayTool, PAY_TOOL_NAME, PHONE_TOOL_NAMES } from '../src/main/agent/tools-phone'
 import { SAMBA_TOOL_NAMES } from '../src/main/agent/tools'
 import { DEFAULT_PAYMENT_LIMIT_KRW, FIRST_RUN_LIMIT_KRW } from '../src/shared/phone'
+
+// 사용자가 설정에 적어 넣은 상한(테스트용 값). 기본값은 둘 다 없음(0)이다
+const USER_LIMIT_KRW = 500_000
+const USER_FIRST_LIMIT_KRW = 10_000
 import type { PhoneElement, PhoneScreen } from '../src/shared/phone-snapshot'
 import type { KeypadLayout } from '../src/main/ai/visual'
 
@@ -160,7 +168,7 @@ describe('PAY_APP_TO_PAYMENT_PROVIDER', () => {
 describe('checkPaymentGate', () => {
   const base = {
     amountKrw: 10_000,
-    limitKrw: DEFAULT_PAYMENT_LIMIT_KRW,
+    limitKrw: USER_LIMIT_KRW,
     isFirstRunForCombo: false,
     vaultUnlocked: true
   }
@@ -170,23 +178,22 @@ describe('checkPaymentGate', () => {
   })
 
   it('상한을 넘으면 over-limit', () => {
-    expect(checkPaymentGate({ ...base, amountKrw: DEFAULT_PAYMENT_LIMIT_KRW + 1 })).toBe(
-      'over-limit'
-    )
+    expect(checkPaymentGate({ ...base, amountKrw: USER_LIMIT_KRW + 1 })).toBe('over-limit')
   })
 
-  it('새 조합의 첫 결제가 1만원을 넘으면 first-run-too-large', () => {
-    expect(
-      checkPaymentGate({
-        ...base,
-        amountKrw: FIRST_RUN_LIMIT_KRW + 1,
-        isFirstRunForCombo: true
-      })
-    ).toBe('first-run-too-large')
-    // 1만원 이하면 통과한다
-    expect(
-      checkPaymentGate({ ...base, amountKrw: FIRST_RUN_LIMIT_KRW, isFirstRunForCombo: true })
-    ).toBe('ok')
+  it('기본값은 상한 없음 — 앱이 임의로 금액을 막지 않는다', () => {
+    expect(DEFAULT_PAYMENT_LIMIT_KRW).toBe(0)
+    expect(FIRST_RUN_LIMIT_KRW).toBe(0)
+    const free = { ...base, limitKrw: DEFAULT_PAYMENT_LIMIT_KRW, isFirstRunForCombo: true }
+    expect(checkPaymentGate({ ...free, amountKrw: 10_000_000 })).toBe('ok')
+  })
+
+  it('사용자가 첫 결제 상한을 적어 두었을 때만, 새 조합의 첫 결제가 그 값을 넘으면 first-run-too-large', () => {
+    const first = { ...base, isFirstRunForCombo: true, firstRunLimitKrw: USER_FIRST_LIMIT_KRW }
+    expect(checkPaymentGate({ ...first, amountKrw: USER_FIRST_LIMIT_KRW + 1 })).toBe(
+      'first-run-too-large'
+    )
+    expect(checkPaymentGate({ ...first, amountKrw: USER_FIRST_LIMIT_KRW })).toBe('ok')
   })
 
   it('금고가 잠겨 있으면 vault-locked', () => {
@@ -196,7 +203,10 @@ describe('checkPaymentGate', () => {
 
 describe('nextPayState', () => {
   it('앱 패키지가 뜨면 app_steps 로 가고 확인 버튼 번호를 함께 돌려준다', () => {
-    const s = screen('viva.republica.toss', [el(1, '결제하기')])
+    const s = screen('viva.republica.toss', [
+      el(1, '결제하기'),
+      el(90, '결제수단 변경 ・ 설정', { clickable: false })
+    ])
     expect(nextPayState('await_app', s, TOSS)).toEqual({ state: 'app_steps', tapElementId: 1 })
   })
 
@@ -233,7 +243,10 @@ describe('nextPayState', () => {
 
 describe('runPayApproval', () => {
   const okScreens = [
-    screen('viva.republica.toss', [el(1, '결제하기')]),
+    screen('viva.republica.toss', [
+      el(1, '결제하기'),
+      el(90, '결제수단 변경 ・ 설정', { clickable: false })
+    ]),
     screen('viva.republica.toss', [el(2, '간편비밀번호', { clickable: false })]),
     screen('viva.republica.toss', [el(3, '결제 완료', { clickable: false })])
   ]
@@ -262,9 +275,12 @@ describe('runPayApproval', () => {
     expect(h.deps.launchApp).not.toHaveBeenCalled()
   })
 
-  it('상한을 넘으면 확인 카드도 띄우지 않고 거부한다', async () => {
+  it('사용자가 적은 상한을 넘으면 확인 카드도 띄우지 않고 거부한다', async () => {
     const h = harness({ screens: okScreens })
-    const r = await runPayApproval(h.deps, request({ amountKrw: 900_000 }))
+    const r = await runPayApproval(
+      h.deps,
+      request({ amountKrw: 900_000, limitKrw: USER_LIMIT_KRW })
+    )
 
     expect(r).toEqual({ ok: false, reason: 'over-limit' })
     expect(h.confirm).not.toHaveBeenCalled()
@@ -344,7 +360,14 @@ describe('runPayApproval', () => {
 
   it('같은 요소를 두 번 연속 탭하지 않는다', async () => {
     // 확인 버튼만 계속 보이는 화면 — 한 번 누른 뒤에는 다시 누르지 않는다
-    const h = harness({ screens: [screen('viva.republica.toss', [el(1, '결제하기')])] })
+    const h = harness({
+      screens: [
+        screen('viva.republica.toss', [
+          el(1, '결제하기'),
+          el(90, '결제수단 변경 ・ 설정', { clickable: false })
+        ])
+      ]
+    })
     const r = await runPayApproval(h.deps, request())
 
     expect(h.taps).toHaveLength(1)
@@ -424,9 +447,400 @@ describe('phone_approve_payment 도구', () => {
     expect(t.run).not.toHaveBeenCalled()
   })
 
+  it('지시문에 카드사가 적혀 있는데 card 없이 부르면 실행기를 부르지 않고 거부한다(실기: 현대카드 지시 → 롯데로 결제)', async () => {
+    const run = vi.fn(async () => ({ ok: true }))
+    const steps: Array<{ label: string; ok: boolean }> = []
+    const built = createPayTool({
+      tick: () => null,
+      onStep: (label, ok) => steps.push({ label, ok }),
+      run,
+      requiredCard: '현대카드'
+    }) as unknown as ToolStub
+    const out = await built.handler(args)
+    expect(out.content[0].text).toContain('card-required')
+    expect(run).not.toHaveBeenCalled()
+    expect(steps[0]?.ok).toBe(false)
+    // card 를 넘기면 그대로 실행한다
+    expect((await built.handler({ ...args, card: '현대' })).content[0].text).toBe('ok')
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
   it('도구 문맥에 금고가 없다', () => {
     type PayCtxKeys = keyof import('../src/main/agent/tools-phone').PayToolContext
     const hasVault: Extract<PayCtxKeys, 'vault'> extends never ? true : false = true
     expect(hasVault).toBe(true)
+  })
+})
+
+describe('결제 요청이 푸시 알림으로만 와 있을 때 — 알림창에서 연다', () => {
+  const shade = (elements: PhoneElement[]): PhoneScreen => screen('com.android.systemui', elements)
+  const tossHome = screen(TOSS.packageName, [el(1, '홈', { clickable: true })])
+  const payAsk = screen(TOSS.packageName, [
+    el(2, '결제하기'),
+    el(90, '결제수단 변경 ・ 설정', { clickable: false })
+  ])
+  const keypad = screen(TOSS.packageName, [el(3, '비밀번호를 눌러주세요', { clickable: false })])
+  const done = screen(TOSS.packageName, [el(4, '결제가 완료되었습니다', { clickable: false })])
+  const TOSS_PUSH = { title: '무신사 결제하기', text: '알림을 누르고 결제를 완료해주세요.' }
+
+  // 알림 우선 규칙 자체를 검증하는 묶음 — 토스는 이제 앱을 바로 열므로(openBy: 'app') 여기서만 알림 우선으로 되돌린다
+  beforeEach(() => {
+    PAY_PROVIDERS.toss.openBy = 'notification'
+  })
+  afterEach(() => {
+    PAY_PROVIDERS.toss.openBy = 'app'
+  })
+
+  // 실기 그대로: 카카오톡으로 온 "토스" 채널 메시지(제목이 토스)와 토스 앱의 결제 알림이 함께 떠 있다
+  const DUMP = [
+    '    NotificationRecord(0x0e5267b9: pkg=com.kakao.talk user=UserHandle{0} id=2 tag=49 importance=4 key=0|com.kakao.talk|2',
+    '                android.title=String (토스)',
+    '                android.text=String ([토스] 결제 혜택이 시작됐어요.',
+    '    NotificationRecord(0x08447035: pkg=viva.republica.toss user=UserHandle{0} id=2010044086 tag=null importance=4',
+    '                android.title=String (무신사 결제하기)',
+    '                android.text=String (알림을 누르고 결제를 완료해주세요.',
+    '    NotificationRecord(0x057392be: pkg=viva.republica.toss user=UserHandle{0} id=511393872 tag=null importance=4',
+    '                android.title=null',
+    '                android.text=null',
+    '    NotificationRecord(0x01: pkg=viva.republica.toss user=UserHandle{0} id=7 tag=null importance=3',
+    '                android.title=String (오늘의 혜택)',
+    '                android.text=String (만보기 포인트를 받아 가세요)'
+  ].join('\n')
+
+  it('parseAppNotifications: 그 앱이 올린 결제 알림만 뽑는다(카카오톡의 "토스" 메시지·토스의 광고 알림 제외)', () => {
+    expect(parseAppNotifications(DUMP, 'viva.republica.toss')).toEqual([TOSS_PUSH])
+  })
+
+  it('findPayNotification: 제목이 정확히 같은 알림만 고른다 — "토스" 글자가 들어간 남의 알림은 누르지 않는다', () => {
+    const s = shade([
+      el(1, '카카오톡', { clickable: false }),
+      el(2, '토스', { clickable: false }),
+      el(3, '[토스] 결제 혜택이 시작됐어요.', { clickable: false }),
+      el(4, '토스', { clickable: false }),
+      el(5, '무신사 결제하기', { clickable: false }),
+      el(6, '알림을 누르고 결제를 완료해주세요.', { clickable: false })
+    ])
+    expect(findPayNotification(s, [TOSS_PUSH])).toBe(5)
+    // 결제 알림 글자가 화면에 없으면 아무것도 고르지 않는다
+    expect(
+      findPayNotification(shade([el(1, '카카오톡'), el(2, '토스'), el(3, '[토스] 결제 혜택')]), [
+        TOSS_PUSH
+      ])
+    ).toBeUndefined()
+    expect(findPayNotification(s, [])).toBeUndefined()
+  })
+
+  it('토스는 알림창을 거치지 않고 앱을 바로 연다 — 알림 클릭이 엉뚱한 곳으로 들어가던 실기 대응', async () => {
+    PAY_PROVIDERS.toss.openBy = 'app'
+    const h = harness({ screens: [tossHome, payAsk, payAsk, keypad, done, done] })
+    const calls: string[] = []
+    h.deps.notifications = {
+      open: async () => void calls.push('open'),
+      close: async () => void calls.push('close'),
+      list: async () => {
+        calls.push('list')
+        return [TOSS_PUSH]
+      }
+    }
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: true })
+    expect(h.deps.launchApp).toHaveBeenCalledTimes(1)
+    // 앱을 열자 결제 화면이 떴으므로 알림창은 한 번도 열지 않았다
+    expect(calls).toEqual([])
+    expect(PAY_PROVIDERS.toss.openBy).toBe('app')
+  })
+
+  it('그 앱이 올린 결제 알림이 있으면 앱을 열기 전에 그 알림부터 누른다(가장 짧은 길)', async () => {
+    const screens = [
+      shade([
+        el(2, '토스', { clickable: false }),
+        el(3, '[토스] 결제 혜택이 시작됐어요.'),
+        el(11, '무신사 결제하기', { clickable: false })
+      ]),
+      payAsk,
+      payAsk,
+      keypad,
+      done,
+      done
+    ]
+    const h = harness({ screens })
+    const calls: string[] = []
+    h.deps.notifications = {
+      open: async () => void calls.push('open'),
+      close: async () => void calls.push('close'),
+      list: async (_serial, pkg) => {
+        calls.push(`list:${pkg}`)
+        return [TOSS_PUSH]
+      }
+    }
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: true })
+    expect(calls).toEqual(['list:viva.republica.toss', 'open'])
+    // 토스 결제 알림(11) → 결제하기(2). 카카오톡의 토스 메시지(3)는 누르지 않았고, 앱을 따로 열지도 않았다
+    expect(h.taps.map((t) => t[2])).toEqual([11 * 100 + 30, 2 * 100 + 30])
+    expect(h.deps.launchApp).not.toHaveBeenCalled()
+  })
+
+  it('알림이 묶음으로 접혀 있으면 첫 탭은 펼치기만 한다 — 같은 제목을 다시 눌러 연다', async () => {
+    const folded = shade([
+      el(9, '토스', { clickable: false }),
+      el(11, '무신사 결제하기', { clickable: false })
+    ])
+    const unfolded = shade([
+      el(9, '토스', { clickable: false }),
+      el(12, '무신사 결제하기', { clickable: false })
+    ])
+    const h = harness({ screens: [folded, unfolded, payAsk, payAsk, keypad, done, done] })
+    h.deps.notifications = {
+      open: async () => {},
+      close: async () => {},
+      list: async () => [TOSS_PUSH]
+    }
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: true })
+    expect(h.taps.map((t) => t[2])).toEqual([11 * 100 + 30, 12 * 100 + 30, 2 * 100 + 30])
+  })
+
+  it('그 앱이 올린 결제 알림이 없으면 알림창을 열지 않고 앱을 직접 연다', async () => {
+    const h = harness({ screens: [payAsk, keypad, done, done] })
+    const calls: string[] = []
+    h.deps.notifications = {
+      open: async () => void calls.push('open'),
+      close: async () => void calls.push('close'),
+      list: async () => []
+    }
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: true })
+    expect(calls).toEqual([])
+    expect(h.deps.launchApp).toHaveBeenCalledTimes(1)
+  })
+
+  it('알림 기록에는 있는데 알림창에서 같은 글자를 못 찾으면 아무것도 누르지 않고 알림창을 올린 뒤 앱을 연다', async () => {
+    const h = harness({ screens: [shade([el(1, '카카오톡'), el(2, '토스')]), tossHome] })
+    const calls: string[] = []
+    h.deps.notifications = {
+      open: async () => void calls.push('open'),
+      close: async () => void calls.push('close'),
+      list: async () => [TOSS_PUSH]
+    }
+    const r = await runPayApproval(h.deps, request())
+    expect(r.ok).toBe(false)
+    expect(calls).toEqual(['open', 'close'])
+    expect(h.taps).toEqual([])
+    expect(h.deps.launchApp).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('첫 결제 상한은 설정값이다', () => {
+  const base = {
+    amountKrw: 29_960,
+    limitKrw: 500_000,
+    isFirstRunForCombo: true,
+    vaultUnlocked: true
+  }
+
+  it('기본값은 첫 결제 상한 없음 — 3만원 첫 결제가 그대로 통과한다(실기: 29,960원이 막혔던 건)', () => {
+    expect(checkPaymentGate(base)).toBe('ok')
+    expect(checkPaymentGate({ ...base, firstRunLimitKrw: 10_000 })).toBe('first-run-too-large')
+  })
+
+  it('설정으로 올리면 통과하고, 0 이면 첫 결제 상한을 끈다(결제 상한은 그대로 본다)', () => {
+    expect(checkPaymentGate({ ...base, firstRunLimitKrw: 50_000 })).toBe('ok')
+    expect(checkPaymentGate({ ...base, firstRunLimitKrw: 0 })).toBe('ok')
+    expect(checkPaymentGate({ ...base, amountKrw: 600_000, firstRunLimitKrw: 0 })).toBe(
+      'over-limit'
+    )
+  })
+
+  it('첫 결제가 아니면 첫 결제 상한과 무관하다', () => {
+    expect(checkPaymentGate({ ...base, isFirstRunForCombo: false, firstRunLimitKrw: 1_000 })).toBe(
+      'ok'
+    )
+  })
+})
+
+describe('결제 확인 카드는 권한 모드를 따른다', () => {
+  const flow = [
+    screen(TOSS.packageName, [
+      el(2, '결제하기'),
+      el(90, '결제수단 변경 ・ 설정', { clickable: false })
+    ]),
+    screen(TOSS.packageName, [el(3, '비밀번호를 눌러주세요', { clickable: false })]),
+    screen(TOSS.packageName, [el(4, '결제가 완료되었습니다', { clickable: false })]),
+    screen(TOSS.packageName, [el(4, '결제가 완료되었습니다', { clickable: false })])
+  ]
+
+  it('자동(full) 모드에서는 묻지 않고 진행한다', async () => {
+    const h = harness({ screens: flow })
+    const r = await runPayApproval(h.deps, request({ confirmFirst: false }))
+    expect(r).toEqual({ ok: true })
+    expect(h.confirm).not.toHaveBeenCalled()
+  })
+
+  it('guard 모드(기본)에서는 확인 카드를 한 번 띄운다', async () => {
+    const h = harness({ screens: flow })
+    await runPayApproval(h.deps, request())
+    expect(h.confirm).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('토스 앱 잠금 — 앱을 켤 때도 비밀번호를 묻는다', () => {
+  const lock = screen(TOSS.packageName, [
+    el(1, '앱을 켜려면\n비밀번호를 눌러주세요', { clickable: false })
+  ])
+  const payAsk = screen(TOSS.packageName, [
+    el(2, '결제하기'),
+    el(90, '결제수단 변경 ・ 설정', { clickable: false })
+  ])
+  const payPw = screen(TOSS.packageName, [el(3, '비밀번호를 눌러주세요', { clickable: false })])
+  const done = screen(TOSS.packageName, [el(4, '결제가 완료되었습니다', { clickable: false })])
+
+  it('잠금 1회 + 결제 1회, 비밀번호를 두 번 넣고 끝까지 간다', async () => {
+    const h = harness({ screens: [lock, lock, payAsk, payPw, done, done] })
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: true })
+    expect(h.tapPassword).toHaveBeenCalledTimes(2)
+  })
+
+  it('잠금 화면이 한참 뒤에도 그대로면(오답) 다시 넣지 않고 멈춘다', async () => {
+    const h = harness({ screens: [lock] })
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: false, reason: 'verify-failed' })
+    expect(h.tapPassword).toHaveBeenCalledTimes(1)
+  })
+
+  it('결제 비밀번호 화면이 두 번째로 보이면 예전처럼 멈춘다(재시도 없음)', async () => {
+    const h = harness({ screens: [payAsk, payPw, payPw, payPw] })
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: false, reason: 'verify-failed' })
+    expect(h.tapPassword).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('토스 결제 화면(실기 구조) — 글자와 눌리는 영역이 따로인 [결제하기], 카드 바꾸기', () => {
+  // 실기: 글자는 클릭 불가 TextView, 눌리는 영역은 글자 없는 View 다
+  const payScreen = (card: string): PhoneScreen =>
+    screen(TOSS.packageName, [
+      el(1, '무신사', { clickable: false }),
+      el(2, '', { clickable: true }),
+      el(3, card, { clickable: false }),
+      el(4, '일시불 결제', { clickable: false }),
+      el(5, '결제수단 변경 ・ 설정', { clickable: false }),
+      el(6, '개인(신용)정보 제3자 제공 동의 필수 항목에 동의합니다', { clickable: false }),
+      el(7, '', { clickable: true }),
+      el(8, '결제하기', { clickable: false })
+    ])
+  const sheet = screen(TOSS.packageName, [
+    el(1, '닫기', { clickable: true }),
+    el(2, '결제수단 선택', { clickable: false }),
+    el(3, 'LOCA Professional', { clickable: false }),
+    el(4, '넥슨현대UNLIMITED', { clickable: false }),
+    el(5, 'zgm.streaming카드', { clickable: false })
+  ])
+  const pw = screen(TOSS.packageName, [el(9, '비밀번호를 눌러주세요', { clickable: false })])
+  const done = screen(TOSS.packageName, [el(10, '결제가 완료되었습니다', { clickable: false })])
+
+  it('클릭 불가 TextView 인 [결제하기]도 누른다 — 동의 문장 같은 본문은 누르지 않는다', async () => {
+    const h = harness({ screens: [payScreen('LOCA Professional'), pw, done, done] })
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: true })
+    expect(h.taps.map((t) => t[2])).toEqual([8 * 100 + 30])
+  })
+
+  it('카드를 지정하면 결제하기 전에 [결제수단 변경] → 그 카드 → 결제하기 순서로 누른다', async () => {
+    const h = harness({
+      screens: [
+        payScreen('LOCA Professional'),
+        sheet,
+        payScreen('넥슨현대UNLIMITED'),
+        pw,
+        done,
+        done
+      ]
+    })
+    const r = await runPayApproval(h.deps, request({ cardHint: '현대' }))
+    expect(r).toEqual({ ok: true })
+    expect(h.taps.map((t) => t[2])).toEqual([5 * 100 + 30, 4 * 100 + 30, 8 * 100 + 30])
+  })
+
+  it('지정한 카드가 이미 선택돼 있으면 바꾸지 않고 바로 결제한다', async () => {
+    const h = harness({ screens: [payScreen('넥슨현대UNLIMITED'), pw, done, done] })
+    const r = await runPayApproval(h.deps, request({ cardHint: '현대' }))
+    expect(r).toEqual({ ok: true })
+    expect(h.taps.map((t) => t[2])).toEqual([8 * 100 + 30])
+  })
+
+  it('카드 목록에 그 카드가 없으면 다른 카드로 결제하지 않고 멈춘다', async () => {
+    const h = harness({ screens: [payScreen('LOCA Professional'), sheet] })
+    const r = await runPayApproval(h.deps, request({ cardHint: '삼성' }))
+    expect(r).toEqual({ ok: false, reason: 'card-not-found' })
+    expect(h.tapPassword).not.toHaveBeenCalled()
+    // [결제수단 변경]만 눌렀고 결제하기는 누르지 않았다
+    expect(h.taps.map((t) => t[2])).toEqual([5 * 100 + 30])
+  })
+
+  it('실기: 화면 다른 곳에 "현대" 글자(혜택 안내)가 있어도 선택된 카드가 LOCA 면 바꾼다 — 롯데로 결제되지 않는다', async () => {
+    const promo = (card: string): PhoneScreen =>
+      screen(TOSS.packageName, [
+        el(1, '무신사', { clickable: false }),
+        el(2, '', { clickable: true }),
+        el(3, card, { clickable: false }),
+        el(4, '일시불 결제', { clickable: false }),
+        el(5, '결제수단 변경 ・ 설정', { clickable: false }),
+        el(6, '현대카드로 결제하면 3개월 무이자', { clickable: false }),
+        el(7, '', { clickable: true }),
+        el(8, '결제하기', { clickable: false })
+      ])
+    const h = harness({
+      screens: [promo('LOCA Professional'), sheet, promo('넥슨현대UNLIMITED'), pw, done, done]
+    })
+    const r = await runPayApproval(h.deps, request({ cardHint: '현대' }))
+    expect(r).toEqual({ ok: true })
+    // [결제수단 변경](5) → 목록의 넥슨현대(4) → 결제하기(8)
+    expect(h.taps.map((t) => t[2])).toEqual([5 * 100 + 30, 4 * 100 + 30, 8 * 100 + 30])
+    expect(h.steps.map((x) => x.label)).toEqual(
+      expect.arrayContaining([
+        '카드 맞추기: [결제수단 변경 ・ 설정] 누름',
+        '카드 확인: 넥슨현대UNLIMITED 일시불 결제'
+      ])
+    )
+  })
+
+  it('카드를 지정하지 않으면 앱에 선택된 카드를 진행 로그에 남기고 그대로 결제한다', async () => {
+    const h = harness({ screens: [payScreen('LOCA Professional'), pw, done, done] })
+    const r = await runPayApproval(h.deps, request())
+    expect(r).toEqual({ ok: true })
+    expect(h.steps.map((x) => x.label)).toContain(
+      '카드 미지정 — 앱에 선택된 카드로 결제: LOCA Professional 일시불 결제'
+    )
+  })
+
+  it('selectedCardOf: [결제수단 변경] 바로 위 줄만 카드로 본다', () => {
+    expect(selectedCardOf(payScreen('LOCA Professional'), TOSS)).toBe(
+      'LOCA Professional 일시불 결제'
+    )
+    expect(selectedCardOf(screen(TOSS.packageName, [el(1, '홈')]), TOSS)).toBe('')
+  })
+})
+
+describe('결제 화면이 아닌 곳에서는 아무것도 누르지 않는다(실기: 토스 홈의 버튼을 눌러 용돈 화면으로 들어감)', () => {
+  it('토스 홈·다른 서비스 화면의 [확인]·[다음]·[결제하기]는 누르지 않는다', async () => {
+    const other = screen(TOSS.packageName, [
+      el(1, '다음'),
+      el(2, '확인'),
+      el(3, '결제하기'),
+      el(4, '용돈 보내기')
+    ])
+    const h = harness({ screens: [other] })
+    const r = await runPayApproval(h.deps, request({ cardHint: '현대' }))
+    expect(r).toEqual({ ok: false, reason: 'stuck' })
+    expect(h.taps).toEqual([])
+  })
+
+  it('카드 이름은 카드사 이름으로 맞춘다 — "현대카드"는 넥슨현대UNLIMITED, "롯데카드"는 LOCA', () => {
+    expect(cardPatternOf('현대카드').test('넥슨현대UNLIMITED')).toBe(true)
+    expect(cardPatternOf('현대').test('LOCA Professional')).toBe(false)
+    expect(cardPatternOf('롯데카드').test('LOCA Professional')).toBe(true)
+    expect(cardPatternOf('KB국민카드').test('KB국민 톡톡')).toBe(true)
   })
 })

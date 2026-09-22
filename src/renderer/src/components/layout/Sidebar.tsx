@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Globe, ListChecks, PanelLeft, Smartphone, ScrollText, Settings } from 'lucide-react'
+import { Globe, ListChecks, PanelLeft, ScrollText, Settings } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import logo from '@renderer/assets/logo.png'
 import { useUiStore, type MainView } from '@renderer/stores/uiStore'
@@ -12,11 +12,10 @@ import { SIDEBAR_ITEMS, showSectionBody } from './sidebar-view'
 import { WorkspaceSwitcher } from '@renderer/components/workspace/WorkspaceSwitcher'
 
 // 사이드바 위쪽 이동 항목. 목록 자체는 sidebar-view 에 있고(테스트가 지킨다) 여기서는
-// 아이콘만 붙인다. 자동화·키마스터는 설정 안으로 옮겼다(설정 → 자동화 / 키마스터)
+// 아이콘만 붙인다. 자동화·키마스터·폰은 설정 안으로 옮겼다(설정 → 자동화 / 키마스터 / 폰)
 const ICONS: Record<(typeof SIDEBAR_ITEMS)[number]['key'], typeof Globe> = {
   browser: Globe,
   tasks: ListChecks,
-  phones: Smartphone,
   logs: ScrollText
 }
 

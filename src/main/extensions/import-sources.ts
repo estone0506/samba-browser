@@ -8,6 +8,7 @@
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import type { ImportBrowserDto, ImportExtensionDto } from '../../shared/extensions'
+import { tr } from '../i18n'
 
 /** 가져오기를 지원하는 브라우저 한 종류 */
 export interface BrowserSource {
@@ -262,7 +263,7 @@ export function collectImportSources(localAppData: string): ImportBrowserDto[] {
  * 크로미움이 남기는 `_metadata`(서명 정보)는 우리 세션에서 쓸모가 없어 빼고 복사한다
  */
 export function copyExtensionFolder(srcDir: string, destRoot: string, id: string): string {
-  if (!isDir(srcDir)) throw new Error('원본 확장 폴더를 찾을 수 없어요')
+  if (!isDir(srcDir)) throw new Error(tr('ext.sourceFolderNotFound'))
   const dest = join(destRoot, id)
   if (existsSync(dest)) rmSync(dest, { recursive: true, force: true })
   cpSync(srcDir, dest, {
@@ -271,7 +272,7 @@ export function copyExtensionFolder(srcDir: string, destRoot: string, id: string
   })
   if (!existsSync(join(dest, 'manifest.json'))) {
     rmSync(dest, { recursive: true, force: true })
-    throw new Error('복사한 폴더에 manifest.json 이 없어요')
+    throw new Error(tr('ext.copiedNoManifest'))
   }
   return dest
 }

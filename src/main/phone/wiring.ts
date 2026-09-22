@@ -7,11 +7,7 @@
 //  - 비밀번호 화면인 동안에는 화면 프레임을 전송·저장하지 않는다(SecretScreenGate)
 //  - 인증번호·문자 본문은 진행 로그에도 남기지 않는다(자리수만 남긴다)
 
-import {
-  DEFAULT_PAYMENT_LIMIT_KRW,
-  type PhoneAuthWaitingDto,
-  type PhoneDto
-} from '../../shared/phone'
+import { type PhoneAuthWaitingDto, type PhoneDto } from '../../shared/phone'
 import type { AuthEventDto } from '../../shared/phone'
 import type { PageSnapshot } from '../../shared/snapshot'
 import type { PhoneScreen } from '../../shared/phone-snapshot'
@@ -29,10 +25,12 @@ import type { PaySecretVault } from './pay-secret'
 import {
   isSecretScreen,
   PAY_PROVIDERS,
+  parseAppNotifications,
   runPayApproval,
   type PayResult,
   type PayRunDeps
 } from './pay'
+import { tr } from '../i18n'
 
 // --- 비밀 화면 차단(T5 ScreenStream 훅) ---------------------------------------
 
@@ -219,6 +217,7 @@ export interface PhoneRunContext {
     matched: string
     currentUrl: () => string
     stillBlocked: () => Promise<boolean>
+    kind?: 'captcha' | 'keypad'
   }) => Promise<HandoffResult>
   cancelled: () => boolean
 }
@@ -253,6 +252,8 @@ export interface WiringVault extends PaySecretVault {
 export interface PagePort {
   /** 활성 탭 호스트(정규화). 없으면 빈 문자열 */
   host: () => string
+  /** 활성 탭의 프로필 이름(계정별 탭). 같은 사이트에 계정이 여럿일 때 고르는 기준. 없으면 빈 문자열 */
+  profile?: () => string
   /** 활성 탭 id — 결제 팝업(openerId)을 되찾는 데 쓴다 */
   activeTabId: () => string | null
   snapshot: () => Promise<PageSnapshot>
@@ -284,6 +285,12 @@ export interface PhoneWiringDeps {
 export interface PhoneAgentBridge {
   waitForSmsCode: (ctx: PhoneRunContext, host?: string) => Promise<SmsCodeOutcome>
   approvePayment: (ctx: PhoneRunContext, req: PayToolRequest) => Promise<PayResult>
+  /**
+   * 폰을 직접 다루는 도구(phone_screen·phone_tap…)가 기본으로 쓸 폰.
+   * 지금 탭의 사이트 계정에 담당 폰이 있고 붙어 있으면 그 폰, 아니면 연결된 첫 번째 폰.
+   * 예전에는 늘 첫 번째 폰이라, 담당 폰을 골라 둬도 엉뚱한 폰에서 토스 알림을 찾았다(실기)
+   */
+  defaultSerial: () => string | null
 }
 
 const defaultSleep = (ms: number): Promise<void> =>
@@ -303,6 +310,15 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     if (!host) return null
     const accounts = deps.vault.listAccounts(host)
     if (accounts.length === 0) return null
+    // 구매 계정이 여럿인 사이트(무신사의 bob·alice…)는 기본 계정이 없어 늘 "특정할 수 없음"으로
+    // 끝났다(실기: 토스페이 결제 요청까지 가서 폰 승인이 거부됨). 계정별 프로필 탭의 이름으로 고른다.
+    // 같은 이름의 계정이 로그인 도메인별로 여럿이면 결제 비밀번호를 가진 쪽이 먼저다
+    const profile = deps.page.profile?.() ?? ''
+    if (profile) {
+      const named = accounts.filter((a) => a.label === profile || a.username === profile)
+      const picked = named.find((a) => a.itemTypes.includes('password')) ?? named[0]
+      if (picked) return picked
+    }
     return accounts.find((a) => a.isDefault) ?? (accounts.length === 1 ? accounts[0] : null)
   }
 
@@ -364,12 +380,20 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     const siteHost = deps.page.host()
     const account = accountFor(siteHost)
     if (!account) {
-      ctx.onStep('결제 거부: 이 사이트의 계정을 특정할 수 없음', false)
+      ctx.onStep(tr('phone.payRejected', { reason: tr('phone.gateNoAccount') }), false)
       return { ok: false, reason: 'no-account' }
+    }
+    // 결제 앱은 담당 폰에만 있다. 담당 폰이 끊겨 있으면 다른 폰으로 넘어가지 않는다 —
+    // 남의 폰에서 결제 앱을 열고 한참 찾다가 stuck 으로 끝났다(실기)
+    const assigned = deps.phones.assignForJob(account.id)
+    if (assigned && !online().some((p) => p.serial === assigned.serial)) {
+      const name = assigned.label || assigned.model || assigned.serial
+      ctx.onStep(tr('phone.payRejected', { reason: tr('phone.gateAssignedOffline', { name }) }), false)
+      return { ok: false, reason: 'no-phone' }
     }
     const serial = serialsFor(account.id)[0]
     if (!serial) {
-      ctx.onStep('결제 거부: 연결된 폰 없음', false)
+      ctx.onStep(tr('phone.payRejected', { reason: tr('phone.gateNoPhone') }), false)
       return { ok: false, reason: 'no-phone' }
     }
     const spec = PAY_PROVIDERS[req.provider]
@@ -396,6 +420,27 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     const runDeps: PayRunDeps = {
       phones: { screen, tap: deps.ops.tap, screenshot: deps.ops.screenshot },
       launchApp: createLaunchApp(deps.adb),
+      // 결제 요청 알림을 누르는 것이 가장 짧은 길이다. 누를 알림은 알림 기록에서 **그 결제 앱이 올린 것**만 고르고
+      // 제목이 정확히 같은 요소만 누른다 — 카카오톡의 "토스" 메시지 같은 남의 알림은 후보가 되지 않는다
+      notifications: {
+        open: async (serial) =>
+          void (await deps.adb.run(
+            shellArgs(serial, ['cmd', 'statusbar', 'expand-notifications']),
+            10000
+          )),
+        close: async (serial) =>
+          void (await deps.adb.run(shellArgs(serial, ['cmd', 'statusbar', 'collapse']), 10000)),
+        list: async (serial, packageName) =>
+          parseAppNotifications(
+            (
+              await deps.adb.run(
+                shellArgs(serial, ['dumpsys', 'notification', '--noredact']),
+                15000
+              )
+            ).stdout,
+            packageName
+          )
+      },
       confirm: (action) => ctx.confirm(action, 'danger'),
       vault: deps.vault,
       vaultUnlocked: () => deps.vault.state() === 'unlocked',
@@ -417,6 +462,7 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
         amountKrw: req.amountKrw,
         merchant: req.merchant,
         methodLabel: req.methodLabel,
+        ...(req.card === undefined ? {} : { cardHint: req.card }),
         phoneLabel: deps.phones.list().find((p) => p.serial === serial)?.label ?? serial,
         accountId: account.id,
         phoneId: phoneIdOf(serial),
@@ -424,7 +470,9 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
         siteHost,
         jobId: ctx.jobId,
         isFirstRunForCombo: !deps.repo.hasPayApproval(siteHost, req.methodLabel),
-        limitKrw: deps.settings().paymentLimitKrw || DEFAULT_PAYMENT_LIMIT_KRW
+        limitKrw: deps.settings().paymentLimitKrw,
+        confirmFirst: deps.settings().permissionMode !== 'full',
+        firstRunLimitKrw: deps.settings().firstPaymentLimitKrw
       })
     } finally {
       // 결제가 끝나면 화면 전송을 곧바로 되살린다(만료를 기다리지 않는다)
@@ -432,5 +480,8 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     }
   }
 
-  return { waitForSmsCode, approvePayment }
+  const defaultSerial = (): string | null =>
+    serialsFor(accountFor(deps.page.host())?.id ?? null)[0] ?? null
+
+  return { waitForSmsCode, approvePayment, defaultSerial }
 }

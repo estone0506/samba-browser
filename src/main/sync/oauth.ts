@@ -5,6 +5,8 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { randomBytes } from 'node:crypto'
+import { getMainLanguage, tr } from '../i18n'
+import { syncMessages } from '../i18n/messages/sync'
 
 /** 콜백을 받을 후보 포트. 앞에서부터 비어 있는 것을 쓴다 */
 export const OAUTH_PORTS = [47612, 47613, 47614] as const
@@ -61,24 +63,25 @@ export function parseAuthCallback(raw: string): AuthCallback | null {
   return state ? { error: 'no-code', state } : { error: 'no-code' }
 }
 
-/** 콜백을 받은 브라우저 탭에 보여 줄 안내 문서(ko/en 병기) */
+/**
+ * 콜백을 받은 브라우저 탭에 보여 줄 안내 문서.
+ * 앱 언어를 위에, 다른 언어를 아래에 병기한다(브라우저 언어가 앱과 다를 수 있다)
+ */
 export function callbackHtml(ok: boolean): string {
-  const title = ok ? '로그인 완료' : '로그인 실패'
-  const titleEn = ok ? 'Signed in' : 'Sign-in failed'
-  const body = ok
-    ? '이 창을 닫아도 됩니다. SAMBA Browser 로 돌아가세요.'
-    : '로그인을 마치지 못했습니다. 이 창을 닫고 앱에서 다시 시도하세요.'
-  const bodyEn = ok
-    ? 'You can close this window and return to SAMBA Browser.'
-    : 'Sign-in did not complete. You can close this window and try again in the app.'
+  const lang = getMainLanguage()
+  const other = syncMessages[lang === 'ko' ? 'en' : 'ko']
+  const title = tr(ok ? 'auth.callbackTitleOk' : 'auth.callbackTitleFail')
+  const body = tr(ok ? 'auth.callbackBodyOk' : 'auth.callbackBodyFail')
+  const titleOther = other[ok ? 'auth.callbackTitleOk' : 'auth.callbackTitleFail']
+  const bodyOther = other[ok ? 'auth.callbackBodyOk' : 'auth.callbackBodyFail']
   return `<!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><title>SAMBA Browser — ${title}</title></head>
+<html lang="${lang}"><head><meta charset="utf-8"><title>SAMBA Browser — ${title}</title></head>
 <body style="font-family:system-ui,sans-serif;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;background:#fff;color:#111">
 <main style="text-align:center;max-width:32rem;padding:2rem">
 <h1 style="font-size:1.25rem;margin:0 0 .5rem">${title}</h1>
 <p style="margin:0 0 1.25rem">${body}</p>
-<h2 style="font-size:1rem;margin:0 0 .5rem;color:#666">${titleEn}</h2>
-<p style="margin:0;color:#666">${bodyEn}</p>
+<h2 style="font-size:1rem;margin:0 0 .5rem;color:#666">${titleOther}</h2>
+<p style="margin:0;color:#666">${bodyOther}</p>
 </main></body></html>`
 }
 
@@ -173,14 +176,14 @@ export async function startOAuthLoopback(
   }
   if (!server) {
     done = true
-    fail(new Error('구글 로그인에 쓸 포트를 열지 못했습니다'))
-    throw new Error('구글 로그인에 쓸 포트를 열지 못했습니다')
+    fail(new Error(tr('auth.googlePortUnavailable')))
+    throw new Error(tr('auth.googlePortUnavailable'))
   }
 
   const timer = setTimeout(() => {
     if (done) return
     done = true
-    fail(new Error('구글 로그인 시간이 초과되었습니다'))
+    fail(new Error(tr('auth.googleTimeout')))
     shutdown()
   }, timeoutMs)
   timer.unref?.()
@@ -194,7 +197,7 @@ export async function startOAuthLoopback(
       if (!done) {
         done = true
         clearTimeout(timer)
-        fail(new Error('구글 로그인이 취소되었습니다'))
+        fail(new Error(tr('auth.googleCancelled')))
       }
       clearTimeout(timer)
       shutdown()

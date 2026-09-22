@@ -76,9 +76,10 @@ describe('결제 비밀번호 제공자', () => {
     }).id
   }
 
-  it('제공자 값 목록은 8종이고 모르는 값은 site 로 정규화된다', () => {
+  it('제공자 값 목록은 9종(무신사페이 포함)이고 모르는 값은 site 로 정규화된다', () => {
     expect([...PAYMENT_PROVIDERS]).toEqual([
       'site',
+      'musinsapay',
       'toss',
       'kakao',
       'naver',
@@ -88,6 +89,7 @@ describe('결제 비밀번호 제공자', () => {
       'other'
     ])
     expect(normalizePaymentProvider('toss')).toBe('toss')
+    expect(normalizePaymentProvider('musinsapay')).toBe('musinsapay')
     expect(normalizePaymentProvider('unknown')).toBe('site')
     expect(normalizePaymentProvider(null)).toBe('site')
     expect(paymentProviderOfSections([])).toBe('site')
@@ -208,5 +210,134 @@ describe('결제 비밀번호 i18n', () => {
         'string'
       )
     }
+  })
+})
+
+describe('결제 비밀번호 복사(copyPaymentItems)', () => {
+  let db: Db
+  let vault: VaultService
+  let fromId: number
+  let toId: number
+
+  beforeEach(async () => {
+    db = await openDatabase(':memory:')
+    vault = new VaultService(db, makeSettings())
+    await vault.setup('master-pw')
+    fromId = vault.upsertAccount({
+      host: 'member.one.musinsa.com',
+      label: 'alice',
+      username: 'alice',
+      isDefault: true
+    }).id
+    toId = vault.upsertAccount({
+      host: 'member.one.musinsa.com',
+      label: 'bob',
+      username: 'bob',
+      isDefault: false
+    }).id
+  })
+
+  afterEach(() => {
+    vault.dispose()
+    db.close()
+  })
+
+  function addPaymentTo(
+    accountId: number,
+    label: string,
+    value: string,
+    provider: PaymentProvider
+  ): number {
+    return vault.putItem({
+      accountId,
+      type: 'password',
+      label,
+      sections: [
+        {
+          key: 'main',
+          label: '결제',
+          fields: [
+            {
+              key: PAYMENT_PROVIDER_FIELD_KEY,
+              label: '결제 수단',
+              kind: 'select',
+              value: provider
+            },
+            { key: 'value', label: '비밀번호', kind: 'secret', value }
+          ]
+        }
+      ]
+    }).id
+  }
+
+  it('원본 계정의 결제 비밀번호를 결제 수단별로 대상 계정에 복사하고, 값은 같게 복호화된다', () => {
+    addPaymentTo(fromId, '무신사머니', '149072', 'site')
+    addPaymentTo(fromId, '토스페이', '335577', 'toss')
+    expect(vault.copyPaymentItems(fromId, toId)).toBe(2)
+    expect(vault.getPaymentSecretForFill({ accountId: toId, provider: 'site' }).value).toBe(
+      '149072'
+    )
+    expect(vault.getPaymentSecretForFill({ accountId: toId, provider: 'toss' }).value).toBe(
+      '335577'
+    )
+    // 원본은 그대로
+    expect(vault.getPaymentSecretForFill({ accountId: fromId, provider: 'site' }).value).toBe(
+      '149072'
+    )
+  })
+
+  it('대상에 이미 같은 결제 수단이 있으면 건너뛰고, 같은 계정으로는 복사하지 않는다', () => {
+    addPaymentTo(fromId, '무신사머니', '149072', 'site')
+    addPaymentTo(toId, '무신사머니', '999999', 'site')
+    expect(vault.copyPaymentItems(fromId, toId)).toBe(0)
+    expect(vault.getPaymentSecretForFill({ accountId: toId, provider: 'site' }).value).toBe(
+      '999999'
+    )
+    expect(vault.copyPaymentItems(fromId, fromId)).toBe(0)
+  })
+
+  it('잠긴 금고에서는 던진다', () => {
+    addPaymentTo(fromId, '무신사머니', '149072', 'site')
+    vault.lock()
+    expect(() => vault.copyPaymentItems(fromId, toId)).toThrow()
+  })
+})
+
+describe('getSecretForFill — 평문 필드(신원정보)', () => {
+  it('비밀이 아닌 필드는 평문 값을 그대로 돌려주고, 값이 없으면 null', async () => {
+    const db = await openDatabase(':memory:')
+    const vault = new VaultService(db, makeSettings())
+    await vault.setup('master-pw')
+    const accountId = vault.upsertAccount({
+      host: 'member.one.musinsa.com',
+      label: 'bob',
+      username: 'bob',
+      isDefault: true
+    }).id
+    vault.putItem({
+      accountId,
+      type: 'identity',
+      label: '신원정보',
+      sections: [
+        {
+          key: 'identity',
+          label: '신원',
+          fields: [
+            { key: 'identity.phone', label: '휴대폰', kind: 'text', value: '010-1234-5678' },
+            { key: 'identity.birth', label: '생년월일', kind: 'date', value: '1991-01-01' },
+            { key: 'identity.name', label: '이름', kind: 'text' }
+          ]
+        }
+      ]
+    })
+    expect(vault.getSecretForFill(accountId, 'identity', 'identity.phone', 'job-1')).toBe(
+      '010-1234-5678'
+    )
+    expect(vault.getSecretForFill(accountId, 'identity', 'identity.birth', 'job-1')).toBe(
+      '1991-01-01'
+    )
+    expect(vault.getSecretForFill(accountId, 'identity', 'identity.name', 'job-1')).toBeNull()
+    vault.dispose()
+    db.close()
   })
 })

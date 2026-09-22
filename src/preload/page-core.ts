@@ -1,9 +1,21 @@
 // [규칙] 이 파일은 page.ts 와 함께 sandbox preload 로 번들된다.
 // src/shared/* 에서 **값(value)** 을 import 하지 말 것 — Rollup 청크 분리로 require() 가 생겨
 // preload 로드가 실패한다. 타입은 `import type` 만 사용(번들에 남지 않음), 값은 ./page-constants 에서.
-import type { KeypadSignals, PageElement, PageOverlay, PageSnapshot } from '../shared/snapshot'
+import type {
+  KeypadLayoutDto,
+  KeypadSignals,
+  PageElement,
+  PageOverlay,
+  PageSnapshot
+} from '../shared/snapshot'
 import { MAX_ELEMENTS } from './page-constants'
-import { isCloseLabel, isOverlay, isSensitiveOverlay, type OverlaySignals } from './page-overlay'
+import {
+  isCloseLabel,
+  isOverlay,
+  isSensitiveOverlay,
+  isSignInPromptOnly,
+  type OverlaySignals
+} from './page-overlay'
 import {
   detectLoginFields,
   detectSignedInHint,
@@ -508,17 +520,27 @@ export interface ClickBaseline {
   expanded: string
   /** 대상 요소의 class(선택 상태를 클래스로 표시하는 UI 대응) */
   className: string
+  /**
+   * 대상 요소의 inline style·aria 상태. 켜짐/꺼짐을 색(style)이나 aria-pressed 로만 표시하는
+   * 토글 버튼(SAMBA-WAVE 까대기)은 이것 말고는 변화가 없다 — 놓치면 폴백이 다시 눌러 도로 꺼진다
+   */
+  state: string
 }
 
 /** 최대 이만큼 지켜본 뒤에도 변화가 없으면 실패로 본다 */
 const CLICK_SETTLE_MS = 400
 const CLICK_POLL_MS = 40
+/** 클릭 이벤트와 waitForChange 시작 사이의 틈 — 그 사이에 도착한 새 창 알림도 인정한다 */
+const POPUP_GRACE_MS = 150
 /** 가린 요소 설명에 담을 class 이름 최대 길이 */
 const COVER_LABEL_MAX = 60
 
 /** 첫 클릭도 Enter 도 통하지 않았을 때 모델에게 주는 안내 */
 export const CLICK_NO_CHANGE_NOTE =
   'clicked but nothing changed (an overlay may be covering it; call dismiss_overlay or check get_page)'
+
+/** 토글 상태가 드러나는 속성들 */
+const TOGGLE_STATE_ATTRS = ['style', 'aria-pressed', 'aria-checked', 'aria-selected', 'disabled']
 
 /** 지금 화면 상태를 기준값으로 찍는다 */
 export function readClickBaseline(el: HTMLElement): ClickBaseline {
@@ -530,7 +552,8 @@ export function readClickBaseline(el: HTMLElement): ClickBaseline {
     textLength: text.length,
     active: document.activeElement,
     expanded: el.getAttribute('aria-expanded') ?? '',
-    className: el.getAttribute('class') ?? ''
+    className: el.getAttribute('class') ?? '',
+    state: TOGGLE_STATE_ATTRS.map((a) => el.getAttribute(a) ?? '').join('|')
   }
 }
 
@@ -542,7 +565,8 @@ export function baselineChanged(before: ClickBaseline, after: ClickBaseline): bo
     before.textLength !== after.textLength ||
     before.active !== after.active ||
     before.expanded !== after.expanded ||
-    before.className !== after.className
+    before.className !== after.className ||
+    before.state !== after.state
   )
 }
 
@@ -596,10 +620,24 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** 이 페이지가 마지막으로 새 탭·새 창을 연 시각(메인 프로세스가 알려 준다) */
+let lastPopupAt = 0
+
+/** 메인의 '새 탭·새 창이 열렸다' 알림을 기록한다 — 클릭이 통했다는 증거다 */
+export function notePopupOpened(): void {
+  lastPopupAt = Date.now()
+}
+
 /** 기준값이 달라질 때까지 최대 CLICK_SETTLE_MS 동안 지켜본다 */
 async function waitForChange(el: HTMLElement, before: ClickBaseline): Promise<boolean> {
   const startedAt = Date.now()
   for (;;) {
+    // 새 탭·새 창이 열렸다면 이 페이지 화면은 그대로여도 클릭은 통한 것이다
+    if (lastPopupAt >= startedAt - POPUP_GRACE_MS) {
+      // 한 번 쓴 알림은 지운다 — 바로 다음 클릭까지 "통했다"로 오인하지 않게
+      lastPopupAt = 0
+      return true
+    }
     if (baselineChanged(before, readClickBaseline(el))) return true
     if (Date.now() - startedAt >= CLICK_SETTLE_MS) return false
     await sleep(CLICK_POLL_MS)
@@ -655,12 +693,46 @@ function fireEnter(el: HTMLElement): void {
   }
 }
 
+/** 글자를 넣는 칸인가(입력 중이던 칸의 blur 를 챙겨야 하는 대상) */
+function isTextEntry(el: Element | null): el is HTMLElement {
+  if (!el) return false
+  const tag = el.tagName.toLowerCase()
+  if (tag === 'textarea') return true
+  if (tag !== 'input') return (el as HTMLElement).isContentEditable === true
+  const type = ((el as HTMLInputElement).type || 'text').toLowerCase()
+  return !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color'].includes(type)
+}
+
+/**
+ * 다른 요소를 누르거나 다른 칸에 입력하기 직전에, 입력 중이던 칸에서 포커스를 뗀다.
+ * 탭 페이지는 AI 패널이 포커스를 쥔 동안 document.hasFocus() 가 false 이고, 그 상태에서는
+ * focus()/blur() 가 activeElement 만 바꾸고 blur·focusout 이벤트는 내지 않는다. blur 에 저장을
+ * 걸어 둔 화면(SAMBA-WAVE 소싱주문번호·메모·실구매가)은 값이 화면에만 남고 서버에는 안 간다.
+ * 그래서 브라우저가 이벤트를 내지 않았을 때만 같은 이벤트를 직접 보낸다(이중 저장 방지)
+ */
+export function releaseTextFocus(next: HTMLElement): void {
+  const active = document.activeElement
+  if (!isTextEntry(active) || active === next || active.contains(next)) return
+  let fired = false
+  const mark = (): void => {
+    fired = true
+  }
+  active.addEventListener('blur', mark, { once: true })
+  active.blur()
+  active.removeEventListener('blur', mark)
+  if (fired || typeof FocusEvent !== 'function') return
+  active.dispatchEvent(new FocusEvent('blur', { relatedTarget: next }))
+  active.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: next }))
+}
+
 export async function performClick(id: number): Promise<string> {
   const el = get(id)
   if (!el) return missingMessage(id)
   // jsdom 등 일부 환경은 scrollIntoView 를 구현하지 않음
   el.scrollIntoView?.({ block: 'center' })
   const covered = coveredByNote(el)
+  // 실제 클릭은 mousedown 에서 입력 중이던 칸의 포커스를 뗀다. 기준값은 그 뒤에 찍는다
+  releaseTextFocus(el)
   const before = readClickBaseline(el)
   // 1차 — 기존 경로 그대로. React 합성 이벤트(onPointerDown/onMouseDown 으로만 반응하는
   // 옵션 UI)를 위해 실제 사용자 클릭과 같은 순서로 쏘고, 마지막 click 은 네이티브 기본동작
@@ -703,29 +775,87 @@ export async function performClick(id: number): Promise<string> {
   return withCoverNote(`ok; ${CLICK_NO_CHANGE_NOTE}`, covered)
 }
 
-export function performType(id: number, text: string, submit: boolean): string {
+/**
+ * 요소를 정확히 한 번만 누른다 — 결제 비밀번호 키패드 전용.
+ * performClick 의 폴백(Enter·좌표 재클릭)은 '변화가 안 보이면 다시 누르기' 라서, 점(●) 표시가
+ * 버튼 바깥에서 바뀌는 키패드에서는 같은 숫자를 두세 번 넣는다(실기: 무신사페이 오답 누적).
+ * 여기서는 실제 사용자 클릭과 같은 이벤트 한 벌만 보내고 끝낸다
+ */
+export function pressOnce(id: number): string {
+  const el = get(id)
+  if (!el) return missingMessage(id)
+  fireMouseEvent(el, 'pointerdown')
+  fireMouseEvent(el, 'mousedown')
+  fireMouseEvent(el, 'pointerup')
+  fireMouseEvent(el, 'mouseup')
+  el.click()
+  return 'ok'
+}
+
+export function performType(id: number, text: string, submit: boolean): string | Promise<string> {
   const el = get(id)
   if (!el) return missingMessage(id)
   const input = el as HTMLInputElement
   if (input.type === 'password') return 'refused: SECRET field. Ask the user to type it.'
+  // 비활성 칸은 값이 화면에만 들어가고 페이지는 받지 않는다(실기: SAMBA-WAVE 소싱주문번호 칸은
+  // 주문계정을 고르기 전에는 disabled). 조용히 성공한 척하지 않는다
+  if (input.disabled === true) {
+    const why = el.getAttribute('title')
+    return `refused: input is disabled${why ? ` (${why.slice(0, 80)})` : ''}. Enable it first, then type.`
+  }
+  releaseTextFocus(el)
   el.focus()
   const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set
   if (setter) setter.call(el, text)
   else input.value = text
   el.dispatchEvent(new Event('input', { bubbles: true }))
   el.dispatchEvent(new Event('change', { bubbles: true }))
-  if (submit) {
-    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }))
-    ;(el as HTMLInputElement).form?.requestSubmit?.()
-  }
-  return 'ok'
+  if (!submit) return 'ok'
+  // Enter 는 한 박자 뒤에 보낸다. React 제어 입력은 input 이벤트로 setState 만 예약하고,
+  // 리렌더 전에는 onKeyDown 핸들러가 옛 state(빈 값·0)를 쥐고 있다. 같은 틱에 Enter 를 쏘면
+  // 옛 값이 저장된다(실기: SAMBA-WAVE 실구매가 칸이 재조회 때 0 으로 돌아감)
+  return new Promise<string>((resolve) => {
+    setTimeout(() => {
+      const target = el.isConnected ? el : null
+      if (!target) return resolve('ok; input re-rendered before Enter — read the page to verify')
+      const init: KeyboardEventInit = {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13,
+        bubbles: true,
+        cancelable: true
+      }
+      // Enter 핸들러가 "e.target.blur() → onBlur 에서 저장" 식이면(SAMBA-WAVE 소싱주문번호),
+      // 포커스 없는 페이지에서는 그 blur() 가 이벤트를 내지 않아 저장이 안 된다.
+      // 포커스는 빠졌는데 blur 이벤트가 없었으면 직접 보낸다
+      let blurred = false
+      const markBlur = (): void => {
+        blurred = true
+      }
+      target.addEventListener('blur', markBlur)
+      target.dispatchEvent(new KeyboardEvent('keydown', init))
+      target.dispatchEvent(new KeyboardEvent('keypress', init))
+      target.dispatchEvent(new KeyboardEvent('keyup', init))
+      target.removeEventListener('blur', markBlur)
+      if (!blurred && document.activeElement !== target && typeof FocusEvent === 'function') {
+        target.dispatchEvent(new FocusEvent('blur'))
+        target.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+      }
+      ;(target as HTMLInputElement).form?.requestSubmit?.()
+      resolve('ok')
+    }, SUBMIT_ENTER_DELAY_MS)
+  })
 }
+
+/** 입력과 Enter 사이 간격 — React 리렌더(핸들러 교체) 한 번이 끝나기에 충분한 시간 */
+const SUBMIT_ENTER_DELAY_MS = 120
 
 export function performSelect(id: number, value: string): string {
   const el = get(id) as HTMLSelectElement | null
   if (!el) return missingMessage(id, '')
   if (el.tagName !== 'SELECT') return 'refused: not a select'
+  releaseTextFocus(el)
   const opt = Array.from(el.options).find((o) => o.value === value || o.text.trim() === value)
   if (!opt) return `option "${value}" not found`
   el.value = opt.value
@@ -876,6 +1006,88 @@ export function keypadSignals(): KeypadSignals {
     digitButtons,
     pinField
   }
+}
+
+// --- 결제 비밀번호 키패드 배치 ---------------------------------------------
+
+// 결제 비밀번호 칸으로 보는 비밀 입력칸(keypadSignals 의 pinField 와 같은 기준)
+function pinInputs(): HTMLInputElement[] {
+  return Array.from(document.querySelectorAll<HTMLInputElement>('input')).filter((el) => {
+    if (el.type !== 'password') return false
+    const max = el.maxLength
+    const short = max >= PIN_MAXLENGTH_MIN && max <= PIN_MAXLENGTH_MAX
+    const numeric = (el.getAttribute('inputmode') ?? '').toLowerCase() === 'numeric'
+    return short || (numeric && (max === -1 || max <= PIN_MAXLENGTH_MAX))
+  })
+}
+
+// 숫자 버튼 후보. 결제 키패드는 button·a 뿐 아니라 div·span·td 로도 그려진다
+const KEYPAD_DIGIT_SELECTOR = SELECTOR + ', div, span, td, li, p, img, area'
+const KEYPAD_DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+
+/**
+ * 요소가 나타내는 한 자리 숫자. 화면 글자가 없으면 접근성 이름(aria-label·alt·title)을 본다 —
+ * NICE nFilter 보안 키패드는 숫자를 배경 스프라이트로 그리고 글자는 aria-label 에만 둔다(실기)
+ */
+function singleDigitOf(el: Element): string | null {
+  const isDigit = (s: string): boolean => s.length === 1 && s >= '0' && s <= '9'
+  const text = (el.textContent ?? '').trim()
+  if (text !== '') return isDigit(text) ? text : null
+  for (const attr of ['aria-label', 'alt', 'title']) {
+    const name = (el.getAttribute(attr) ?? '').trim()
+    if (name !== '') return isDigit(name) ? name : null
+  }
+  return null
+}
+
+// 자리수를 세는 입력칸. 비밀 입력칸이 없으면 PIN 길이의 숫자칸(type=tel — nFilter)도 본다
+function pinCounterInput(): HTMLInputElement | null {
+  const secret = pinInputs()[0]
+  if (secret) return secret
+  const tel = Array.from(document.querySelectorAll<HTMLInputElement>('input')).find(
+    (el) =>
+      el.type === 'tel' && el.maxLength >= PIN_MAXLENGTH_MIN && el.maxLength <= PIN_MAXLENGTH_MAX
+  )
+  return tel ?? null
+}
+
+/** 이 요소에 id 가 없으면 매겨 registry 에 넣는다(스냅샷을 다시 찍지 않고 누를 수 있게) */
+function ensureId(el: HTMLElement): number {
+  if (idDoc !== document) resetElementIds()
+  let id = idOf.get(el)
+  if (id === undefined) {
+    id = ++idSeq
+    idOf.set(el, id)
+  }
+  registry.set(id, el)
+  goneIds.delete(id)
+  return id
+}
+
+/**
+ * 결제 비밀번호 키패드의 숫자 버튼 배치. 앱이 키마스터 값을 대신 누를 때 쓴다.
+ * 0~9 가 각각 정확히 한 개 보일 때만 배치를 돌려주고, 하나라도 빠지거나 겹치면 null —
+ * 부분·중복 배치로 누르면 잘못 눌러 계정이 잠긴다. 이미지로 그려진 숫자는 잡지 못한다.
+ * 값은 어디에서도 읽지 않는다: filled 는 비밀 입력칸의 길이(자리수)뿐이다
+ */
+export function keypadLayout(): KeypadLayoutDto | null {
+  const visible: VisibilityCache = new Map()
+  const found = new Map<string, HTMLElement>()
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>(KEYPAD_DIGIT_SELECTOR))
+  for (const el of candidates) {
+    const digit = singleDigitOf(el)
+    if (digit === null) continue
+    // <a><span>5</span></a> 처럼 겹친 경우 가장 안쪽만 센다(클릭은 위로 전파된다)
+    if (Array.from(el.children).some((child) => singleDigitOf(child) !== null)) continue
+    if (!isVisible(el, visible)) continue
+    // 같은 숫자가 두 곳에 보이면 어느 쪽인지 확정할 수 없다 — 배치 전체를 버린다
+    if (found.has(digit)) return null
+    found.set(digit, el)
+  }
+  if (KEYPAD_DIGITS.some((d) => !found.has(d))) return null
+  const digits = KEYPAD_DIGITS.map((digit) => ({ digit, id: ensureId(found.get(digit)!) }))
+  const pin = pinCounterInput()
+  return { digits, filled: pin ? pin.value.length : null }
 }
 
 // --- 로그인 상태 유지 체크박스 ---------------------------------------------
@@ -1101,7 +1313,14 @@ function describeOverlay(el: HTMLElement, index: Map<HTMLElement, number>): Page
   const cls = (el.getAttribute('class') ?? '').trim().split(/\s+/)[0]
   const fallback = `transparent layer ${cls ? `${tag}.${cls}` : tag}`
   const label = ((aria || headingText || body).trim() || fallback).slice(0, OVERLAY_LABEL_MAX)
-  const sensitive = isSensitiveOverlay(`${label} ${body.slice(0, OVERLAY_TEXT_MAX)}`)
+  const overlayText = `${label} ${body.slice(0, OVERLAY_TEXT_MAX)}`
+  // "로그인" 말고는 민감한 말이 없고, 비밀 입력칸도 없고, 페이지는 이미 로그인 상태다 →
+  // 가입·로그인 유도 팝업이다. 닫아도 되는 레이어로 본다(무신사는 이걸 닫아야 구매 버튼이 풀린다)
+  const signInPromo =
+    isSignInPromptOnly(overlayText) &&
+    el.querySelector('input[type="password"]') === null &&
+    detectSignedInHint().signedIn
+  const sensitive = isSensitiveOverlay(overlayText) && !signInPromo
   const closeIds: number[] = []
   // 결제·비밀번호·로그인 레이어는 닫기 후보를 아예 내놓지 않는다
   if (!sensitive) {
@@ -1192,6 +1411,10 @@ export function runAgentOp(raw: unknown): unknown {
       return rectOf(id)
     case 'keypadSignals':
       return keypadSignals()
+    case 'keypadLayout':
+      return keypadLayout()
+    case 'pressOnce':
+      return pressOnce(id)
     case 'overlays':
       return detectOverlays()
     default:

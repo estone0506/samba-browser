@@ -8,6 +8,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { API_KEY_VENDORS, type ApiKeyVendor } from '../../shared/ai'
+import { tr } from '../i18n'
 
 // electron safeStorage 중 실제로 쓰는 부분만 좁혀 둔 인터페이스(테스트에서 스텁 주입)
 export interface SafeStorageLike {
@@ -80,14 +81,16 @@ export class ApiKeyStore {
       mkdirSync(dirname(this.filePath), { recursive: true })
       writeFileSync(this.filePath, this.safeStorage!.encryptString(JSON.stringify(this.keys)))
     } catch (e) {
-      throw new Error(`API 키 저장 실패: ${e instanceof Error ? e.message : String(e)}`)
+      throw new Error(
+        tr('aiKeys.saveFailed', { reason: e instanceof Error ? e.message : String(e) })
+      )
     }
   }
 
   /** 키를 저장한다. 빈 문자열이면 삭제와 같다. safeStorage 불가 환경에서는 저장하지 않고 예외를 던진다 */
   set(vendor: ApiKeyVendor, key: string): void {
     if (!this.isAvailable()) {
-      throw new Error('이 기기에서는 안전 저장소를 쓸 수 없어 API 키를 보관할 수 없습니다')
+      throw new Error(tr('aiKeys.safeStorageUnavailable'))
     }
     const value = key.trim()
     if (!value) {

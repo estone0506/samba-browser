@@ -154,6 +154,23 @@ export class PlaybookStore {
     return updated
   }
 
+  /**
+   * 절차 본문 한 건만 바꾼다(AI 의 update_playbook 도구가 쓴다).
+   * 이름·트리거·예약은 건드리지 않는다 — AI 가 트리거를 바꿔 다른 요청까지 끌어오면 안 된다.
+   * 상한을 넘는 본문은 잘라 저장하지 않고 거절한다(중간에서 끊긴 절차가 남으면 더 위험하다)
+   */
+  setInstructions(id: string, instructions: string): PlaybookDto | null {
+    if (instructions.length > PLAYBOOK_INSTRUCTIONS_MAX) return null
+    const rows = this.list()
+    const index = rows.findIndex((row) => row.id === id)
+    if (index < 0) return null
+    const updated: PlaybookDto = { ...rows[index], instructions, updatedAt: this.now() }
+    const next = [...rows]
+    next[index] = updated
+    this.save(next)
+    return updated
+  }
+
   private save(rows: PlaybookDto[]): PlaybookDto[] {
     return this.settings.set({ playbooks: rows }).playbooks
   }

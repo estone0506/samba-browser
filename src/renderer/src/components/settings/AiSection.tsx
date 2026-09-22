@@ -6,8 +6,11 @@ import { ProviderCard } from '@renderer/components/ai/ProviderCard'
 import { TaskModelTable } from '@renderer/components/ai/TaskModelTable'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@renderer/components/ui/dialog'
 import {
+  AI_USAGE_WARN_PERCENT,
   API_KEY_VENDORS,
   type AiProviderId,
+  type AiUsage,
+  type AiUsageLimit,
   type ApiKeyVendor,
   type SubscriptionProviderId
 } from '@shared/ai'
@@ -47,6 +50,7 @@ export function AiSection(): React.JSX.Element {
 
   useEffect(() => {
     void ai.load()
+    void ai.loadUsage()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -79,6 +83,20 @@ export function AiSection(): React.JSX.Element {
         )}
         {status?.state === 'available' && (
           <p className="text-[11.5px] text-[var(--text2)]">{t('ai.availableHint')}</p>
+        )}
+        {status?.state === 'connected' && ai.usage[provider] && (
+          <UsageRows usage={ai.usage[provider] as AiUsage} />
+        )}
+        {/* 계정이 여럿일 때: 지금 붙은 계정을 로그아웃하고 다른 계정으로 로그인한다 */}
+        {(status?.state === 'connected' || status?.state === 'available') && (
+          <div>
+            <SecondaryButton
+              disabled={ai.busy !== null}
+              onClick={() => void ai.switchAccount(provider)}
+            >
+              {t('ai.switchAccount')}
+            </SecondaryButton>
+          </div>
         )}
       </ProviderCard>
     )
@@ -126,6 +144,63 @@ export function AiSection(): React.JSX.Element {
 
       <LoginHintDialog />
       <DisconnectDialog provider={confirmOff} onClose={() => setConfirmOff(null)} />
+    </div>
+  )
+}
+
+const USAGE_LABEL_KEYS: Record<AiUsageLimit['kind'], string> = {
+  session: 'ai.usage.session',
+  weekly_all: 'ai.usage.weeklyAll',
+  weekly_scoped: 'ai.usage.weeklyModel'
+}
+
+// 구독 사용량 — 5시간 세션·주간 전체·모델별 주간. 90% 부터 붉게 알린다
+function UsageRows({ usage }: { usage: AiUsage }): React.JSX.Element {
+  const { t, i18n } = useTranslation()
+  const resetText = (iso: string | null): string => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return ''
+    return d.toLocaleString(i18n.language, {
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      {usage.limits.map((l, i) => {
+        const warn = l.percent >= AI_USAGE_WARN_PERCENT
+        return (
+          <div key={`${l.kind}-${i}`} className="flex items-center gap-2 text-[11.5px]">
+            <span className="w-[92px] shrink-0 text-[var(--text2)]">
+              {t(USAGE_LABEL_KEYS[l.kind], { model: l.model ?? '' })}
+            </span>
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-black/10">
+              <div
+                className={warn ? 'h-full bg-[#b91c1c]' : 'h-full bg-[var(--text)]'}
+                style={{ width: `${l.percent}%` }}
+              />
+            </div>
+            <span
+              className={
+                warn
+                  ? 'w-[38px] shrink-0 text-right font-semibold text-[#b91c1c]'
+                  : 'w-[38px] shrink-0 text-right text-[var(--text)]'
+              }
+            >
+              {l.percent}%
+            </span>
+            <span className="hidden w-[96px] shrink-0 text-right text-[var(--text2)] sm:block">
+              {resetText(l.resetsAt)}
+            </span>
+          </div>
+        )
+      })}
+      {usage.limits.some((l) => l.percent >= AI_USAGE_WARN_PERCENT) && (
+        <p className="text-[11.5px] text-[#b91c1c]">{t('ai.usage.nearLimit')}</p>
+      )}
     </div>
   )
 }

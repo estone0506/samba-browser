@@ -10,6 +10,7 @@ import {
   type AuthCallback,
   type OAuthLoopback
 } from './oauth'
+import { tr } from '../i18n'
 
 export interface AuthDeps {
   /** Supabase 설정이 없으면 null */
@@ -96,7 +97,7 @@ export class AuthService {
   /** 콜백 주소를 직접 받아 로그인을 끝낸다(루프백 서버가 부르는 경로와 동일) */
   async handleCallback(url: string): Promise<AuthState> {
     const callback = parseAuthCallback(url)
-    if (!callback) throw new Error('구글 로그인 콜백 주소가 아닙니다')
+    if (!callback) throw new Error(tr('auth.notGoogleCallback'))
     return this.complete(callback, this.pending?.state)
   }
 
@@ -142,16 +143,14 @@ export class AuthService {
 
   private requireBackend(): SyncBackend {
     if (!this.deps.configured || !this.deps.backend) {
-      throw new Error(
-        'Supabase 설정이 필요합니다. docs/supabase-설정.md 를 보고 .env 를 채워 주세요'
-      )
+      throw new Error(tr('auth.notConfigured'))
     }
     return this.deps.backend
   }
 
   private requireCredentials(email: string, password: string): void {
-    if (!email.trim()) throw new Error('이메일을 입력해 주세요')
-    if (!password) throw new Error('비밀번호를 입력해 주세요')
+    if (!email.trim()) throw new Error(tr('auth.emailRequired'))
+    if (!password) throw new Error(tr('auth.passwordRequired'))
   }
 
   /** 콜백 한 건을 검증하고 코드를 세션으로 바꾼다 */
@@ -159,10 +158,10 @@ export class AuthService {
     const backend = this.requireBackend()
     // 우리가 심어 둔 state 와 다르면 남이 만든 콜백이다
     if (expectedState && callback.state !== expectedState) {
-      throw new Error('구글 로그인 state 값이 일치하지 않습니다')
+      throw new Error(tr('auth.googleStateMismatch'))
     }
-    if (callback.error) throw new Error(`구글 로그인 실패: ${callback.error}`)
-    if (!callback.code) throw new Error('구글 로그인 실패: no-code')
+    if (callback.error) throw new Error(tr('auth.googleFailed', { reason: callback.error }))
+    if (!callback.code) throw new Error(tr('auth.googleFailed', { reason: 'no-code' }))
     this.apply(await backend.exchangeCode(callback.code))
     return this.state()
   }

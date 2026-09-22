@@ -110,6 +110,37 @@ export class PhoneRepo {
     })
   }
 
+  /**
+   * 전송 이름(ip:port·서비스 이름)으로 만들어진 줄을 실제 시리얼의 줄로 합친다.
+   * 실제 시리얼 줄이 없으면 시리얼만 바꾼다(사용자가 붙인 이름·담당 계정이 그대로 남는다).
+   * 있으면 담당 계정을 그쪽으로 옮기고(이미 담당 폰이 있는 계정은 그대로) 옛 줄을 지운다
+   */
+  mergeAlias(aliasSerial: string, realSerial: string): void {
+    if (aliasSerial === realSerial) return
+    const alias = this.d.select().from(phones).where(eq(phones.serial, aliasSerial)).get()
+    if (!alias) return
+    const real = this.d.select().from(phones).where(eq(phones.serial, realSerial)).get()
+    if (!real) {
+      this.d.update(phones).set({ serial: realSerial }).where(eq(phones.id, alias.id)).run()
+      this.db.scheduleSave()
+      return
+    }
+    this.d
+      .update(accountPhones)
+      .set({ phoneId: real.id })
+      .where(eq(accountPhones.phoneId, alias.id))
+      .run()
+    this.d.delete(phones).where(eq(phones.id, alias.id)).run()
+    this.db.scheduleSave()
+  }
+
+  /** 폰 줄과 그 폰에 걸린 담당 계정 매핑을 지운다(인증 기록은 남긴다) */
+  remove(id: number): void {
+    this.d.delete(accountPhones).where(eq(accountPhones.phoneId, id)).run()
+    this.d.delete(phones).where(eq(phones.id, id)).run()
+    this.db.scheduleSave()
+  }
+
   list(): PhoneRow[] {
     return this.d.select().from(phones).all().map(toPhoneRow)
   }

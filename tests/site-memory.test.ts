@@ -13,6 +13,7 @@ import {
   toUrlPattern,
   SITE_MEMORY_BLOCK_MAX,
   SITE_MEMORY_HINT,
+  SITE_PARTIAL_HINT,
   SITE_NOTE_MAX,
   SITE_RECIPE_MAX,
   SITE_RECIPE_STEP_MAX,
@@ -183,6 +184,86 @@ describe('저장 상한', () => {
     const fresh: SiteRecipe = { goal: '같은 일', steps: [], createdAt: 9, uses: 0, lastOkAt: 9 }
     expect(addRecipe([old], fresh)).toEqual([fresh])
   })
+
+  it('끝까지 못 간 경로(partial)는 같은 목표의 완주 경로를 덮어쓰지 않는다', () => {
+    const step = { tool: 'click' as const, label: '구매하기', urlPattern: '/p' }
+    const done: SiteRecipe = {
+      goal: '주문',
+      steps: [step, step],
+      createdAt: 1,
+      uses: 0,
+      lastOkAt: 1
+    }
+    const partial: SiteRecipe = {
+      goal: '주문',
+      steps: [step],
+      createdAt: 9,
+      uses: 0,
+      lastOkAt: 9,
+      partial: true
+    }
+    expect(addRecipe([done], partial)).toEqual([done])
+    // 반대로 완주 경로는 부분 경로를 갈아 끼운다
+    expect(addRecipe([partial], done)).toEqual([done])
+    // 부분 경로끼리는 최신이 이긴다
+    const later: SiteRecipe = { ...partial, createdAt: 10, lastOkAt: 10 }
+    expect(addRecipe([partial], later)).toEqual([later])
+  })
+
+  it('일찍 접은 짧은 완주(1단계)는 주문서까지 간 긴 부분 경로를 막지도 밀어내지도 못한다', () => {
+    const step = { tool: 'click' as const, label: 'x', urlPattern: '/p' }
+    const lazyDone: SiteRecipe = { goal: '주문', steps: [step], createdAt: 1, uses: 0, lastOkAt: 1 }
+    const longPartial: SiteRecipe = {
+      goal: '주문',
+      steps: Array.from({ length: 40 }, () => step),
+      createdAt: 2,
+      uses: 0,
+      lastOkAt: 2,
+      partial: true
+    }
+    // 짧은 완주가 먼저 있어도 긴 부분 경로가 들어온다
+    expect(addRecipe([lazyDone], longPartial)).toEqual([longPartial])
+    // 긴 부분 경로가 있으면 짧은 완주는 덮어쓰지 못한다
+    expect(addRecipe([longPartial], { ...lazyDone, createdAt: 3, lastOkAt: 3 })).toEqual([
+      longPartial
+    ])
+    // 제대로 된 완주(5단계 이상)는 언제나 이긴다
+    const realDone: SiteRecipe = {
+      goal: '주문',
+      steps: Array.from({ length: 12 }, () => step),
+      createdAt: 4,
+      uses: 0,
+      lastOkAt: 4
+    }
+    expect(addRecipe([longPartial], realDone)).toEqual([realDone])
+    expect(addRecipe([realDone], longPartial)).toEqual([realDone])
+  })
+
+  it('상한을 넘으면 짧은 경로부터 버린다(긴 주문 경로가 밀려나지 않는다)', () => {
+    const step = { tool: 'click' as const, label: 'x', urlPattern: '/p' }
+    const long: SiteRecipe = {
+      goal: '주문 처리',
+      steps: Array.from({ length: 40 }, () => step),
+      createdAt: 1,
+      uses: 0,
+      lastOkAt: 1
+    }
+    let recipes: SiteRecipe[] = [long]
+    for (let i = 0; i < SITE_RECIPE_MAX + 2; i += 1) {
+      recipes = addRecipe(recipes, {
+        goal: `쿠폰 ${i}`,
+        steps: [step],
+        createdAt: 10 + i,
+        uses: 0,
+        lastOkAt: 10 + i
+      })
+    }
+    expect(recipes).toHaveLength(SITE_RECIPE_MAX)
+    expect(recipes.some((r) => r.goal === '주문 처리')).toBe(true)
+    // 방금 넣은 것은 남고, 가장 오래된 짧은 것부터 밀려난다
+    expect(recipes[0].goal).toBe(`쿠폰 ${SITE_RECIPE_MAX + 1}`)
+    expect(recipes.some((r) => r.goal === '쿠폰 0')).toBe(false)
+  })
 })
 
 describe('주입 블록', () => {
@@ -223,6 +304,30 @@ describe('주입 블록', () => {
     expect(block).toContain('버튼4')
     expect(block).toContain('버튼3')
     expect(block).not.toContain('버튼1')
+  })
+
+  it('이번 실행의 목표(플레이북 이름)와 같은 경로를 먼저 싣는다', () => {
+    const mk = (goal: string, n: number, partial = false): SiteRecipe => ({
+      goal,
+      steps: [{ tool: 'click', label: `버튼-${goal}`, urlPattern: '/p' }],
+      createdAt: n,
+      uses: 0,
+      lastOkAt: n,
+      ...(partial ? { partial: true } : {})
+    })
+    const entry: SiteMemoryEntry = {
+      notes: [],
+      recipes: [mk('쿠폰 눌러', 9), mk('다시해', 8), mk('포이즌 소싱 주문 처리', 1, true)]
+    }
+    const block = buildSiteMemoryBlock([{ host: 'a.com', entry }], undefined, [
+      '포이즌 소싱 주문 처리'
+    ])
+    const lines = block.split('\n')
+    // 목표 일치 경로가 첫 줄, 부분 경로 안내가 붙는다
+    expect(lines[1]).toContain(SITE_PARTIAL_HINT)
+    expect(lines[1]).toContain('버튼-포이즌 소싱 주문 처리')
+    expect(lines[2]).toContain('버튼-쿠폰 눌러')
+    expect(block).not.toContain('버튼-다시해')
   })
 
   it('전체 길이 상한을 넘지 않는다', () => {
@@ -293,6 +398,68 @@ describe('SiteMemoryService', () => {
     ])
     expect(entry.recipes[0].lastOkAt).toBe(100)
     expect(entry.notes).toEqual(["'구매하기' 는 Enter 로 열린다"])
+  })
+
+  it('goal 을 주면(플레이북 이름) 주문번호가 달라도 같은 경로 하나에 누적된다', () => {
+    const store = memoryStore()
+    const svc = new SiteMemoryService(
+      store,
+      () => true,
+      () => 100
+    )
+    const goal = '포이즌 소싱 주문 처리'
+    svc.learn({
+      prompt: '상품주문번호 111 주문처리해',
+      goal,
+      calls: [call({ label: '클릭: 구매하기 (#1)' })]
+    })
+    svc.learn({
+      prompt: '상품주문번호 222 주문처리해',
+      goal,
+      calls: [call({ label: '클릭: 구매하기 (#1)' }), call({ label: '클릭: 결제하기 (#2)' })]
+    })
+    const recipes = store.data['musinsa.com'].recipes
+    expect(recipes).toHaveLength(1)
+    expect(recipes[0].goal).toBe(goal)
+    expect(recipes[0].steps.map((s) => s.label)).toEqual(['구매하기', '결제하기'])
+    // 블록도 그 목표를 먼저 싣는다
+    const block = svc.blockFor({
+      prompt: '상품주문번호 333 주문처리해',
+      goals: [goal],
+      currentUrl: 'https://www.musinsa.com/'
+    })
+    expect(block.text).toContain('구매하기 @/products/123 > click 결제하기')
+  })
+
+  it('끝까지 못 간 실행은 부분 경로로 남고, 완주 경로를 덮어쓰지 않는다', () => {
+    const store = memoryStore()
+    const svc = new SiteMemoryService(
+      store,
+      () => true,
+      () => 100
+    )
+    svc.learn({
+      prompt: '주문',
+      goal: '주문 처리',
+      partial: true,
+      calls: [call({ label: '클릭: 구매하기 (#1)' })]
+    })
+    expect(store.data['musinsa.com'].recipes[0].partial).toBe(true)
+    svc.learn({
+      prompt: '주문',
+      goal: '주문 처리',
+      calls: [call({ label: '클릭: 구매하기 (#1)' }), call({ label: '클릭: 결제하기 (#2)' })]
+    })
+    svc.learn({
+      prompt: '주문',
+      goal: '주문 처리',
+      partial: true,
+      calls: [call({ label: '클릭: 구매하기 (#1)' })]
+    })
+    const recipes = store.data['musinsa.com'].recipes
+    expect(recipes).toHaveLength(1)
+    expect(recipes[0].partial).toBeUndefined()
+    expect(recipes[0].steps).toHaveLength(2)
   })
 
   it('기억이 꺼져 있으면 저장도 주입도 하지 않는다', () => {
@@ -384,5 +551,18 @@ describe('사이트 기억 i18n', () => {
       expect(dict.settingsPage.agent.siteMemoryCounts).toContain('{{recipes}}')
       expect(dict.settingsPage.agent.siteMemoryCounts).toContain('{{notes}}')
     }
+  })
+})
+
+describe('메모 스키마 — 긴 메모 하나가 나머지를 지우지 않는다', () => {
+  it('길이 상한을 넘는 메모는 잘라서 살리고 다른 메모는 그대로 둔다', async () => {
+    const { siteMemoryFileSchema, SITE_NOTE_LENGTH_MAX } = await import('../src/shared/site-memory')
+    const parsed = siteMemoryFileSchema.parse({
+      'samba-wave.vercel.app': { recipes: [], notes: ['기간은 올해로 검색', 'x'.repeat(300), 7, ''] }
+    })
+    const notes = parsed['samba-wave.vercel.app'].notes
+    expect(notes).toHaveLength(2)
+    expect(notes[0]).toBe('기간은 올해로 검색')
+    expect(notes[1]).toHaveLength(SITE_NOTE_LENGTH_MAX)
   })
 })

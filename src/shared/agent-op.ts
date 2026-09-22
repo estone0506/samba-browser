@@ -21,14 +21,9 @@ export type AgentOp =
   // 요소 가운데의 뷰포트 좌표(실제 마우스 클릭을 보낼 자리). 메인 프레임에서만 쓴다
   | { op: 'rectOf'; id: number }
   | { op: 'keypadSignals' }
+  // 결제 비밀번호 키패드의 숫자 버튼 배치(앱이 키마스터 값을 넣을 때 쓴다). 값은 오가지 않는다
+  | { op: 'keypadLayout' }
+  // 키패드 버튼을 정확히 한 번만 누른다(폴백 없음). 일반 click 은 변화가 안 보이면 Enter·좌표로
+  // 다시 눌러 같은 숫자가 두세 번 들어갈 수 있다(실기: 무신사페이 오답)
+  | { op: 'pressOnce'; id: number }
   | { op: 'overlays' }
-
-/** 메인 → 프레임 요청(동작 + 짝 맞추기용 번호) */
-export type AgentOpRequest = AgentOp & { reqId: number }
-
-/** 프레임 → 메인 응답. 실패하면 ok:false 만 온다(오류 문구에 페이지 값이 섞이지 않게) */
-export interface AgentOpReply {
-  reqId: number
-  ok: boolean
-  value?: unknown
-}

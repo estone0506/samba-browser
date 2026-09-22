@@ -5,6 +5,7 @@ import {
   performClick,
   performScroll,
   performType,
+  releaseTextFocus,
   runAgentOp,
   textOf
 } from '../src/preload/page-core'
@@ -74,6 +75,75 @@ describe('performClick / performType', () => {
   it('없는 id는 오류', async () => {
     buildSnapshot()
     expect(await performClick(99)).toMatch(/not found/)
+  })
+  it('포커스 없는 페이지에서도 다음 칸으로 넘어가면 앞 칸에 blur·focusout 이 간다(blur 저장 화면)', () => {
+    buildSnapshot()
+    const first = document.querySelector('[name=q]') as HTMLInputElement
+    expect(performType(2, '202609211338390004', false)).toBe('ok')
+    const seen: string[] = []
+    first.addEventListener('blur', () => seen.push('blur'))
+    first.addEventListener('focusout', () => seen.push('focusout'))
+    // AI 패널이 포커스를 쥔 상태 흉내 — blur() 가 이벤트를 내지 않는다
+    first.blur = () => {}
+    const other = document.createElement('input')
+    document.body.appendChild(other)
+    releaseTextFocus(other)
+    expect(seen).toEqual(['blur', 'focusout'])
+  })
+  it('브라우저가 blur 를 직접 냈으면 한 번 더 보내지 않는다(이중 저장 방지)', () => {
+    buildSnapshot()
+    const first = document.querySelector('[name=q]') as HTMLInputElement
+    performType(2, 'x', false)
+    let blurs = 0
+    first.addEventListener('blur', () => (blurs += 1))
+    releaseTextFocus(document.body)
+    expect(blurs).toBe(1)
+  })
+  it('비활성 입력칸은 거부하고 이유(title)를 알려 준다', () => {
+    buildSnapshot()
+    const input = document.querySelector('[name=q]') as HTMLInputElement
+    input.disabled = true
+    input.title = '주문계정을 먼저 선택하세요'
+    expect(performType(2, '2026', false)).toMatch(/disabled.*주문계정을 먼저/)
+    expect(input.value).toBe('')
+  })
+  it('Enter 핸들러가 blur() 로 저장하는 칸 — 포커스 없는 페이지에서도 blur 가 간다', async () => {
+    buildSnapshot()
+    const input = document.querySelector('[name=q]') as HTMLInputElement
+    let saved: string | null = null
+    input.addEventListener('focusout', () => (saved = input.value))
+    // 포커스 없는 페이지 흉내: blur() 는 activeElement 만 바꾸고 이벤트를 내지 않는다
+    input.blur = () => {
+      Object.defineProperty(document, 'activeElement', {
+        get: () => document.body,
+        configurable: true
+      })
+    }
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') input.blur()
+    })
+    try {
+      expect(await performType(2, '202609211338390004', true)).toBe('ok')
+      expect(saved).toBe('202609211338390004')
+    } finally {
+      delete (document as unknown as Record<string, unknown>).activeElement
+    }
+  })
+  it('submit 의 Enter 는 입력 반영(리렌더) 뒤에 간다 — 옛 state 가 저장되지 않는다', async () => {
+    buildSnapshot()
+    const input = document.querySelector('[name=q]') as HTMLInputElement
+    // React 제어 입력 흉내: input 이벤트는 state 갱신을 '예약'만 하고, Enter 핸들러는 state 를 읽는다
+    let state = '0'
+    let saved: string | null = null
+    input.addEventListener('input', () => {
+      const next = input.value
+      setTimeout(() => (state = next), 0)
+    })
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') saved = state
+    })
+    expect(await performType(2, '82420', true)).toBe('ok')
+    expect(saved).toBe('82420')
   })
 })
 

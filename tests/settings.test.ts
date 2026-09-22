@@ -55,11 +55,11 @@ describe('parseSettings — dangerWords 합집합', () => {
 describe('maxToolCalls 기본값', () => {
   // 주문 흐름(로그인→검색→옵션→장바구니→주문서)이 40회에서 끊겼던 회귀
   it('기본 120회, 상한 200회', () => {
-    expect(DEFAULT_SETTINGS.maxToolCalls).toBe(120)
-    expect(MAX_TOOL_CALLS).toBe(200)
+    expect(DEFAULT_SETTINGS.maxToolCalls).toBe(200)
+    expect(MAX_TOOL_CALLS).toBe(400)
   })
   it('빈 설정도 120회로 시작한다', () => {
-    expect(parseSettings({}).maxToolCalls).toBe(120)
+    expect(parseSettings({}).maxToolCalls).toBe(200)
   })
 })
 

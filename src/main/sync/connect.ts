@@ -17,6 +17,7 @@ import type { AuthService } from './auth'
 import { backfillOutbox, backfillSettings, backfillTotal, verifyBackfill } from './backfill'
 import { AuthExpiredError, type SyncBackend } from './backend'
 import { DeviceRevokedError, DeviceService } from './devices'
+import { tr } from '../i18n'
 import { SyncEngine, SyncEngineHolder } from './engine'
 import { SyncLocal } from './local'
 import { createOutboxRecorder, settingUpdatedAtKey, SyncOutbox } from './outbox'
@@ -162,7 +163,7 @@ export class SyncConnection {
           await devices.heartbeat()
           // (이어서) 풀이 끝나면 onAfterPull 이 설정 최초 업로드를 챙긴다
           if (await devices.isRevoked()) {
-            throw new AuthExpiredError('이 기기는 다른 기기에서 로그아웃되었습니다')
+            throw new AuthExpiredError(tr('sync.deviceLoggedOutRemotely'))
           }
         },
         // 설정은 최초 업로드에서 빼 두고, **풀을 한 번 돌린 뒤** 서버에 없던 키만 올린다.

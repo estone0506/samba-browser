@@ -6,7 +6,6 @@ import { deriveKey, encrypt, decrypt, randomBytes, type EncryptedBlob } from './
 export const RECOVERY_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 export const RECOVERY_KEY_CHARS = 24
 export const RECOVERY_GROUP_SIZE = 4
-export const RECOVERY_GROUPS = 6
 const RECOVERY_AAD = 'recovery'
 // 256 을 32 로 나눈 나머지가 0 이라 0~255 전부 써도 편향이 없지만,
 // 알파벳이 32 가 아닌 값으로 바뀌어도 안전하도록 상한을 계산해 둔다(거부 표집)

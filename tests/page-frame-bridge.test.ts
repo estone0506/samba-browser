@@ -16,8 +16,7 @@ vi.mock('../src/main/browser/frame-channel', () => ({
     frameCalls.push({ host, op })
     if (frameReply.fail.has(host)) throw new Error('frame call failed')
     return frame.result
-  },
-  clearFrameCalls: (): void => undefined
+  }
 }))
 
 const { pageBridge } = await import('../src/main/browser/page-bridge')
@@ -183,6 +182,54 @@ describe('pageBridge.keypadSignalsAll', () => {
     }
     const { tab } = fakeTab(mainSignals, [{ url: 'https://kpad.payco.com/', result: frameSignals }])
     expect(await pageBridge.keypadSignalsAll(tab)).toEqual([mainSignals, frameSignals])
+  })
+})
+
+describe('pageBridge.keypadLayout / keypadFilled — 결제 키패드 배치', () => {
+  const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+  const layout = (
+    filled: number | null = 0
+  ): { digits: { digit: string; id: number }[]; filled: number | null } => ({
+    digits: DIGITS.map((d, i) => ({ digit: d, id: 10 + i })),
+    filled
+  })
+
+  it('메인 프레임에 배치가 있으면 그 id 그대로(프레임 0)', async () => {
+    const { tab } = fakeTab(layout(), [])
+    const r = await pageBridge.keypadLayout(tab)
+    expect(r?.frameIndex).toBe(0)
+    expect(r?.digits['7']).toBe(17)
+    expect(r?.filled).toBe(0)
+  })
+
+  it('메인에 없고 iframe 에 있으면 프레임 번호를 얹은 id 를 준다(그대로 click 가능)', async () => {
+    const { tab } = fakeTab(null, [
+      { url: 'https://ads.example/x', result: null },
+      { url: 'https://kpad.payco.com/', result: layout(3) }
+    ])
+    const r = await pageBridge.keypadLayout(tab)
+    expect(r?.frameIndex).toBe(2)
+    expect(r?.digits['0']).toBe(200010)
+    expect(r?.filled).toBe(3)
+    expect(frameCalls.map((c) => c.op)).toEqual([{ op: 'keypadLayout' }, { op: 'keypadLayout' }])
+  })
+
+  it('어느 프레임에도 없으면 null', async () => {
+    const { tab } = fakeTab(null, [{ url: 'https://kpad.payco.com/', result: null }])
+    expect(await pageBridge.keypadLayout(tab)).toBeNull()
+  })
+
+  it('숫자가 아닌 digit 이 섞여 오면 페이지 결과를 믿지 않고 던진다', async () => {
+    const bad = { digits: [{ digit: 'x', id: 1 }], filled: null }
+    const { tab } = fakeTab(bad, [])
+    await expect(pageBridge.keypadLayout(tab)).rejects.toThrow(/unexpected page result/)
+  })
+
+  it('keypadFilled 는 그 프레임의 자리수만 돌려준다', async () => {
+    const { tab } = fakeTab(layout(1), [{ url: 'https://kpad.payco.com/', result: layout(4) }])
+    expect(await pageBridge.keypadFilled(tab, 0)).toBe(1)
+    expect(await pageBridge.keypadFilled(tab, 1)).toBe(4)
+    await expect(pageBridge.keypadFilled(tab, 5)).rejects.toThrow(/frame 5 is gone/)
   })
 })
 

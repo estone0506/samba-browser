@@ -428,7 +428,7 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
   /** 런처 → 토스 결제 확인 → 보안 키패드 → 완료 */
   function scriptPayScreens(adb: ScriptedAdb): void {
     adb.pushScreen('com.sec.android.app.launcher', hierarchy([button('홈', 0)]))
-    adb.pushScreen('viva.republica.toss', hierarchy([button('결제하기', 200)]))
+    adb.pushScreen('viva.republica.toss', hierarchy([button('결제수단 변경 ・ 설정', 60), button('결제하기', 200)]))
     adb.pushScreen('viva.republica.toss', keypadScreen())
     adb.pushScreen('viva.republica.toss', hierarchy([button('결제 완료', 300)]))
   }
@@ -501,8 +501,10 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     expect(h.gate.isSecret(SERIAL)).toBe(false)
   })
 
-  it('새 (사이트 × 결제수단) 조합의 첫 결제는 소액만 허용하고, 성공하면 이력이 남는다', async () => {
+  it('첫 결제 상한을 적어 둔 경우: 새 (사이트 × 결제수단) 조합의 첫 결제는 그 값까지만, 성공하면 이력이 남는다', async () => {
     const h = harness(db)
+    const base = h.deps.settings
+    h.deps.settings = () => ({ ...base(), firstPaymentLimitKrw: 10_000 })
     scriptPayScreens(h.adb)
     h.paySuccess.value = true
     const bridge = createPhoneAgentBridge(h.deps)
@@ -570,6 +572,66 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     })
     expect(r).toEqual({ ok: false, reason: 'no-account' })
     expect(h.confirms).toHaveLength(0)
+  })
+
+  it('폰 도구의 기본 폰은 연결된 첫 번째가 아니라 그 계정의 담당 폰이다', () => {
+    // 실기: 담당 폰(김사무)을 골라 뒀는데 phone_screen 이 첫 번째 폰(삼성 플립)을 봐서 토스 알림을 못 찾았다
+    const h = harness(db)
+    const first = { ...phoneDto(), id: 1, serial: 'FLIP-USB' }
+    const assigned = { ...phoneDto(), id: 6, serial: 'adb-R5CR30LFATY._adb-tls-connect._tcp' }
+    h.deps.phones.list = () => [first, assigned]
+    h.deps.phones.assignForJob = () => assigned
+    expect(createPhoneAgentBridge(h.deps).defaultSerial()).toBe(assigned.serial)
+    // 담당 폰이 없으면(또는 끊겼으면) 예전처럼 연결된 첫 번째 폰
+    h.deps.phones.assignForJob = () => null
+    expect(createPhoneAgentBridge(h.deps).defaultSerial()).toBe('FLIP-USB')
+    h.deps.phones.list = () => []
+    expect(createPhoneAgentBridge(h.deps).defaultSerial()).toBeNull()
+  })
+
+  it('구매 계정이 여럿이고 기본 계정이 없어도, 탭 프로필 이름으로 계정을 고른다', async () => {
+    // 실기: 무신사에 bob·alice 가 함께 있어 폰 승인이 늘 "계정을 특정할 수 없음"으로 거부됐다
+    const many = [
+      { ...ACCOUNT, id: 11, label: 'alice', username: 'alice', isDefault: false },
+      {
+        ...ACCOUNT,
+        id: 12,
+        label: 'bob',
+        username: 'bob',
+        isDefault: false,
+        itemTypes: ['login']
+      },
+      { ...ACCOUNT, id: 13, label: 'bob', username: 'bob', isDefault: false }
+    ] as AccountDto[]
+    const without = harness(db, { vault: { listAccounts: () => many } })
+    scriptPayScreens(without.adb)
+    const req = {
+      provider: 'toss',
+      amountKrw: 9000,
+      merchant: '삼바상회',
+      methodLabel: '토스페이'
+    } as const
+    expect(await createPhoneAgentBridge(without.deps).approvePayment(without.ctx, req)).toEqual({
+      ok: false,
+      reason: 'no-account'
+    })
+
+    const asked: number[] = []
+    const withProfile = harness(db, {
+      vault: {
+        listAccounts: () => many,
+        getPaymentSecretForFill: (args: { accountId: number }) => {
+          asked.push(args.accountId)
+          return { value: SECRET }
+        }
+      }
+    })
+    withProfile.deps.page.profile = () => 'bob'
+    scriptPayScreens(withProfile.adb)
+    const r = await createPhoneAgentBridge(withProfile.deps).approvePayment(withProfile.ctx, req)
+    expect(r.ok === false && r.reason === 'no-account').toBe(false)
+    // 같은 이름이 둘이면 결제 비밀번호를 가진 계정(13)이다
+    expect(asked.every((id) => id === 13)).toBe(true)
   })
 
   it('앱은 끝냈지만 웹 결제창이 성공으로 넘어가지 않으면 성공으로 보지 않는다', async () => {

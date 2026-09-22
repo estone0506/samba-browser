@@ -8,6 +8,7 @@
 import AdmZip from 'adm-zip'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, normalize, sep } from 'node:path'
+import { tr } from '../i18n'
 
 /** 내려받기 상한 — 웹스토어 확장은 보통 몇 MB 다 */
 export const MAX_CRX_BYTES = 50 * 1024 * 1024
@@ -25,14 +26,14 @@ const EXTENSION_ID_RE = /^[a-p]{32}$/
  */
 export function extractExtensionId(input: string): string {
   const raw = input.trim()
-  if (!raw) throw new Error('확장 주소나 id 를 입력해 주세요')
+  if (!raw) throw new Error(tr('ext.inputEmpty'))
   if (EXTENSION_ID_RE.test(raw)) return raw
   // 주소 안의 경로 조각 중 id 형태인 것을 찾는다(쿼리·해시는 버린다)
   const withoutQuery = raw.split(/[?#]/)[0]
   const segments = withoutQuery.split('/').filter(Boolean)
   const hit = [...segments].reverse().find((s) => EXTENSION_ID_RE.test(s))
   if (hit) return hit
-  throw new Error('확장 id 를 찾지 못했어요 (웹스토어 주소나 32자 id 를 넣어 주세요)')
+  throw new Error(tr('ext.idNotFound'))
 }
 
 /** 구글 업데이트 서버의 CRX3 내려받기 주소를 만든다 */
@@ -150,20 +151,20 @@ export function parseCrxId(buffer: Buffer): string | null {
  * CRX2(버전 2)는 헤더 구조가 달라 받지 않는다 — 웹스토어도 더 이상 내주지 않는다
  */
 export function parseCrx3(buffer: Buffer): Buffer {
-  if (buffer.length < 16) throw new Error('내려받은 파일이 너무 짧아요 (CRX 가 아니에요)')
+  if (buffer.length < 16) throw new Error(tr('ext.crxTooShort'))
   if (buffer.subarray(0, 4).toString('latin1') !== CRX_MAGIC) {
-    throw new Error('CRX 파일이 아니에요 (매직 넘버가 달라요)')
+    throw new Error(tr('ext.crxBadMagic'))
   }
   const version = buffer.readUInt32LE(4)
-  if (version !== 3) throw new Error(`지원하지 않는 CRX 버전이에요 (${version})`)
+  if (version !== 3) throw new Error(tr('ext.crxVersionUnsupported', { version }))
   const headerLength = buffer.readUInt32LE(8)
   const zipStart = 12 + headerLength
   if (headerLength <= 0 || zipStart > buffer.length) {
-    throw new Error('CRX 헤더 길이가 올바르지 않아요')
+    throw new Error(tr('ext.crxBadHeaderLength'))
   }
   const zip = buffer.subarray(zipStart)
   if (zip.length < 4 || zip.subarray(0, 2).toString('latin1') !== 'PK') {
-    throw new Error('CRX 안에서 ZIP 을 찾지 못했어요')
+    throw new Error(tr('ext.crxNoZip'))
   }
   return zip
 }
@@ -175,12 +176,12 @@ export function parseCrx3(buffer: Buffer): Buffer {
 export function safeEntryPath(destRoot: string, entryName: string): string {
   const name = entryName.replace(/\\/g, '/')
   if (!name || name.startsWith('/') || /^[A-Za-z]:/.test(name)) {
-    throw new Error(`확장 폴더 밖을 가리키는 파일이 있어요: ${entryName}`)
+    throw new Error(tr('ext.zipSlip', { name: entryName }))
   }
   const root = normalize(destRoot)
   const target = normalize(join(root, name))
   if (target !== root && !target.startsWith(root.endsWith(sep) ? root : root + sep)) {
-    throw new Error(`확장 폴더 밖을 가리키는 파일이 있어요: ${entryName}`)
+    throw new Error(tr('ext.zipSlip', { name: entryName }))
   }
   return target
 }
@@ -206,13 +207,13 @@ export function extractZip(
   const maxBytes = limits.maxBytes ?? MAX_UNZIPPED_BYTES
   const maxEntries = limits.maxEntries ?? MAX_ZIP_ENTRIES
   const tooBig = (): Error =>
-    new Error(`확장 압축을 풀면 너무 커져요 (${Math.floor(maxBytes / (1024 * 1024))}MB 초과)`)
+    new Error(tr('ext.zipTooBig', { mb: Math.floor(maxBytes / (1024 * 1024)) }))
 
   const archive = new AdmZip(zip)
   const entries = archive.getEntries()
-  if (entries.length === 0) throw new Error('확장 압축 파일이 비어 있어요')
+  if (entries.length === 0) throw new Error(tr('ext.zipEmpty'))
   if (entries.length > maxEntries) {
-    throw new Error(`확장 안의 파일이 너무 많아요 (${maxEntries}개 초과)`)
+    throw new Error(tr('ext.zipTooManyEntries', { max: maxEntries }))
   }
   // 1) 경로·크기 검사를 먼저 끝낸다 — 반쯤 풀린 폴더를 남기지 않기 위해서다.
   //    크기는 헤더의 원본 크기(header.size)로 재, 실제로 풀기 전에 거른다
@@ -257,7 +258,7 @@ export interface CrxFetcher {
 
 /** 상한 초과 메시지 — 스트림 경로와 통짜 경로가 같은 문구를 쓴다 */
 function tooLarge(maxBytes: number): Error {
-  return new Error(`확장 파일이 너무 커요 (${Math.floor(maxBytes / (1024 * 1024))}MB 초과)`)
+  return new Error(tr('ext.fileTooLarge', { mb: Math.floor(maxBytes / (1024 * 1024)) }))
 }
 
 /**
@@ -322,18 +323,18 @@ export async function downloadCrx(
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetchImpl(url, { signal: controller.signal })
-    if (!res.ok) throw new Error(`내려받기에 실패했어요 (HTTP ${res.status})`)
+    if (!res.ok) throw new Error(tr('ext.downloadFailed', { status: res.status }))
     // 업데이트 서버는 배포망으로 리다이렉트한다 — 최종 주소가 구글 호스트가 아니면 받지 않는다
     if (typeof res.url === 'string' && res.url && !isAllowedCrxUrl(res.url)) {
       controller.abort()
-      throw new Error('허용하지 않는 주소로 연결됐어요')
+      throw new Error(tr('ext.downloadBadRedirect'))
     }
     const buf = await readCapped(res, maxBytes, () => controller.abort())
-    if (buf.length === 0) throw new Error('내려받은 파일이 비어 있어요')
+    if (buf.length === 0) throw new Error(tr('ext.downloadEmpty'))
     return buf
   } catch (e: unknown) {
     if (e instanceof Error && e.name === 'AbortError') {
-      throw new Error('내려받기 시간이 초과됐어요')
+      throw new Error(tr('ext.downloadTimeout'))
     }
     throw e
   } finally {
@@ -343,11 +344,10 @@ export async function downloadCrx(
 
 /** 해제한 폴더의 manifest 가 우리 세션에서 쓸 수 있는지 본다 */
 export function assertInstallableManifest(raw: unknown): void {
-  if (typeof raw !== 'object' || raw === null)
-    throw new Error('manifest.json 형식이 올바르지 않아요')
+  if (typeof raw !== 'object' || raw === null) throw new Error(tr('ext.manifestInvalid'))
   const mv = (raw as { manifest_version?: unknown }).manifest_version
-  if (mv === 2) throw new Error('MV2(Manifest V2) 확장은 지원하지 않아요')
-  if (mv !== 3) throw new Error('지원하지 않는 manifest_version 이에요 (3만 지원)')
+  if (mv === 2) throw new Error(tr('ext.mv2Unsupported'))
+  if (mv !== 3) throw new Error(tr('ext.manifestVersionOnly3'))
 }
 
 export interface InstallWebstoreDeps {
@@ -378,8 +378,8 @@ export async function installFromWebstore(
   const crx = await downloadCrx(buildCrxUrl(id, deps.chromiumVersion), deps.fetchImpl)
   // 받은 파일이 정말 그 확장인지 헤더의 crx_id 로 맞춰 본다
   const actualId = parseCrxId(crx)
-  if (!actualId) throw new Error('CRX 헤더에서 확장 id 를 읽지 못했어요')
-  if (actualId !== id) throw new Error(`요청한 확장과 다른 파일이에요 (${actualId})`)
+  if (!actualId) throw new Error(tr('ext.crxNoId'))
+  if (actualId !== id) throw new Error(tr('ext.crxIdMismatch', { id: actualId }))
   const zip = parseCrx3(crx)
   // 폴더를 건드리기 전에 호출부가 세션·목록에서 먼저 걷어낸다
   deps.onBeforeReplace?.(dest)
@@ -388,7 +388,7 @@ export async function installFromWebstore(
   try {
     extractZip(zip, dest)
     const manifestPath = join(dest, 'manifest.json')
-    if (!existsSync(manifestPath)) throw new Error('확장 안에 manifest.json 이 없어요')
+    if (!existsSync(manifestPath)) throw new Error(tr('ext.zipNoManifest'))
     const read = deps.readManifest ?? defaultReadManifest
     assertInstallableManifest(read(dest))
     return dest
@@ -402,6 +402,6 @@ function defaultReadManifest(dir: string): unknown {
   try {
     return JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'))
   } catch {
-    throw new Error('manifest.json 을 읽을 수 없어요 (JSON 형식 오류)')
+    throw new Error(tr('ext.manifestUnreadable'))
   }
 }

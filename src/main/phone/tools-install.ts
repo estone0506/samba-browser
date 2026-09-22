@@ -18,6 +18,7 @@ import type {
 } from '../../shared/phone'
 import { installedToolPath } from './adb'
 import { safeEntryPath } from '../extensions/webstore'
+import { tr } from '../i18n'
 
 /** 안드로이드 platform-tools(adb 가 들어 있다) 최신 윈도우 zip */
 export const PLATFORM_TOOLS_URL =
@@ -65,7 +66,7 @@ export function isAllowedToolUrl(raw: string): boolean {
 }
 
 function assertToolUrl(raw: string): void {
-  if (!isAllowedToolUrl(raw)) throw new Error(`허용되지 않은 내려받기 주소예요: ${raw}`)
+  if (!isAllowedToolUrl(raw)) throw new Error(tr('phone.toolUrlNotAllowed', { url: raw }))
 }
 
 /** 내려받기 상한 — platform-tools 는 10MB 대, scrcpy 는 50MB 대다 */
@@ -120,10 +121,10 @@ export interface InstallPhoneToolsDeps {
 
 /** zip 매직 넘버(`PK\x03\x04`) 확인 — HTML 오류 문서를 받아 놓고 푸는 일을 막는다 */
 export function assertZip(buf: Buffer, label: string): void {
-  if (buf.length < 4) throw new Error(`${label} 파일이 비어 있어요`)
+  if (buf.length < 4) throw new Error(tr('phone.toolFileEmpty', { label }))
   const magic = buf.subarray(0, 4)
   if (magic[0] !== 0x50 || magic[1] !== 0x4b || magic[2] !== 0x03 || magic[3] !== 0x04) {
-    throw new Error(`${label} 내려받기가 올바르지 않아요 (zip 파일이 아니에요)`)
+    throw new Error(tr('phone.toolNotZip', { label }))
   }
 }
 
@@ -224,12 +225,12 @@ export function extractToolZip(
   const maxBytes = options.maxBytes ?? MAX_UNZIPPED_BYTES
   const maxEntries = options.maxEntries ?? MAX_ZIP_ENTRIES
   const tooBig = (): Error =>
-    new Error(`압축을 풀면 너무 커져요 (${Math.floor(maxBytes / (1024 * 1024))}MB 초과)`)
+    new Error(tr('phone.unzipTooLarge', { mb: Math.floor(maxBytes / (1024 * 1024)) }))
 
   const entries = new AdmZip(zip).getEntries()
-  if (entries.length === 0) throw new Error('내려받은 압축 파일이 비어 있어요')
+  if (entries.length === 0) throw new Error(tr('phone.archiveEmpty'))
   if (entries.length > maxEntries)
-    throw new Error(`압축 안의 파일이 너무 많아요 (${maxEntries}개 초과)`)
+    throw new Error(tr('phone.archiveTooManyEntries', { count: maxEntries }))
 
   const root =
     options.stripRoot === false ? null : commonRootFolder(entries.map((e) => e.entryName))
@@ -276,14 +277,14 @@ function safeToolPath(destRoot: string, entryName: string): string {
   try {
     return safeEntryPath(destRoot, entryName)
   } catch {
-    throw new Error(`설치 폴더 밖을 가리키는 파일이 있어요: ${entryName}`)
+    throw new Error(tr('phone.zipSlip', { name: entryName }))
   }
 }
 
 // --- 내려받기 ---------------------------------------------------------------
 
 function tooLarge(): Error {
-  return new Error(`파일이 너무 커요 (${Math.floor(MAX_TOOL_BYTES / (1024 * 1024))}MB 초과)`)
+  return new Error(tr('phone.downloadTooLarge', { mb: Math.floor(MAX_TOOL_BYTES / (1024 * 1024)) }))
 }
 
 async function* streamToIterable(stream: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
@@ -315,7 +316,7 @@ export async function downloadWithProgress(
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetchImpl(url, { signal: controller.signal })
-    if (!res.ok) throw new Error(`내려받기에 실패했어요 (HTTP ${res.status})`)
+    if (!res.ok) throw new Error(tr('phone.downloadFailed', { status: res.status }))
     const total = Number(res.headers?.get('content-length') ?? '') || 0
     const body = res.body
     if (!body) {
@@ -339,10 +340,10 @@ export async function downloadWithProgress(
       chunks.push(Buffer.from(chunk))
       onChunk(received, total)
     }
-    if (received === 0) throw new Error('내려받은 파일이 비어 있어요')
+    if (received === 0) throw new Error(tr('phone.downloadEmpty'))
     return Buffer.concat(chunks, received)
   } catch (e: unknown) {
-    if (e instanceof Error && e.name === 'AbortError') throw new Error('내려받기 시간이 초과됐어요')
+    if (e instanceof Error && e.name === 'AbortError') throw new Error(tr('phone.downloadTimeout'))
     throw e
   } finally {
     clearTimeout(timer)
@@ -445,8 +446,6 @@ export async function resolveScrcpyAsset(fetchImpl: ToolsFetcher): Promise<Scrcp
   }
 }
 
-const SHA_MISMATCH = 'scrcpy 내려받기가 손상됐어요 (해시가 달라요). 잠시 뒤 다시 시도해 주세요'
-
 /**
  * 받은 zip 의 sha256 을 반드시 대조한다.
  * 박아 둔 상수가 있으면 그것과, 없으면 릴리스의 해시 목록과 견준다.
@@ -458,21 +457,22 @@ export async function verifyScrcpy(
   fetchImpl: ToolsFetcher
 ): Promise<void> {
   if (asset.expectedSha256) {
-    if (sha256(zip) !== asset.expectedSha256.toLowerCase()) throw new Error(SHA_MISMATCH)
+    if (sha256(zip) !== asset.expectedSha256.toLowerCase())
+      throw new Error(tr('phone.scrcpyHashMismatch'))
     return
   }
-  if (!asset.sumsUrl) throw new Error('scrcpy 해시 목록이 없어 설치를 멈췄어요')
+  if (!asset.sumsUrl) throw new Error(tr('phone.scrcpyNoSums'))
   let text: string
   try {
     const res = await fetchImpl(asset.sumsUrl)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     text = res.text ? await res.text() : Buffer.from(await res.arrayBuffer()).toString('utf8')
   } catch {
-    throw new Error('scrcpy 해시 목록을 받지 못해 설치를 멈췄어요. 잠시 뒤 다시 시도해 주세요')
+    throw new Error(tr('phone.scrcpySumsFetchFailed'))
   }
   const expected = parseSha256Sums(text, asset.fileName)
-  if (!expected) throw new Error('scrcpy 해시 목록에 이 파일이 없어 설치를 멈췄어요')
-  if (sha256(zip) !== expected) throw new Error(SHA_MISMATCH)
+  if (!expected) throw new Error(tr('phone.scrcpySumsMissingFile'))
+  if (sha256(zip) !== expected) throw new Error(tr('phone.scrcpyHashMismatch'))
 }
 
 /**
@@ -495,7 +495,7 @@ export async function installPhoneTools(deps: InstallPhoneToolsDeps): Promise<Ph
   const adbPath = installedToolPath(deps.root, 'adb.exe')
   if (!existsSync(adbPath)) {
     rmSync(ptDir, { recursive: true, force: true })
-    throw new Error('내려받은 platform-tools 안에 adb.exe 가 없어요')
+    throw new Error(tr('phone.adbExeMissing'))
   }
   ptStep('done', 1, 1)
 
@@ -513,7 +513,7 @@ export async function installPhoneTools(deps: InstallPhoneToolsDeps): Promise<Ph
   const scrcpyPath = installedToolPath(deps.root, 'scrcpy.exe')
   if (!existsSync(scrcpyPath)) {
     rmSync(scDir, { recursive: true, force: true })
-    throw new Error('내려받은 scrcpy 안에 scrcpy.exe 가 없어요')
+    throw new Error(tr('phone.scrcpyExeMissing'))
   }
   scStep('done', 1, 1)
 

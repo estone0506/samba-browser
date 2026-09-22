@@ -2,11 +2,13 @@ import { create } from 'zustand'
 import type {
   AiProviderId,
   AiProviderStatus,
+  AiUsage,
   ApiKeyVendor,
   SubscriptionProviderId,
   TaskModelKey,
   TaskModels
 } from '@shared/ai'
+import { SUBSCRIPTION_PROVIDERS } from '@shared/ai'
 
 // AI 연결 화면 상태.
 // 평문 API 키는 setApiKey 로 메인에 넘어가기만 하고 되돌아오지 않는다 —
@@ -26,7 +28,12 @@ interface AiStoreState {
   busy: SubscriptionProviderId | null
   /** 자격이 없어 안내 다이얼로그를 띄워야 하는 구독 카드와 사유 */
   loginHint: { provider: SubscriptionProviderId; reason: 'not_installed' | 'needs_login' } | null
+  /** 구독 사용량(Claude · Codex). 조회 실패·미연결이면 그 칸이 null */
+  usage: Partial<Record<SubscriptionProviderId, AiUsage | null>>
   load: () => Promise<void>
+  loadUsage: () => Promise<void>
+  /** 다른 계정으로: 로그아웃 + 로그인 터미널. 로그인 뒤 [연결]로 다시 붙인다 */
+  switchAccount: (provider: SubscriptionProviderId) => Promise<void>
   connect: (provider: SubscriptionProviderId, openTerminal?: boolean) => Promise<void>
   disconnect: (provider: SubscriptionProviderId) => Promise<void>
   dismissLoginHint: () => void
@@ -48,6 +55,31 @@ export const useAiStore = create<AiStoreState>((set, get) => ({
   testResults: {},
   busy: null,
   loginHint: null,
+  usage: {},
+
+  loadUsage: async () => {
+    // 구독 카드마다 따로 조회한다(한쪽이 실패해도 다른 쪽은 보인다)
+    const entries = await Promise.all(
+      SUBSCRIPTION_PROVIDERS.map(async (p) => {
+        const r = await window.samba.ai.usage?.(p)
+        return [p, r?.ok ? r.data : null] as const
+      })
+    )
+    set({ usage: Object.fromEntries(entries) })
+  },
+
+  switchAccount: async (provider) => {
+    set({ busy: provider, error: null })
+    const r = await window.samba.ai.switchAccount(provider)
+    set({ busy: null })
+    if (!r.ok) {
+      set({ error: r.error })
+      return
+    }
+    // 터미널에서 로그인하는 동안 안내를 띄워 둔다(끝나면 [다시 확인])
+    set({ usage: {}, loginHint: { provider, reason: 'needs_login' } })
+    await get().load()
+  },
 
   load: async () => {
     set({ loading: true, error: null })

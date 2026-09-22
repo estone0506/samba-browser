@@ -1,6 +1,12 @@
 import type { WebContents, WebFrameMain } from 'electron'
 import { z } from 'zod'
-import type { KeypadSignals, PageElement, PageOverlay, PageSnapshot } from '../../shared/snapshot'
+import type {
+  KeypadLayoutDto,
+  KeypadSignals,
+  PageElement,
+  PageOverlay,
+  PageSnapshot
+} from '../../shared/snapshot'
 import { findCodeField as pickCodeField } from '../phone/auth-flow'
 import type { AgentOp } from '../../shared/agent-op'
 import { callFrameOp } from './frame-channel'
@@ -44,6 +50,22 @@ const keypadSignalsSchema = z.object({
   digitButtons: z.number().int(),
   pinField: z.boolean()
 })
+
+// 결제 키패드 숫자 버튼 배치. 값은 담기지 않는다(숫자 → 요소 id, 눌린 자리수만)
+const keypadLayoutSchema = z
+  .object({
+    digits: z.array(z.object({ digit: z.string().regex(/^[0-9]$/), id: z.number().int() })),
+    filled: z.number().int().nullable()
+  })
+  .nullable()
+
+/** 키패드 배치(프레임 번호가 얹힌 id). 어느 프레임에 있었는지도 함께 준다 */
+export interface KeypadLayout {
+  /** 숫자 → 프레임 번호가 얹힌 요소 id(그대로 click 에 넘길 수 있다) */
+  digits: Record<string, number>
+  filled: number | null
+  frameIndex: number
+}
 
 // 화면을 덮는 레이어 목록. label 은 페이지에서 온 문자열이라 길이를 잘라 쓴다
 const overlaySchema = z.object({
@@ -281,6 +303,10 @@ function opToCode(op: AgentOp): string {
       return `__samba.rectOf(${op.id})`
     case 'keypadSignals':
       return '__samba.keypadSignals()'
+    case 'keypadLayout':
+      return '__samba.keypadLayout()'
+    case 'pressOnce':
+      return `__samba.pressOnce(${op.id})`
     case 'overlays':
       return '__samba.overlays()'
   }
@@ -370,6 +396,42 @@ export const pageBridge = {
   keypadSignalsAll: async (tab: Tab): Promise<KeypadSignals[]> => {
     const { main, frames } = await callEveryFrame(tab, { op: 'keypadSignals' }, keypadSignalsSchema)
     return [main, ...frames.map((f) => f.value)]
+  },
+  /**
+   * 결제 키패드 숫자 버튼 배치. 메인 프레임부터 살펴 0~9 가 완전한 첫 프레임을 쓴다
+   * (페이코·NICE 보안 키패드는 iframe 안에 있다). 어느 프레임에도 없으면 null.
+   * 값은 오가지 않는다 — 숫자별 요소 id 와 눌린 자리수만
+   */
+  keypadLayout: async (tab: Tab): Promise<KeypadLayout | null> => {
+    const { main, frames } = await callEveryFrame(tab, { op: 'keypadLayout' }, keypadLayoutSchema)
+    const candidates: { index: number; value: KeypadLayoutDto | null }[] = [
+      { index: 0, value: main },
+      ...frames.map((f) => ({ index: f.index, value: f.value }))
+    ]
+    for (const c of candidates) {
+      if (!c.value) continue
+      const digits: Record<string, number> = {}
+      for (const d of c.value.digits) digits[d.digit] = encodeFrameId(c.index, d.id)
+      return { digits, filled: c.value.filled, frameIndex: c.index }
+    }
+    return null
+  },
+  /** 키패드 버튼을 정확히 한 번 누른다(일반 click 의 재시도 폴백이 없다) */
+  pressOnce: (tab: Tab, id: number): Promise<string> =>
+    callById(tab, id, (n) => ({ op: 'pressOnce', id: n }), resultSchema),
+  /** 그 프레임의 비밀 입력칸에 찍힌 자리수(값은 읽지 않는다). 셀 수 없으면 null */
+  keypadFilled: async (tab: Tab, frameIndex: number): Promise<number | null> => {
+    const wc = tab.view.webContents
+    const op: AgentOp = { op: 'keypadLayout' }
+    const layout =
+      frameIndex === 0
+        ? await call(wc, opToCode(op), keypadLayoutSchema)
+        : await (async () => {
+            const frame = agentSubFrames(wc)[frameIndex - 1]
+            if (!frame) throw new Error(`frame ${frameIndex} is gone`)
+            return callFrame(frame, op, keypadLayoutSchema)
+          })()
+    return layout?.filled ?? null
   },
   /**
    * 지금 화면을 덮고 있는 레이어들(메인 프레임 + iframe).

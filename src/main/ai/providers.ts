@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
+import { resolveCliBin } from './cli-bin'
 import {
   connectionKeyOf,
   type AiConnections,
@@ -45,7 +46,9 @@ export const SUBSCRIPTION_CLI: Record<
   claude_subscription: {
     bin: 'claude',
     credentialPaths: CLAUDE_CREDENTIAL_PATHS,
-    loginCommand: 'claude login'
+    // 예전 'claude login' 은 지금 CLI 에 없는 하위 명령이라 로그인 대신 대화가 시작됐다(실기).
+    // 먼저 로그아웃해야 다른 계정으로 바꿀 수 있다 — 이미 로그인돼 있으면 login 이 같은 계정으로 끝난다
+    loginCommand: 'claude auth logout & claude auth login'
   },
   codex_subscription: {
     bin: 'codex',
@@ -67,9 +70,11 @@ export function defaultProbes(): ProviderProbes {
     fileExists: existsSync,
     runVersion: (provider) =>
       new Promise((resolve) => {
+        // Windows 의 npm 셔틀(codex.cmd)은 이름만으로는 못 돌리므로 실제 실행 파일로 푼다
+        const cli = resolveCliBin(SUBSCRIPTION_CLI[provider].bin)
         const child = execFile(
-          SUBSCRIPTION_CLI[provider].bin,
-          ['--version'],
+          cli.command,
+          [...cli.prefixArgs, '--version'],
           { timeout: VERSION_TIMEOUT_MS },
           (err) => resolve(!err)
         )

@@ -52,6 +52,21 @@ describe('chatStore 상태 가드', () => {
     expect(useChatStore.getState().status).toBe('running')
   })
 
+  it('이미지를 붙여 보내면 네 번째 인자로 넘기고 말풍선에 미리보기를 단다', async () => {
+    const img = { mediaType: 'image/png' as const, data: 'aGk=' }
+    await useChatStore.getState().send('이 화면 읽어', undefined, [img])
+    expect(run).toHaveBeenCalledWith('이 화면 읽어', undefined, undefined, [img])
+    const user = useChatStore.getState().messages[0]
+    expect(user.role).toBe('user')
+    expect(user.images).toEqual(['data:image/png;base64,aGk='])
+  })
+
+  it('이미지 없이 보내면 호출 모양이 예전과 같다', async () => {
+    await useChatStore.getState().send('검색')
+    expect(run).toHaveBeenCalledWith('검색')
+    expect(useChatStore.getState().messages[0].images).toBeUndefined()
+  })
+
   it('중단 뒤 새 작업을 다시 보낼 수 있다', async () => {
     useChatStore.setState({ status: 'stopped' })
     await useChatStore.getState().send('다시')
@@ -136,6 +151,7 @@ describe('chatStore 캡차 넘김 카드', () => {
     })
     expect(useChatStore.getState().handoff).toEqual({
       requestId: 'r1',
+      kind: 'captcha',
       matched: '캡차',
       url: 'https://a.example/login'
     })

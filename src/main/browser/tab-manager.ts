@@ -23,6 +23,7 @@ import { attachInternalProtocol } from './internal-protocol'
 import type { PermissionMode, SearchEngine } from '../../shared/settings'
 import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
 import { installWebstoreNavigatorUserAgent, installWebstoreUserAgent } from './webstore-ua'
+import { installSessionCookieKeeper } from './session-cookies'
 import { installDialogHandler, isAutomationActive } from './dialogs'
 import { PopupRegistry, type PopupEntry } from './popups'
 import { buildTargets, pickAgentTargetId, type AgentTarget } from './targets'
@@ -120,6 +121,9 @@ function hardenSession(ses: Session, partition: string): void {
   // 웹스토어는 Electron UA 를 보면 "지원되지 않는 브라우저" 안내로 설치 버튼을 감춘다.
   // 그 호스트 요청에만 크롬 UA 를 보낸다(다른 사이트는 그대로)
   installWebstoreUserAgent(ses)
+  // 로그인 토큰이 세션 쿠키인 사이트(무신사)는 앱을 다시 켤 때마다 반쪽 로그인이 됐다 —
+  // 크롬의 "이전 세션 이어서" 처럼 세션 쿠키에 만료를 얹어 남긴다
+  installSessionCookieKeeper(ses)
 }
 
 // 리다이렉트·페이지 내 이동으로 금지 스킴에 도달하는 경로까지 막는다.
@@ -141,6 +145,18 @@ export function guardNavigation(wc: WebContents, allowExtension: boolean): void 
 }
 
 // 탭 = WebContentsView 1개. 프로필은 persist: 파티션으로 쿠키 분리
+/**
+ * 탭의 웹 내용이 아직 살아 있는가.
+ * WebContentsView 가 닫히면 `view.webContents` 자체가 undefined 가 된다 — 곧바로 isDestroyed() 를 부르면
+ * "Cannot read properties of undefined" 로 메인 프로세스가 죽는다(실기: 탭 이벤트가 닫힌 탭 목록을 돌 때)
+ */
+export function isTabAlive(tab: {
+  view: { webContents?: { isDestroyed(): boolean } | null }
+}): boolean {
+  const wc = tab.view.webContents
+  return wc !== undefined && wc !== null && !wc.isDestroyed()
+}
+
 export class TabManager {
   private tabs: Tab[] = []
   private popups = new PopupRegistry<BrowserWindow>()
@@ -381,7 +397,7 @@ export class TabManager {
 
   list(): TabInfo[] {
     return this.tabs
-      .filter((t) => !t.view.webContents.isDestroyed())
+      .filter((t) => isTabAlive(t))
       .map((t) => ({
         id: t.id,
         url: t.view.webContents.getURL(),
@@ -540,7 +556,7 @@ export class TabManager {
     if (popup) return this.asTab(popup)
     for (let i = this.tabs.length - 1; i >= 0; i--) {
       const t = this.tabs[i]
-      if (t.openerId === openerId && !t.view.webContents.isDestroyed()) return t
+      if (t.openerId === openerId && isTabAlive(t)) return t
     }
     return null
   }
@@ -664,6 +680,9 @@ export class TabManager {
         console.warn(`새 창 차단: ${target}`)
         return { action: 'deny' }
       }
+      // 여는 쪽 페이지에 알린다 — 새 탭이 열려도 그 페이지 화면은 그대로라, AI 클릭의 재시도 폴백이
+      // 같은 버튼을 다시 눌러 탭이 여러 개 열렸다(실기: SAMBA-WAVE 원문링크 → 탭 4개)
+      if (!wc.isDestroyed()) wc.send(IPC.pagePopupOpened)
       // 크롬과 같은 규칙: target=_blank 링크·일반 새 탭 요청은 탭으로 연다.
       // (같은 profile 로 열어 로그인 세션·쿠키가 이어진다)
       if (disposition === 'foreground-tab' || disposition === 'background-tab') {
@@ -793,7 +812,7 @@ export class TabManager {
     const [tab] = this.tabs.splice(idx, 1)
     this.lastDialogMessage.delete(id)
     // 닫히기 전에 주소를 챙겨 둔다(제스처 '닫은 탭 다시 열기')
-    if (!tab.view.webContents.isDestroyed()) {
+    if (isTabAlive(tab)) {
       const record: ClosedTabRecord = {
         url: tab.view.webContents.getURL(),
         profile: tab.profile,
@@ -802,7 +821,7 @@ export class TabManager {
       for (const cb of this.closedListeners) cb(record)
     }
     if (!this.win.isDestroyed()) this.win.contentView.removeChildView(tab.view)
-    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
+    if (isTabAlive(tab)) tab.view.webContents.close()
     if (this.activeId === id) {
       const next = this.tabs[idx] ?? this.tabs[idx - 1]
       if (next) this.activate(next.id)

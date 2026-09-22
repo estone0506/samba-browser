@@ -55,13 +55,15 @@ export class SiteMemoryService {
     prompt: string
     playbookTexts?: readonly string[]
     currentUrl?: string
+    /** 이번 실행의 목표(플레이북 이름). 같은 목표로 남긴 경로를 먼저 싣는다 */
+    goals?: readonly string[]
   }): SiteMemoryBlock {
     if (!this.enabled()) return { text: '', hosts: [], usedRecipe: false }
     const file = this.store.read()
     const hosts = runHosts(input).filter((h) => file[h] !== undefined)
     if (hosts.length === 0) return { text: '', hosts: [], usedRecipe: false }
     const entries = hosts.map((host) => ({ host, entry: file[host] }))
-    const text = buildSiteMemoryBlock(entries)
+    const text = buildSiteMemoryBlock(entries, undefined, input.goals ?? [])
     if (!text) return { text: '', hosts: [], usedRecipe: false }
     const usedRecipe = entries.some((e) => e.entry.recipes.length > 0)
     // 실어 보낸 경로의 사용 횟수를 올린다(효과 비교용)
@@ -76,17 +78,25 @@ export class SiteMemoryService {
   }
 
   /**
-   * 성공(done)으로 끝난 실행의 도구 호출 기록을 기억으로 접는다.
+   * 실행의 도구 호출 기록을 기억으로 접는다.
+   * 성공(done)이면 완주 경로, 끝까지 못 갔으면(도구 상한·오류) partial 경로로 남긴다 —
+   * 5분을 밟은 길이 실패했다는 이유로 통째로 버려지면 다음 실행이 또 처음부터 더듬는다.
+   * goal 을 주면(플레이북 이름) 주문번호가 바뀌어도 같은 경로 하나에 누적된다.
    * 저장 실패가 실행을 깨뜨리지는 않는다
    */
-  learn(input: { prompt: string; calls: readonly AgentToolCall[] }): string[] {
+  learn(input: {
+    prompt: string
+    calls: readonly AgentToolCall[]
+    goal?: string
+    partial?: boolean
+  }): string[] {
     if (!this.enabled()) return []
     const calls = [...input.calls]
     const stepsByHost = extractStepsByHost(calls)
     const notesByHost = autoNotesByHost(calls)
     const hosts = new Set([...stepsByHost.keys(), ...notesByHost.keys()])
     if (hosts.size === 0) return []
-    const goal = toGoal(input.prompt)
+    const goal = input.goal ? toGoal(input.goal) : toGoal(input.prompt)
     const at = this.now()
     const file = { ...this.store.read() }
     for (const host of hosts) {
@@ -94,7 +104,14 @@ export class SiteMemoryService {
       let recipes = entry.recipes
       const steps = stepsByHost.get(host) ?? []
       if (steps.length > 0) {
-        const recipe: SiteRecipe = { goal, steps, createdAt: at, uses: 0, lastOkAt: at }
+        const recipe: SiteRecipe = {
+          goal,
+          steps,
+          createdAt: at,
+          uses: 0,
+          lastOkAt: at,
+          ...(input.partial === true ? { partial: true } : {})
+        }
         recipes = addRecipe(recipes, recipe)
       }
       let notes = entry.notes

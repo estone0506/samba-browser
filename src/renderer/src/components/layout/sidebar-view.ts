@@ -16,12 +16,12 @@ export type { SidebarSectionKey, SidebarSections }
 /**
  * 사이드바 위쪽 이동 항목(적힌 순서가 곧 화면 순서).
  * 눌러도 아무 데도 가지 않는 자리표시자는 두지 않는다 — 모든 항목에 갈 뷰가 있다.
+ * 폰은 설정 안으로 옮겼다(설정 → 폰) — 매일 여는 화면이 아니라 연결할 때만 쓴다.
  * 아이콘은 컴포넌트가 붙이고, view 가 실제 MainView 인지도 컴포넌트에서 검사한다
  */
 export const SIDEBAR_ITEMS = [
   { key: 'browser', view: 'browser' },
   { key: 'tasks', view: 'tasks' },
-  { key: 'phones', view: 'phones' },
   { key: 'logs', view: 'logs' }
 ] as const satisfies readonly { key: string; view: string }[]
 

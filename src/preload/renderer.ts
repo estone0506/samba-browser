@@ -65,6 +65,8 @@ import {
   type NotifyChannel,
   type NotifySendResult
 } from '../shared/ipc'
+import type { AgentImage } from '../shared/agent-image'
+import type { AiUsage } from '../shared/ai'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
 
@@ -153,11 +155,16 @@ const api = {
     // 반환은 "시작 접수" ack 뿐. 완료·실패는 onEvent 의 status 이벤트로 온다
     // chatId 를 주면 메인이 완료 시점에 그 대화에 기록을 남긴다
     // scheduleToken 은 예약이 보낸 실행을 잇는 표식이다(사용자가 직접 칠 때는 없다)
+    // images 는 AI 창에 붙여 넣은 그림(base64). 없으면 인자를 덧붙이지 않는다
     run: (
       prompt: string,
       chatId?: number,
-      scheduleToken?: string
-    ): Promise<IpcResult<AgentRunAck>> => invoke(IPC.agentRun, prompt, chatId, scheduleToken),
+      scheduleToken?: string,
+      images?: AgentImage[]
+    ): Promise<IpcResult<AgentRunAck>> =>
+      images === undefined
+        ? invoke(IPC.agentRun, prompt, chatId, scheduleToken)
+        : invoke(IPC.agentRun, prompt, chatId, scheduleToken, images),
     stop: (): Promise<IpcResult<void>> => invoke(IPC.agentStop),
     confirmReply: (requestId: string, approved: boolean): void => {
       ipcRenderer.send(IPC.agentConfirmReply, requestId, approved)
@@ -252,6 +259,9 @@ const api = {
     putItem: (input: PutItemInput): Promise<IpcResult<VaultItemMeta>> =>
       invoke(IPC.vaultPutItem, input),
     deleteItem: (id: number): Promise<IpcResult<void>> => invoke(IPC.vaultDeleteItem, id),
+    // 결제 비밀번호 항목을 다른 계정으로 복사. 복사한 개수만 돌아온다
+    copyPaymentItems: (fromAccountId: number, toAccountId: number): Promise<IpcResult<number>> =>
+      invoke(IPC.vaultCopyPaymentItems, fromAccountId, toAccountId),
     // 사용자가 '보기' 를 눌렀을 때만 호출한다. fieldKey 로 항목 안의 개별 필드를 지정한다
     reveal: (id: number, fieldKey?: string): Promise<IpcResult<string>> =>
       invoke(IPC.vaultReveal, id, fieldKey),
@@ -326,6 +336,12 @@ const api = {
     ): Promise<IpcResult<AiConnectResult>> => invoke(IPC.aiConnect, provider, openTerminal),
     disconnect: (provider: SubscriptionProviderId): Promise<IpcResult<AiConnectResult>> =>
       invoke(IPC.aiDisconnect, provider),
+    // 다른 계정으로 바꾸기: 로그아웃 + 로그인 터미널을 연다(로그인은 사용자가 그 창에서 한다)
+    switchAccount: (provider: SubscriptionProviderId): Promise<IpcResult<{ opened: boolean }>> =>
+      invoke(IPC.aiSwitchAccount, provider),
+    // Claude 구독 사용량(비율·재설정 시각). 조회 실패는 null
+    usage: (provider?: SubscriptionProviderId): Promise<IpcResult<AiUsage | null>> =>
+      invoke(IPC.aiUsage, provider),
     setProvider: (
       id: AiProviderId
     ): Promise<
@@ -456,6 +472,11 @@ const api = {
       invoke(IPC.phoneSetLabel, id, label, country),
     assign: (accountId: number, phoneId: number | null): Promise<IpcResult<void>> =>
       invoke(IPC.phoneAssign, accountId, phoneId),
+    remove: (id: number): Promise<IpcResult<void>> => invoke(IPC.phoneRemove, id),
+    pair: (address: string, code: string): Promise<IpcResult<{ ok: boolean; message: string }>> =>
+      invoke(IPC.phonePair, address, code),
+    assigned: (accountId: number): Promise<IpcResult<number | null>> =>
+      invoke(IPC.phoneAssigned, accountId),
     authEvents: (limit?: number): Promise<IpcResult<AuthEventDto[]>> =>
       invoke(IPC.phoneAuthEvents, limit),
     // 폰 연동 프로그램(adb·scrcpy) 설치 상태·원클릭 설치
@@ -477,8 +498,9 @@ const api = {
       ipcRenderer.on(IPC.phoneAuthWaiting, h)
       return () => ipcRenderer.off(IPC.phoneAuthWaiting, h)
     },
-    screenStart: (serial: string): Promise<IpcResult<ScreenMode>> =>
-      invoke(IPC.phoneScreenStart, serial),
+    // mode 'still' 을 주면 동영상을 건너뛰고 간이 화면으로 연다(디코더가 못 푸는 폰)
+    screenStart: (serial: string, mode?: 'still'): Promise<IpcResult<ScreenMode>> =>
+      invoke(IPC.phoneScreenStart, serial, mode),
     // 사용자가 화면을 직접 눌렀을 때. 좌표는 0~1 비율
     tap: (serial: string, rx: number, ry: number): Promise<IpcResult<void>> =>
       invoke(IPC.phoneTap, serial, rx, ry),

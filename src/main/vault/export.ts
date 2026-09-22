@@ -9,6 +9,7 @@
 // Electron 의존성은 주입받는다(ExportDeps) — 테스트에서 파일 쓰기·다이얼로그를 대체한다.
 
 import { chmod, writeFile } from 'node:fs/promises'
+import { tr } from '../i18n'
 import { DEFAULT_FIELD_KEY } from './fields'
 import type {
   ExportFormat,
@@ -26,9 +27,10 @@ export const EXPORT_CSV_HEADER = 'name,url,username,password,note'
 /** JSON 내보내기 스키마 버전 */
 export const EXPORT_JSON_VERSION = 1
 
-/** 저장 다이얼로그에 고정으로 노출하는 경고 문구(파일에 평문이 들어간다) */
-export const EXPORT_WARNING =
-  '내보낸 파일에는 비밀번호가 평문으로 들어갑니다. 저장 후 안전한 곳으로 옮기고 원본은 지우세요.'
+/** 저장 다이얼로그에 고정으로 노출하는 경고 문구(파일에 평문이 들어간다). 앱 언어를 따르도록 부를 때마다 고른다 */
+export function exportWarning(): string {
+  return tr('vault.exportWarning')
+}
 
 /**
  * 내보낼 항목 한 줄. 평문이 담기므로 메인 프로세스 밖으로 나가지 않는다.
@@ -139,11 +141,12 @@ export async function exportVault(deps: ExportDeps, req: ExportRequest): Promise
   if (!(await deps.vault.verifyMaster(req.master))) throw new Error('invalid-master')
 
   const now = deps.now?.() ?? Date.now()
+  const warning = exportWarning()
   const filePath = await deps.showSaveDialog({
     defaultPath: defaultExportFileName(req.format, now),
     filters: req.format === 'csv' ? CSV_FILTERS : JSON_FILTERS,
-    message: EXPORT_WARNING,
-    nameFieldLabel: EXPORT_WARNING
+    message: warning,
+    nameFieldLabel: warning
   })
   if (!filePath) throw new Error('cancelled')
 

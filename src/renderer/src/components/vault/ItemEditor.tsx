@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+import { Eye, EyeOff } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -63,7 +64,10 @@ const FORM_SPECS: Record<VaultItemType, SectionSpec[]> = {
           options: PAYMENT_PROVIDERS,
           optionLabelPrefix: 'vault.paymentProvider'
         },
-        { key: 'value', labelKey: 'vault.fieldNames.password', kind: 'secret' }
+        { key: 'value', labelKey: 'vault.fieldNames.password', kind: 'secret' },
+        // 토스페이처럼 결제창이 휴대폰 번호·생년월일을 먼저 묻는 수단용(선택). AI 가 결제창에 채운다
+        { key: 'payment.phone', labelKey: 'vault.fieldNames.paymentPhone', kind: 'text' },
+        { key: 'payment.birth', labelKey: 'vault.fieldNames.paymentBirth', kind: 'text' }
       ]
     }
   ],
@@ -111,6 +115,50 @@ const FORM_SPECS: Record<VaultItemType, SectionSpec[]> = {
 }
 
 const CUSTOM_SECTION_KEY = 'custom'
+
+/**
+ * 비밀 입력칸 + [보이기] 눈 버튼. 지금 치고 있는 글자를 확인하는 용도다 —
+ * 편집기는 저장된 비밀값을 불러오지 않으므로(빈 칸 = 그대로 둠) 이 버튼으로 기존 값이 드러나지는 않는다.
+ * 칸을 벗어나 다른 항목을 열면 컴포넌트가 새로 만들어져 다시 가려진다
+ */
+function SecretInput({
+  value,
+  onChange,
+  placeholder
+}: {
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [shown, setShown] = useState(false)
+  const label = t(shown ? 'vault.editor.hideSecret' : 'vault.editor.showSecret')
+  return (
+    <div className="relative min-w-0 flex-1">
+      <Input
+        type={shown ? 'text' : 'password'}
+        autoComplete="off"
+        data-lpignore="true"
+        spellCheck={false}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="pr-9"
+      />
+      <button
+        type="button"
+        aria-label={label}
+        title={label}
+        aria-pressed={shown}
+        onClick={() => setShown((v) => !v)}
+        className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[7px] text-[var(--text2)] hover:bg-black/5 hover:text-[var(--text)]"
+      >
+        {shown ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
+    </div>
+  )
+}
+
 const FIELD_KINDS: FieldKind[] = ['text', 'secret', 'url', 'date']
 
 interface CustomField {
@@ -336,21 +384,23 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
                     </select>
                   ) : (
                     <div className="flex items-center gap-1.5">
-                      <Input
-                        type={
-                          field.kind === 'secret'
-                            ? 'password'
-                            : field.kind === 'date'
-                              ? 'date'
-                              : 'text'
-                        }
-                        autoComplete="off"
-                        data-lpignore="true"
-                        spellCheck={false}
-                        value={values[field.key] ?? ''}
-                        onChange={(e) => setValue(field.key, e.target.value)}
-                        placeholder={item ? t('vault.editor.keepHint') : ''}
-                      />
+                      {field.kind === 'secret' ? (
+                        <SecretInput
+                          value={values[field.key] ?? ''}
+                          onChange={(v) => setValue(field.key, v)}
+                          placeholder={item ? t('vault.editor.keepHint') : ''}
+                        />
+                      ) : (
+                        <Input
+                          type={field.kind === 'date' ? 'date' : 'text'}
+                          autoComplete="off"
+                          data-lpignore="true"
+                          spellCheck={false}
+                          value={values[field.key] ?? ''}
+                          onChange={(e) => setValue(field.key, e.target.value)}
+                          placeholder={item ? t('vault.editor.keepHint') : ''}
+                        />
+                      )}
                       {field.kind === 'secret' && (
                         <Popover>
                           <PopoverTrigger asChild>
@@ -438,12 +488,19 @@ function CustomFieldEditor({
       {fields.map((field) => (
         <Field key={field.key} label={field.label}>
           <div className="flex items-center gap-1.5">
-            <Input
-              type={field.kind === 'secret' ? 'password' : 'text'}
-              autoComplete="off"
-              value={values[field.key] ?? ''}
-              onChange={(e) => onChange(field.key, e.target.value)}
-            />
+            {field.kind === 'secret' ? (
+              <SecretInput
+                value={values[field.key] ?? ''}
+                onChange={(v) => onChange(field.key, v)}
+              />
+            ) : (
+              <Input
+                type="text"
+                autoComplete="off"
+                value={values[field.key] ?? ''}
+                onChange={(e) => onChange(field.key, e.target.value)}
+              />
+            )}
             <Button
               type="button"
               variant="outline"

@@ -2,6 +2,7 @@
 // 렌더러의 MediaRecorder 가 한다. '직접 지정' 은 화면 소스를 canvas 로 잘라서 녹화한다
 
 import type { CaptureVideoSourceDto } from '@shared/capture'
+import i18n from '@renderer/i18n'
 
 // vp9 우선, 안 되면 브라우저가 고르게 둔다
 const MIME_CANDIDATES = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
@@ -86,7 +87,7 @@ export async function startRecording(options: StartRecordingOptions): Promise<Re
     canvas.width = Math.max(2, Math.round(crop.width * ratio))
     canvas.height = Math.max(2, Math.round(crop.height * ratio))
     const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('캔버스를 만들지 못했습니다')
+    if (!ctx) throw new Error(i18n.t('screenCapture.canvasFailed'))
     const draw = (): void => {
       ctx.drawImage(
         video,
@@ -147,7 +148,7 @@ export async function startRecording(options: StartRecordingOptions): Promise<Re
   let recorderError: Error | null = null
   let onRecorderError: ((e: Error) => void) | null = null
   recorder.onerror = (): void => {
-    recorderError = new Error('녹화 중 오류가 났어요')
+    recorderError = new Error(i18n.t('screenCapture.recorderError'))
     for (const fn of cleanups) fn()
     onRecorderError?.(recorderError)
   }
@@ -193,7 +194,7 @@ export async function cropDataUrl(
   canvas.width = Math.max(1, Math.round(rect.width))
   canvas.height = Math.max(1, Math.round(rect.height))
   const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('캔버스를 만들지 못했습니다')
+  if (!ctx) throw new Error(i18n.t('screenCapture.canvasFailed'))
   ctx.drawImage(
     image,
     Math.round(rect.x),

@@ -198,3 +198,40 @@ describe('PhoneRepo', () => {
     expect(tables).not.toContain('account_phones')
   })
 })
+
+describe('PhoneRepo.mergeAlias — 전송 이름으로 만들어진 줄 합치기', () => {
+  let db: Db
+  let repo: PhoneRepo
+  const seen = (serial: string, transport: 'usb' | 'wifi' = 'wifi'): number =>
+    repo.upsertSeen({ serial, model: 'SM A155N', transport, state: 'online', at: 1 }).id
+
+  beforeEach(async () => {
+    db = await openDatabase(':memory:')
+    repo = new PhoneRepo(db)
+  })
+  afterEach(() => db.close())
+
+  it('실제 시리얼 줄이 없으면 시리얼만 바꾼다(붙여 둔 이름·담당 계정 유지)', () => {
+    const id = seen('192.168.45.212:5555')
+    repo.setLabel(id, '김사무', 'KR')
+    repo.assignAccount(7, id)
+    repo.mergeAlias('192.168.45.212:5555', 'R3CR50QEJJN')
+    expect(repo.list().map((r) => [r.serial, r.label])).toEqual([['R3CR50QEJJN', '김사무']])
+    expect(repo.phoneForAccount(7)?.id).toBe(id)
+  })
+
+  it('실제 시리얼 줄이 있으면 담당 계정을 옮기고 옛 줄을 지운다', () => {
+    const real = seen('RF9X4021NHD', 'usb')
+    const alias = seen('adb-RF9X4021NHD-iEPG7p._adb-tls-connect._tcp')
+    repo.assignAccount(9, alias)
+    repo.mergeAlias('adb-RF9X4021NHD-iEPG7p._adb-tls-connect._tcp', 'RF9X4021NHD')
+    expect(repo.list().map((r) => r.serial)).toEqual(['RF9X4021NHD'])
+    expect(repo.phoneForAccount(9)?.id).toBe(real)
+  })
+
+  it('없는 줄이면 아무 일도 하지 않는다', () => {
+    seen('RF9X4021NHD', 'usb')
+    repo.mergeAlias('10.0.0.1:5555', 'RF9X4021NHD')
+    expect(repo.list()).toHaveLength(1)
+  })
+})

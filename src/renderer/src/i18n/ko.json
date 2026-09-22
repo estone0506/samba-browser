@@ -155,7 +155,8 @@
     "save": "저장",
     "shortcutHint": "Ctrl+Alt+1~9 로 전환",
     "switchedNotice": "작업공간을 바꿨습니다. 이미 열려 있는 탭은 이전 세션을 그대로 쓰고, 새로 여는 탭부터 새 세션을 씁니다.",
-    "settingsHint": "작업공간은 사이드바에서 관리해요"
+    "settingsHint": "작업공간은 사이드바에서 관리해요",
+    "requestFailed": "작업공간 요청에 실패했습니다"
   },
   "address": {
     "placeholder": "검색어 또는 URL 입력",
@@ -180,6 +181,10 @@
   "chat": {
     "title": "AI",
     "placeholder": "지시를 입력하세요…",
+    "imagePasted": "이미지 {{n}}장 첨부됨",
+    "imageRemove": "이미지 제거",
+    "imageTooLarge": "5MB 를 넘는 이미지는 붙일 수 없어요",
+    "imageTooMany": "이미지는 한 번에 {{max}}장까지 붙일 수 있어요",
     "send": "전송",
     "stop": "중단",
     "thinking": "생각 중…",
@@ -208,7 +213,8 @@
     "collapsePanel": "AI 패널 접기",
     "expandPanel": "AI 패널 펼치기",
     "setupHint": "AI 가 아직 연결되지 않았어요.",
-    "setupLink": "설정 → AI 연결"
+    "setupLink": "설정 → AI 연결",
+    "lockedWhileRunning": "작업이 실행 중일 때는 다른 대화로 이동할 수 없습니다. 끝나거나 중지한 뒤 눌러 주세요"
   },
   "confirm": {
     "title": "확인이 필요합니다",
@@ -222,6 +228,9 @@
   "handoff": {
     "title": "추가 확인이 필요해요",
     "body": "사이트가 추가 확인을 요구해요. 화면에서 직접 입력하면 이어서 진행해요",
+    "keypadTitle": "결제 비밀번호를 직접 눌러 주세요",
+    "keypadBody": "앱은 결제 비밀번호 키패드를 대신 누르지 않아요. 화면의 키패드에서 비밀번호를 누르고 완료까지 누르면 결제 결과 확인을 이어서 해요",
+    "keypadSkip": "나중에 직접 결제",
     "skip": "건너뛰고 계속",
     "abort": "작업 중단",
     "waiting": "사용자 확인 대기 중…",
@@ -243,7 +252,7 @@
     "finalConfirm": "최종 확인"
   },
   "auth": {
-    "missing": "AI 연결이 안 됐어요. 터미널에서 claude login 을 실행하거나 설정에서 API 키를 입력하세요.",
+    "missing": "AI 연결이 안 됐어요. 터미널에서 claude auth login 을 실행하거나 설정에서 API 키를 입력하세요.",
     "limit": "AI 사용 한도에 도달했어요. 잠시 후 다시 시도하세요.",
     "notConnected": "AI 연결이 없어요. 설정 > AI 연결에서 구독을 연결하거나 API 키를 넣어 주세요"
   },
@@ -323,7 +332,10 @@
     "shortcuts": "단축키",
     "shortcutsDesc": "Alt+1~6 이 기본값이에요. 비워 두면 단축키를 쓰지 않아요",
     "shortcutInvalid": "단축키 표기를 알아볼 수 없어요 (예: Alt+1)",
-    "recordingBusy": "녹화 중에는 새 녹화를 시작할 수 없어요. 먼저 중지해 주세요 (이미지 캡처는 가능)"
+    "recordingBusy": "녹화 중에는 새 녹화를 시작할 수 없어요. 먼저 중지해 주세요 (이미지 캡처는 가능)",
+    "regionNotFound": "녹화할 영역을 찾지 못했습니다",
+    "canvasFailed": "캔버스를 만들지 못했습니다",
+    "recorderError": "녹화 중 오류가 났어요"
   },
   "bookmark": {
     "title": "북마크",
@@ -520,7 +532,9 @@
       "newTitle": "{{type}} 추가",
       "editItemTitle": "{{type}} 편집",
       "generate": "생성",
-      "keepHint": "비워두면 기존 값을 유지해요"
+      "keepHint": "비워두면 기존 값을 유지해요",
+      "showSecret": "입력한 값 보이기",
+      "hideSecret": "입력한 값 가리기"
     },
     "import": {
       "title": "가져오기",
@@ -653,6 +667,8 @@
       "expiry": "유효기간",
       "cvc": "CVC",
       "cardPassword": "결제 비밀번호",
+      "paymentPhone": "결제 알림 휴대폰 번호(토스페이 등, 선택)",
+      "paymentBirth": "생년월일 6자리(토스페이 등, 선택)",
       "name": "이름",
       "birth": "생년월일",
       "address": "주소",
@@ -663,7 +679,8 @@
       "paymentProvider": "결제 수단"
     },
     "paymentProvider": {
-      "site": "사이트 자체 결제",
+      "site": "사이트 자체 결제(무신사머니 등)",
+      "musinsapay": "무신사페이",
       "toss": "토스페이",
       "kakao": "카카오페이",
       "naver": "네이버페이",
@@ -714,7 +731,8 @@
       "ai": "AI 연결",
       "automation": "자동화",
       "keymaster": "키마스터",
-      "notify": "알림 연동"
+      "notify": "알림 연동",
+      "phones": "폰 연동"
     },
     "general": {
       "searchTitle": "검색",
@@ -892,7 +910,8 @@
       "badUrl": "https:// 로 시작하는 프로젝트 URL 을 넣어 주세요",
       "badKey": "sb_publishable_ 또는 eyJ 로 시작하는 anon 키를 넣어 주세요. service_role 키는 쓰면 안 됩니다",
       "restartNeeded": "저장했습니다. 앱을 다시 시작하면 적용됩니다",
-      "optional": "비워 두면 동기화 없이 이 PC 에서만 씁니다. 만드는 방법은 README 의 \"내 Supabase 만들기\" 참고"
+      "optional": "비워 두면 동기화 없이 이 PC 에서만 씁니다. 만드는 방법은 README 의 \"내 Supabase 만들기\" 참고",
+      "envInUse": "지금은 프로젝트 폴더의 .env 값(개발용)으로 연결돼 있어 칸이 비어 보여요. 여기 값을 넣으면 그게 우선합니다"
     }
   },
   "sync": {
@@ -909,7 +928,7 @@
   "ai": {
     "claudeSubscriptionDesc": "이 PC 에 설치된 Claude Code 로그인을 그대로 써요",
     "claudeInstallHint": "Claude Code 가 설치되어 있지 않아요. 터미널에서 설치한 뒤 다시 확인하세요",
-    "claudeLoginHint": "터미널에서 claude login 을 실행해 주세요",
+    "claudeLoginHint": "터미널에서 claude auth login 을 실행해 주세요",
     "noKey": "등록된 키 없음",
     "keyPlaceholder": "키를 붙여 넣으면 바로 저장돼요",
     "testOk": "키가 정상이에요",
@@ -938,6 +957,13 @@
     "loginNeededTitle": "로그인이 필요해요",
     "loginNeededDetail": "터미널 창에서 로그인한 뒤 [다시 연결] 을 눌러 주세요. 앱은 아이디·비밀번호를 대신 입력하지 않아요",
     "openTerminal": "터미널 열기",
+    "switchAccount": "다른 계정으로 바꾸기",
+    "usage": {
+      "session": "5시간 세션",
+      "weeklyAll": "주간 전체",
+      "weeklyModel": "주간 {{model}}",
+      "nearLimit": "한도에 거의 닿았어요. 작업이 중간에 끊길 수 있으니 다른 계정으로 바꾸거나 모델을 바꿔 주세요"
+    },
     "retryConnect": "다시 연결",
     "close": "닫기",
     "disconnectTitle": "연결을 해지할까요?",
@@ -967,7 +993,7 @@
   },
   "phone": {
     "title": "폰",
-    "subtitle": "연결된 폰에서 본인인증 문자와 간편결제 승인을 처리합니다. 최대 {{n}}대까지 연결할 수 있어요",
+    "subtitle": "연결된 폰에서 본인인증 문자와 간편결제 승인을 처리합니다",
     "findNow": "지금 찾기",
     "wifiPlaceholder": "와이파이 주소 (예: 192.168.0.5:5555)",
     "wifiConnect": "연결",
@@ -1034,8 +1060,6 @@
       "detectFailed": "경로를 찾지 못했어요. 직접 입력해 주세요",
       "listTitle": "연결된 폰",
       "labelPlaceholder": "별칭 (예: 업무용 갤럭시)",
-      "limitNote": "폰은 한 번에 {{n}}대까지 연결할 수 있어요",
-      "overLimit": "연결 상한 {{n}}대를 넘었어요. 쓰지 않는 폰은 연결을 끊어 주세요",
       "qualityTitle": "화면 품질",
       "maxSize": "해상도",
       "maxSizeDesc": "긴 변 기준 픽셀 수예요. 낮출수록 가볍습니다",
@@ -1043,14 +1067,16 @@
       "autoReconnect": "자동 재연결",
       "autoReconnectDesc": "연결이 끊기면 한 번만 다시 붙여 봐요",
       "paymentTitle": "결제",
-      "paymentDesc": "상한을 넘는 결제는 권한 모드와 상관없이 사람 확인을 받습니다",
-      "paymentLimit": "결제 상한 (원)",
+      "paymentDesc": "폰으로 승인하는 간편결제에 금액 상한을 걸고 싶을 때만 적어 주세요. 기본은 둘 다 없음(0)이에요",
+      "paymentLimit": "결제 상한 (원, 0 = 없음)",
       "settingsOpen": "폰 설정",
-      "settingsClose": "폰 설정 닫기"
+      "settingsClose": "폰 설정 닫기",
+      "firstPaymentLimit": "첫 결제 상한 (원, 0 = 없음)",
+      "firstPaymentLimitDesc": "처음 써 보는 사이트·결제수단 조합의 첫 자동 결제에만 거는 상한이에요. 기본은 없음(0)이에요"
     },
     "assign": {
       "label": "담당 폰",
-      "open": "담당 폰 고르기",
+      "open": "담당 폰 바꾸기",
       "title": "담당 폰 고르기",
       "desc": "이 계정의 본인인증을 어느 폰으로 받을지 고르세요. 고르지 않으면 연결된 폰을 동시에 감시합니다",
       "none": "고르지 않음",
@@ -1059,8 +1085,20 @@
       "save": "저장",
       "suggestion": "{{host}} 인증을 {{phone}} 에서 받았어요. 이 폰을 담당 폰으로 할까요?",
       "accept": "담당 폰으로",
-      "dismiss": "괜찮아요"
-    }
+      "dismiss": "괜찮아요",
+      "currentNone": "고르지 않음 — 연결된 폰을 동시에 감시해요"
+    },
+    "showScreen": "화면 보기",
+    "hideScreen": "화면 닫기",
+    "pairTitle": "USB 없이 와이파이로 등록(무선 디버깅 페어링)",
+    "pairHelp": "폰에서 설정 → 개발자 옵션 → 무선 디버깅 → \"페어링 코드로 기기 페어링\"을 누르면 주소와 6자리 코드가 떠요. 그 창을 띄운 채로 아래에 적어 주세요",
+    "pairAddressPlaceholder": "페어링 주소 (예: 192.168.0.5:37123)",
+    "pairCodePlaceholder": "6자리 코드",
+    "pairButton": "페어링",
+    "pairDone": "페어링됐어요. 잠시 뒤 폰이 자동으로 연결돼요",
+    "pairFailed": "페어링하지 못했어요: {{message}}",
+    "remove": "지우기",
+    "removeConfirm": "한 번 더 누르면 지워요"
   },
   "extensions": {
     "title": "확장",

@@ -36,6 +36,7 @@ export const IPC = {
   vaultAccounts: 'vault:accounts',
   vaultItems: 'vault:items',
   vaultPutItem: 'vault:putItem',
+  vaultCopyPaymentItems: 'vault:copyPaymentItems', // 결제 비밀번호 항목을 다른 계정으로 복사(평문은 메인 안에서만)
   vaultDeleteItem: 'vault:deleteItem',
   vaultReveal: 'vault:reveal',
   vaultUpsertAccount: 'vault:upsertAccount',
@@ -80,6 +81,8 @@ export const IPC = {
   // 미리 정해진 동작 이름(shared/agent-op 의 AgentOp)과 인자만 오간다
   pageAgentCall: 'page:agentCall', // main → 해당 프레임 preload (frame.send)
   pageAgentResult: 'page:agentResult', // 프레임 preload → main (send)
+  // 이 페이지가 새 탭·새 창을 열었다(main → preload). 클릭 폴백이 같은 버튼을 다시 누르지 않게 한다
+  pagePopupOpened: 'page:popupOpened',
   // 파비콘 — 사이트 자체에서만 받아온 dataUrl 을 돌려준다(제3자 전송 없음)
   faviconGet: 'favicon:get',
   // --- 작업공간(브라우저 프로필) ---------------------------------------------
@@ -104,6 +107,8 @@ export const IPC = {
   aiProviders: 'ai:providers', // 제공자 카드 4종 상태(마스킹 문자열만)
   aiConnect: 'ai:connect', // 구독 연결(자격이 없으면 이유만 돌려준다)
   aiDisconnect: 'ai:disconnect', // 구독 연결 해지(PC 의 CLI 로그인 파일은 건드리지 않는다)
+  aiSwitchAccount: 'ai:switchAccount', // 다른 계정으로: CLI 로그아웃 + 로그인 터미널(자격은 사용자가 그 창에서 만든다)
+  aiUsage: 'ai:usage', // Claude 구독 사용량(비율·재설정 시각만. 토큰은 나가지 않는다)
   aiSetProvider: 'ai:setProvider', // 제공자 전환 + 작업별 모델 자동 대체
   aiSetApiKey: 'ai:setApiKey', // 렌더러 → 메인 한 방향으로만 평문 키가 흐른다
   aiTestKey: 'ai:testKey', // 모델 목록 1회 호출로 확인, {ok} 만 반환
@@ -138,10 +143,13 @@ export const IPC = {
   phoneRefresh: 'phone:refresh', // 즉시 스캔
   phoneDetectPaths: 'phone:detectPaths', // adb/scrcpy 경로 자동 찾기
   phoneConnect: 'phone:connect', // 와이파이 주소로 연결
+  phonePair: 'phone:pair', // 무선 디버깅 페어링(주소 + 6자리 코드)
+  phoneRemove: 'phone:remove', // 목록에서 폰 지우기(연결 끊기 + 다시 찾지 않기)
   phoneDisconnect: 'phone:disconnect',
   phoneRecover: 'phone:recover', // kill/start-server 1회 재시도
   phoneSetLabel: 'phone:setLabel', // 별칭·국가
   phoneAssign: 'phone:assign', // 계정 ↔ 폰 매핑
+  phoneAssigned: 'phone:assigned', // 계정의 담당 폰 id 조회(없으면 null)
   phoneScreenStart: 'phone:screenStart',
   phoneScreenStop: 'phone:screenStop',
   phoneScreenChunk: 'phone:screenChunk', // main → renderer 이벤트(영상 청크/스틸 이미지)
@@ -210,6 +218,9 @@ export const IPC = {
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
+/** 넘김 카드 종류. captcha = 캡차·2FA, keypad = 결제 비밀번호 키패드(사용자가 직접 누른다) */
+export type HandoffKind = 'captcha' | 'keypad'
+
 // agent:run 의 즉시 응답. 작업 완료 여부가 아니라 "시작을 받았다"는 뜻만 담는다
 export interface AgentRunAck {
   started: boolean
@@ -255,7 +266,7 @@ export type AgentEvent =
   | { type: 'playbook'; names: string[] }
   // 캡차·2FA 를 사용자에게 넘김. 응답은 agentConfirmReply 채널을 그대로 쓴다
   // (approved=true → 건너뛰고 계속, false → 작업 중단)
-  | { type: 'handoff'; requestId: string; kind: 'captcha'; matched: string; url: string }
+  | { type: 'handoff'; requestId: string; kind: HandoffKind; matched: string; url: string }
   // 넘김 종료(사용자 처리 감지로 자동 재개 포함). 카드를 닫고 진행 로그를 남긴다
   | {
       type: 'handoffDone'

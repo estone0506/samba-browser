@@ -12,11 +12,16 @@ import { countryBadge } from './phone-view'
 export function PhoneAssignDialog({
   accountId,
   open,
-  onOpenChange
+  current,
+  onOpenChange,
+  onSaved
 }: {
   accountId: number
   open: boolean
+  /** 지금 저장돼 있는 담당 폰 id(없으면 null) — 열릴 때 이것부터 골라 둔다 */
+  current: number | null
   onOpenChange: (open: boolean) => void
+  onSaved: (phoneId: number | null) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const { list, load, assign } = usePhoneStore()
@@ -24,14 +29,19 @@ export function PhoneAssignDialog({
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    if (open) void load()
-  }, [open, load])
+    if (!open) return
+    void load()
+    // 열 때마다 저장된 선택에서 시작한다(항상 "고르지 않음"으로 열려 저장이 안 된 것처럼 보였다)
+    setPicked(current)
+  }, [open, load, current])
 
   const save = async (): Promise<void> => {
     setBusy(true)
     const ok = await assign(accountId, picked)
     setBusy(false)
-    if (ok) onOpenChange(false)
+    if (!ok) return
+    onSaved(picked)
+    onOpenChange(false)
   }
 
   return (

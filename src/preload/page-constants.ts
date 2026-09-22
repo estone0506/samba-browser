@@ -53,7 +53,9 @@ export const PAGE_IPC = {
   // AI 프레임 채널: 메인이 이 프레임에서 동작 하나를 시키고(agentCall) 결과를 받는다(agentResult).
   // iframe(주소 검색·보안 키패드) 안 요소를 다루기 위한 통로다
   agentCall: 'page:agentCall',
-  agentResult: 'page:agentResult'
+  agentResult: 'page:agentResult',
+  // ← IPC.pagePopupOpened. 이 페이지의 window.open 이 새 탭·새 창을 만들었다는 알림(main → page)
+  popupOpened: 'page:popupOpened'
 } as const
 
 // 번역 배치 상한·동시 실행 수 사본

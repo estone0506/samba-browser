@@ -126,6 +126,19 @@ describe('AgentRunner.requestHandoff — 일시정지와 재개', () => {
     expect(events.at(-1)).toMatchObject({ type: 'handoffDone', outcome: 'resumed' })
   })
 
+  it('kind 를 주면 카드 이벤트에 그대로 실린다(결제 키패드)', async () => {
+    const { runner, events } = makeRunner()
+    const pending = runner.requestHandoff({
+      matched: '결제 비밀번호 키패드',
+      kind: 'keypad',
+      currentUrl: () => 'https://pay.example/keypad',
+      stillBlocked: async () => false,
+      watch: { sleep: fastSleep, pollMs: 1, timeoutMs: 100 }
+    })
+    expect(events.find((e) => e.type === 'handoff')).toMatchObject({ kind: 'keypad' })
+    await pending
+  })
+
   it("'건너뛰고 계속'(승인)은 skipped 로 끝난다", async () => {
     const { runner, events } = makeRunner()
     const pending = runner.requestHandoff({

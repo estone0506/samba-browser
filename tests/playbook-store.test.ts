@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { PlaybookStore, withBuiltins } from '../src/main/playbooks/store'
 import {
   BUILTIN_UNFULFILLED_ID,
+  PLAYBOOK_INSTRUCTIONS_MAX,
   PLAYBOOK_MAX_COUNT,
   PLAYBOOK_NAME_MAX,
   type PlaybookDto
@@ -157,5 +158,39 @@ describe('기본값 복원', () => {
     expect(created).not.toBeNull()
     if (!created) return
     expect(store.restore(created.id)).toBeNull()
+  })
+})
+
+describe('setInstructions — 절차 본문만 바꾼다', () => {
+  it('이름·트리거·예약은 그대로 두고 본문과 updatedAt 만 바꾼다', () => {
+    const created = store.put({
+      name: '쿠폰',
+      triggers: ['쿠폰'],
+      instructions: '1단계',
+      enabled: true,
+      schedule: { enabled: true, kind: 'daily', at: '09:00' }
+    })!
+    const updated = store.setInstructions(created.id, '1단계\n\n2단계')!
+    expect(updated.instructions).toBe('1단계\n\n2단계')
+    expect(updated.name).toBe('쿠폰')
+    expect(updated.triggers).toEqual(['쿠폰'])
+    expect(updated.schedule?.enabled).toBe(true)
+    expect(store.list().find((p) => p.id === created.id)?.instructions).toBe('1단계\n\n2단계')
+  })
+
+  it('내장 플레이북도 본문은 바꿀 수 있고 builtin 표식은 남는다', () => {
+    const updated = store.setInstructions(BUILTIN_UNFULFILLED_ID, '새 절차')!
+    expect(updated.builtin).toBe(true)
+    expect(updated.instructions).toBe('새 절차')
+  })
+
+  it('없는 id 나 상한 초과 본문은 null 을 돌려주고 저장하지 않는다', () => {
+    store.list()
+    const before = JSON.stringify(settings.get().playbooks)
+    expect(store.setInstructions('없음', 'x')).toBeNull()
+    expect(
+      store.setInstructions(BUILTIN_UNFULFILLED_ID, 'x'.repeat(PLAYBOOK_INSTRUCTIONS_MAX + 1))
+    ).toBeNull()
+    expect(JSON.stringify(settings.get().playbooks)).toBe(before)
   })
 })

@@ -1,7 +1,14 @@
+import { buildLearnPrompt, LEARN_PROMPT_PREFIX, shouldLearn, type LearnedRunJs } from './learn'
+import {
+  buildHistoryNote,
+  RESUME_MAX_RUNS,
+  type ChatSessionStore,
+  type HistoryMessage
+} from './chat-session'
 import { randomUUID } from 'crypto'
 import type { TabManager } from '../browser/tab-manager'
 import type { SettingsStore } from '../settings/store'
-import type { AgentEvent } from '../../shared/ipc'
+import type { AgentEvent, HandoffKind } from '../../shared/ipc'
 import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
 import { hasConnectedPhone } from './tools-phone'
@@ -13,6 +20,7 @@ import { appendPlaybooks, matchPlaybooks, type PlaybookDto } from '../../shared/
 import type { AgentToolCall } from '../../shared/site-memory'
 import type { SiteMemoryBlock, SiteMemoryService } from './site-memory'
 import type { ScheduleRunOverrides } from '../../shared/schedule'
+import type { AgentImage } from '../../shared/agent-image'
 import {
   runQuery,
   runCodexQuery,
@@ -24,6 +32,8 @@ import {
 import { resolveModel } from '../ai/models'
 import type { CodexInput } from './provider-codex'
 import { makeCounter } from './counter'
+import type { SiteScriptStore } from './site-scripts-store'
+import { buildScriptsBlock } from '../../shared/site-scripts'
 import { createTextDeduper } from './dedupe'
 import {
   watchHandoff,
@@ -34,6 +44,16 @@ import {
 
 // 확인 요청 응답 대기 상한 30분
 const CONFIRM_TIMEOUT_MS = 30 * 60 * 1000
+
+/** 지시문에 적힌 카드사 이름("현대카드"·"롯데카드"). 결제 도구가 card 를 빠뜨리면 이 값으로 거부한다 */
+const CARD_NAME_RE =
+  /(현대|롯데|국민|KB국민|KB|신한|삼성|우리|하나|농협|NH농협|NH|BC|비씨|씨티|카카오뱅크|토스뱅크)\s*카드/
+export function cardNamedIn(prompt: string): string | undefined {
+  const m = CARD_NAME_RE.exec(prompt)
+  return m ? m[0].replace(/\s+/g, '') : undefined
+}
+// 답 없이 멈춘 실행을 자동으로 이어갈 때 쓰는 지시문 머리. 이걸로 시작하면 사용자 지시가 아니다
+const AUTO_CONTINUE_PROMPT = '직전 작업을 그 자리에서 이어서'
 
 /**
  * 작업 1건이 남긴 대화 기록. 완료·실패·중단 어느 쪽으로 끝나도 한 번 전달된다.
@@ -50,6 +70,14 @@ export type TranscriptSink = (chatId: number, entry: TranscriptEntry) => void
 
 /** 플레이북 목록 공급자. 주입하지 않으면 플레이북이 전혀 적용되지 않는다 */
 export type PlaybookProvider = () => PlaybookDto[]
+// Codex 백엔드로 이미지가 함께 왔을 때 지시문 끝에 붙이는 안내
+export const CODEX_NO_IMAGE_NOTE =
+  '(The user attached an image, but this AI connection cannot see images. Say so briefly and ask them to describe it.)'
+/** 플레이북 절차 수정기(AI 의 update_playbook 도구가 쓴다). 없으면 도구를 등록하지 않는다 */
+export interface PlaybookEditor {
+  list: () => PlaybookDto[]
+  setInstructions: (id: string, instructions: string) => PlaybookDto | null
+}
 
 /**
  * 폰 도구 배선. 권한 모드·호출 상한·확인 카드는 웹 도구 것을 그대로 쓰므로
@@ -79,12 +107,22 @@ export class AgentRunner {
   private generation = 0
   // 대화 기록 저장 훅(채팅 저장소). 없으면 기록을 남기지 않는다
   private transcript: TranscriptSink | null = null
+  // 사용자 지시 하나당 자동 이어가기 허용 횟수(무한 반복 방지)
+  private autoContinueLeft = 1
+  // 지금 도는 실행이 사용자 지시가 아닌 후속 턴(자동 이어가기·자동 학습)인지. 사용자 지시가 들어오면 양보한다
+  private followUpRunning = false
   // 폰 도구 배선. 없으면 폰 도구를 등록하지 않는다(3단계 전 실행·테스트)
   private phones: PhoneBridge | null = null
   // 자동화 플레이북 목록 공급자. 없으면 시스템 프롬프트에 아무것도 덧붙이지 않는다
   private playbooks: PlaybookProvider | null = null
+  private playbookEditor: PlaybookEditor | null = null
   // 사이트 기억. 없으면 기억을 붙이지도 남기지도 않는다(기존 호출부·테스트)
   private siteMemory: SiteMemoryService | null = null
+  private siteScripts: SiteScriptStore | null = null
+  // 대화 ↔ SDK 세션 연결. 없으면 매 실행이 새 세션이다(기억 없음)
+  private chatSessions: ChatSessionStore | null = null
+  // 세션을 못 이어받을 때 앞부분 요약을 만들 대화 읽기. 없으면 요약도 없다
+  private historyReader: ((chatId: number) => HistoryMessage[]) | null = null
   // 실행 중인 작업이 쥔 금고 자동 잠금 보류 해제 함수. stop() 과 run() 의 finally 가
   // 겹쳐 불러도 되도록 해제 함수 자체가 여러 번 호출에 안전하다
   private releaseVaultHold: (() => void) | null = null
@@ -110,6 +148,28 @@ export class AgentRunner {
   /** 플레이북 목록 공급자를 붙인다. null 이면 플레이북을 적용하지 않는다 */
   setPlaybooks(provider: PlaybookProvider | null): void {
     this.playbooks = provider
+  }
+
+  /** 플레이북 수정기를 붙인다. null 이면 list_playbooks·update_playbook 도구를 내보내지 않는다 */
+  setPlaybookEditor(editor: PlaybookEditor | null): void {
+    this.playbookEditor = editor
+  }
+
+  /** 저장된 사이트 스크립트를 붙인다. null 이면 목록 주입과 save_script·run_script 가 꺼진다 */
+  setSiteScripts(store: SiteScriptStore | null): void {
+    this.siteScripts = store
+  }
+
+  /**
+   * 대화 ↔ SDK 세션 연결을 붙인다. 같은 대화의 다음 지시는 세션을 이어받아 앞선 지시·도구 결과를 기억한다.
+   * reader 는 세션을 못 이어받을 때(세션 없음·상한 초과) 앞부분 요약을 만들 대화 메시지를 준다
+   */
+  setChatSessions(
+    store: ChatSessionStore | null,
+    reader: ((chatId: number) => HistoryMessage[]) | null
+  ): void {
+    this.chatSessions = store
+    this.historyReader = reader
   }
 
   /** 사이트 기억을 붙인다. null 이면 기억 주입·학습·remember_site 가 모두 꺼진다 */
@@ -142,7 +202,9 @@ export class AgentRunner {
       return this.siteMemory.blockFor({
         prompt,
         playbookTexts: playbooks.map((p) => p.instructions),
-        currentUrl: this.currentUrl()
+        currentUrl: this.currentUrl(),
+        // 플레이북 실행은 플레이북 이름으로 경로를 남기므로 같은 이름의 경로를 먼저 싣는다
+        goals: playbooks.map((p) => p.name)
       })
     } catch (e: unknown) {
       console.error('사이트 기억 조회 실패', e instanceof Error ? e.message : String(e))
@@ -170,16 +232,25 @@ export class AgentRunner {
     /** 이번 실행의 전체 도구 호출 수(관찰 도구 포함) */
     toolCalls: number
     usedRecipe: boolean
+    /** 이번 실행에 걸린 플레이북 이름. 있으면 경로를 이 이름으로 누적한다 */
+    goal?: string
+    /** 끝까지 못 간 실행(도구 상한·오류). 성공한 단계까지만 부분 경로로 남긴다 */
+    partial?: boolean
   }): void {
     const seconds = Math.round((Date.now() - run.startedAt) / 1000)
     // 효과 비교용 한 줄. 기억을 실어 보낸 실행이면 표식이 붙는다
     console.info(
-      `작업 완료 — 도구 호출 ${run.toolCalls}회·${seconds}초` +
+      `작업 ${run.partial ? '중단' : '완료'} — 도구 호출 ${run.toolCalls}회·${seconds}초` +
         (run.usedRecipe ? ' (usedRecipe: true)' : '')
     )
     if (!this.siteMemory) return
     try {
-      this.siteMemory.learn({ prompt: run.prompt, calls: run.calls })
+      this.siteMemory.learn({
+        prompt: run.prompt,
+        calls: run.calls,
+        ...(run.goal === undefined ? {} : { goal: run.goal }),
+        ...(run.partial === true ? { partial: true } : {})
+      })
     } catch (e: unknown) {
       console.error('사이트 기억 저장 실패', e instanceof Error ? e.message : String(e))
     }
@@ -216,6 +287,8 @@ export class AgentRunner {
       matched: string
       currentUrl: () => string
       stillBlocked: () => Promise<boolean>
+      // 카드 종류. 없으면 캡차·2FA 로 본다
+      kind?: HandoffKind
       // 테스트에서 폴링 주기·시계를 갈아 끼우기 위한 통로
       watch?: Pick<HandoffWatchDeps, 'sleep' | 'pollMs' | 'timeoutMs'>
     },
@@ -227,7 +300,7 @@ export class AgentRunner {
     emit({
       type: 'handoff',
       requestId: id,
-      kind: 'captcha',
+      kind: req.kind ?? 'captcha',
       matched: req.matched,
       url: req.currentUrl()
     })
@@ -314,11 +387,20 @@ export class AgentRunner {
    * overrides 는 예약 실행이 넘기는 이번 실행만의 모델·권한 모드다 —
    * 주지 않으면(사용자가 직접 친 문장) 전역 설정을 그대로 쓴다
    */
-  async run(prompt: string, chatId?: number, overrides?: ScheduleRunOverrides): Promise<void> {
+  async run(
+    prompt: string,
+    chatId?: number,
+    overrides?: ScheduleRunOverrides,
+    // AI 창에 붙여 넣은 이미지. 모델에만 실어 주고 대화 기록에는 남기지 않는다
+    images?: AgentImage[]
+  ): Promise<void> {
     // 이미 실행 중이면 세대 가드 없이 status 를 emit 하면 진행 중인 실행의 UI 를 덮어쓸 수 있다.
     // 핸들러가 throw 를 { ok: false, error } 로 ack 하므로 에러만 던진다.
     if (this.abort) {
-      throw new Error('이미 실행 중')
+      // 자동 이어가기·자동 학습 턴이 도는 중에 들어온 사용자 지시는 그 턴을 끊고 우선한다.
+      // (실기: 결제 실패 뒤 학습 턴이 도는 사이 친 "연결됐어 다시해"가 조용히 버려졌다)
+      if (this.followUpRunning) this.stop()
+      else throw new Error('이미 실행 중')
     }
     // 이전 작업의 잔여 확인 요청 정리
     this.clearPending()
@@ -339,27 +421,50 @@ export class AgentRunner {
     const gen = ++this.generation
     // 이 실행이 남길 대화 기록. 화면으로 나가는 이벤트와 같은 값만 모은다(라벨·본문)
     const entry: TranscriptEntry = { prompt, text: '', steps: [] }
+    // 자동 이어가기 문장이 아니면 사용자의 새 지시 — 허용 횟수를 되돌린다
+    const autoContinuing = prompt.startsWith(AUTO_CONTINUE_PROMPT)
+    if (!autoContinuing) this.autoContinueLeft = 1
+    this.followUpRunning = autoContinuing || prompt.startsWith(LEARN_PROMPT_PREFIX)
     // 이 실행의 행동 도구 호출 기록. 성공으로 끝나면 사이트 기억이 여기서 경로를 뽑는다
     const calls: AgentToolCall[] = []
+    // 이 실행에서 돌린 run_js 코드 전문. 실행이 끝나면 자동 학습 턴이 이것으로 재생용 스크립트를 만든다
+    const runJsLog: LearnedRunJs[] = []
+    // 이 실행이 끝난 뒤 이어서 돌릴 지시문(자동 이어가기·자동 학습). finally 에서 실행 상태를 비운 다음에 시작한다
+    let followUp: string | null = null
+    // 이 실행의 SDK 세션 id(init 메시지) · 이어받은 세션 id · 이어받기 실패 여부
+    let sessionId: string | null = null
+    let resume: string | undefined
+    let resumeFailed = false
     const startedAt = Date.now()
     // 사용자 문장에 걸리는 플레이북 — 시스템 프롬프트 뒤에 절차를 덧붙이고, 화면에는 이름만 알린다
-    const playbooks = this.matchedPlaybooks(prompt)
+    // 자동 학습 턴에는 플레이북을 붙이지 않는다 — 지시문에 든 "주문처리"에 걸려 주문을 다시 처리하려 들면 안 된다
+    const learning = prompt.startsWith(LEARN_PROMPT_PREFIX)
+    const playbooks = learning ? [] : this.matchedPlaybooks(prompt)
     // 이번 실행에 붙일 사이트 기억 블록(지시문·플레이북 본문·현재 탭 URL 에서 호스트를 뽑는다)
     const memory = this.siteMemoryBlock(prompt, playbooks)
+    const scripts = s.siteMemoryEnabled ? this.siteScripts : null
+    const scriptsBlock = scripts ? buildScriptsBlock(scripts.list()) : ''
     // 이 실행이 최신 세대일 때만 UI 로 이벤트를 보낸다
     const emit = (e: AgentEvent): void => {
       if (gen !== this.generation) return
       if (e.type === 'text') entry.text = entry.text ? `${entry.text}\n${e.text}` : e.text
       if (e.type === 'step') entry.steps.push({ label: e.label, ok: e.ok })
-      // 성공으로 끝난 실행에서만 경로를 남긴다. 속도 지표도 여기서 한 줄 적는다
-      if (e.type === 'status' && e.state === 'done') {
-        this.finishRun({
-          prompt,
-          calls,
-          startedAt,
-          toolCalls: e.toolCalls ?? 0,
-          usedRecipe: memory.usedRecipe
-        })
+      // 성공이면 완주 경로, 도구를 쓰다 실패(상한·오류)했으면 부분 경로를 남긴다.
+      // 연결·인증 문제로 시작도 못 한 실패(auth:*)는 배울 것이 없다. 속도 지표도 여기서 한 줄 적는다
+      if (e.type === 'status' && (e.state === 'done' || e.state === 'failed')) {
+        const partial = e.state === 'failed'
+        const authFailure = partial && (e.message ?? '').startsWith('auth:')
+        if (!authFailure && (!partial || calls.length > 0)) {
+          this.finishRun({
+            prompt,
+            calls,
+            startedAt,
+            toolCalls: e.toolCalls ?? 0,
+            usedRecipe: memory.usedRecipe,
+            ...(playbooks[0] === undefined ? {} : { goal: playbooks[0].name }),
+            ...(partial ? { partial: true } : {})
+          })
+        }
       }
       this.emit(e)
     }
@@ -377,7 +482,9 @@ export class AgentRunner {
             : buildSystemPrompt(s.language, mode, effort, phoneAvailable),
           playbooks
         ),
-        memory.text
+        // 저장된 스크립트 목록은 실행마다 다시 읽는다(직전 실행에서 저장한 것이 바로 보이게).
+        // 사이트 기억을 끈 실행에서는 스크립트도 끈다 — 같은 "학습" 스위치다
+        [memory.text, scriptsBlock].filter((part) => part !== '').join('\n\n')
       )
     const counter = makeCounter(s.maxToolCalls)
     const deduper = createTextDeduper()
@@ -419,8 +526,23 @@ export class AgentRunner {
       onStep: (label, ok) => emit({ type: 'step', label, ok }),
       // 행동 도구 호출만 넘어온다(관찰 도구는 오지 않는다)
       onCall: (call) => calls.push(call),
+      onRunJs: (run) => runJsLog.push(run),
       siteMemory: this.siteMemory
         ? { remember: (host, note) => this.siteMemory?.remember(host, note) ?? '' }
+        : undefined,
+      scripts: scripts
+        ? {
+            find: (name) => scripts.find(name),
+            save: (input) => scripts.save(input),
+            ran: (name, ok) => scripts.ran(name, ok)
+          }
+        : undefined,
+      playbooks: this.playbookEditor
+        ? {
+            list: () => this.playbookEditor?.list() ?? [],
+            update: (id, instructions) =>
+              this.playbookEditor?.setInstructions(id, instructions) ?? null
+          }
         : undefined,
       onProgress: ({ done, total, label }) =>
         emit(
@@ -452,7 +574,9 @@ export class AgentRunner {
           ? {
               tick: counter.tick,
               onStep: (label, ok) => emit({ type: 'step', label, ok }),
-              run: (req) => runPay(req)
+              run: (req) => runPay(req),
+              // 지시문에 카드사가 적혀 있으면 card 없는 결제 호출을 거부한다(다른 카드로 나가지 않게)
+              ...(cardNamedIn(prompt) === undefined ? {} : { requiredCard: cardNamedIn(prompt) })
             }
           : undefined
     })
@@ -473,9 +597,14 @@ export class AgentRunner {
       }
       // Codex 구독 경로: Codex CLI 를 백엔드로 텍스트 응답을 받는다(samba 도구는 붙지 않는다)
       if (backend === 'codex') {
+        // Codex 경로는 이미지를 받지 않는다 — 조용히 빼지 않고 모델에게 그 사실을 알린다
         settled = await this.runOnCodex(
           {
-            prompt,
+            prompt:
+              images && images.length > 0
+                ? `${prompt}
+${CODEX_NO_IMAGE_NOTE}`
+                : prompt,
             systemPrompt: systemPrompt(s.permissionMode),
             model: runModel,
             abort
@@ -485,8 +614,18 @@ export class AgentRunner {
         )
         return
       }
+      // 같은 대화면 SDK 세션을 이어받는다(앞선 지시·탭·도구 결과를 기억). 세션이 없거나 한 세션으로
+      // 너무 오래 돌았으면 새 세션을 열고, 대신 앞부분 요약을 지시문 앞에 붙여 맥락을 넘긴다
+      const session = chatId === undefined ? null : (this.chatSessions?.get(chatId) ?? null)
+      resume = session !== null && session.runs < RESUME_MAX_RUNS ? session.sessionId : undefined
+      const historyNote =
+        resume === undefined && chatId !== undefined && !learning && this.historyReader
+          ? buildHistoryNote(this.historyReader(chatId))
+          : ''
       const stream = runQuery({
-        prompt,
+        prompt: historyNote === '' ? prompt : `${historyNote}${prompt}`,
+        ...(resume === undefined ? {} : { resume }),
+        ...(images && images.length > 0 ? { images } : {}),
         systemPrompt: systemPrompt(s.permissionMode, s.agentEffort),
         model: runModel,
         // 채팅 입력줄에서 고른 추론 강도
@@ -506,6 +645,9 @@ export class AgentRunner {
             const text = deduper.accept(block.text)
             if (text) emit({ type: 'text', text })
           }
+        } else if (msg.type === 'system' && msg.subtype === 'init') {
+          // 이 실행의 SDK 세션 id — 끝나면 대화에 남겨 다음 지시가 이어받는다
+          sessionId = msg.session_id
         } else if (msg.type === 'system' && msg.subtype === 'api_retry') {
           // 인증 실패는 SDK 가 최대 10회 재시도한다(수 분 소요). 회복 불가 오류면 즉시 중단
           apiError = `${msg.error} ${msg.error_status ?? ''}`.trim()
@@ -544,6 +686,16 @@ export class AgentRunner {
             const text = deduper.accept(msg.subtype === 'success' ? msg.result : '')
             if (text) emit({ type: 'text', text })
           }
+          // 도구를 여러 번 부르다가 done 없이 조용히 끝난 경우(실기: 로그인 뒤 빈 응답으로 종료) —
+          // 사람이 "계속"을 치기 전에 한 번만 자동으로 이어 달라고 한다
+          const silentStop =
+            !failed &&
+            counter.count() >= 3 &&
+            !entry.steps.some(
+              (st) => st.label.startsWith('완료:') || st.label.startsWith('계속 진행:')
+            ) &&
+            !entry.steps.some((st) => /넘김|handoff|확인 대기/.test(st.label)) &&
+            this.autoContinueLeft > 0
           settled = true
           emit({
             type: 'status',
@@ -551,9 +703,43 @@ export class AgentRunner {
             toolCalls: counter.count(),
             message: failed ? (kind ? `auth:${kind}` : detail || msg.subtype) : undefined
           })
+          if (silentStop) {
+            this.autoContinueLeft -= 1
+            emit({ type: 'text', text: '(답 없이 멈춰 자동으로 이어갑니다)' })
+            followUp = `${AUTO_CONTINUE_PROMPT} 끝까지 진행하고, 끝나면 done 으로 보고해.`
+          } else if (scripts && shouldLearn(prompt, runJsLog)) {
+            // 성공이든 실패든, 통한 구간까지는 다음에 재생할 수 있게 스스로 저장하게 한다
+            emit({
+              type: 'text',
+              text: '(이번에 통한 절차를 다음부터 한 번에 재생하도록 저장합니다)'
+            })
+            followUp = buildLearnPrompt({
+              userPrompt: prompt,
+              runs: runJsLog,
+              steps: entry.steps,
+              savedScripts: scripts
+                .list()
+                .map((sc) => ({ name: sc.name, description: sc.description }))
+            })
+          }
         }
       }
     } catch (e) {
+      // 세션을 이어받으려다 시작도 못 하고 죽었으면(세션 파일 없음·다른 cwd) 연결을 지우고 새 세션으로 한 번 다시 돈다
+      if (
+        !abort.signal.aborted &&
+        !settled &&
+        resume !== undefined &&
+        chatId !== undefined &&
+        counter.count() === 0 &&
+        sessionId === null
+      ) {
+        settled = true
+        resumeFailed = true
+        this.chatSessions?.clear(chatId)
+        emit({ type: 'text', text: '(이전 세션을 이어받지 못해 새 세션으로 다시 시작합니다)' })
+        followUp = prompt
+      }
       // stop() 또는 result 처리에서 이미 종료 상태를 보냈으면 중복 emit 하지 않는다
       if (!abort.signal.aborted && !settled) {
         const message = e instanceof Error ? e.message : String(e)
@@ -578,6 +764,9 @@ export class AgentRunner {
     } finally {
       releaseVaultHold()
       if (this.releaseVaultHold === releaseVaultHold) this.releaseVaultHold = null
+      // 다음 지시가 이어받을 세션 id 를 대화에 남긴다(이어받기에 실패한 실행은 남기지 않는다)
+      if (chatId !== undefined && sessionId !== null && !resumeFailed)
+        this.chatSessions?.note(chatId, sessionId)
       // 이미 stop() 이나 다음 run() 이 상태를 가져갔으면 건드리지 않는다
       if (gen === this.generation) {
         this.abort = null
@@ -590,6 +779,15 @@ export class AgentRunner {
         } catch (e: unknown) {
           console.error('대화 기록 저장 실패', e instanceof Error ? e.message : String(e))
         }
+      }
+      // 이어서 돌릴 것이 있으면 이 실행이 완전히 끝난 다음(실행 상태를 비운 뒤)에 시작한다.
+      // 그 사이 사용자가 새 지시를 넣었으면(세대가 바뀜) 양보한다
+      const next = followUp
+      if (next !== null && gen === this.generation && !abort.signal.aborted) {
+        setTimeout(() => {
+          if (gen !== this.generation || this.abort) return
+          void this.run(next, chatId).catch(() => undefined)
+        }, 0)
       }
     }
   }

@@ -13,9 +13,9 @@ import { maskSecrets } from './notify'
 import { normalizeHost, registrableDomain } from './host'
 
 /** 호스트 한 곳에 남기는 경로(recipe) 개수 상한 */
-export const SITE_RECIPE_MAX = 5
-/** 경로 한 건의 단계 수 상한 */
-export const SITE_RECIPE_STEP_MAX = 30
+export const SITE_RECIPE_MAX = 8
+/** 경로 한 건의 단계 수 상한. 주문 한 건이 상품→주문서→쿠폰→결제까지 50단계를 넘는다 */
+export const SITE_RECIPE_STEP_MAX = 80
 /** 호스트 한 곳에 남기는 메모 개수 상한 */
 export const SITE_NOTE_MAX = 20
 /** 메모 한 줄의 길이 상한 */
@@ -24,8 +24,8 @@ export const SITE_NOTE_LENGTH_MAX = 160
 export const SITE_GOAL_MAX = 60
 /** 단계 라벨 길이 상한 */
 export const SITE_STEP_LABEL_MAX = 60
-/** 프롬프트에 붙이는 기억 블록 전체 길이 상한 */
-export const SITE_MEMORY_BLOCK_MAX = 1500
+/** 프롬프트에 붙이는 기억 블록 전체 길이 상한(긴 주문 경로 하나가 1,500자를 넘는다) */
+export const SITE_MEMORY_BLOCK_MAX = 3500
 /** 파일 하나에 담는 호스트 수 상한(기억이 한없이 불어나지 않게) */
 export const SITE_HOST_MAX = 100
 
@@ -68,6 +68,11 @@ export interface SiteRecipe {
   uses: number
   /** 마지막으로 이 경로가 통한 시각 */
   lastOkAt: number
+  /**
+   * 끝까지 못 간 실행(도구 상한·오류)에서 성공한 단계까지만 뽑은 경로.
+   * 다음 실행이 "여기까지는 통했다"를 알고 이어 가게 한다. 완주 경로를 덮어쓰지는 않는다
+   */
+  partial?: boolean
 }
 
 /** 호스트 한 곳의 기억 */
@@ -97,13 +102,24 @@ const recipeSchema = z.object({
   steps: z.array(recipeStepSchema).max(SITE_RECIPE_STEP_MAX),
   createdAt: z.number(),
   uses: z.number().catch(0),
-  lastOkAt: z.number().catch(0)
+  lastOkAt: z.number().catch(0),
+  partial: z.boolean().optional()
 })
 
 /** 호스트 한 칸의 스키마. 깨진 칸은 호출부가 통째로 버린다(부분 복구는 하지 않는다) */
 export const siteMemoryEntrySchema = z.object({
   recipes: z.array(recipeSchema).max(SITE_RECIPE_MAX).catch([]),
-  notes: z.array(z.string().max(SITE_NOTE_LENGTH_MAX)).max(SITE_NOTE_MAX).catch([])
+  // 메모 하나가 길이 상한을 넘었다고 그 사이트의 메모 전부를 버리지 않는다 — 긴 것은 잘라서 살리고,
+  // 개수 상한은 최근 것부터 남긴다(실기: 손으로 고친 긴 메모 하나 때문에 "기간은 올해" 메모까지 사라짐)
+  notes: z
+    .array(z.unknown())
+    .transform((list) =>
+      list
+        .filter((n): n is string => typeof n === 'string' && n.trim() !== '')
+        .map((n) => n.slice(0, SITE_NOTE_LENGTH_MAX))
+        .slice(-SITE_NOTE_MAX)
+    )
+    .catch([])
 })
 
 export const siteMemoryFileSchema = z.record(z.string(), siteMemoryEntrySchema)
@@ -268,11 +284,51 @@ export function addNote(notes: readonly string[], note: string): string[] {
   return [...notes, cleaned].slice(-SITE_NOTE_MAX)
 }
 
-/** 경로를 추가한 목록(최신이 앞, 상한 초과분은 버린다) */
+/**
+ * 경로를 추가한 목록(최신이 앞, 상한 초과분은 버린다).
+ * 같은 목표의 옛 경로는 새 것으로 갈아 끼운다(같은 일을 두 줄로 기억하지 않는다) —
+ * 단, 끝까지 못 간 경로(partial)가 이미 있는 완주 경로를 덮어쓰지는 않는다.
+ * 상한을 넘으면 짧은 것부터 버린다: 한 줄짜리 지시("쿠폰 눌러")로 생긴 두 단계 경로가
+ * 주문 한 건의 긴 경로를 밀어내지 않게 한다
+ */
+/** "제대로 된 완주 경로"로 보는 최소 단계 수. 이보다 짧은 완주는 일찍 접은 실행이다 */
+export const SITE_REAL_PATH_MIN_STEPS = 5
+
+/**
+ * 같은 목표의 옛 경로를 새 경로로 갈아 끼울 것인가.
+ *  - 새 경로가 제대로 된 완주(5단계 이상)면 언제나 갈아 끼운다
+ *  - 옛 경로가 제대로 된 완주인데 새 것이 부분 경로면 그대로 둔다
+ *  - 그 밖에는 단계가 더 많은 쪽을 남긴다(같으면 새 것).
+ *    "상품 페이지만 보고 보류" 로 71초 만에 끝난 1단계 완주가, 주문서까지 간 40단계
+ *    부분 경로를 막거나 밀어내면 안 된다(실기에서 관찰)
+ */
+export function replacesSameGoal(old: SiteRecipe, fresh: SiteRecipe): boolean {
+  const real = (r: SiteRecipe): boolean =>
+    r.partial !== true && r.steps.length >= SITE_REAL_PATH_MIN_STEPS
+  if (real(fresh)) return true
+  if (real(old) && fresh.partial === true) return false
+  return fresh.steps.length >= old.steps.length
+}
+
 export function addRecipe(recipes: readonly SiteRecipe[], recipe: SiteRecipe): SiteRecipe[] {
-  // 같은 목표의 옛 경로는 새 것으로 갈아 끼운다(같은 일을 두 줄로 기억하지 않는다)
+  const same = recipes.find((r) => r.goal === recipe.goal)
+  if (same && !replacesSameGoal(same, recipe)) return [...recipes]
   const rest = recipes.filter((r) => r.goal !== recipe.goal)
-  return [recipe, ...rest].slice(0, SITE_RECIPE_MAX)
+  const merged = [recipe, ...rest]
+  if (merged.length <= SITE_RECIPE_MAX) return merged
+  // 버릴 것을 고른다: 단계가 가장 적은 것 → 오래된 것 → 목록 뒤쪽(먼저 들어온 것) 순.
+  // 방금 넣은 경로는 남긴다
+  const candidates = merged.slice(1).map((recipe, index) => ({ recipe, index }))
+  const victims = candidates
+    .sort(
+      (a, b) =>
+        a.recipe.steps.length - b.recipe.steps.length ||
+        a.recipe.lastOkAt - b.recipe.lastOkAt ||
+        b.index - a.index
+    )
+    .slice(0, merged.length - SITE_RECIPE_MAX)
+    .map((c) => c.recipe)
+  return merged.filter((r) => !victims.includes(r))
 }
 
 // === 주입 블록 ==============================================================
@@ -284,12 +340,34 @@ export const SITE_MEMORY_HINT =
 /** 블록에 싣는 경로 개수(호스트당) */
 export const SITE_MEMORY_RECIPES_IN_BLOCK = 2
 
+/** 끝까지 못 간 경로 앞에 붙이는 안내 */
+export const SITE_PARTIAL_HINT =
+  '지난 부분 경로(끝까지 못 갔다. 여기까지는 통했으니 그 다음부터 살펴라)'
+
 function formatRecipe(recipe: SiteRecipe): string {
   const steps = recipe.steps
     .map((s) => `${s.tool} ${s.label}${s.urlPattern ? ` @${s.urlPattern}` : ''}`)
     .join(' > ')
   // 지시문 원문(goal)은 넣지 않는다 — 테스트 지시("결제 금지" 등)가 규칙처럼 주입돼 실제 실행을 막았다
-  return `- 지난 성공 경로: ${steps}`
+  return recipe.partial === true ? `- ${SITE_PARTIAL_HINT}: ${steps}` : `- 지난 성공 경로: ${steps}`
+}
+
+/**
+ * 블록에 실을 경로를 고른다. 이번 실행의 목표(플레이북 이름)와 같은 목표의 경로를 먼저,
+ * 그다음은 최근 것부터. 한 줄짜리 지시로 생긴 짧은 경로가 주문 경로를 밀어내지 않게 한다
+ */
+export function pickRecipes(
+  recipes: readonly SiteRecipe[],
+  goals: readonly string[] = [],
+  limit = SITE_MEMORY_RECIPES_IN_BLOCK
+): SiteRecipe[] {
+  const preferred = recipes
+    .filter((r) => goals.includes(r.goal))
+    .sort((a, b) => b.lastOkAt - a.lastOkAt)
+  const rest = recipes
+    .filter((r) => !goals.includes(r.goal))
+    .sort((a, b) => b.lastOkAt - a.lastOkAt)
+  return [...preferred, ...rest].slice(0, limit)
 }
 
 /**
@@ -298,18 +376,15 @@ function formatRecipe(recipe: SiteRecipe): string {
  */
 export function buildSiteMemoryBlock(
   entries: readonly { host: string; entry: SiteMemoryEntry }[],
-  max = SITE_MEMORY_BLOCK_MAX
+  max = SITE_MEMORY_BLOCK_MAX,
+  goals: readonly string[] = []
 ): string {
   const lines: string[] = []
   for (const { host, entry } of entries) {
     if (entry.notes.length === 0 && entry.recipes.length === 0) continue
     lines.push(`SITE MEMORY (${host}): ${SITE_MEMORY_HINT}`)
     for (const note of entry.notes) lines.push(`- 메모: ${note}`)
-    // 가장 최근 성공 경로부터 1~2개
-    const recent = [...entry.recipes]
-      .sort((a, b) => b.lastOkAt - a.lastOkAt)
-      .slice(0, SITE_MEMORY_RECIPES_IN_BLOCK)
-    for (const recipe of recent) lines.push(formatRecipe(recipe))
+    for (const recipe of pickRecipes(entry.recipes, goals)) lines.push(formatRecipe(recipe))
   }
   const out: string[] = []
   let length = 0

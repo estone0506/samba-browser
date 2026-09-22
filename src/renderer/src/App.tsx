@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import type React from 'react'
+import { DEFAULT_SETTINGS } from '@shared/settings'
 import { useTranslation } from 'react-i18next'
 import { Sidebar } from '@renderer/components/layout/Sidebar'
 import { RightPanel, CollapsedPanelStrip } from '@renderer/components/layout/RightPanel'
@@ -23,6 +24,8 @@ import { canResizeSidebar, sidebarWidthOf } from '@renderer/components/layout/si
 import { useVaultStore } from '@renderer/stores/vaultStore'
 
 export default function App(): React.JSX.Element {
+  // 진행 띠에 보여 줄 도구 호출 상한(설정값). 읽기 전까지는 기본값
+  const [toolCap, setToolCap] = useState(DEFAULT_SETTINGS.maxToolCalls)
   const { t } = useTranslation()
   const { refresh, setTabs } = useBrowserStore()
   const {
@@ -59,6 +62,8 @@ export default function App(): React.JSX.Element {
       setSidebarCollapsed(r.data.sidebarCollapsed)
       useUiStore.getState().setPanelCollapsed(r.data.panelCollapsed)
       setSidebarSections(r.data.sidebarSections)
+      // 진행 띠의 "도구 호출 n / max" 는 실제 상한(설정)을 보여 준다 — 40 고정값이 실기에서 혼란을 줬다
+      setToolCap(r.data.maxToolCalls)
     })
   }, [setSidebarWidth, setPanelWidth, setSidebarCollapsed, setSidebarSections])
   // 예약이 때가 됐다고 알려 오면, 사용자가 직접 친 것과 똑같이 채팅으로 보낸다 —
@@ -122,7 +127,7 @@ export default function App(): React.JSX.Element {
                     : chat.currentLabel || t('chat.thinking')
                 }
                 toolCalls={chat.toolCalls}
-                max={40}
+                max={toolCap}
                 progress={chat.taskProgress}
                 onStop={() => void chat.stop()}
               />

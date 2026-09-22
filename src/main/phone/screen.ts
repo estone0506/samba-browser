@@ -173,7 +173,11 @@ export class ScreenStream {
     return this.sessions.get(serial)?.mode ?? null
   }
 
-  start(serial: string): void {
+  /**
+   * 화면 전송을 시작한다. preferStill 이면 동영상을 건너뛰고 간이 화면(주기 스크린샷)으로 연다 —
+   * 렌더러의 디코더가 이 폰의 동영상을 못 풀 때 쓴다
+   */
+  start(serial: string, preferStill = false): void {
     if (this.sessions.has(serial)) return
     const s: Session = {
       serial,
@@ -191,7 +195,8 @@ export class ScreenStream {
       stillFailures: 0
     }
     this.sessions.set(serial, s)
-    void this.openVideo(s)
+    if (preferStill) this.fallbackToStill(s)
+    else void this.openVideo(s)
   }
 
   stop(serial: string): void {

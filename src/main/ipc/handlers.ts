@@ -1,3 +1,4 @@
+import { ChatSessionStore } from '../agent/chat-session'
 import {
   app,
   dialog,
@@ -26,11 +27,15 @@ import { exportVault, writeOwnerOnlyFile, type ExportRequest } from '../vault/ex
 import { ImportService, type ImportDialogs } from '../import/service'
 import { ChatRepo } from '../chat/repo'
 import { PlaybookStore } from '../playbooks/store'
+import { parseAgentImages } from '../../shared/agent-image'
+import { fetchClaudeUsage } from '../ai/usage'
+import { fetchCodexUsage } from '../ai/usage-codex'
 import type { PlaybookInput } from '../../shared/playbook'
 import { ScheduleRunStore } from '../schedule/runs'
 import { PlaybookScheduler } from '../schedule/scheduler'
 import { ActivityStore } from '../activity/store'
 import { SiteMemoryStore } from '../agent/site-memory-store'
+import { SiteScriptStore } from '../agent/site-scripts-store'
 import { SiteMemoryService } from '../agent/site-memory'
 import { ActivityRecorder } from '../activity/recorder'
 import { RecommendService } from '../activity/recommend'
@@ -111,6 +116,7 @@ import { registerTranslate } from '../translate/register'
 import { registerCaptureIpc } from '../capture/capture-ipc'
 import { isAllowedCaptureDir } from '../capture/paths'
 import type { CaptureShortcutInput } from '../../shared/capture'
+import { tr } from '../i18n'
 
 /**
  * 렌더러가 보낸 툴바 버튼 좌표를 숫자만 남긴 형태로 받는다.
@@ -215,11 +221,20 @@ export function registerIpc(
   // 자동화 플레이북. 사용자 문장에 트리거가 들어 있으면 러너가 절차를 시스템 프롬프트에 덧붙인다
   const playbooks = new PlaybookStore(settings)
   agent.setPlaybooks(() => playbooks.list())
+  // AI 가 배운 절차를 플레이북에 덧붙일 수 있게 한다(저장 전 확인 카드는 도구가 띄운다)
+  agent.setPlaybookEditor(playbooks)
   // 사이트 기억. 파일은 이 PC 의 userData 안에만 있고 동기화 대상이 아니다.
   // 켬/끔은 설정 한 칸(siteMemoryEnabled)으로 매번 다시 읽는다 — 끄면 곧바로 멈춘다
   const siteMemoryStore = new SiteMemoryStore(join(app.getPath('userData'), 'site-memory.json'))
   const siteMemory = new SiteMemoryService(siteMemoryStore, () => settings.get().siteMemoryEnabled)
   agent.setSiteMemory(siteMemory)
+  // 한 번 통한 run_js 코드를 저장해 두고 재생한다(기기 로컬). 사이트 기억과 같은 스위치로 켜고 끈다
+  agent.setSiteScripts(new SiteScriptStore(join(app.getPath('userData'), 'site-scripts.json')))
+  // 같은 대화의 다음 지시는 SDK 세션을 이어받아 앞선 지시·도구 결과를 기억한다(세션 연결은 이 PC 에만 남는다)
+  agent.setChatSessions(
+    new ChatSessionStore(join(app.getPath('userData'), 'chat-sessions.json')),
+    (chatId) => chats.messages(chatId).map((m) => ({ role: m.role, content: m.content }))
+  )
   // 예약 실행. 실행 기록은 이 PC 의 파일에만 남는다(동기화 대상이 아니다)
   const scheduleRuns = new ScheduleRunStore(join(app.getPath('userData'), 'schedule-runs.json'))
   const scheduler = new PlaybookScheduler({
@@ -243,7 +258,7 @@ export function registerIpc(
   // guard 모드에서 confirm/beforeunload 는 사용자 확인 카드를 거쳐야 '예' 가 된다
   tabs.setDialogPolicy({
     mode: () => settings.get().permissionMode,
-    confirm: (message) => agent.requestConfirm(`페이지 확인: ${message}`, 'danger')
+    confirm: (message) => agent.requestConfirm(tr('ipc.pageConfirm', { message }), 'danger')
   })
   vault.onStateChanged((state) => send(IPC.vaultStateChanged, state))
   // 저장 제안 카드에는 host/username/isNew 만 간다(비밀번호는 메인에 남는다)
@@ -329,17 +344,23 @@ export function registerIpc(
   // 실행 시작만 즉시 확인해 주고, 완료·실패는 status 이벤트로만 알린다.
   // (예전처럼 완료까지 기다리면 늦게 끝난 이전 작업의 응답이 새 작업 UI 를 덮어썼다)
   // scheduleToken 은 예약이 보낸 실행임을 잇는 표식이다. 모르는 토큰이면 평소대로 돈다
-  handleFromRenderer(IPC.agentRun, (prompt: string, chatId?: number, scheduleToken?: string) => {
-    // 알림 요약의 "작업:" 줄에 쓸 사용자 지시(비밀값 마스킹은 메시지 조립 때 한다)
-    notifier.setPrompt(prompt)
-    // 활동 기록도 같은 자리에서 지시를 받아 둔다(마스킹은 저장 직전에 한다)
-    activity.notePrompt(prompt)
-    const overrides = scheduler.claimOverrides(scheduleToken)
-    void agent
-      .run(prompt, chatId, overrides)
-      .catch((e: unknown) => console.error('작업 실행 실패', e))
-    return { started: true }
-  })
+  handleFromRenderer(
+    IPC.agentRun,
+    (prompt: string, chatId?: number, scheduleToken?: string, rawImages?: unknown) => {
+      // 붙여 넣은 이미지는 형식·크기·장수를 검증하고, 하나라도 어긋나면 실행하지 않는다
+      const images = parseAgentImages(rawImages)
+      if (images === null) throw new Error(tr('ipc.imagesInvalid'))
+      // 알림 요약의 "작업:" 줄에 쓸 사용자 지시(비밀값 마스킹은 메시지 조립 때 한다)
+      notifier.setPrompt(prompt)
+      // 활동 기록도 같은 자리에서 지시를 받아 둔다(마스킹은 저장 직전에 한다)
+      activity.notePrompt(prompt)
+      const overrides = scheduler.claimOverrides(scheduleToken)
+      void agent
+        .run(prompt, chatId, overrides, images)
+        .catch((e: unknown) => console.error('작업 실행 실패', e))
+      return { started: true }
+    }
+  )
 
   // 설정 화면의 [테스트 보내기] — 지금 입력된 값으로 한 줄 보내 본다
   handleFromRenderer(IPC.notifyTest, (channel: NotifyChannel) => notifier.test(channel))
@@ -395,7 +416,7 @@ export function registerIpc(
       typeof patch.captureDir === 'string' &&
       !isAllowedCaptureDir(patch.captureDir, app.getPath('home'))
     ) {
-      throw new Error('저장 폴더는 홈 폴더 안에서만 지정할 수 있어요')
+      throw new Error(tr('ipc.saveFolderOutsideHome'))
     }
     const s = settings.set(patch)
     // 홈 주소·새 탭 주소·검색엔진이 바뀌면 tab-manager 도 즉시 반영한다
@@ -428,6 +449,12 @@ export function registerIpc(
     return vault.listItems(accountId ?? null)
   })
   handleFromRenderer(IPC.vaultPutItem, (input: PutItemInput) => vault.putItem(input))
+  // 같은 사람의 두 계정이 같은 결제 비밀번호를 쓸 때. 사용자 화면에서만 부른다(AI 도구 아님)
+  handleFromRenderer(IPC.vaultCopyPaymentItems, (from: unknown, to: unknown) => {
+    if (!Number.isInteger(from) || !Number.isInteger(to))
+      throw new Error(tr('vault.accountNotFound'))
+    return vault.copyPaymentItems(from as number, to as number)
+  })
   handleFromRenderer(IPC.vaultDeleteItem, (id: number) => vault.deleteItem(id))
   // 사용자가 '보기' 를 눌렀을 때만 호출된다(감사 로그 기록됨)
   handleFromRenderer(IPC.vaultReveal, (id: number, fieldKey?: string) => vault.reveal(id, fieldKey))
@@ -759,7 +786,7 @@ export function registerIpc(
   )
   // 연결: 자격이 있으면 연결 기록을 남기고, 없으면 이유만 돌려준다(화면이 안내를 띄운다)
   handleFromRenderer(IPC.aiConnect, async (raw: unknown, rawOpenTerminal: unknown) => {
-    if (!isSubscriptionProviderId(raw)) throw new Error('알 수 없는 구독 경로')
+    if (!isSubscriptionProviderId(raw)) throw new Error(tr('ipc.unknownSubscriptionProvider'))
     if (rawOpenTerminal === true) {
       // 새 터미널 창에서 로그인 명령을 띄운다(자격은 그 창에서 사용자가 직접 만든다)
       openLoginTerminal(raw)
@@ -775,14 +802,28 @@ export function registerIpc(
   })
   // 해지: 진행 중 작업이 없을 때만. 앱의 연결 기록만 지우고 CLI 로그인 파일은 두 손 대지 않는다
   handleFromRenderer(IPC.aiDisconnect, (raw: unknown) => {
-    if (!isSubscriptionProviderId(raw)) throw new Error('알 수 없는 구독 경로')
-    if (agent.isRunning()) throw new Error('작업이 끝난 뒤에 연결을 해지할 수 있어요')
+    if (!isSubscriptionProviderId(raw)) throw new Error(tr('ipc.unknownSubscriptionProvider'))
+    if (agent.isRunning()) throw new Error(tr('ipc.disconnectWhileRunning'))
     const next = withConnection(settings.get().aiConnections, raw, disconnectedRecord())
     settings.set({ aiConnections: next })
     return { ok: true, connection: next[connectionKeyOf(raw)] }
   })
+  // 계정 바꾸기: 앱의 연결 기록을 지우고, 새 터미널에서 'claude auth logout & claude auth login' 을 띄운다.
+  // 로그인은 그 창에서 사용자가 직접 한다 — 끝나면 카드의 [연결]로 다시 붙인다
+  handleFromRenderer(IPC.aiSwitchAccount, (raw: unknown) => {
+    if (!isSubscriptionProviderId(raw)) throw new Error(tr('ipc.unknownSubscriptionProvider'))
+    if (agent.isRunning()) throw new Error(tr('ipc.disconnectWhileRunning'))
+    settings.set({
+      aiConnections: withConnection(settings.get().aiConnections, raw, disconnectedRecord())
+    })
+    return { opened: openLoginTerminal(raw) }
+  })
+  // 사용량: 구독 경로별(Claude · Codex). 조회가 안 되면 null(화면은 줄을 숨긴다)
+  handleFromRenderer(IPC.aiUsage, (raw: unknown) =>
+    raw === 'codex_subscription' ? fetchCodexUsage() : fetchClaudeUsage()
+  )
   handleFromRenderer(IPC.aiSetProvider, (raw: unknown) => {
-    if (!isAiProviderId(raw)) throw new Error('알 수 없는 AI 연결 경로')
+    if (!isAiProviderId(raw)) throw new Error(tr('ipc.unknownAiProvider'))
     const before = settings.get()
     const { models, changed } = remapOnProviderChange(
       before.taskModels,
@@ -794,7 +835,7 @@ export function registerIpc(
   })
   // 평문 키는 렌더러 → 메인 한 방향으로만 흐른다. 응답은 마스킹뿐이다
   handleFromRenderer(IPC.aiSetApiKey, (rawVendor: unknown, rawKey: unknown) => {
-    if (!isApiKeyVendor(rawVendor)) throw new Error('알 수 없는 API 키 제공자')
+    if (!isApiKeyVendor(rawVendor)) throw new Error(tr('ipc.unknownApiKeyVendor'))
     const key = typeof rawKey === 'string' ? rawKey : ''
     if (key.trim()) apiKeys.set(rawVendor as ApiKeyVendor, key)
     else apiKeys.remove(rawVendor as ApiKeyVendor)
@@ -802,7 +843,7 @@ export function registerIpc(
   })
   // 확인은 모델 목록 1회 호출. 응답 본문은 읽지도 로그에 남기지도 않는다
   handleFromRenderer(IPC.aiTestKey, async (rawVendor: unknown, rawKey: unknown) => {
-    if (!isApiKeyVendor(rawVendor)) throw new Error('알 수 없는 API 키 제공자')
+    if (!isApiKeyVendor(rawVendor)) throw new Error(tr('ipc.unknownApiKeyVendor'))
     const key = typeof rawKey === 'string' ? rawKey : ''
     return testApiKey(rawVendor as ApiKeyVendor, key)
   })
@@ -815,8 +856,8 @@ export function registerIpc(
     }
   })
   handleFromRenderer(IPC.aiSetTaskModel, (rawKey: unknown, rawModel: unknown) => {
-    if (!isTaskModelKey(rawKey)) throw new Error('알 수 없는 작업 등급')
-    if (typeof rawModel !== 'string' || !rawModel.trim()) throw new Error('모델 이름이 비어 있음')
+    if (!isTaskModelKey(rawKey)) throw new Error(tr('ipc.unknownTaskModel'))
+    if (typeof rawModel !== 'string' || !rawModel.trim()) throw new Error(tr('ipc.emptyModelName'))
     const key = rawKey as TaskModelKey
     const next = { ...settings.get().taskModels, [key]: rawModel.trim() }
     return settings.set({ taskModels: next }).taskModels
@@ -950,7 +991,7 @@ export function registerIpc(
 
   const requireDevices = (): DeviceService => {
     const devices = connection.devices()
-    if (!devices) throw new Error('로그인이 필요합니다')
+    if (!devices) throw new Error(tr('ipc.loginRequired'))
     return devices
   }
   handleFromRenderer(IPC.devicesList, () => requireDevices().list())
@@ -1008,17 +1049,17 @@ export function registerIpc(
   // Electron 39 에는 chrome.action 이 없어 확장이 팝업을 띄워 달라고 할 수 없으므로,
   // manifest 의 default_popup 을 우리가 읽어 같은 자리에 같은 문서를 띄운다
   handleFromRenderer(IPC.extAction, (id: unknown, rawAnchor: unknown): ExtensionActionResult => {
-    if (typeof id !== 'string') throw new Error('확장 id 가 올바르지 않아요')
+    if (typeof id !== 'string') throw new Error(tr('ipc.invalidExtensionId'))
     const item = extensions.find(id)
-    if (!item) throw new Error('목록에 없는 확장이에요')
-    if (!item.enabled) throw new Error('꺼져 있는 확장이에요')
+    if (!item) throw new Error(tr('ipc.extensionNotListed'))
+    if (!item.enabled) throw new Error(tr('ipc.extensionDisabled'))
     const anchor = toExtensionAnchor(rawAnchor)
     if (item.popup) {
       // 팝업은 그 확장이 로드된 세션에서 열어야 chrome.* 이 동작한다.
       // 보통은 지금 보고 있는 탭의 파티션 세션이고, 거기에 없으면 기본 세션으로 내려간다
       const active = tabs.active()?.view.webContents.session
       const ses = sessionWithExtension(id, [...(active ? [active] : []), session.defaultSession])
-      if (!ses) throw new Error('확장이 올라간 세션을 찾지 못했어요')
+      if (!ses) throw new Error(tr('ipc.extensionSessionNotFound'))
       const open = extensionPopup.toggle({
         id,
         url: extensionPopupUrl(id, item.popup),
@@ -1112,6 +1153,10 @@ export function registerIpc(
   handleFromRenderer(IPC.phoneRefresh, () => phones.refresh())
   handleFromRenderer(IPC.phoneDetectPaths, () => phones.detectPaths())
   handleFromRenderer(IPC.phoneConnect, (address: string) => phones.connectWifi(address))
+  handleFromRenderer(IPC.phoneRemove, (id: number) => phones.remove(id))
+  handleFromRenderer(IPC.phonePair, (address: string, code: string) =>
+    phones.pairWifi(address, code)
+  )
   handleFromRenderer(IPC.phoneDisconnect, (serial: string) => phones.disconnect(serial))
   handleFromRenderer(IPC.phoneRecover, (serial: string) => phones.recover(serial))
   handleFromRenderer(IPC.phoneSetLabel, (id: number, label: string, country: string) =>
@@ -1120,6 +1165,7 @@ export function registerIpc(
   handleFromRenderer(IPC.phoneAssign, (accountId: number, phoneId: number | null) =>
     phones.assign(accountId, phoneId)
   )
+  handleFromRenderer(IPC.phoneAssigned, (accountId: number) => phones.assignedPhoneId(accountId))
   handleFromRenderer(IPC.phoneAuthEvents, (limit?: number) => phones.authEvents(limit))
   // 폰 연동 프로그램 원클릭 설치 — 내려받기·해제·설정 저장까지 메인에서만 한다
   handleFromRenderer(IPC.phoneToolsStatus, () =>
@@ -1174,7 +1220,7 @@ export function registerIpc(
   })
   agent.setPhones({
     phones: phoneOps,
-    assigned: () => phones.list().find((p) => p.state === 'online')?.serial ?? null,
+    assigned: () => phoneBridge.defaultSerial(),
     waitForSmsCode: phoneBridge.waitForSmsCode,
     approvePayment: phoneBridge.approvePayment
   })

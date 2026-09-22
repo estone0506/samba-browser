@@ -17,6 +17,18 @@ export function MessageList(): React.JSX.Element {
             key={m.id}
             className="max-w-[88%] self-end rounded-2xl rounded-br-[4px] bg-[var(--text)] px-3 py-2 leading-relaxed text-white"
           >
+            {m.images && m.images.length > 0 && (
+              <div className="mb-1.5 flex flex-wrap gap-1.5">
+                {m.images.map((src, k) => (
+                  <img
+                    key={k}
+                    src={src}
+                    alt=""
+                    className="max-h-32 max-w-full rounded-lg object-contain"
+                  />
+                ))}
+              </div>
+            )}
             {m.text}
           </div>
         ) : (
