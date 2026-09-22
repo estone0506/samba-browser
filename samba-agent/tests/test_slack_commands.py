@@ -57,3 +57,36 @@ def test_주문번호_숫자_자릿수가_범위_밖이면_unknown(digits):
 def test_주문번호_숫자_자릿수_경계값은_인식한다(digits):
     c = parse_command(f'<@BOT> {digits} 처리해')
     assert (c.kind, c.order_no) == ('process', digits)
+
+
+@pytest.mark.parametrize(
+    ('text', 'order_no'),
+    [
+        ('<@BOT> process ABC12345', 'ABC12345'),
+        ('<@BOT> 처리해 ABC12345', 'ABC12345'),
+        ('<@BOT> 처리 ABC12345', 'ABC12345'),
+        ('<@BOT> ABC12345 처리해줘', 'ABC12345'),
+    ],
+)
+def test_명령어_토큰을_주문번호로_읽지_않는다(text, order_no):
+    # 리뷰 지적 — I9: `process ABC12345` 가 order_no='process' 로 읽혔다
+    c = parse_command(text)
+    assert (c.kind, c.order_no) == ('process', order_no)
+
+
+def test_주문번호_안의_글자를_카드로_읽지_않는다():
+    # 리뷰 지적 — I9: 'ABC12345' 안의 'BC' 를 BC카드로 읽었다
+    c = parse_command('<@BOT> process ABC12345')
+    assert c.options == {}
+
+
+@pytest.mark.parametrize(
+    ('text', 'card'),
+    [
+        ('<@BOT> A1 처리해 BC카드', 'BC'),
+        ('<@BOT> A1 처리해 BC', 'BC'),
+        ('<@BOT> 734501000740906 처리해 현대카드로', '현대'),
+    ],
+)
+def test_카드는_단어_경계로만_읽는다(text, card):
+    assert parse_command(text).options == {'card': card}

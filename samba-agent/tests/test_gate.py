@@ -500,3 +500,33 @@ def test_EventLog와_함께_돌아가는_observe_통합(tmp_path):
     rows = log.since(30)
     assert _observe_ok(rows, version='v2') is True
     assert _observe_ok(rows, version='v3') is False
+
+
+def test_슬랙_승인_파일을_승인자로_읽는다(tmp_path):
+    # 리뷰 지적 — I8: `@삼바 승인 <v>` 가 아무것도 기록하지 않으면서 기록했다고 답했다
+    from samba_agent.ops.gate import read_approval, record_approval
+
+    assert read_approval(tmp_path, 'v1') is None
+    path = record_approval(tmp_path, 'v1', 'U1')
+    assert path.name == 'v1.approval.json'
+    assert read_approval(tmp_path, 'v1') == 'U1'
+
+
+def test_이상한_버전_이름으로는_승인_파일을_쓰지_않는다(tmp_path):
+    from samba_agent.ops.gate import record_approval
+
+    with pytest.raises(ValueError):
+        record_approval(tmp_path, '../../etc/passwd', 'U1')
+
+
+def test_승인_파일이_있으면_approve_인자_없이도_판정이_승인을_본다(tmp_path, monkeypatch):
+    from samba_agent.ops.gate import record_approval
+
+    monkeypatch.setattr(gate_mod, 'REPORT_DIR', tmp_path)
+    monkeypatch.setenv('SAMBA_BRIDGE_TOKEN', 'f' * 64)
+    monkeypatch.setenv('SAMBA_AGENT_ROOT', str(tmp_path))
+    monkeypatch.setenv('SAMBA_DB_PATH', str(tmp_path / 'jobs.sqlite'))
+    record_approval(tmp_path, 'v-approved', 'U7')
+    assert gate_mod.main(['--version', 'v-approved']) == 0
+    report = (tmp_path / 'v-approved.md').read_text(encoding='utf-8')
+    assert '| approval | 통과 |' in report

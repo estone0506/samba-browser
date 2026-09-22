@@ -15,6 +15,8 @@ VERSION_RE = re.compile(r'\bv[0-9a-f]{12}\b')
 KNOWN_CARDS = ('현대', '삼성', '신한', '국민', '롯데', '하나', 'BC', '농협')
 # '처리' 로 시작하는 아무 말이나 잡으면 "처리하지마" 도 명령으로 오인한다 — 화이트리스트로 좁힌다
 PROCESS_WORDS = ('처리해', '처리해줘', '처리', 'process')
+# 주문번호 자리에 올 수 없는 말 — 명령어 자체가 주문번호로 읽히면 안 된다(리뷰 지적 — I9)
+COMMAND_WORDS = frozenset(PROCESS_WORDS) | {'상태', '버전', '승인', '취소', '이어서', '진단'}
 
 
 @dataclass(frozen=True)
@@ -28,10 +30,25 @@ class Command:
 
 
 def _first_order(words: list[str]) -> str | None:
+    """첫 주문번호. 명령어 토큰(`process`·`처리해` …)은 건너뛴다(리뷰 지적 — I9)."""
     for w in words:
+        if w in COMMAND_WORDS:
+            continue
         m = ORDER_RE.fullmatch(w)
         if m:
             return m.group(1)
+    return None
+
+
+def _card_option(words: list[str]) -> str | None:
+    """카드 이름. 단어 그 자체이거나 `○○카드…` 꼴일 때만 읽는다.
+
+    부분 문자열로 찾으면 주문번호 'ABC12345' 안의 'BC' 가 BC카드가 된다(리뷰 지적 — I9).
+    """
+    for w in words:
+        for card in KNOWN_CARDS:
+            if w == card or w.startswith(f'{card}카드'):
+                return card
     return None
 
 
@@ -58,10 +75,7 @@ def parse_command(text: str) -> Command:
         order = _first_order(words)
         if not order:
             return Command('unknown')
-        options: dict[str, str] = {}
-        for card in KNOWN_CARDS:
-            if any(card in w for w in words):
-                options['card'] = card
-                break
+        card = _card_option(words)
+        options: dict[str, str] = {'card': card} if card else {}
         return Command('process', order_no=order, options=options)
     return Command('unknown')

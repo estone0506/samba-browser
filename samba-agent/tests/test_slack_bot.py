@@ -243,3 +243,14 @@ def test_채널을_못_풀었으면_슬랙에_보내지_않는다():
     b = SambaBot(app=app, worker=None, queue=None, settings=s, diagnose=lambda v: '')
     assert not b.post('ts1', '아무 말')
     assert app.client.posts == []
+
+
+def test_버전_승인_명령은_승인자를_파일에_남긴다(tmp_path, bot):
+    # 리뷰 지적 — I8
+    from samba_agent.ops.gate import read_approval
+
+    b, _q, _w = bot
+    b.settings = b.settings.model_copy(update={'report_dir': tmp_path})
+    out = b.handle_mention('<@BOT> 승인 vab12cd34ef56', 'U1', None)
+    assert 'vab12cd34ef56' in out
+    assert read_approval(tmp_path, 'vab12cd34ef56') == 'U1'

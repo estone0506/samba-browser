@@ -37,6 +37,52 @@ REPORT_DIR = default_report_dir()
 VERSION_RE = re.compile(r'^[A-Za-z0-9._-]{1,64}$')
 
 
+def approval_path(report_dir: Path, version: str) -> Path:
+    """`<version>.approval.json` 경로. 버전 이름은 파일명으로 안전한 값만 받는다."""
+    if not VERSION_RE.match(version):
+        raise ValueError(f'올바른 버전 이름이 아니다: {version}')
+    return report_dir / f'{version}.approval.json'
+
+
+def record_approval(report_dir: Path, version: str, approved_by: str) -> Path:
+    """슬랙 `@삼바 승인 <버전>` 을 파일로 남긴다(리뷰 지적 — I8).
+
+    이 파일이 없으면 판정은 사용자 승인이 없는 것으로 보고 improve 를 낸다 —
+    봇이 "기록했다" 고만 답하고 아무것도 남기지 않던 문제를 막는다.
+    """
+    path = approval_path(report_dir, version)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                'version': version,
+                'approved_by': approved_by,
+                'at': datetime.now(UTC).isoformat(timespec='seconds'),
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    return path
+
+
+def read_approval(report_dir: Path, version: str) -> str | None:
+    """승인 파일의 승인자. 없거나 깨졌으면 None(= 승인 없음)."""
+    try:
+        path = approval_path(report_dir, version)
+    except ValueError:
+        return None
+    if not path.exists():
+        return None
+    try:
+        body = json.loads(path.read_text(encoding='utf-8'))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        log.warning('승인 파일이 손상됐다: %s — 승인 없음으로 본다', path, exc_info=True)
+        return None
+    approved_by = body.get('approved_by')
+    return str(approved_by) if approved_by else None
+
+
 @dataclass(frozen=True)
 class GateResult:
     """판정 1건."""
@@ -205,7 +251,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog='ops.gate')
     parser.add_argument('--version', required=True, type=_version_arg)
-    parser.add_argument('--approve', default=None, help='승인한 사람(슬랙 ID)')
+    parser.add_argument(
+        '--approve',
+        default=None,
+        help='승인한 사람(슬랙 ID). 없으면 슬랙이 남긴 <버전>.approval.json 을 읽는다',
+    )
     parser.add_argument('--rollback', action='store_true')
     parser.add_argument(
         '--apply',
@@ -278,7 +328,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         observe_ok=_observe_ok(events.since(30), version=args.version),
         dry_run_ok=bool(args.dry_run_ok),
         review_queue_blocking=diagnosis.review_queue_pending,
-        approved_by=args.approve,
+        # 슬랙 `@삼바 승인 <버전>` 과 `--approve` 를 나란히 본다(리뷰 지적 — I8)
+        approved_by=args.approve or read_approval(REPORT_DIR, args.version),
         baseline=baseline,
     )
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
