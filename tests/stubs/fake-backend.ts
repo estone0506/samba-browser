@@ -114,6 +114,13 @@ export function createFakeBackend(): FakeBackend {
     async updatePassword() {
       if (!signedIn) throw new Error('not signed in')
     },
+    async exportSession() {
+      return signedIn ? { accessToken: `at:${signedIn.email}`, refreshToken: 'rt' } : null
+    },
+    async importSession(session) {
+      const email = session.accessToken.replace(/^at:/, '')
+      signedIn = { userId: FAKE_USER_ID, email }
+    },
     async currentUser() {
       return signedIn
     },
