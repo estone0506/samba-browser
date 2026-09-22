@@ -1,7 +1,7 @@
 # 진단 표 — 에이전트별 실패율 / 상위 사유 / 재시도 / 소요 / 직전 대비 / 빈 기간
 import pytest
 
-from samba_agent.ops.diagnose import diagnose
+from samba_agent.ops.diagnose import diagnose, main
 from samba_agent.ops.events import EventLog
 
 
@@ -56,7 +56,7 @@ def test_에이전트별_실패율과_상위_사유(events):
     assert buyer.failures == 2
     assert buyer.fail_rate == pytest.approx(0.2)
     assert buyer.top_reason == 'out_of_stock'
-    assert buyer.retries == 1
+    assert buyer.retries == 2  # 실패 2건, 각 retries=1 의 합
     assert buyer.example_links  # 실패 예시 링크가 있다
 
 
@@ -111,7 +111,7 @@ def test_다른_버전_이벤트만_있으면_빈_표(tmp_path):
     assert d.rows == ()
 
 
-def test_모르는_실패_사유는_문자열_그대로_집계된다(tmp_path):
+def test_모르는_실패_사유는_unknown으로_집계된다(tmp_path):
     log = EventLog(tmp_path / 'e.sqlite')
     log.write(
         job_id=1,
@@ -128,7 +128,7 @@ def test_모르는_실패_사유는_문자열_그대로_집계된다(tmp_path):
     )
     d = diagnose(log, version='v1')
     buyer = next(r for r in d.rows if r.agent == 'buyer.musinsa')
-    assert buyer.top_reason == 'totally_unknown_value'
+    assert buyer.top_reason == 'unknown'
 
 
 def test_fail_reason_없는_실패는_unknown으로_집계된다(tmp_path):
@@ -158,3 +158,57 @@ def test_kind가_agent가_아니면_집계에서_빠진다(tmp_path):
     )
     d = diagnose(log, version='v1')
     assert d.rows == ()
+
+
+# --- 추가: (agent, step) 그룹핑 / nearest-rank p50·p95 / --since 파싱 실패 ---
+
+
+def test_같은_에이전트라도_단계가_다르면_두_줄로_나온다(tmp_path):
+    log = EventLog(tmp_path / 'e.sqlite')
+    log.write(
+        job_id=1,
+        version='v1',
+        env='prod',
+        agent='buyer.musinsa',
+        kind='agent',
+        payload={'ok': True, 'duration_ms': 100, 'step': 'search'},
+    )
+    log.write(
+        job_id=2,
+        version='v1',
+        env='prod',
+        agent='buyer.musinsa',
+        kind='agent',
+        payload={'ok': True, 'duration_ms': 200, 'step': 'checkout'},
+    )
+    d = diagnose(log, version='v1')
+    buyer_rows = [r for r in d.rows if r.agent == 'buyer.musinsa']
+    assert len(buyer_rows) == 2
+    assert {r.step for r in buyer_rows} == {'search', 'checkout'}
+
+
+def test_p50_p95는_표준_nearest_rank로_계산된다(tmp_path):
+    # N=15 (10 의 배수가 아님) — ceil(0.5*15)-1 = 6(0-based, 7번째), ceil(0.95*15)-1 = 13(14번째)
+    log = EventLog(tmp_path / 'e.sqlite')
+    durations = list(range(1, 16))  # 1..15ms
+    for i, dur in enumerate(durations):
+        log.write(
+            job_id=i,
+            version='v1',
+            env='prod',
+            agent='buyer.musinsa',
+            kind='agent',
+            payload={'ok': True, 'duration_ms': dur, 'step': 's'},
+        )
+    d = diagnose(log, version='v1')
+    buyer = next(r for r in d.rows if r.agent == 'buyer.musinsa')
+    assert buyer.p50_ms == 8  # idx = ceil(0.5*15)-1 = 7(0-based) → durations[7] == 8
+    assert buyer.p95_ms == 15  # idx = ceil(0.95*15)-1 = 14(0-based) → durations[14] == 15
+
+
+def test_main은_잘못된_since_값에_argparse_오류로_끝난다(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        main(['--version', 'v1', '--since', 'not-a-number'])
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert 'since' in captured.err

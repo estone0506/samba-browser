@@ -4,15 +4,24 @@
 """
 
 import argparse
-import statistics
+import math
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from samba_agent.failures import FailReason
 from samba_agent.ops.events import EventLog
 
 MAX_LINKS = 3
+
+
+def _parse_since_days(value: str) -> int:
+    """`--since` 값(예: '7d')을 일수로 바꾼다. 잘못된 값이면 argparse 오류로 끝난다."""
+    text = value.strip().removesuffix('d')
+    if not text.isdigit():
+        raise argparse.ArgumentTypeError(f"'{value}' 은(는) 올바른 --since 값이 아니다(예: 7d)")
+    return int(text)
 
 
 @dataclass(frozen=True)
@@ -63,6 +72,24 @@ class Diagnosis:
         return '\n'.join(lines) + '\n'
 
 
+def _parse_fail_reason(value: object) -> str:
+    """`fail_reason` 값을 `FailReason` enum 으로 검증한다. 없거나 모르는 값은 unknown."""
+    if value is None:
+        return FailReason.UNKNOWN.value
+    try:
+        return FailReason(str(value)).value
+    except ValueError:
+        return FailReason.UNKNOWN.value
+
+
+def _nearest_rank(sorted_values: list[int], pct: float) -> int:
+    """표준 nearest-rank 백분위수: 정렬된 값에서 `ceil(pct*N)-1` 번째(0-based)."""
+    if not sorted_values:
+        return 0
+    idx = max(0, math.ceil(pct * len(sorted_values)) - 1)
+    return sorted_values[min(idx, len(sorted_values) - 1)]
+
+
 def diagnose(
     events: EventLog,
     *,
@@ -73,37 +100,43 @@ def diagnose(
 ) -> Diagnosis:
     """이벤트 → 표.
 
-    실패 사유(`top_reason`)는 payload 의 `fail_reason` 문자열을 그대로 센다 — 이 값이
-    `FailReason` enum 밖의 값이라도(모르는 사유) 집계는 막지 않고 그 문자열 그대로
-    표에 남긴다(운영 중 enum 에 없는 값이 들어와도 진단이 죽지 않게).
+    실패 사유(`top_reason`)는 payload 의 `fail_reason` 값을 `FailReason` enum 으로
+    파싱해서 센다. enum 밖의 값(운영 중 잘못 들어온 값)은 `FailReason.UNKNOWN` 으로
+    폴백한다 — 검증되지 않은 문자열이 그대로 표에 남지 않게 한다.
+
+    행은 `agent` 만이 아니라 `(agent, step)` 쌍으로 묶는다 — 같은 에이전트라도
+    단계가 다르면 실패율·재시도·소요가 다르게 나오므로 단계별로 따로 봐야
+    "어느 에이전트의 어느 단계를 고칠지"가 읽힌다.
     """
-    by_agent: dict[str, list[dict[str, object]]] = defaultdict(list)
+    by_key: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
     for row in events.since(since_days):
         if row['version'] != version or row['kind'] != 'agent':
             continue
-        by_agent[str(row['agent'])].append(dict(row['payload']))
+        payload = dict(row['payload'])
+        key = (str(row['agent']), str(payload.get('step', '-')))
+        by_key[key].append(payload)
     rows: list[DiagnosisRow] = []
-    for agent in sorted(by_agent):
-        items = by_agent[agent]
+    for agent, step in sorted(by_key):
+        items = by_key[(agent, step)]
         failures = [p for p in items if not p.get('ok')]
         durations = sorted(int(p.get('duration_ms', 0)) for p in items)
-        reasons = Counter(str(p.get('fail_reason', 'unknown')) for p in failures)
-        rate = len(failures) / len(items) if items else 0.0
+        reasons = Counter(_parse_fail_reason(p.get('fail_reason')) for p in failures)
+        rate = len(failures) / len(items)
         prev = previous.get(agent) if previous else None
         rows.append(
             DiagnosisRow(
                 agent=agent,
-                step=str(items[-1].get('step', '-')),
+                step=step,
                 runs=len(items),
                 failures=len(failures),
                 fail_rate=rate,
                 top_reason=reasons.most_common(1)[0][0] if reasons else '-',
-                # 합이 아니라 최댓값 — "가장 많이 재시도한 건"이 몇 번 재시도했는지를 본다.
-                # (브리프 코드는 sum 이었으나, 브리프의 테스트 픽스처(2건, 각 retries=1)가
-                # retries==1 을 기대해 sum(=2) 과 어긋난다. 테스트를 기준으로 max 로 맞춘다.)
-                retries=max((int(p.get('retries', 0)) for p in items), default=0),
-                p50_ms=int(statistics.median(durations)) if durations else 0,
-                p95_ms=durations[max(0, int(len(durations) * 0.95) - 1)] if durations else 0,
+                # 실패 건의 재시도 합(성공 건은 제외) — "이 기간 이 (에이전트,단계) 가
+                # 재시도로 총 몇 번을 더 썼는지"를 본다. 성공 건의 재시도는 이미 성공으로
+                # 끝났으므로 여기 문제 진단에는 넣지 않는다.
+                retries=sum(int(p.get('retries', 0)) for p in failures),
+                p50_ms=_nearest_rank(durations, 0.50),
+                p95_ms=_nearest_rank(durations, 0.95),
                 delta_vs_prev=(rate - prev) if prev is not None else None,
                 example_links=tuple(str(p['link']) for p in failures if p.get('link'))[:MAX_LINKS],
             )
@@ -121,12 +154,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog='ops.diagnose')
     parser.add_argument('--version', required=True)
-    parser.add_argument('--since', default='7d')
+    parser.add_argument('--since', default='7d', type=_parse_since_days)
     args = parser.parse_args(argv)
     settings = load_settings()
-    days = int(str(args.since).rstrip('d') or 7)
     events = EventLog(settings.root / 'events.sqlite')
-    report = diagnose(events, version=args.version, since_days=days)
+    report = diagnose(events, version=args.version, since_days=args.since)
     out = Path(__file__).resolve().parent / 'reports' / f'{args.version}.diagnose.md'
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(report.to_markdown(), encoding='utf-8')
