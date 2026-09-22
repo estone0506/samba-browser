@@ -266,3 +266,31 @@ def test_요청자가_카드를_지정하지_않아도_payer는_buyer의_카드�
 
     run(reg, agents(payer=payer), options={})
     assert seen['a'].handoff['card'] == '현대'
+
+
+def test_에이전트_실행마다_결과_훅이_불린다(reg):
+    # diagnose 는 kind='agent' 이벤트만 본다 — 훅이 없으면 진단 표가 항상 비어 있다(실기)
+    calls: list[tuple[str, str, str, int]] = []
+
+    def hook(state, stage, agent, result, duration_ms, attempt):
+        calls.append((stage, agent, result.status, attempt))
+        assert duration_ms >= 0
+
+    graph = build_supervisor(reg, agents(), on_agent_result=hook)
+    out = graph.invoke({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True})
+    assert out['outcome'] == 'done'
+    assert calls == [
+        ('buy', 'buyer.musinsa', 'ok', 1),
+        ('pay', 'payer', 'ok', 1),
+        ('record', 'recorder', 'ok', 1),
+        ('verify', 'verifier', 'ok', 1),
+    ]
+
+
+def test_결과_훅이_예외를_던져도_실행은_계속된다(reg):
+    def hook(*_a):
+        raise RuntimeError('기록 실패')
+
+    graph = build_supervisor(reg, agents(), on_agent_result=hook)
+    out = graph.invoke({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True})
+    assert out['outcome'] == 'done'
