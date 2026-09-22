@@ -24,6 +24,14 @@ DECLINED_MARKERS = ('declined', '거절')
 # 결제창의 신원정보(주문자) 입력칸을 찾는 검색어 — find_elements 로 elementId 를 얻는다
 IDENTITY_QUERY = '주문자'
 
+# 웹 결제 비밀번호 키패드 화면에서 요소 번호를 얻는 검색어. 키패드 경로에서는 앱이 번호를 쓰지
+# 않지만(숫자 버튼을 앱이 직접 누른다) fill_secret 스키마가 정수를 요구한다
+KEYPAD_QUERY = '비밀번호'
+
+# 시험 입력(dry-run) 응답 표시. 앱은 'refused: dry-run …'(폰) · 'refused: DRY_RUN …'(웹 키패드)로
+# 돌려준다 — refusal.py 가 거절로 분류하지 않고 그대로 넘겨 준다
+DRY_RUN_MARKERS = ('dry-run', 'dry_run')
+
 # find_elements 응답 한 줄 형식: `[12] textbox "주문자 이름"`(src/shared/snapshot.ts)
 ELEMENT_ID_RE = re.compile(r'^\[(\d+)\]', re.MULTILINE)
 
@@ -160,8 +168,14 @@ class PayerAgent(AgentBase):
         return run_agent(lambda: self._pay(assignment))
 
     def tool(self, name: str, /, **args: object) -> str:
-        """dry_run 이면 부수효과 도구는 허용 목록에 있어도 아예 부르지 않는다(불변조건)."""
-        if self._dry_run and name in DRY_RUN_BLOCKED_TOOLS:
+        """dry_run 이면 부수효과 도구는 허용 목록에 있어도 아예 부르지 않는다(불변조건).
+
+        딱 하나의 예외가 시험 입력이다 — `dryRunDigits` 를 실어 부르면 앱이 결제 비밀번호를
+        그 자리수만 누르고 취소한다(결제는 끝나지 않는다). 그 인자가 없으면 여전히 막는다.
+        """
+        dry_digits = args.get('dryRunDigits')
+        allowed_dry_call = isinstance(dry_digits, int) and dry_digits > 0
+        if self._dry_run and name in DRY_RUN_BLOCKED_TOOLS and not allowed_dry_call:
             raise AgentFailure(
                 'fail',
                 f'dry_run 에서는 부수효과 도구를 부르지 않는다: {name}',
@@ -227,6 +241,57 @@ class PayerAgent(AgentBase):
             )
         return matches[-1][1]
 
+    def _dry_run_keypad(self, a: Assignment, card: str, digits: int) -> AgentResult:
+        """결제창까지 간 뒤 결제 비밀번호를 `digits` 자리만 눌러 보고 취소한다.
+
+        실기에서 키패드 자동 입력이 되는지만 보는 길이다 — 결제는 어느 경로에서도 끝나지
+        않는다. 결제 앱이 정해지면 폰 승인 도구로, 아니면 웹 키패드(fill_secret)로 간다.
+        비밀번호 값은 앱 안에만 있고 여기로는 자리수조차 오지 않는다(돌아오는 것은 문구뿐)."""
+        self.step(f'payer: 시험 입력 — 결제 비밀번호 {digits}자리만 누르고 취소')
+        provider = _pay_provider(card) or self._provider_from_payment_popup()
+        if provider is not None:
+            amount = _amount_krw(a.handoff.get('cost'))
+            if amount is None:
+                raise AgentFailure(
+                    'needs_human',
+                    '결제 금액을 모른다 — 시험 입력도 하지 않는다',
+                    FailReason.UNKNOWN,
+                )
+            # 카드 이름 자체가 결제 앱을 가리키면(예: 토스페이) 앱 안에서 고를 카드가 아니다
+            card_hint = None if _pay_provider(card) else card
+            out = self.tool(
+                'phone_approve_payment',
+                provider=provider,
+                amountKrw=amount,
+                merchant=a.order.source,
+                methodLabel=card,
+                dryRunDigits=digits,
+                **({'card': card_hint} if card_hint else {}),
+            )
+        else:
+            # 결제 앱이 없다 — 사이트 결제창의 웹 키패드다. 요소 번호는 스키마가 요구해서 찾는다
+            found = self.tool('find_elements', query=KEYPAD_QUERY)
+            out = self.tool(
+                'fill_secret',
+                elementId=_element_id(found) or 0,
+                itemType='password',
+                dryRunDigits=digits,
+            )
+        self.note('시험 입력', mask_text(out[:200]))
+        if not any(m in out.lower() for m in DRY_RUN_MARKERS):
+            # 시험 입력이라고 했는데 시험 입력 응답이 아니다 — 결제가 진행됐을 수 있다
+            raise AgentFailure(
+                'needs_human',
+                f'시험 입력 응답이 아니다 — 사람이 결제 상태를 확인한다: {mask_text(out[:100])}',
+                FailReason.PAY_INTERRUPTED,
+            )
+        return AgentResult(
+            status='ok',
+            reason=f'dry-run: 결제 비밀번호 {digits}자리만 눌러 보고 취소했다(결제 안 함)',
+            payload={'dry_run': True, 'paid': False, 'keypad_tested': True, 'digits': digits},
+            evidence=tuple(self.evidence),
+        )
+
     def _pay(self, a: Assignment) -> AgentResult:
         self.evidence = []
         # 요청자가 지정한 카드가 먼저, 없으면 구매 에이전트가 고른 카드다(리뷰 지적 — C3)
@@ -241,6 +306,10 @@ class PayerAgent(AgentBase):
         args = json.dumps({'card': card}, ensure_ascii=False)
         enter = self.tool('run_script', name=script, args=args)
         self.note('결제창', mask_text(enter[:200]))
+
+        if a.dry_run and a.dry_run_digits > 0:
+            # 키패드 시험 입력: 결제 비밀번호를 절반만 누르고 취소한다(결제는 하지 않는다)
+            return self._dry_run_keypad(a, card, a.dry_run_digits)
 
         if a.dry_run:
             # 사용자 검토 전에는 여기까지만 한다(스펙 §10-1) — 부수효과 도구는 부르지 않는다

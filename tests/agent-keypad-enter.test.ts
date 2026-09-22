@@ -38,7 +38,7 @@ const { pageBridge } = vi.hoisted(() => ({
 }))
 vi.mock('../src/main/browser/page-bridge', () => ({ pageBridge }))
 
-const { createSambaTools, KEYPAD_ENTERED_NEXT, KEYPAD_HANDOFF_MESSAGE } =
+const { createSambaTools, KEYPAD_DRY_RUN, KEYPAD_ENTERED_NEXT, KEYPAD_HANDOFF_MESSAGE } =
   await import('../src/main/agent/tools')
 const { secretKeypadGate } = await import('../src/main/agent/secret-page')
 const { DEFAULT_DANGER_WORDS } = await import('../src/shared/danger')
@@ -90,6 +90,7 @@ interface Built {
   confirm: ReturnType<typeof vi.fn>
   steps: Array<{ label: string; ok: boolean }>
   listAccounts: ReturnType<typeof vi.fn>
+  closeTarget: ReturnType<typeof vi.fn>
   getPaymentSecretForFill: ReturnType<typeof vi.fn>
   handoff: ReturnType<typeof vi.fn>
 }
@@ -116,6 +117,7 @@ function build(
   } = {}
 ): Built {
   const confirm = vi.fn(async () => opts.confirmResult ?? true)
+  const closeTarget = vi.fn()
   const steps: Array<{ label: string; ok: boolean }> = []
   // 실제 VaultService.listAccounts 처럼 등록 도메인(eTLD+1)이 같으면 같은 사이트로 본다
   const domainOf = (h: string): string => h.split('.').slice(-2).join('.')
@@ -160,7 +162,8 @@ function build(
             ]
           }
         : {}),
-    navigate: vi.fn(async () => {})
+    navigate: vi.fn(async () => {}),
+    closeTarget
   } as unknown as TabManager
   const handoff = vi.fn(async (): Promise<HandoffResult> => ({
     outcome: 'resumed',
@@ -185,6 +188,7 @@ function build(
     confirm,
     steps,
     listAccounts,
+    closeTarget,
     getPaymentSecretForFill,
     handoff
   }
@@ -358,5 +362,59 @@ describe('fill_secret — 키패드 화면에서 앱이 결제 비밀번호를 �
     const r = await fill(b, { itemType: 'login', provider: undefined })
     expect(r).toContain(KEYPAD_HANDOFF_MESSAGE)
     expect(pageBridge.pressOnce).not.toHaveBeenCalled()
+  })
+})
+
+describe('fill_secret — 시험 입력(dry-run)', () => {
+  // 키패드가 뜬 창이 팝업(결제창)인 경우의 대상 목록
+  const popupTargets = [
+    { id: 'shop-1', kind: 'tab' as const, url: SHOP, title: '주문서', active: true },
+    {
+      id: 'pay-1',
+      kind: 'popup' as const,
+      url: PG,
+      title: '결제',
+      openerId: 'shop-1',
+      active: false
+    }
+  ]
+
+  it('지정한 자리수만 누르고 결제창(팝업)을 닫는다 — 결제는 하지 않는다', async () => {
+    pageBridge.keypadSignals.mockResolvedValue(keypadSignals(PG))
+    const b = build({ tabUrl: PG, openerUrl: SHOP, targets: popupTargets })
+    const r = await fill(b, { dryRunDigits: 3 })
+
+    expect(r).toBe(KEYPAD_DRY_RUN(3, 'popup closed'))
+    expect(r).toContain('DRY_RUN')
+    expect(pageBridge.pressOnce).toHaveBeenCalledTimes(3)
+    expect(b.closeTarget).toHaveBeenCalledWith('pay-1')
+    // 값은 결과·라벨 어디에도 없다
+    expect(SECRET_RE.test(r)).toBe(false)
+    expect(b.steps.some((x) => SECRET_RE.test(x.label))).toBe(false)
+    expect(b.steps.map((x) => x.label)).toContain(
+      '시험 입력: 결제 비밀번호 3자리만 누름(결제 안 함)'
+    )
+  })
+
+  it('팝업이 아니면 취소 버튼을 눌러 키패드를 빠져나온다', async () => {
+    pageBridge.snapshot.mockResolvedValueOnce({
+      url: SHOP,
+      title: '주문서',
+      text: '',
+      elements: [{ id: 9, tag: 'button', role: 'button', text: '취소', isSecret: false }],
+      total: 1
+    })
+    const b = build()
+    const r = await fill(b, { dryRunDigits: 2 })
+
+    expect(r).toBe(KEYPAD_DRY_RUN(2, 'cancel button clicked'))
+    expect(pageBridge.click).toHaveBeenCalledWith(expect.anything(), 9)
+    expect(b.closeTarget).not.toHaveBeenCalled()
+  })
+
+  it('시험 입력은 키패드 1회 제한을 쓰지 않는다(뒤이은 진짜 입력이 통한다)', async () => {
+    const b = build()
+    expect(await fill(b, { dryRunDigits: 1 })).toContain('DRY_RUN')
+    expect(await fill(b)).toBe(KEYPAD_ENTERED_NEXT)
   })
 })

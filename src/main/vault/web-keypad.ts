@@ -65,6 +65,13 @@ export async function enterWebPaymentPassword(deps: {
   filled: () => Promise<number | null>
   sleep?: (ms: number) => Promise<void>
   onStep: (label: string, ok: boolean) => void
+  /**
+   * 시험 입력(dry-run): 앞에서 이 자리수만 누르고 멈춘다. 지정하면 절대 끝까지 누르지 않는다 —
+   * (자리수 − 1) 로 한 번 더 조여 짧은 비밀번호에서도 결제가 진행되지 않게 한다
+   */
+  maxDigits?: number
+  /** 실제로 누른 자리수. 값이 아니라 개수만 알린다(호출부는 비밀번호 길이를 모른다) */
+  onTyped?: (typed: number) => void
 }): Promise<WebKeypadResult> {
   if (deps.vault.state() !== 'unlocked') return 'locked'
   if (!isCompleteLayout(deps.layout)) return 'layout-incomplete'
@@ -85,7 +92,12 @@ export async function enterWebPaymentPassword(deps: {
   const before = await deps.filled().catch(() => null)
   let pressed = 0
   let layout: KeypadLayout = deps.layout
-  for (const d of digits) {
+  // 시험 입력이면 끝까지 누르지 않는다 — 요청 자리수와 (자리수 − 1) 중 작은 쪽까지만
+  const limit =
+    deps.maxDigits === undefined
+      ? digits.length
+      : Math.max(0, Math.min(deps.maxDigits, digits.length - 1))
+  for (const d of digits.slice(0, limit)) {
     // 첫 자리는 방금 읽은 배치를 쓰고, 둘째 자리부터는 다시 읽는다(재배열 키패드)
     if (pressed > 0 && deps.relayout) {
       const fresh = await deps.relayout().catch(() => null)
@@ -114,7 +126,13 @@ export async function enterWebPaymentPassword(deps: {
       }
     }
   }
+  deps.onTyped?.(pressed)
   // 라벨에는 자리수만 남긴다
-  deps.onStep(tr('vault.webKeypadEntered', { digits: digits.length }), true)
+  deps.onStep(
+    deps.maxDigits === undefined
+      ? tr('vault.webKeypadEntered', { digits: pressed })
+      : tr('vault.webKeypadPartial', { digits: pressed }),
+    true
+  )
   return 'ok'
 }

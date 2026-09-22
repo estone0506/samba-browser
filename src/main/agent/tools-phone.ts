@@ -417,6 +417,11 @@ export interface PayToolRequest {
   card?: string
   /** 결제 앱 자체의 키마스터 계정(네이버페이면 naver.com 계정)의 아이디 또는 라벨 */
   payAccount?: string
+  /**
+   * 시험 입력(dry-run) 자리수. 주면 결제 비밀번호를 이 자리수만 누르고 취소한다 —
+   * 실기에서 키패드 자동 입력이 되는지만 보고 결제는 하지 않는다
+   */
+  dryRunDigits?: number
 }
 
 export interface PayToolContext {
@@ -451,6 +456,16 @@ export function createPayTool(ctx: PayToolContext): PhoneTool {
           'part of the card name to pay with inside the pay app, e.g. "현대" for 현대카드 or "LOCA" for 롯데카드. ' +
             'The tool switches the selected card to it before paying and refuses (card-not-found) if the app has no such card.'
         ),
+      dryRunDigits: z
+        .number()
+        .int()
+        .min(1)
+        .max(3)
+        .optional()
+        .describe(
+          'DRY RUN: type only this many digits of the payment password, then cancel and leave the keypad. ' +
+            'Nothing is paid - the tool answers "refused: dry-run". Pass it only when the user asked to test the keypad.'
+        ),
       payAccount: z
         .string()
         .optional()
@@ -478,6 +493,7 @@ export function createPayTool(ctx: PayToolContext): PhoneTool {
           merchant: args.merchant,
           methodLabel: args.methodLabel,
           ...(args.card === undefined ? {} : { card: args.card }),
+          ...(args.dryRunDigits === undefined ? {} : { dryRunDigits: args.dryRunDigits }),
           ...(args.payAccount === undefined ? {} : { payAccount: args.payAccount })
         })
         // 사유는 상태 이름뿐이다 — 화면 값은 담지 않는다(진행 로그는 실행기가 남긴다).

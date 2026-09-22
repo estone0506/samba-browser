@@ -27,6 +27,7 @@ def build_assignment(reg: Registry, spec: AgentSpec, state: RunState) -> Assignm
         allowed_tools=spec.tools,
         rules=reg.rules_text(spec),
         dry_run=bool(state.get('dry_run', True)),
+        dry_run_digits=int(state.get('dry_run_digits', 0) or 0),
         expected=_expected(state),
         handoff=handoff,
     )

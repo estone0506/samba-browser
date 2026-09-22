@@ -42,6 +42,8 @@ class WorkerDeps:
     approval_report: Callable[[Job, str, str, str], None] | None = None
     # settings.dry_run 이 아직 여기까지 안 들어와서 당장은 기본값 True 로 주입한다.
     dry_run: bool = True
+    # dry-run 에서 결제 비밀번호를 몇 자리만 눌러 보고 취소할지(0 이면 결제창까지만)
+    dry_run_digits: int = 0
     # 관측(스펙 §4.5 1단계) — 주입하면 실행 1건이 LangSmith span + 로컬 이벤트로 남는다.
     # 없으면 추적 없이 그냥 돈다(테스트·오프라인)
     events: EventLog | None = None
@@ -77,6 +79,7 @@ class Worker:
             'options': {str(k): str(v) for k, v in job.options.items()},
             'job_id': job.id,
             'dry_run': self.d.dry_run,
+            'dry_run_digits': self.d.dry_run_digits,
         }
         return self._invoke(job, state)
 

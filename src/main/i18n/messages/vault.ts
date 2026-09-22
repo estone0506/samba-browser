@@ -16,6 +16,7 @@ export const vaultMessages = defineMessages({
     'vault.exportWarning':
       '내보낸 파일에는 비밀번호가 평문으로 들어갑니다. 저장 후 안전한 곳으로 옮기고 원본은 지우세요.',
     'vault.webKeypadEntered': '결제 비밀번호 입력({digits}자리)',
+    'vault.webKeypadPartial': '시험 입력: 결제 비밀번호 {digits}자리만 누름(결제 안 함)',
     'vault.webKeypadVerifyFailed': '결제 비밀번호 입력 확인 실패({digits}자리째)',
     'aiKeys.saveFailed': 'API 키 저장 실패: {reason}',
     'aiKeys.safeStorageUnavailable':
@@ -35,6 +36,8 @@ export const vaultMessages = defineMessages({
     'vault.exportWarning':
       'The exported file contains your passwords in plain text. After saving, move it somewhere safe and delete the original.',
     'vault.webKeypadEntered': 'Payment password entered ({digits} digits)',
+    'vault.webKeypadPartial':
+      'Dry run: pressed only {digits} digits of the payment password (not paying)',
     'vault.webKeypadVerifyFailed': 'Payment password entry not registering (digit {digits})',
     'aiKeys.saveFailed': 'Failed to save API key: {reason}',
     'aiKeys.safeStorageUnavailable':
