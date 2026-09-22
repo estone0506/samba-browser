@@ -38,6 +38,9 @@ export const phoneMessages = defineMessages({
     'phone.gateNoAccount': '이 사이트의 계정을 특정할 수 없음',
     'phone.gatePayAccountAmbiguous': '{app} 계정이 여럿이라 골라야 함: {list}',
     'phone.gatePayAccountMissing': '{app} 계정 "{name}" 이 키마스터에 없음',
+    'phone.gatePayAccountMismatch':
+      '네이버페이 창이 다른 계정({shown})으로 로그인됨 — 결제할 계정은 {expected}',
+    'phone.payAccountChecked': '네이버페이 창 계정 확인: {shown}',
     'phone.gateNoPhone': '연결된 폰 없음',
     'phone.gateAssignedOffline':
       '담당 폰({name})이 연결되어 있지 않음 — 폰의 무선 디버깅·와이파이를 확인',
@@ -88,6 +91,9 @@ export const phoneMessages = defineMessages({
     'phone.gateNoAccount': 'could not identify the account for this site',
     'phone.gatePayAccountAmbiguous': 'several {app} accounts - pick one: {list}',
     'phone.gatePayAccountMissing': '{app} account "{name}" is not in KeyMaster',
+    'phone.gatePayAccountMismatch':
+      'Naver Pay window is signed in as {shown}; the account to pay with is {expected}',
+    'phone.payAccountChecked': 'Naver Pay window account verified: {shown}',
     'phone.gateNoPhone': 'no phone connected',
     'phone.gateAssignedOffline':
       'the assigned phone ({name}) is not connected - check its wireless debugging and Wi-Fi',

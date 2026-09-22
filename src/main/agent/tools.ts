@@ -20,6 +20,11 @@ import type { VaultService } from '../vault/service'
 import type { AccountDto, PaymentProvider, VaultItemType } from '../../shared/vault'
 import { normalizeHost } from '../../shared/host'
 import {
+  isNaverPayHost,
+  maskedNaverAccount,
+  maskedNaverAccountMatches
+} from '../../shared/naverpay'
+import {
   checkFillGate,
   checkVaultGate,
   effectiveAccess,
@@ -75,6 +80,14 @@ const HOST_UNKNOWN = 'host unknown: navigate to the site first'
 const HOST_MISMATCH = 'refused: host must match the current tab'
 // 계정을 특정하지 못했을 때 돌려주는 문자열
 const ACCOUNT_NOT_FOUND = 'account not found: use list_accounts'
+// 네이버페이 결제창이 키마스터에서 고른 네이버 계정이 아닌 다른 계정으로 로그인돼 있다.
+// 그 계정으로 결제하면 안 되므로 넣지 않는다 — 결제창에서 로그아웃하고 맞는 계정으로 다시 로그인해야 한다
+export const NAVERPAY_ACCOUNT_MISMATCH = (shown: string, expected: string): string =>
+  `refused: NAVERPAY_ACCOUNT_MISMATCH — the Naver Pay window is signed in as ${shown}, but the KeyMaster account to pay with is ${expected}. ` +
+  'Sign out inside the Naver Pay window (top-right account menu) and sign in as that account with fill_secret, then continue'
+export const NAVERPAY_ACCOUNT_UNKNOWN =
+  'refused: NAVERPAY_ACCOUNT_UNKNOWN — could not read the signed-in account (top-right, masked like abcd******) on the Naver Pay window; ' +
+  'make sure the payment page is fully shown, then call again'
 // 계정에 결제 비밀번호가 둘 이상인데 provider 를 주지 않았을 때 돌려주는 문자열.
 // 임의로 고르면 잘못 눌러 계정이 잠기므로 반드시 모델에게 되묻게 한다
 const PAYMENT_PROVIDER_AMBIGUOUS =
@@ -737,6 +750,32 @@ ${raw}`
   }
 
   /**
+   * 네이버페이 결제창(pay.naver.com)이면 창 우측 위의 마스킹된 아이디(cann******)를 읽어 키마스터에서 고른
+   * 네이버 계정과 맞춘다. 다른 계정이거나 못 읽으면 거부 문구, 네이버페이 창이 아니거나 계정 연결이 없으면 null
+   */
+  const verifyNaverPayAccount = async (
+    v: VaultService,
+    accountId: number,
+    tab: Tab
+  ): Promise<string | null> => {
+    if (!isNaverPayHost(currentHost(tab))) return null
+    const expected = v.paymentAccountUsername(accountId, 'naver')
+    if (!expected) return null
+    const snapshot = await pageBridge.snapshot(tab).catch(() => null)
+    const shown = snapshot ? maskedNaverAccount(`${snapshot.title}\n${snapshot.text}`) : null
+    if (!shown) {
+      ctx.onStep('네이버페이 창 계정 확인 실패(표시 없음)', false)
+      return NAVERPAY_ACCOUNT_UNKNOWN
+    }
+    if (!maskedNaverAccountMatches(shown, expected)) {
+      ctx.onStep(`네이버페이 창 계정 불일치: ${shown} ≠ ${expected}`, false)
+      return NAVERPAY_ACCOUNT_MISMATCH(shown, expected)
+    }
+    ctx.onStep(`네이버페이 창 계정 확인: ${shown}`, true)
+    return null
+  }
+
+  /**
    * 결제 비밀번호를 넣을 계정. 같은 이름의 계정이 로그인 도메인별로 여럿일 수 있다
    * (member.one.musinsa.com / my.musinsa.com / musinsa.com 의 alice) — 그중 결제 비밀번호를
    * 가진 계정을 먼저 본다. 안 그러면 프로필 이름이 같은 다른 계정을 잡아 "not found" 로 끝난다(실기)
@@ -798,6 +837,9 @@ ${raw}`
         .some((h) => sameRegistrableDomain(h, accountHost))
       if (!openedFromAccountSite) return FILL_HOST_MISMATCH
     }
+    // 네이버페이 창은 반드시 고른 네이버 계정으로 로그인돼 있어야 한다(우측 위 마스킹 아이디로 맞춘다)
+    const naverCheck = await verifyNaverPayAccount(v, account.id, tab)
+    if (naverCheck) return naverCheck
     // guard 모드는 결제 비밀번호 입력 전에 한 번 더 묻는다(fill_secret 의 평소 규칙과 같다).
     // full 모드는 묻지 않는다 — 결제 직전 확인은 플레이북이 정한다
     if (ctx.mode === 'guard') {
@@ -1592,6 +1634,9 @@ overlays left: ${after.length}${kept}`
         const fieldKey = field ?? DEFAULT_FIELD_KEY
         // 결제 비밀번호는 계정당 여러 개다 — 못 좁히면 채우지 않고 되묻게 한다
         if (itemType === 'password') {
+          // 네이버페이 창은 반드시 고른 네이버 계정으로 로그인돼 있어야 한다
+          const naverCheck = await verifyNaverPayAccount(v, account.id, tab)
+          if (naverCheck) return naverCheck
           const found = v.getPaymentSecretForFill({
             accountId: account.id,
             ...(provider === undefined ? {} : { provider }),

@@ -4,6 +4,7 @@
 import type { TabManager } from '../browser/tab-manager'
 import { pageBridge } from '../browser/page-bridge'
 import { normalizeHost } from '../../shared/host'
+import { isNaverPayHost, maskedNaverAccount } from '../../shared/naverpay'
 import type { PageSnapshot } from '../../shared/snapshot'
 import { isPaySuccessUrl, PAY_SUCCESS_TEXT_RE, type PagePort } from './wiring'
 
@@ -20,6 +21,22 @@ export function createTabPagePort(tabs: TabManager): PagePort {
     },
     profile: () => active()?.profile ?? '',
     activeTabId: () => active()?.id ?? null,
+    naverPayAccount: async () => {
+      // 결제창은 보통 활성 탭이 연 팝업이다. 팝업이 없으면 활성 탭 자체가 결제창일 수 있다
+      const tab = active()
+      if (!tab) return null
+      const candidates = [tabs.popupOf(tab.id), tab].filter((t) => t !== null)
+      for (const target of candidates) {
+        if (!isNaverPayHost(normalizeHost(target.view.webContents.getURL()))) continue
+        try {
+          const snapshot = await pageBridge.snapshot(target)
+          return maskedNaverAccount(`${snapshot.title}\n${snapshot.text}`)
+        } catch {
+          return null
+        }
+      }
+      return null
+    },
     snapshot: async () => {
       const tab = active()
       return tab ? pageBridge.snapshot(tab) : EMPTY_SNAPSHOT

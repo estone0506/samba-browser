@@ -653,6 +653,32 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     expect(r3).toEqual({ ok: false, reason: 'no-account' })
   })
 
+  it('네이버페이: 결제창이 다른 네이버 계정으로 로그인돼 있으면 결제하지 않는다', async () => {
+    const site = { ...ACCOUNT, id: 7, itemTypes: ['password'] } as AccountDto
+    const h = harness(db, {
+      vault: {
+        listAccounts: (host?: string) => (host === HOST ? [site] : []),
+        paymentAccountUsername: () => 'buyer01'
+      }
+    })
+    h.deps.page.naverPayAccount = async () => 'cann******'
+    scriptPayScreens(h.adb)
+    const req = {
+      provider: 'naverpay',
+      amountKrw: 9000,
+      merchant: '삼바상회',
+      methodLabel: '네이버페이'
+    } as const
+    const r = await createPhoneAgentBridge(h.deps).approvePayment(h.ctx, req)
+    expect(r).toMatchObject({ ok: false, reason: 'pay-account-mismatch' })
+    expect(h.confirms).toHaveLength(0)
+    // 맞는 계정이면 진행한다
+    h.deps.page.naverPayAccount = async () => 'edel******'
+    scriptPayScreens(h.adb)
+    const r2 = await createPhoneAgentBridge(h.deps).approvePayment(h.ctx, req)
+    expect(r2.ok === false && r2.reason === 'pay-account-mismatch').toBe(false)
+  })
+
   it('토스처럼 앱 계정이 따로 없는 결제 수단은 예전처럼 구매 사이트 계정만 본다', async () => {
     const h = harness(db, {
       vault: { listAccounts: (host?: string) => (host === HOST ? [ACCOUNT] : []) }
