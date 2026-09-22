@@ -49,6 +49,7 @@ export class BridgeServer {
         resolve()
       })
     })
+    server.on('error', (e) => console.error('브릿지 서버 오류', e.message))
     const a = server.address()
     return a && typeof a === 'object' ? a.port : port
   }
@@ -97,8 +98,9 @@ export class BridgeServer {
     let body: string
     try {
       body = await readBody(req)
-    } catch {
-      return json(res, 413, { error: 'body too large' })
+    } catch (e: unknown) {
+      if (e instanceof BodyTooLarge) return json(res, 413, { error: 'body too large' })
+      return json(res, 400, { error: 'invalid body' })
     }
     let args: Record<string, unknown>
     try {
@@ -122,26 +124,49 @@ export class BridgeServer {
     this.busy = true
     const timeoutMs = this.deps.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS
     let timer: NodeJS.Timeout | undefined
+    const callPromise = session.call(name, args)
+    // 제한 시간 뒤에도 callPromise 는 계속 돌 수 있다 — 늦게 끝나도 세션 정리와 busy 해제는 한 번만
+    let settledByTimer = false
     try {
       const result = await Promise.race([
-        session.call(name, args),
+        callPromise,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new BridgeTimeout()), timeoutMs)
+          timer = setTimeout(() => {
+            settledByTimer = true
+            reject(new BridgeTimeout())
+          }, timeoutMs)
         })
       ])
       json(res, 200, { ok: true, result, steps })
     } catch (e: unknown) {
-      if (e instanceof BridgeTimeout) json(res, 504, { ok: false, error: 'tool timeout' })
-      else json(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) })
+      if (settledByTimer) {
+        // 504 를 먼저 보낸다 — 세션은 아직 안 닫는다, callPromise 가 끝날 때 정리한다
+        json(res, 504, { ok: false, error: 'tool timeout' })
+      } else {
+        json(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) })
+      }
     } finally {
       if (timer) clearTimeout(timer)
-      session.dispose()
-      this.busy = false
+      if (settledByTimer) {
+        callPromise
+          .catch((e: unknown) => {
+            const message = e instanceof Error ? e.message : String(e)
+            console.warn('브릿지: 제한 시간 뒤 늦게 끝난 도구 호출 실패', message)
+          })
+          .finally(() => {
+            session.dispose()
+            this.busy = false
+          })
+      } else {
+        session.dispose()
+        this.busy = false
+      }
     }
   }
 }
 
 class BridgeTimeout extends Error {}
+class BodyTooLarge extends Error {}
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body)
@@ -153,16 +178,29 @@ function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let size = 0
+    let settled = false
     req.on('data', (c: Buffer) => {
       size += c.length
       if (size > MAX_BODY_BYTES) {
-        reject(new Error('too large'))
-        req.destroy()
+        if (!settled) {
+          settled = true
+          // 소켓을 끊지 않는다 — 핸들러가 413 을 보낸 뒤 끝낸다. 남은 데이터는 흘려보낸다
+          req.removeAllListeners('data')
+          req.resume()
+          reject(new BodyTooLarge())
+        }
         return
       }
       chunks.push(c)
     })
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
-    req.on('error', reject)
+    req.on('end', () => {
+      if (!settled) resolve(Buffer.concat(chunks).toString('utf8'))
+    })
+    req.on('error', (e) => {
+      if (!settled) {
+        settled = true
+        reject(e)
+      }
+    })
   })
 }

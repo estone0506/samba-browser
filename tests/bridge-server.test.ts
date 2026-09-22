@@ -128,8 +128,8 @@ describe('BridgeServer', () => {
     expect((await a).status).toBe(200)
   })
 
-  it('제한 시간을 넘기면 504 로 끝내고 세션을 닫는다', async () => {
-    const fs = fakeSession({ slowMs: 500 })
+  it('제한 시간을 넘기면 504 로 끝내고, 도구 호출이 실제로 끝나면 세션을 닫는다', async () => {
+    const fs = fakeSession({ slowMs: 300 })
     server = new BridgeServer({ openSession: fs.make, token: () => TOKEN, toolTimeoutMs: 100 })
     const port = await server.start(0)
     const r = await fetch(`http://127.0.0.1:${port}/tool/get_page`, {
@@ -138,7 +138,66 @@ describe('BridgeServer', () => {
       body: '{"args":{}}'
     })
     expect(r.status).toBe(504)
+    // 504 응답 시점에는 도구 호출이 아직 도는 중이라 세션을 닫지 않는다
+    expect(fs.disposed()).toBe(0)
+    await new Promise((r2) => setTimeout(r2, 400))
     expect(fs.disposed()).toBe(1)
+  })
+
+  it('제한 시간 뒤에도 도구 호출을 끝까지 지켜본 뒤 세션을 닫는다 — 그동안 새 요청은 409, 끝나면 다음 요청은 정상', async () => {
+    let callCount = 0
+    let disposed = 0
+    const make = (onStep: (l: string, ok: boolean) => void): ToolSession => {
+      void onStep
+      const isFirst = callCount === 0
+      callCount += 1
+      return {
+        names: () => ['get_page', 'click'],
+        call: async (name: string) => {
+          if (isFirst) await new Promise((r) => setTimeout(r, 300))
+          return `${name} 결과`
+        },
+        dispose: () => {
+          disposed += 1
+        }
+      }
+    }
+    server = new BridgeServer({ openSession: make, token: () => TOKEN, toolTimeoutMs: 100 })
+    const port = await server.start(0)
+    const r = await fetch(`http://127.0.0.1:${port}/tool/get_page`, {
+      method: 'POST',
+      headers: H,
+      body: '{"args":{}}'
+    })
+    expect(r.status).toBe(504)
+    // 도구 호출이 아직 끝나지 않았으니 새 요청은 409
+    const r2 = await fetch(`http://127.0.0.1:${port}/tool/get_page`, {
+      method: 'POST',
+      headers: H,
+      body: '{"args":{}}'
+    })
+    expect(r2.status).toBe(409)
+    expect(disposed).toBe(0)
+    await new Promise((r3) => setTimeout(r3, 400))
+    expect(disposed).toBe(1)
+    const r3 = await fetch(`http://127.0.0.1:${port}/tool/get_page`, {
+      method: 'POST',
+      headers: H,
+      body: '{"args":{}}'
+    })
+    expect(r3.status).toBe(200)
+  })
+
+  it('본문이 1MB 를 넘으면 413', async () => {
+    const base = await up()
+    const big = JSON.stringify({ args: { x: 'a'.repeat(1024 * 1024) } })
+    const r = await fetch(`${base}/tool/get_page`, {
+      method: 'POST',
+      headers: H,
+      body: big
+    })
+    expect(r.status).toBe(413)
+    expect(await r.json()).toEqual({ error: 'body too large' })
   })
 
   it('127.0.0.1 에만 바인딩한다', async () => {
