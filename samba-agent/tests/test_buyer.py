@@ -6,7 +6,7 @@ import pytest
 import respx
 
 from samba_agent.agents.base import AgentFailure
-from samba_agent.agents.buyer import BuyerAgent
+from samba_agent.agents.buyer import BuyerAgent, snapshot_args
 from samba_agent.agents.contracts import Assignment, OrderRef
 from samba_agent.agents.registry import Registry
 from samba_agent.bridge.client import BridgeClient
@@ -225,3 +225,37 @@ def test_dry_run이_아니면_부수효과_도구_호출은_막지_않는다(reg
     b._dry_run = False
     b.tool('save_script', name='x', args='{}')
     assert route.called
+
+
+def test_스냅샷_인자는_상품_ID와_사이즈를_우선한다():
+    """실기: 판매 상품명을 ABC마트 검색어로 써서 검색 결과 페이지에서 '품절'로 오판했다."""
+    abc = OrderRef(
+        order_no='A1',
+        source='ABC마트',
+        seller='신세계몰',
+        sku='매장정품 코르테즈 [265]',
+        qty=1,
+        option='265',
+        product_url='https://abcmart.a-rt.com/product/new?prdtNo=1010118346',
+    )
+    assert json.loads(snapshot_args('buyer.abc', abc)) == {
+        'sku': '1010118346',
+        'qty': 1,
+        'size': '265',
+    }
+    # ID 규칙이 없는 소싱처는 URL 그대로, URL 도 없으면 판매 상품명
+    musinsa = abc.model_copy(update={'product_url': 'https://www.musinsa.com/products/1'})
+    assert (
+        json.loads(snapshot_args('buyer.musinsa', musinsa))['sku']
+        == 'https://www.musinsa.com/products/1'
+    )
+    plain = abc.model_copy(update={'product_url': None, 'option': None})
+    assert json.loads(snapshot_args('buyer.abc', plain)) == {
+        'sku': '매장정품 코르테즈 [265]',
+        'qty': 1,
+    }
+
+
+def test_스냅샷_인자는_따옴표가_있어도_JSON_이다():
+    order = OrderRef(order_no='A1', source='무신사', seller='포이즌', sku='SKU "A"', qty=2)
+    assert json.loads(snapshot_args('buyer.musinsa', order)) == {'sku': 'SKU "A"', 'qty': 2}

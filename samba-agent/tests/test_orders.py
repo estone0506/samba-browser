@@ -104,7 +104,7 @@ def test_결과에_개인정보가_있어도_OrderRef_에는_없다():
     )
     ref = lookup_order(client(), '1001', {})
     dumped = ref.model_dump()
-    assert set(dumped) == {'order_no', 'source', 'seller', 'sku', 'qty'}
+    assert set(dumped) == {'order_no', 'source', 'seller', 'sku', 'qty', 'option', 'product_url'}
     assert '홍길동' not in str(ref)
 
 
@@ -178,3 +178,33 @@ def test_조회는_탭을_앞에_둔_뒤_스크립트를_돌린다(orders_tab):
     lookup_order(client(), '1001', {})
     names = [c.request.url.path.rsplit('/', 1)[-1] for c in orders_tab.calls]
     assert names == ['list_tabs', 'run_script']
+
+
+@respx.mock
+def test_원문링크와_옵션은_OrderRef_에_실린다():
+    """실기: 판매 상품명으로 검색하면 못 찾는다 — 소싱처 상품 URL(sourceUrl)과 옵션을 따로 싣는다."""
+    respx.post(f'{URL}/tool/run_script').mock(
+        return_value=found(
+            {
+                'sourcingPlatform': 'ABC마트',
+                'sellerAccount': '신세계몰(seller01)',
+                'productName': '코르테즈',
+                'option': '265',
+                'qty': 1,
+                'sourceUrl': 'https://abcmart.a-rt.com/product/new?prdtNo=1010118346',
+            }
+        )
+    )
+    ref = lookup_order(client(), '1001', {})
+    assert ref.option == '265'
+    assert ref.product_url == 'https://abcmart.a-rt.com/product/new?prdtNo=1010118346'
+    assert ref.sku == '코르테즈 [265]'
+
+
+@respx.mock
+def test_원문링크가_없으면_OrderRef_에_None_이다():
+    respx.post(f'{URL}/tool/run_script').mock(
+        return_value=found({'source': '무신사', 'seller': '포이즌', 'sku': 'SKU1', 'qty': 1})
+    )
+    ref = lookup_order(client(), '1001', {})
+    assert ref.option is None and ref.product_url is None

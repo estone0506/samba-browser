@@ -27,7 +27,11 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     'source': ('source', 'sourcingPlatform', 'sourcing_platform', 'sourcing'),
     'seller': ('seller', 'sellerAccount', 'seller_account', 'market'),
     'qty': ('qty', 'quantity', 'count'),
+    'option': ('option', 'optionText', 'size'),
+    'product_url': ('product_url', 'sourceUrl', 'productUrl', 'source_url'),
 }
+# 없어도 되는 필드 — 있으면 OrderRef 에 싣는다
+_OPTIONAL_FIELDS = ('option', 'product_url')
 
 
 def _normalize(data: dict[str, object]) -> dict[str, object]:
@@ -108,10 +112,16 @@ def lookup_order(bridge: BridgeClient, order_no: str, options: Mapping[str, str]
     if qty < 1:
         raise ValueError(f'{order_no} qty 는 1 이상이어야 한다 (받은 값: {qty})')
 
+    extras = {
+        field: str(data[field]).strip()
+        for field in _OPTIONAL_FIELDS
+        if data.get(field) not in (None, '')
+    }
     return OrderRef(
         order_no=order_no,
         source=str(values['source']),
         seller=str(values['seller']),
         sku=str(values['sku']),
         qty=qty,
+        **extras,
     )

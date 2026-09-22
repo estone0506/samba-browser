@@ -5,13 +5,37 @@
 """
 
 import json
+import re
 
 from samba_agent.agents.base import AgentBase, AgentFailure, Decision, run_agent
-from samba_agent.agents.contracts import AgentResult, Assignment
+from samba_agent.agents.contracts import AgentResult, Assignment, OrderRef
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_text
 
 # 소싱처별 "상품 상태 한 번에 읽기" 저장 스크립트 이름. 앱에 save_script 로 저장해 둔다
+# 소싱처 상품 URL 에서 스냅샷 스크립트가 바로 여는 상품 ID 를 뽑는 규칙(없는 소싱처는 URL 그대로)
+_PRODUCT_ID_OF = {
+    'buyer.abc': re.compile(r'[?&]prdtNo=(\d+)'),
+}
+
+
+def product_ref(agent_name: str, order: OrderRef) -> str:
+    """스냅샷 스크립트의 sku 인자 — 상품 ID > 상품 URL > 판매 상품명 순으로 확실한 것을 쓴다."""
+    if order.product_url:
+        pattern = _PRODUCT_ID_OF.get(agent_name)
+        m = pattern.search(order.product_url) if pattern else None
+        return m.group(1) if m else order.product_url
+    return order.sku
+
+
+def snapshot_args(agent_name: str, order: OrderRef) -> str:
+    """run_script 에 넘길 JSON 문자열. 옵션이 있으면 size 로 같이 준다(스크립트가 그 사이즈를 고른다)."""
+    args: dict[str, object] = {'sku': product_ref(agent_name, order), 'qty': order.qty}
+    if order.option:
+        args['size'] = order.option
+    return json.dumps(args, ensure_ascii=False)
+
+
 SNAPSHOT_SCRIPT = {
     'buyer.musinsa': 'musinsa_product_snapshot',
     'buyer.29cm': 'cm29_product_snapshot',
@@ -73,7 +97,7 @@ class BuyerAgent(AgentBase):
         snap = self.json_tool(
             'run_script',
             name=SNAPSHOT_SCRIPT[self.spec.name],
-            args=f'{{"sku":"{a.order.sku}","qty":{a.order.qty}}}',
+            args=snapshot_args(self.spec.name, a.order),
         )
 
         # 같은 상품을 이미 산 흔적 — 옵션 선택 전에 끝낸다(규칙 파일 §3)
