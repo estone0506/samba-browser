@@ -338,3 +338,43 @@ def test_실행마다_추적_이벤트를_남긴다(tmp_path):
     rows = events.of_job(job.id)
     assert rows, '실행 경로에서 이벤트가 하나도 남지 않았다'
     assert _observe_ok(rows, version='vtest')
+
+
+def test_이벤트_정리를_기동_시_1회와_주기마다_부른다(setup):
+    # 리뷰 지적 — Minor: EventLog.prune() 을 아무도 부르지 않았다
+    _q, _log, _sent, make = setup
+    w = make(gate=False)
+    calls = {'n': 0}
+
+    def prune() -> int:
+        calls['n'] += 1
+        return 0
+
+    w.d.prune = prune
+    w.d.prune_interval_s = 0.0  # 매 주기 확인
+    ticks = iter([False, False, True])
+    w.run_forever(stop=lambda: next(ticks), interval_s=0)
+    assert calls['n'] == 3  # 기동 1회 + 주기 2회
+
+
+def test_이벤트_정리_주기가_안_됐으면_다시_부르지_않는다(setup):
+    _q, _log, _sent, make = setup
+    w = make(gate=False)
+    calls = {'n': 0}
+    w.d.prune = lambda: calls.__setitem__('n', calls['n'] + 1) or 0
+    w.d.prune_interval_s = 3600.0
+    ticks = iter([False, False, True])
+    w.run_forever(stop=lambda: next(ticks), interval_s=0)
+    assert calls['n'] == 1  # 기동 시 1회뿐
+
+
+def test_이벤트_정리가_실패해도_고리는_계속_돈다(setup):
+    _q, _log, _sent, make = setup
+    w = make(gate=False)
+
+    def boom() -> int:
+        raise RuntimeError('디스크 오류')
+
+    w.d.prune = boom
+    ticks = iter([False, True])
+    w.run_forever(stop=lambda: next(ticks), interval_s=0)  # 예외가 새지 않는다

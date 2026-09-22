@@ -59,7 +59,7 @@ def test_허용_목록_밖_도구는_호출도_안_하고_권한부족():
 
 
 @respx.mock
-@pytest.mark.parametrize('status', [401, 403, 404])
+@pytest.mark.parametrize('status', [401, 403])
 def test_권한_계열_응답은_permission_denied(status):
     respx.post(f'{URL}/tool/get_page').mock(
         return_value=httpx.Response(status, json={'error': 'unauthorized'})
@@ -137,3 +137,19 @@ def test_오류_메시지에_토큰이_새지_않는다():
         client().call('get_page')
     assert TOKEN not in str(e.value)
     assert TOKEN not in repr(e.value)
+
+
+@respx.mock
+def test_404는_구현_누락이라_unknown이다():
+    # 리뷰 지적 — Minor: 없는 도구(404)를 권한 부족으로 읽으면 진단 표가 어긋난다
+    respx.post(f'{URL}/tool/get_page').mock(return_value=httpx.Response(404, json={'error': 'no'}))
+    with pytest.raises(BridgeError) as e:
+        client().call('get_page')
+    assert e.value.reason is FailReason.UNKNOWN
+
+
+def test_컨텍스트_매니저로_쓰면_닫힌다():
+    http = httpx.Client()
+    with BridgeClient(URL, 'a' * 64, allowed=('get_page',), client=http) as c:
+        assert c.allowed == ('get_page',)
+    assert http.is_closed

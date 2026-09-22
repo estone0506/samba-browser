@@ -105,6 +105,7 @@ def main() -> None:
             events=events,
             env=settings.harness_env,
             prompt_commit=settings.prompt_commit,
+            prune=events.prune,
         )
     )
 

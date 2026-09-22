@@ -380,10 +380,10 @@ def test_rollback은_태그를_자동으로_옮기지_않는다_직전_promote�
     assert store.current_prod() is None
 
 
-# ── --apply: 실제 태그 이동 없이 "무엇을 바꿀지"만 출력(브리프 41행) ──
+# ── --plan: 실제 태그 이동 없이 "무엇을 바꿀지"만 출력(브리프 41행) ──
 
 
-def test_apply는_실제_이동_없이_대상_버전과_현재_prod만_출력한다(tmp_path, monkeypatch, capsys):
+def test_plan은_실제_이동_없이_대상_버전과_현재_prod만_출력한다(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(gate_mod, 'REPORT_DIR', tmp_path)
     monkeypatch.setenv('SAMBA_BRIDGE_TOKEN', 'f' * 64)
     monkeypatch.setenv('SAMBA_AGENT_ROOT', str(tmp_path))
@@ -400,7 +400,7 @@ def test_apply는_실제_이동_없이_대상_버전과_현재_prod만_출력한
         )
     )
 
-    rc = gate_mod.main(['--version', 'v2', '--apply'])
+    rc = gate_mod.main(['--version', 'v2', '--plan'])
 
     assert rc == 0
     out = capsys.readouterr().out
@@ -530,3 +530,17 @@ def test_승인_파일이_있으면_approve_인자_없이도_판정이_승인을
     assert gate_mod.main(['--version', 'v-approved']) == 0
     report = (tmp_path / 'v-approved.md').read_text(encoding='utf-8')
     assert '| approval | 통과 |' in report
+
+
+def test_plan_은_무엇을_바꿀지만_보여준다(tmp_path, monkeypatch, capsys):
+    # 리뷰 지적 — Minor: --apply 라는 이름이 실제로 반영하는 것처럼 읽힌다
+    monkeypatch.setattr(gate_mod, 'REPORT_DIR', tmp_path)
+    monkeypatch.setenv('SAMBA_BRIDGE_TOKEN', 'f' * 64)
+    monkeypatch.setenv('SAMBA_AGENT_ROOT', str(tmp_path))
+    monkeypatch.setenv('SAMBA_DB_PATH', str(tmp_path / 'jobs.sqlite'))
+    assert gate_mod.main(['--version', 'v9', '--plan']) == 0
+    out = capsys.readouterr().out
+    assert 'v9' in out
+    assert not (tmp_path / 'v9.md').exists()  # 판정도 기록도 하지 않는다
+    with pytest.raises(SystemExit):
+        gate_mod.main(['--version', 'v9', '--apply'])

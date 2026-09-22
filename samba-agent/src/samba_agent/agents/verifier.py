@@ -19,6 +19,14 @@ class VerifierAgent(AgentBase):
 
     def _verify(self, a: Assignment) -> AgentResult:
         self.evidence = []
+        if not a.expected:
+            # 대조할 값이 하나도 없으면 '다 맞았다' 가 아니라 '확인하지 못했다' 다(리뷰 지적 — Minor)
+            return AgentResult(
+                status='needs_human',
+                reason='대조할 기대값이 없다 — 앞 단계가 값을 넘기지 못했다',
+                fail_reason=FailReason.VERIFY_MISMATCH,
+                evidence=tuple(self.evidence),
+            )
         self.step('verifier: 소싱처 주문 상세 읽기')
         source = self.json_tool(
             'run_script',

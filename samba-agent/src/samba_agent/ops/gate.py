@@ -258,10 +258,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument('--rollback', action='store_true')
     parser.add_argument(
-        '--apply',
+        '--plan',
         action='store_true',
         help=(
-            'promote 판정을 프롬프트 허브 prod 태그에 실제로 반영하지 않는다 — '
+            '미리보기다 — 프롬프트 허브 prod 태그를 실제로 옮기지 않는다. '
             '무엇을(대상 버전·옮길 태그·현재 운영 버전) 바꿀지만 출력한다. '
             '실제 태그 이동은 사람이 별도로 한다(스펙 §10-1).'
         ),
@@ -297,7 +297,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
-    if args.apply:
+    if args.plan:
         # 무엇을 바꿀지만 출력한다 — 실제 태그 이동·releases 기록은 하지 않는다.
         prev = store.current_prod()
         print(f'적용 대상 버전: {args.version}')

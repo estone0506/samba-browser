@@ -47,6 +47,9 @@ class WorkerDeps:
     events: EventLog | None = None
     env: str = 'dev'
     prompt_commit: str = '-'
+    # 보관 기간 지난 이벤트 정리(EventLog.prune). 기동 시 1회 + 주기마다 부른다(리뷰 지적 — Minor)
+    prune: Callable[[], int] | None = None
+    prune_interval_s: float = 6 * 60 * 60
 
     def __post_init__(self) -> None:
         if isinstance(self.version, str):
@@ -59,6 +62,7 @@ class Worker:
 
     def __init__(self, deps: WorkerDeps) -> None:
         self.d = deps
+        self._last_prune: float | None = None
 
     def tick(self) -> Job | None:
         """queued 1건을 집어 끝까지(또는 승인 대기까지) 돌린다. 없으면 None."""
@@ -93,7 +97,9 @@ class Worker:
 
     def run_forever(self, stop: Callable[[], bool], interval_s: float = 2.0) -> None:
         """봇과 함께 도는 고리. stop() 이 참이 될 때까지 큐를 본다."""
+        self._maybe_prune()  # 기동 시 1회
         while not stop():
+            self._maybe_prune()
             try:
                 caught_none = self.tick() is None
             except Exception:  # noqa: BLE001 — 고리는 개별 tick 예외로 멈추지 않는다
@@ -101,6 +107,22 @@ class Worker:
                 caught_none = True
             if caught_none:
                 time.sleep(interval_s)
+
+    def _maybe_prune(self) -> None:
+        """보관 기간이 지난 이벤트를 치운다. 정리 실패가 실행 고리를 멈추지는 않는다."""
+        if self.d.prune is None:
+            return
+        now = time.monotonic()
+        if self._last_prune is not None and now - self._last_prune < self.d.prune_interval_s:
+            return
+        self._last_prune = now
+        try:
+            removed = self.d.prune()
+        except Exception:  # noqa: BLE001 — 정리 실패는 로그만 남기고 계속 돈다
+            _log.exception('이벤트 정리 실패 — 계속 돈다')
+            return
+        if removed:
+            _log.info('오래된 이벤트 %d줄 정리', removed)
 
     def mark_stage(self, state: object, stage: str) -> None:
         """감독자가 단계에 들어갈 때 부른다 — 결제 진입만 큐에 적는다.

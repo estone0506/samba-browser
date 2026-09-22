@@ -11,6 +11,7 @@ POST /tool/{name} 본문 {"args": {...}} → {"ok", "result", "steps"}.
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Self
 
 import httpx
 
@@ -24,7 +25,8 @@ DEFAULT_BUSY_WAIT_S = 1.0
 _STATUS_REASON = {
     401: FailReason.PERMISSION_DENIED,
     403: FailReason.PERMISSION_DENIED,
-    404: FailReason.PERMISSION_DENIED,
+    # 404 는 권한이 아니라 그 이름의 도구가 앱에 없다는 뜻이다 — 구현 누락으로 센다
+    404: FailReason.UNKNOWN,
     504: FailReason.BRIDGE_DOWN,
 }
 
@@ -109,7 +111,6 @@ class BridgeClient:
                 f'허용 목록 밖 도구: {name} (허용: {", ".join(self._allowed)})',
             )
         attempts = self._busy_retries + 1
-        last: httpx.Response | None = None
         for i in range(attempts):
             try:
                 r = self._client.post(
@@ -130,7 +131,6 @@ class BridgeClient:
                 )
                 return BridgeResult(result=str(body.get('result', '')), steps=steps)
             if r.status_code == 409:
-                last = r
                 if i < attempts - 1:
                     time.sleep(self._busy_wait_s)
                     continue
@@ -139,7 +139,17 @@ class BridgeClient:
                     FailReason.BRIDGE_DOWN, f'브릿지가 계속 busy 다({attempts}회 시도)', 409
                 )
             raise BridgeError(*self._fail(r))
-        raise BridgeError(FailReason.BRIDGE_DOWN, 'busy', last.status_code if last else None)
+        # 고리는 항상 return 이나 raise 로 끝난다(409 마지막 시도도 raise) — 여기는 닿지 않는다
+
+    def close(self) -> None:
+        """HTTP 연결을 닫는다. scoped() 사본은 같은 커넥션을 공유하니 한 번만 닫는다."""
+        self._client.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
 
     def _headers(self) -> dict[str, str]:
         return {'X-Samba-Token': self._token, 'content-type': 'application/json'}

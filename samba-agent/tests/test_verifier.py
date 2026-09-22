@@ -124,3 +124,13 @@ def test_브릿지의_원문_개인정보가_불일치_표와_프롬프트에서
     assert find_leaks([e.detail for e in out.evidence]) == []
     assert captured_prompts, '불일치가 있으면 decide_once 가 반드시 호출돼야 한다'
     assert all(find_leaks(p) == [] for p in captured_prompts)
+
+
+@respx.mock
+def test_대조할_기대값이_없으면_ok가_아니라_사람에게_넘긴다(reg):
+    # 리뷰 지적 — Minor: 기대값이 비면 '0개가 모두 같다' 로 ok 가 나왔다
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page({}))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, expected={}))
+    assert out.status == 'needs_human'
+    assert out.fail_reason is FailReason.VERIFY_MISMATCH
