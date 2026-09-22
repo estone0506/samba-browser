@@ -34,3 +34,26 @@ def test_승인은_버전을_읽는다():
 @pytest.mark.parametrize('text', ['<@BOT> 안녕', '<@BOT>', '<@BOT> 처리해', '<@BOT> 취소'])
 def test_모르는_명령은_unknown(text):
     assert parse_command(text).kind == 'unknown'
+
+
+def test_처리하지마는_unknown이다():
+    # '처리' 로 시작한다고 다 처리 명령이 아니다 — 화이트리스트만 인정한다(리뷰 지적 — Minor 4)
+    assert parse_command('<@BOT> A1 처리하지마').kind == 'unknown'
+
+
+@pytest.mark.parametrize('word', ['처리해', '처리해줘', '처리', 'process'])
+def test_처리_화이트리스트_단어는_모두_인식한다(word):
+    c = parse_command(f'<@BOT> A1 {word}')
+    assert (c.kind, c.order_no) == ('process', 'A1')
+
+
+@pytest.mark.parametrize('digits', ['12345678', '1' * 9, '1' * 21, '1' * 25])
+def test_주문번호_숫자_자릿수가_범위_밖이면_unknown(digits):
+    # 숫자 주문번호는 10~20자리만 인정한다(리뷰 지적 — Minor 5)
+    assert parse_command(f'<@BOT> {digits} 처리해').kind == 'unknown'
+
+
+@pytest.mark.parametrize('digits', ['1' * 10, '1' * 20, '734501000740906'])
+def test_주문번호_숫자_자릿수_경계값은_인식한다(digits):
+    c = parse_command(f'<@BOT> {digits} 처리해')
+    assert (c.kind, c.order_no) == ('process', digits)

@@ -1,4 +1,6 @@
 # 실행기 — 1건 처리 / 승인 대기 / 재개 / 거부 / 중복 요청 / 브릿지 죽음
+import threading
+
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -159,6 +161,45 @@ def test_run_forever는_tick_예외에도_계속_돈다(setup):
     w.run_forever(stop=lambda: next(ticks), interval_s=0)
 
     assert calls['n'] == 2  # 프로세스가 살아서 다음 주기로 계속 돈다
+
+
+def test_동시에_두번_resume해도_그래프는_한번만_불린다(setup):
+    # 리뷰 지적 — Important 3: 읽기→running 전환을 트랜잭션으로 원자화했는지 확인
+    q, _log, _sent, make = setup
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    w = make(gate=True)
+    w.tick()
+    assert q.get('A1').step == '승인 대기: pay'
+
+    lock = threading.Lock()
+    invoke_calls: list[int] = []
+    real_invoke = w.d.graph.invoke
+
+    def counting_invoke(state, config):
+        with lock:
+            invoke_calls.append(1)
+        return real_invoke(state, config)
+
+    w.d.graph.invoke = counting_invoke  # type: ignore[method-assign]
+
+    barrier = threading.Barrier(2)
+    results: list[object] = []
+    results_lock = threading.Lock()
+
+    def call_resume() -> None:
+        barrier.wait()
+        r = w.resume('A1', approved=True, by='U9', stage='pay')
+        with results_lock:
+            results.append(r)
+
+    threads = [threading.Thread(target=call_resume) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(invoke_calls) == 1
+    assert sum(1 for r in results if r is not None) == 1
 
 
 def test_dry_run_False로_주입하면_state에_반영된다(setup):

@@ -109,3 +109,74 @@ def test_승인_블록에_두_버튼이_있다():
     ids = [e['action_id'] for b in blocks if b['type'] == 'actions' for e in b['elements']]
     assert ids == ['samba_approve', 'samba_reject']
     assert all('A1' in str(b) or True for b in blocks)
+
+
+def test_같은_승인_버튼_두번_눌러도_record_게이트를_통과시키지_않는다(bot):
+    # 리뷰 지적 — Critical 2: 중복 승인 클릭은 한 번만 먹어야 한다
+    b, q, w = bot
+    b.handle_mention('<@BOT> A1 처리해', 'U1', 'ts1')
+    w.tick()
+    assert q.get('A1').step == '승인 대기: pay'
+
+    calls: list[str] = []
+    real_resume = w.resume
+
+    def counting_resume(*a, **k):
+        calls.append('resume')
+        return real_resume(*a, **k)
+
+    w.resume = counting_resume  # type: ignore[method-assign]
+
+    out1 = b.handle_approval('A1', True, 'U1', stage='pay')
+    assert '승인' in out1
+    assert q.get('A1').step == '승인 대기: record'  # 다음 게이트로 정상 진행
+
+    out2 = b.handle_approval('A1', True, 'U1', stage='pay')  # 같은 버튼 재클릭
+    assert '이미' in out2
+    assert q.get('A1').step == '승인 대기: record'  # record 게이트는 건드리지 않았다
+    assert calls == ['resume']  # 실제 재개는 첫 클릭 한 번뿐
+
+
+class _FakeSlackClient:
+    def __init__(self, channels: list[dict[str, str]]) -> None:
+        self._channels = channels
+
+    def conversations_list(self, **_kwargs):  # type: ignore[no-untyped-def]
+        return {'channels': self._channels, 'response_metadata': {}}
+
+
+class _FakeSlackApp:
+    def __init__(self, channels: list[dict[str, str]]) -> None:
+        self.client = _FakeSlackClient(channels)
+
+
+def test_is_target_channel은_풀어둔_id와만_비교한다():
+    s = Settings(SAMBA_BRIDGE_TOKEN='a' * 64, SLACK_ALLOWED_USERS='U1', SLACK_CHANNEL='#test')
+    b = SambaBot(
+        app=None, worker=None, queue=None, settings=s, diagnose=lambda v: '', channel_id='C123'
+    )
+    assert b.is_target_channel('C123')
+    assert not b.is_target_channel('C999')
+
+
+def test_채널_이름을_시작시_id로_풀어둔다():
+    app = _FakeSlackApp([{'id': 'C123', 'name': 'sambaorder'}])
+    s = Settings(SAMBA_BRIDGE_TOKEN='a' * 64, SLACK_ALLOWED_USERS='U1', SLACK_CHANNEL='#sambaorder')
+    b = SambaBot(app=app, worker=None, queue=None, settings=s, diagnose=lambda v: '')
+    b.resolve_channel()
+    assert b.is_target_channel('C123')
+    assert not b.is_target_channel('C999')
+
+
+def test_채널이_이미_id_모양이면_풀이를_건너뛴다():
+    s = Settings(SAMBA_BRIDGE_TOKEN='a' * 64, SLACK_ALLOWED_USERS='U1', SLACK_CHANNEL='C123ABCDE')
+    b = SambaBot(app=None, worker=None, queue=None, settings=s, diagnose=lambda v: '')
+    b.resolve_channel()  # app 없어도 id 모양이면 바로 확정된다
+    assert b.is_target_channel('C123ABCDE')
+
+
+def test_채널을_못_풀면_전부_무시한다():
+    # app 도 없고 채널 id 도 안 넣었으면(운영에서 conversations.list 실패 등) 안전하게 거부한다
+    s = Settings(SAMBA_BRIDGE_TOKEN='a' * 64, SLACK_ALLOWED_USERS='U1', SLACK_CHANNEL='#nope')
+    b = SambaBot(app=None, worker=None, queue=None, settings=s, diagnose=lambda v: '')
+    assert not b.is_target_channel('C1')

@@ -8,11 +8,13 @@ CommandKind = Literal[
     'process', 'status', 'cancel', 'resume', 'diagnose', 'version', 'approve', 'unknown'
 ]
 
-# 주문번호는 숫자 8자 이상 또는 영문+숫자 혼합 코드
-ORDER_RE = re.compile(r'\b([0-9]{8,}|[A-Za-z][A-Za-z0-9_-]{1,31})\b')
+# 주문번호는 숫자 10~20자리(무신사 등 실 주문번호 자릿수) 또는 2~32자 영문+숫자 혼합 코드
+ORDER_RE = re.compile(r'\b([0-9]{10,20}|[A-Za-z][A-Za-z0-9_-]{1,31})\b')
 MENTION_RE = re.compile(r'<@[A-Z0-9]+>')
 VERSION_RE = re.compile(r'\bv[0-9a-f]{12}\b')
 KNOWN_CARDS = ('현대', '삼성', '신한', '국민', '롯데', '하나', 'BC', '농협')
+# '처리' 로 시작하는 아무 말이나 잡으면 "처리하지마" 도 명령으로 오인한다 — 화이트리스트로 좁힌다
+PROCESS_WORDS = ('처리해', '처리해줘', '처리', 'process')
 
 
 @dataclass(frozen=True)
@@ -52,7 +54,7 @@ def parse_command(text: str) -> Command:
         order = _first_order(rest)
         kind: CommandKind = {'취소': 'cancel', '이어서': 'resume', '진단': 'diagnose'}[head]
         return Command(kind, order_no=order) if order else Command('unknown')
-    if any(w.startswith('처리') for w in words):
+    if any(w in PROCESS_WORDS for w in words):
         order = _first_order(words)
         if not order:
             return Command('unknown')

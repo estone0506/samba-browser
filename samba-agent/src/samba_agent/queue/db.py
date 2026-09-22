@@ -7,6 +7,7 @@
 import contextlib
 import json
 import sqlite3
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -77,6 +78,12 @@ class JobQueue:
         self._db.execute(
             "UPDATE jobs SET state='queued', updated_at=? WHERE state='running'", (_now(),)
         )
+        # sqlite3 커넥션 하나를 여러 스레드가 공유한다(check_same_thread=False). BEGIN 과
+        # COMMIT 이 서로 다른 execute() 호출이라, 락 없이는 스레드 A 의 BEGIN 과 B 의 BEGIN 이
+        # 같은 커넥션 위에서 겹쳐 "cannot commit - no transaction is active" 로 깨진다
+        # (스펙 리뷰 지적 — Important 3 를 스레드로 테스트하다 드러남). SQLite 자체 잠금은
+        # 여러 커넥션 사이의 얘기라 이 경우엔 못 막아준다 — 파이썬 쪽에서 직접 막는다.
+        self._lock = threading.Lock()
 
     @contextlib.contextmanager
     def _immediate(self) -> Iterator[None]:
@@ -84,16 +91,18 @@ class JobQueue:
 
         ``isolation_level=None`` (오토커밋) 상태라 BEGIN 을 직접 열지 않으면
         조회와 쓰기 사이에 다른 연결이 끼어들 수 있다. BEGIN IMMEDIATE 로
-        쓰기 잠금을 즉시 잡아 그 틈을 없앤다.
+        쓰기 잠금을 즉시 잡아 그 틈을 없앤다. 커넥션을 공유하는 스레드끼리는
+        ``self._lock`` 으로 BEGIN~COMMIT/ROLLBACK 구간 자체를 직렬화한다.
         """
-        self._db.execute('BEGIN IMMEDIATE')
-        try:
-            yield
-        except BaseException:
-            self._db.execute('ROLLBACK')
-            raise
-        else:
-            self._db.execute('COMMIT')
+        with self._lock:
+            self._db.execute('BEGIN IMMEDIATE')
+            try:
+                yield
+            except BaseException:
+                self._db.execute('ROLLBACK')
+                raise
+            else:
+                self._db.execute('COMMIT')
 
     def enqueue(
         self, order_no: str, requester: str, options: dict[str, object], thread_ts: str | None
@@ -195,6 +204,29 @@ class JobQueue:
             (_now(), job_id),
         )
         return self._job(self._db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone())
+
+    def try_start_resume(self, order_no: str, *, stage: str | None) -> Job | None:
+        """승인 재개 — 읽기(needs_human·단계 확인)와 running 전환을 한 트랜잭션으로 묶는다.
+
+        두 스레드가 동시에 같은 승인 버튼을 눌러도 BEGIN IMMEDIATE 가 뒤엣놈을 기다리게 하고,
+        먼저 커밋된 쪽이 state 를 running 으로 바꿔놔서 뒤엣놈은 조건에 걸려 None 을 받는다
+        (스펙 리뷰 지적 — Important 3).
+        """
+        with self._immediate():
+            row = self._row(order_no)
+            if row is None or row['state'] != 'needs_human':
+                return None
+            step = row['step'] or ''
+            if stage is not None:
+                if step != f'승인 대기: {stage}':
+                    return None
+            elif not step.startswith('승인 대기'):
+                return None
+            self._db.execute(
+                "UPDATE jobs SET state='running', updated_at=? WHERE id=? AND state='needs_human'",
+                (_now(), row['id']),
+            )
+            return self._job(self._row(order_no))
 
     def cancel(self, order_no: str) -> Job | None:
         """살아 있는 건만 취소한다. 결제 진입 뒤 취소는 감독자가 막는다(스펙 §6)."""

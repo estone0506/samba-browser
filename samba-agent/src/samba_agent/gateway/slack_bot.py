@@ -5,6 +5,7 @@
 """
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from samba_agent.gateway.commands import Command, parse_command
@@ -22,6 +23,8 @@ log = logging.getLogger(__name__)
 
 APPROVE_ACTION_ID = 'samba_approve'
 REJECT_ACTION_ID = 'samba_reject'
+# 슬랙 채널 id 모양(공개 C.../비공개 G...) — 이 모양이면 이름 풀이를 건너뛴다
+_CHANNEL_ID_RE = re.compile(r'^[CG][A-Z0-9]{8,}$')
 
 
 def approval_blocks(order_no: str, stage: str, summary: str) -> list[dict[str, object]]:
@@ -60,16 +63,57 @@ class SambaBot:
         queue: JobQueue,
         settings: Settings,
         diagnose: 'Callable[[str | None], str]',
+        *,
+        channel_id: str | None = None,
     ) -> None:
         self.app = app
         self.worker = worker
         self.queue = queue
         self.settings = settings
         self.diagnose = diagnose
+        # settings.slack_channel(id 또는 이름)을 채널 id 로 풀어둔 값. app 이 없는 테스트는
+        # 여기로 직접 주입한다 — start() 는 이게 비어 있을 때만 conversations.list 로 풀어본다.
+        self._channel_id = channel_id
 
     def _allowed(self, user: str) -> bool:
         """등록부가 비어 있으면 아무도 못 시킨다 — 실수로 열려 있는 걸 막는다."""
         return user in self.settings.slack_allowed_users
+
+    def is_target_channel(self, channel_id: str) -> bool:
+        """이 채널이 봇이 응답할 채널인가 — 순수 메서드라 슬랙 없이 테스트한다.
+
+        채널을 아직 못 풀었으면(운영에서 conversations.list 가 실패한 경우 등) 안전하게
+        모든 채널을 거부한다 — "다른 채널은 무시" 가 전역 제약이라, 모르면 응답하지 않는 쪽이 맞다.
+        """
+        if self._channel_id is None:
+            return False
+        return channel_id == self._channel_id
+
+    def resolve_channel(self) -> None:
+        """`settings.slack_channel`(id 또는 이름) → 채널 id. 시작 시 한 번만 부른다.
+
+        이미 id 모양이면 그대로 쓰고, 이름이면 conversations.list 로 찾는다.
+        `app` 이 없으면(테스트) 아무것도 하지 않는다 — 그런 자리는 생성자의 channel_id 로 주입한다.
+        """
+        name = self.settings.slack_channel.lstrip('#')
+        if _CHANNEL_ID_RE.match(name):
+            self._channel_id = name
+            return
+        if self.app is None:
+            return
+        cursor: str | None = None
+        while True:
+            resp = self.app.client.conversations_list(
+                types='public_channel,private_channel', cursor=cursor, limit=200
+            )
+            for ch in resp.get('channels', []):
+                if ch.get('name') == name:
+                    self._channel_id = ch['id']
+                    return
+            cursor = (resp.get('response_metadata') or {}).get('next_cursor')
+            if not cursor:
+                break
+        log.warning('대상 채널을 찾지 못했다: %s', name)
 
     def handle_mention(self, text: str, user: str, thread_ts: str | None) -> str | None:
         """멘션 1건. 답할 말이 없으면 None(봇이 조용히 넘어간다)."""
@@ -121,14 +165,26 @@ class SambaBot:
             return f'버전 {cmd.version} 승인 요청을 접수했습니다(판정 파일에 기록)'
         return None
 
-    def handle_approval(self, order_no: str, approved: bool, user: str) -> str:
-        """승인·거부 버튼. 누른 사람도 등록돼 있어야 한다."""
+    def handle_approval(
+        self, order_no: str, approved: bool, user: str, stage: str | None = None
+    ) -> str:
+        """승인·거부 버튼. 누른 사람도 등록돼 있어야 하고, 같은 버튼 두 번은 한 번만 먹는다.
+
+        ``stage`` 는 버튼 value 에 실어온 단계(pay/record) — 지금 큐가 그 단계의 승인 대기가
+        아니면(이미 처리됐거나 다음 단계로 넘어갔으면) 그래프를 다시 부르지 않고 안내만 한다
+        (스펙 리뷰 지적 — Critical 2).
+        """
         if not self._allowed(user):
             log.info('미등록 사용자 승인 무시: %s', user)
             return '권한이 없습니다'
-        job = self.worker.resume(order_no, approved=approved, by=user)
-        if job is None:
+        pending = self.queue.get(order_no)
+        if pending is None or pending.state != 'needs_human':
             return f'{order_no} 는 승인 대기 상태가 아닙니다'
+        if stage is not None and pending.step != f'승인 대기: {stage}':
+            return '이미 처리된 승인입니다'
+        job = self.worker.resume(order_no, approved=approved, by=user, stage=stage)
+        if job is None:
+            return '이미 처리된 승인입니다'
         answer = (
             f'<@{user}>님이 {order_no} 를 승인했습니다 → {job.state}'
             if approved
@@ -136,13 +192,22 @@ class SambaBot:
         )
         return mask_text(answer)
 
+    @staticmethod
+    def _split_value(value: str) -> tuple[str, str | None]:
+        """승인 버튼 value(`order_no|stage`) → (order_no, stage)."""
+        order_no, _, stage = value.partition('|')
+        return order_no, (stage or None)
+
     def start(self) -> None:
         """Socket Mode 로 슬랙에 붙는다. 검토 전에는 테스트 채널만 쓴다(스펙 §7 ④)."""
         from slack_bolt.adapter.socket_mode import SocketModeHandler
 
+        self.resolve_channel()
+
         @self.app.event('app_mention')
         def _on_mention(event, say):  # type: ignore[no-untyped-def]
-            if event.get('channel_type') == 'im':
+            if not self.is_target_channel(event.get('channel', '')):
+                log.info('다른 채널의 멘션 무시: %s', event.get('channel'))
                 return
             answer = self.handle_mention(
                 event.get('text', ''),
@@ -154,19 +219,22 @@ class SambaBot:
 
         @self.app.action(APPROVE_ACTION_ID)
         def _on_approve(ack, body, say):  # type: ignore[no-untyped-def]
+            # ack() 는 3초 안에 슬랙에 응답만 보낸다 — 뒤이은 처리는 동기라, 워커가 하나뿐이라
+            # 이미 다른 건을 돌리고 있으면 이 승인의 실제 반영(say)이 그만큼 늦어질 수 있다.
             ack()
-            order_no = str(body['actions'][0]['value']).split('|')[0]
+            order_no, stage = self._split_value(str(body['actions'][0]['value']))
             say(
-                text=self.handle_approval(order_no, True, body['user']['id']),
+                text=self.handle_approval(order_no, True, body['user']['id'], stage=stage),
                 thread_ts=body['message'].get('thread_ts') or body['message']['ts'],
             )
 
         @self.app.action(REJECT_ACTION_ID)
         def _on_reject(ack, body, say):  # type: ignore[no-untyped-def]
+            # 위 승인과 같은 이유로 ack() 뒤 동기 처리가 단일 워커 지연에 걸릴 수 있다.
             ack()
-            order_no = str(body['actions'][0]['value']).split('|')[0]
+            order_no, stage = self._split_value(str(body['actions'][0]['value']))
             say(
-                text=self.handle_approval(order_no, False, body['user']['id']),
+                text=self.handle_approval(order_no, False, body['user']['id'], stage=stage),
                 thread_ts=body['message'].get('thread_ts') or body['message']['ts'],
             )
 

@@ -54,16 +54,19 @@ class Worker:
         }
         return self._invoke(job, state)
 
-    def resume(self, order_no: str, approved: bool, by: str) -> Job | None:
-        """슬랙 승인 버튼 → 멈춘 그래프를 깨운다. 끝난 주문이면 None."""
-        job = self.d.queue.get(order_no)
-        if (
-            job is None
-            or job.state != 'needs_human'
-            or not (job.step or '').startswith('승인 대기')
-        ):
+    def resume(
+        self, order_no: str, approved: bool, by: str, stage: str | None = None
+    ) -> Job | None:
+        """슬랙 승인 버튼 → 멈춘 그래프를 깨운다.
+
+        끝난 주문이거나(중복 클릭 등) 이미 다른 단계로 넘어갔으면 None.
+        ``stage`` 를 주면 지금 큐가 그 단계(``승인 대기: {stage}``)에 멈춰 있을 때만 재개한다 —
+        같은 버튼을 두 번 눌러도 두 번째는 여기서 걸린다(스펙 리뷰 지적 — Critical 2).
+        읽기→running 전환은 JobQueue 트랜잭션으로 원자화돼 있어 동시 호출도 하나만 통과한다.
+        """
+        job = self.d.queue.try_start_resume(order_no, stage=stage)
+        if job is None:
             return None
-        self.d.queue.finish(job.id, 'running')
         return self._invoke(job, resume_command(approved, by))
 
     def run_forever(self, stop: Callable[[], bool], interval_s: float = 2.0) -> None:
