@@ -24,6 +24,8 @@ class OrderRef(BaseModel):
     # 소싱처 상품 페이지(삼바웨이브 '원문링크'). 있으면 판매 상품명으로 검색하지 않고 이 상품을 바로 연다
     # (실기: 판매처 상품명을 ABC마트 검색어로 써서 검색 결과 페이지에서 '품절'로 오판)
     product_url: str | None = None
+    # 소싱처 로그인 계정(아이디). 삼바웨이브 '주문계정'(예: "ABCmart · 사무(buyer01)")의 괄호 안 값
+    account: str | None = None
 
 
 class Evidence(BaseModel):

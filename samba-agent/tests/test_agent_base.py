@@ -163,3 +163,20 @@ def test_진행_보고는_done_total_정수를_함께_보낸다():
     sent = [json.loads(c.request.content)['args'] for c in route.calls]
     assert sent[0] == {'label': '상품 확인', 'done': 0, 'total': 1}
     assert sent[1] == {'label': '옵션 선택', 'done': 1, 'total': 2}
+
+
+@respx.mock
+def test_로그인_제출_응답의_captcha_글자는_캡차가_아니다():
+    # 앱 login 도구는 제출 뒤 'submitted: check the page for success or captcha/2FA' 를 돌려준다
+    respx.post(f'{URL}/tool/login').mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                'ok': True,
+                'result': 'submitted: check the page for success or captcha/2FA',
+                'steps': [],
+            },
+        )
+    )
+    b = base(allowed=('login',))
+    assert b.tool('login', accountLabel='x').startswith('submitted')

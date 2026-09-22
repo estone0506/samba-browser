@@ -7,6 +7,7 @@
 """
 
 import json
+import re
 from collections.abc import Mapping
 
 from samba_agent.agents.contracts import OrderRef
@@ -29,9 +30,12 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     'qty': ('qty', 'quantity', 'count'),
     'option': ('option', 'optionText', 'size'),
     'product_url': ('product_url', 'sourceUrl', 'productUrl', 'source_url'),
+    'account': ('account', 'sourcingAccount', 'sourcing_account'),
 }
 # 없어도 되는 필드 — 있으면 OrderRef 에 싣는다
-_OPTIONAL_FIELDS = ('option', 'product_url')
+_OPTIONAL_FIELDS = ('option', 'product_url', 'account')
+# "ABCmart · 사무(buyer01)" 처럼 표시 이름 뒤 괄호에 아이디가 온다 — 아이디만 쓴다
+_ACCOUNT_ID = re.compile(r'\(([^()]+)\)\s*$')
 
 
 def _normalize(data: dict[str, object]) -> dict[str, object]:
@@ -43,6 +47,10 @@ def _normalize(data: dict[str, object]) -> dict[str, object]:
                 if data.get(n) not in (None, ''):
                     out[field] = data[n]
                     break
+    account = out.get('account')
+    if isinstance(account, str):
+        m = _ACCOUNT_ID.search(account)
+        out['account'] = (m.group(1) if m else account).strip()
     if out.get('sku') in (None, ''):
         name = next(
             (str(data[k]) for k in ('productName', 'product', 'name', 'title') if data.get(k)), ''

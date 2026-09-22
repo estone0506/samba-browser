@@ -41,7 +41,7 @@ class RecorderAgent(AgentBase):
     RECORD_FIELDS = ('account', 'source_order_no', 'real_price', 'shipping_fee', 'memo', 'flags')
 
     def __call__(self, assignment: Assignment) -> AgentResult:
-        return run_agent(lambda: self._record(assignment))
+        return run_agent(lambda: self._record(assignment), lambda: self.evidence)
 
     def _record(self, a: Assignment) -> AgentResult:
         self.evidence = []

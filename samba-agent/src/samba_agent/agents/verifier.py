@@ -15,7 +15,7 @@ class VerifierAgent(AgentBase):
     """대조만 한다. 아무것도 바꾸지 않는다(등록부 tools 에 쓰기 도구가 없다)."""
 
     def __call__(self, assignment: Assignment) -> AgentResult:
-        return run_agent(lambda: self._verify(assignment))
+        return run_agent(lambda: self._verify(assignment), lambda: self.evidence)
 
     def _verify(self, a: Assignment) -> AgentResult:
         self.evidence = []

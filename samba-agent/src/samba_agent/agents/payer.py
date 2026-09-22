@@ -165,7 +165,7 @@ class PayerAgent(AgentBase):
 
     def __call__(self, assignment: Assignment) -> AgentResult:
         self._dry_run = assignment.dry_run
-        return run_agent(lambda: self._pay(assignment))
+        return run_agent(lambda: self._pay(assignment), lambda: self.evidence)
 
     def tool(self, name: str, /, **args: object) -> str:
         """dry_run 이면 부수효과 도구는 허용 목록에 있어도 아예 부르지 않는다(불변조건).

@@ -104,7 +104,16 @@ def test_결과에_개인정보가_있어도_OrderRef_에는_없다():
     )
     ref = lookup_order(client(), '1001', {})
     dumped = ref.model_dump()
-    assert set(dumped) == {'order_no', 'source', 'seller', 'sku', 'qty', 'option', 'product_url'}
+    assert set(dumped) == {
+        'order_no',
+        'source',
+        'seller',
+        'sku',
+        'qty',
+        'option',
+        'product_url',
+        'account',
+    }
     assert '홍길동' not in str(ref)
 
 
@@ -208,3 +217,29 @@ def test_원문링크가_없으면_OrderRef_에_None_이다():
     )
     ref = lookup_order(client(), '1001', {})
     assert ref.option is None and ref.product_url is None
+
+
+@respx.mock
+def test_주문계정은_괄호_안_아이디만_싣는다():
+    respx.post(f'{URL}/tool/run_script').mock(
+        return_value=found(
+            {
+                'source': 'ABC마트',
+                'seller': '신세계몰',
+                'sku': 'SKU1',
+                'qty': 1,
+                'sourcingAccount': 'ABCmart · 사무(buyer01)',
+            }
+        )
+    )
+    assert lookup_order(client(), '1001', {}).account == 'buyer01'
+
+
+@respx.mock
+def test_괄호가_없는_주문계정은_그대로_쓴다():
+    respx.post(f'{URL}/tool/run_script').mock(
+        return_value=found(
+            {'source': 'ABC마트', 'seller': '신세계몰', 'sku': 'SKU1', 'qty': 1, 'account': 'buyer06'}
+        )
+    )
+    assert lookup_order(client(), '1001', {}).account == 'buyer06'
