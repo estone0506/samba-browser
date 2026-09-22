@@ -34,8 +34,8 @@ describe('전역 신원정보 폴백', () => {
     await vault.setup('master-pw')
     accountId = vault.upsertAccount({
       host: 'www.musinsa.com',
-      label: 'buyer01',
-      username: 'buyer01',
+      label: 'bob',
+      username: 'bob',
       isDefault: true
     }).id
   })

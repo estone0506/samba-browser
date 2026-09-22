@@ -590,18 +590,18 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
   })
 
   it('구매 계정이 여럿이고 기본 계정이 없어도, 탭 프로필 이름으로 계정을 고른다', async () => {
-    // 실기: 무신사에 buyer01·buyer02 가 함께 있어 폰 승인이 늘 "계정을 특정할 수 없음"으로 거부됐다
+    // 실기: 무신사에 bob·alice 가 함께 있어 폰 승인이 늘 "계정을 특정할 수 없음"으로 거부됐다
     const many = [
-      { ...ACCOUNT, id: 11, label: 'buyer02', username: 'buyer02', isDefault: false },
+      { ...ACCOUNT, id: 11, label: 'alice', username: 'alice', isDefault: false },
       {
         ...ACCOUNT,
         id: 12,
-        label: 'buyer01',
-        username: 'buyer01',
+        label: 'bob',
+        username: 'bob',
         isDefault: false,
         itemTypes: ['login']
       },
-      { ...ACCOUNT, id: 13, label: 'buyer01', username: 'buyer01', isDefault: false }
+      { ...ACCOUNT, id: 13, label: 'bob', username: 'bob', isDefault: false }
     ] as AccountDto[]
     const without = harness(db, { vault: { listAccounts: () => many } })
     scriptPayScreens(without.adb)
@@ -626,7 +626,7 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
         }
       }
     })
-    withProfile.deps.page.profile = () => 'buyer01'
+    withProfile.deps.page.profile = () => 'bob'
     scriptPayScreens(withProfile.adb)
     const r = await createPhoneAgentBridge(withProfile.deps).approvePayment(withProfile.ctx, req)
     expect(r.ok === false && r.reason === 'no-account').toBe(false)

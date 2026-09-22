@@ -726,7 +726,7 @@ ${raw}`
 
   /**
    * 결제 비밀번호를 넣을 계정. 같은 이름의 계정이 로그인 도메인별로 여럿일 수 있다
-   * (member.one.musinsa.com / my.musinsa.com / musinsa.com 의 buyer02) — 그중 결제 비밀번호를
+   * (member.one.musinsa.com / my.musinsa.com / musinsa.com 의 alice) — 그중 결제 비밀번호를
    * 가진 계정을 먼저 본다. 안 그러면 프로필 이름이 같은 다른 계정을 잡아 "not found" 로 끝난다(실기)
    */
   const keypadAccount = (

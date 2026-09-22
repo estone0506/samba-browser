@@ -225,14 +225,14 @@ describe('결제 비밀번호 복사(copyPaymentItems)', () => {
     await vault.setup('master-pw')
     fromId = vault.upsertAccount({
       host: 'member.one.musinsa.com',
-      label: 'buyer02',
-      username: 'buyer02',
+      label: 'alice',
+      username: 'alice',
       isDefault: true
     }).id
     toId = vault.upsertAccount({
       host: 'member.one.musinsa.com',
-      label: 'buyer01',
-      username: 'buyer01',
+      label: 'bob',
+      username: 'bob',
       isDefault: false
     }).id
   })
@@ -310,8 +310,8 @@ describe('getSecretForFill — 평문 필드(신원정보)', () => {
     await vault.setup('master-pw')
     const accountId = vault.upsertAccount({
       host: 'member.one.musinsa.com',
-      label: 'buyer01',
-      username: 'buyer01',
+      label: 'bob',
+      username: 'bob',
       isDefault: true
     }).id
     vault.putItem({

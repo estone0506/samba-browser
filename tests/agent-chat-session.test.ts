@@ -60,13 +60,13 @@ describe('buildHistoryNote — 세션을 못 이어받을 때 붙이는 앞부�
 
   it('사용자 지시와 AI 보고만 싣고, 자동 학습 턴과 빈 메시지는 뺀다', () => {
     const note = buildHistoryNote([
-      { role: 'user', content: '734501000740906 주문처리해' },
+      { role: 'user', content: '123456789012345 주문처리해' },
       { role: 'assistant', content: '결제 완료했습니다.' },
       { role: 'user', content: '[자동 학습] 방금 끝난 작업에서…' },
       { role: 'assistant', content: '' },
       { role: 'system', content: '내부' }
     ])
-    expect(note).toContain('- 사용자: 734501000740906 주문처리해')
+    expect(note).toContain('- 사용자: 123456789012345 주문처리해')
     expect(note).toContain('- AI: 결제 완료했습니다.')
     expect(note).not.toContain('자동 학습')
     expect(note).not.toContain('내부')

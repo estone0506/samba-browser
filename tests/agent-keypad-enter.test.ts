@@ -260,19 +260,19 @@ describe('fill_secret — 키패드 화면에서 앱이 결제 비밀번호를 �
     ])
   })
 
-  it('같은 이름의 계정이 여럿이면 결제 비밀번호를 가진 계정을 고른다(실기: 로그인 도메인별 buyer02 3개)', async () => {
+  it('같은 이름의 계정이 여럿이면 결제 비밀번호를 가진 계정을 고른다(실기: 로그인 도메인별 alice 3개)', async () => {
     const b = build({
       accounts: [
-        account({ id: 1, host: 'musinsa.com', label: 'buyer02', itemTypes: ['login'] }),
-        account({ id: 2, host: 'my.musinsa.com', label: 'buyer02', itemTypes: ['login'] }),
+        account({ id: 1, host: 'musinsa.com', label: 'alice', itemTypes: ['login'] }),
+        account({ id: 2, host: 'my.musinsa.com', label: 'alice', itemTypes: ['login'] }),
         account({
           id: 3,
           host: 'member.one.musinsa.com',
-          label: 'buyer02',
+          label: 'alice',
           itemTypes: ['login', 'password']
         })
       ],
-      tabProfile: 'buyer02'
+      tabProfile: 'alice'
     })
     expect(await fill(b)).toBe(KEYPAD_ENTERED_NEXT)
     expect(b.getPaymentSecretForFill).toHaveBeenCalledWith(

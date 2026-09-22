@@ -310,7 +310,7 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     if (!host) return null
     const accounts = deps.vault.listAccounts(host)
     if (accounts.length === 0) return null
-    // 구매 계정이 여럿인 사이트(무신사의 buyer01·buyer02…)는 기본 계정이 없어 늘 "특정할 수 없음"으로
+    // 구매 계정이 여럿인 사이트(무신사의 bob·alice…)는 기본 계정이 없어 늘 "특정할 수 없음"으로
     // 끝났다(실기: 토스페이 결제 요청까지 가서 폰 승인이 거부됨). 계정별 프로필 탭의 이름으로 고른다.
     // 같은 이름의 계정이 로그인 도메인별로 여럿이면 결제 비밀번호를 가진 쪽이 먼저다
     const profile = deps.page.profile?.() ?? ''

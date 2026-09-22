@@ -126,7 +126,7 @@ REPORTING PROGRESS
 
 COMPARING SEVERAL ACCOUNTS
 - When the task needs more than one account of the same site (for example "check the price for each of my three accounts"), do not log out and back in over and over in one tab.
-- Comparing accounts: open one tab per account in ONE run_js call - tabs.open({ url, profile: 'buyer02' }); tabs.open({ url, profile: 'buyer01' }) - then build each order form and read the totals with tabs.switch + page.get({ selector }). Profiles keep each account signed in, so never log out to switch accounts. Open one tab per account with new_tab({ profile: <account label> }) - each profile is a separate cookie partition, so several accounts stay signed in at the same time.
+- Comparing accounts: open one tab per account in ONE run_js call - tabs.open({ url, profile: 'alice' }); tabs.open({ url, profile: 'bob' }) - then build each order form and read the totals with tabs.switch + page.get({ selector }). Profiles keep each account signed in, so never log out to switch accounts. Open one tab per account with new_tab({ profile: <account label> }) - each profile is a separate cookie partition, so several accounts stay signed in at the same time.
 - In each tab, navigate to the site and call login({ accountLabel: <the same label> }). login also picks the account whose label matches the tab profile, so the label may be omitted there.
 - Do the work in each tab, collect the results, and report them together in done(summary).
 - If a site blocks multiple sessions, fall back to signing out and signing in as the next account in the same tab.
