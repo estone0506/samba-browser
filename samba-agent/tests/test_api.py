@@ -91,6 +91,46 @@ def test_규칙_원문_경로_탈출은_400(client):
     assert client.get('/graph/rules/..%2F..%2Fetc').status_code == 400
 
 
+def test_규칙_파일이_등록부에만_있고_실제로_없으면_404(tmp_path, client):
+    # 리뷰 지적 — Important 3: read_text 예외를 그대로 흘리지 않고 404 JSON 으로
+    rules_dir = tmp_path / 'root' / 'rules'
+    payer_files = list(rules_dir.glob('payer*'))
+    assert payer_files, 'payer 규칙 파일을 찾지 못함'
+    payer_files[0].unlink()
+    resp = client.get('/graph/rules/payer')
+    assert resp.status_code == 404
+    assert 'error' in _json(resp)
+
+
+def test_규칙_파일이_UTF8이_아니면_400(tmp_path, client):
+    rules_dir = tmp_path / 'root' / 'rules'
+    payer_files = list(rules_dir.glob('payer*'))
+    assert payer_files, 'payer 규칙 파일을 찾지 못함'
+    payer_files[0].write_bytes(b'\xff\xfe\x00\x01')
+    resp = client.get('/graph/rules/payer')
+    assert resp.status_code == 400
+    assert 'error' in _json(resp)
+
+
+def test_규칙_쓰기가_실패하면_HTML_대신_500_JSON(client, monkeypatch):
+    # 리뷰 지적 — Important 3: _atomic_write 의 OSError 를 그대로 흘리지 않는다
+    import samba_agent.api.server as server_module
+
+    def boom(path, text):
+        raise OSError('disk full')
+
+    monkeypatch.setattr(server_module, '_atomic_write', boom)
+    resp = client.put('/graph/rules/payer', json={'text': '# 새 규칙\n'})
+    assert resp.status_code == 500
+    assert _json(resp)['error']
+
+
+def test_에이전트_이름은_퍼센트_인코딩을_풀어서_찾는다(client):
+    # payer -> pay%65r (e 를 인코딩) 도 같은 에이전트를 찾아야 한다
+    body = _json(client.get('/graph/rules/pay%65r'))
+    assert body['agent'] == 'payer'
+
+
 def test_고친_뒤_읽으면_새_내용이다(client):
     resp = client.put('/graph/rules/payer', json={'text': '# 결제 규칙 v3\n'})
     assert resp.status_code == 200
