@@ -43,6 +43,8 @@ def build_app(
             resp = _get_jobs(queue)
         elif req.method == 'GET' and path == '/releases':
             resp = _get_releases(releases, version, reports)
+        elif req.method == 'GET' and path.startswith('/graph/rules/'):
+            resp = _get_rules(reg, root, version, path[len('/graph/rules/') :])
         elif req.method == 'PUT' and path.startswith('/graph/rules/'):
             resp = _put_rules(reg, root, version, path[len('/graph/rules/') :], req)
         else:
@@ -103,16 +105,43 @@ def _get_releases(releases: ReleaseStore, version: Callable[[], str], reports: P
     )
 
 
+def _resolve_rules_path(
+    reg: Registry, root: Path, name: str
+) -> tuple[Path, None] | tuple[None, Response]:
+    """이름 → 규칙 파일 경로. PUT/GET 이 같은 검사를 쓴다(경로 이탈·미등록 에이전트)."""
+    if '/' in name or '..' in name or '%2f' in name.lower():
+        return None, _json({'error': 'bad name'}, 400)
+    try:
+        spec = reg[name]
+    except KeyError:
+        return None, _json({'error': f'unknown agent: {name}'}, 404)
+    rules_path = (root / spec.rules).resolve()
+    # 등록부 경로 자체가 탈출하지 않는 한 여기까지 오지만, 한 번 더 root 밖으로
+    # 안 나가는지 확인한다(스펙 §10-3 — 실패 케이스는 항상 한 번 더 검사한다)
+    if root.resolve() not in rules_path.parents and rules_path != root.resolve():
+        return None, _json({'error': 'bad path'}, 400)
+    return rules_path, None
+
+
+def _get_rules(reg: Registry, root: Path, version: Callable[[], str], name: str) -> Response:
+    """규칙 파일 원문. 앱의 편집 모달이 고치기 전에 현재 내용을 받는다(플랜 3/3)."""
+    rules_path, err = _resolve_rules_path(reg, root, name)
+    if err is not None:
+        return err
+    assert rules_path is not None
+    return _json(
+        {'agent': name, 'text': rules_path.read_text(encoding='utf-8'), 'version': version()}
+    )
+
+
 def _put_rules(
     reg: Registry, root: Path, version: Callable[[], str], name: str, req: Request
 ) -> Response:
     """규칙 파일 수정. 고치면 새 버전이 되어 판정 시스템을 다시 통과해야 한다."""
-    if '/' in name or '..' in name or '%2f' in name.lower():
-        return _json({'error': 'bad name'}, 400)
-    try:
-        spec = reg[name]
-    except KeyError:
-        return _json({'error': f'unknown agent: {name}'}, 404)
+    rules_path, err = _resolve_rules_path(reg, root, name)
+    if err is not None:
+        return err
+    assert rules_path is not None
     # content-length 로 먼저 거른다(스트림 다 읽기 전에 413 — 리뷰 지적 — Important 2).
     # 헤더가 없거나 거짓이어도 아래에서 실제 바이트 길이로 다시 확인한다.
     if (req.content_length or 0) > MAX_RULES_BODY:
@@ -129,11 +158,6 @@ def _put_rules(
     text = str(body.get('text', ''))
     if not text.strip():
         return _json({'error': 'empty rules'}, 400)
-    rules_path = (root / spec.rules).resolve()
-    # 등록부 경로 자체가 탈출하지 않는 한 여기까지 오지만, 한 번 더 root 밖으로
-    # 안 나가는지 확인한다(스펙 §10-3 — 실패 케이스는 항상 한 번 더 검사한다)
-    if root.resolve() not in rules_path.parents and rules_path != root.resolve():
-        return _json({'error': 'bad path'}, 400)
     _atomic_write(rules_path, text)
     return _json({'ok': True, 'version': version()})
 

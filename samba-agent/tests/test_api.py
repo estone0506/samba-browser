@@ -75,6 +75,29 @@ def test_경로_탈출은_400(client):
     assert client.put('/graph/rules/..%2F..%2Fetc', json={'text': 'x'}).status_code == 400
 
 
+def test_규칙_원문을_읽는다(client):
+    # 앱 편집 모달이 편집 전 원문을 받는 경로(플랜 3/3)
+    body = _json(client.get('/graph/rules/payer'))
+    assert body['agent'] == 'payer'
+    assert body['version'] == 'vtest'
+    assert isinstance(body['text'], str) and body['text'].strip() != ''
+
+
+def test_규칙_원문_없는_에이전트는_404(client):
+    assert client.get('/graph/rules/nope').status_code == 404
+
+
+def test_규칙_원문_경로_탈출은_400(client):
+    assert client.get('/graph/rules/..%2F..%2Fetc').status_code == 400
+
+
+def test_고친_뒤_읽으면_새_내용이다(client):
+    resp = client.put('/graph/rules/payer', json={'text': '# 결제 규칙 v3\n'})
+    assert resp.status_code == 200
+    body = _json(client.get('/graph/rules/payer'))
+    assert body['text'] == '# 결제 규칙 v3\n'
+
+
 def test_모르는_경로는_404(client):
     assert client.get('/nope').status_code == 404
 
