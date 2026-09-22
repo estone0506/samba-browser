@@ -88,6 +88,7 @@ import {
   setSupabaseEnvFromSettings
 } from '../sync/env'
 import { AccountService } from '../sync/account'
+import { AccountWorkspaceStore, ensureAccountWorkspace } from '../sync/account-workspace'
 import { createSessionStore } from '../sync/session-store'
 import { createSupabaseBackend } from '../sync/supabase-backend'
 import { SyncConnection } from '../sync/connect'
@@ -936,32 +937,40 @@ export function registerIpc(
   })
 
   handleFromRenderer(IPC.authState, () => authStateWithAccount())
-  handleFromRenderer(IPC.authSignUp, async (email: string, password: string) => {
-    await account.signUp(email, password)
+  // 실패 사유를 한 줄 남긴다(Supabase 오류 문구뿐 — 이메일·비밀번호·토큰은 넣지 않는다)
+  const logged = async (step: string, fn: () => Promise<unknown>): Promise<AuthState> => {
+    try {
+      await fn()
+    } catch (e: unknown) {
+      console.warn(`계정 ${step} 실패`, e instanceof Error ? e.message : String(e))
+      throw e
+    }
     return authStateWithAccount()
-  })
-  handleFromRenderer(IPC.authSignIn, async (email: string, password: string) => {
-    await account.signIn(email, password)
-    return authStateWithAccount()
-  })
+  }
+  handleFromRenderer(IPC.authSignUp, (email: string, password: string) =>
+    logged('가입', () => account.signUp(email, password))
+  )
+  handleFromRenderer(IPC.authSignIn, (email: string, password: string) =>
+    logged('로그인', () => account.signIn(email, password))
+  )
   // 브라우저에서 구글 로그인을 마칠 때까지(최대 5분) 응답이 늦게 온다
-  handleFromRenderer(IPC.authSignInGoogle, async () => {
-    await account.signInGoogle()
-    return authStateWithAccount()
-  })
+  handleFromRenderer(IPC.authSignInGoogle, () =>
+    logged('구글 로그인', () => account.signInGoogle())
+  )
   handleFromRenderer(IPC.authSignOut, async () => {
     await account.signOut()
+    // 로그아웃 = 자리를 비우는 것. 금고는 곧바로 잠근다(다음 사람이 열어 보지 못하게)
+    vault.lock()
     return authStateWithAccount()
   })
   // 로그인한 계정에 데이터 Supabase 주소를 저장하고 곧바로 붙는다(재시작 불필요)
-  handleFromRenderer(IPC.authSaveSupabase, async (raw: unknown) => {
+  handleFromRenderer(IPC.authSaveSupabase, (raw: unknown) => {
     const o = raw as { url?: unknown; anonKey?: unknown }
     const url = typeof o?.url === 'string' ? o.url.trim() : ''
     const anonKey = typeof o?.anonKey === 'string' ? o.anonKey.trim() : ''
     if (!isSupabaseProjectUrl(url)) throw new Error(tr('auth.badSupabaseUrl'))
     if (!isSupabaseAnonKey(anonKey)) throw new Error(tr('auth.badSupabaseKey'))
-    await account.saveSupabase({ url, anonKey })
-    return authStateWithAccount()
+    return logged('Supabase 주소 저장', () => account.saveSupabase({ url, anonKey }))
   })
   // === 계정 인증 끝 ====================================================================
 
@@ -980,6 +989,29 @@ export function registerIpc(
   }
   applyWorkspace(false)
   workspace.onChanged(() => applyWorkspace(true))
+  // 계정별 로컬 공간: 계정이 로그인하면 그 계정의 작업공간으로 전환한다(첫 계정은 기존 공간을 물려받는다).
+  // 로그인 전에는 탭 뷰를 숨겨 로그인 화면만 보인다(북마크·대화는 렌더러 게이트가 가린다)
+  const accountWorkspaces = new AccountWorkspaceStore(
+    join(app.getPath('userData'), 'account-workspaces.json')
+  )
+  const applyAccountGate = (state: {
+    configured: boolean
+    signedIn: boolean
+    userId?: string
+    email?: string
+  }): void => {
+    if (!state.configured) return
+    tabs.setGateHidden(!state.signedIn)
+    if (state.signedIn && state.userId) {
+      try {
+        ensureAccountWorkspace(workspace, accountWorkspaces, state.userId, state.email ?? '')
+      } catch (e: unknown) {
+        console.error('계정 작업공간 전환 실패', e instanceof Error ? e.message : String(e))
+      }
+    }
+  }
+  account.onStateChanged(applyAccountGate)
+  applyAccountGate(account.accountState())
 
   // Ctrl+Alt+1~9 — 전역 단축키가 아니라 이 창(렌더러 UI + 탭 페이지)에서만 듣는다
   const handleWorkspaceShortcut = (input: {
@@ -1038,7 +1070,15 @@ export function registerIpc(
     // 기본 작업공간만 기기 간 공유 대상이라 고정 uuid 를 쓴다(2b 범위)
     workspace: () => {
       const scope = workspace.scope()
-      return { localId: scope.id, remoteId: workspaceRemoteId(db, scope.id, scope.isDefault) }
+      // 계정 작업공간은 그 계정의 "기본" 공간이다 — 모든 PC 에서 같은 고정 uuid 를 써야 서로 내려받는다
+      return {
+        localId: scope.id,
+        remoteId: workspaceRemoteId(
+          db,
+          scope.id,
+          scope.isDefault || accountWorkspaces.isAccountWorkspace(scope.id)
+        )
+      }
     },
     device: {
       hostname: () => os.hostname(),

@@ -22,6 +22,8 @@ import { useChatStore } from '@renderer/stores/chatStore'
 import { ResizeHandle } from '@renderer/components/layout/ResizeHandle'
 import { canResizeSidebar, sidebarWidthOf } from '@renderer/components/layout/sidebar-view'
 import { useVaultStore } from '@renderer/stores/vaultStore'
+import { useAuthStore } from '@renderer/stores/authStore'
+import { LoginGate } from '@renderer/components/layout/LoginGate'
 
 export default function App(): React.JSX.Element {
   // 진행 띠에 보여 줄 도구 호출 상한(설정값). 읽기 전까지는 기본값
@@ -40,6 +42,14 @@ export default function App(): React.JSX.Element {
     setPanelWidth
   } = useUiStore()
   const chat = useChatStore()
+  // 계정 로그인 게이트 — 디렉터리가 있는 빌드에서는 로그인 전에 아무것도 보여 주지 않는다
+  const authState = useAuthStore((s) => s.state)
+  const loadAuth = useAuthStore((s) => s.load)
+  const subscribeAuth = useAuthStore((s) => s.subscribe)
+  useEffect(() => {
+    void loadAuth()
+    return subscribeAuth()
+  }, [loadAuth, subscribeAuth])
   const refreshVaultState = useVaultStore((s) => s.refreshState)
   const subscribeCapture = useVaultStore((s) => s.subscribeCapture)
   const subscribePasswordUpdated = useVaultStore((s) => s.subscribePasswordUpdated)
@@ -99,6 +109,9 @@ export default function App(): React.JSX.Element {
         viewportHeight: window.innerHeight
       })
   }, [view])
+  // 인증 상태를 아직 못 읽었으면 빈 화면(잠깐) — 로그인 전 화면이 스쳐 보이지 않게
+  if (authState === null) return <div className="h-full bg-[var(--bg)]" />
+  if (authState.account?.configured && !authState.account.signedIn) return <LoginGate />
   return (
     <div className="flex h-full bg-[var(--bg)]">
       <Sidebar width={sidebarWidthOf(sidebarCollapsed, sidebarWidth)} />

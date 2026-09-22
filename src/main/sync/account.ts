@@ -41,6 +41,8 @@ export interface AccountState {
   configured: boolean
   signedIn: boolean
   email?: string
+  /** 디렉터리 계정 id(uuid). 이 PC 의 계정별 작업공간을 고르는 열쇠다 */
+  userId?: string
   /** 로그인은 됐는데 이 계정에 데이터 Supabase 주소가 아직 없다 */
   needsSupabase: boolean
   /** 서버 함수(directory_user_count)가 관리자에게만 돌려주는 가입 사용자 수 */
@@ -85,7 +87,13 @@ export class AccountService {
       await dir.auth.restore()
       const user = await dir.backend.currentUser()
       if (!user) {
-        this.next({ ...this.state, signedIn: false, email: undefined, needsSupabase: false })
+        this.next({
+          ...this.state,
+          signedIn: false,
+          email: undefined,
+          userId: undefined,
+          needsSupabase: false
+        })
         return this.deps.auth.restore()
       }
       await this.afterDirectorySignIn(user)
@@ -146,7 +154,7 @@ export class AccountService {
       } catch (e: unknown) {
         console.warn('디렉터리 로그아웃 실패', e instanceof Error ? e.message : String(e))
       }
-      this.next({ configured: true, signedIn: false, email: undefined, needsSupabase: false })
+      this.next({ configured: true, signedIn: false, needsSupabase: false })
     }
     return state
   }
@@ -201,6 +209,7 @@ export class AccountService {
       configured: true,
       signedIn: true,
       email: user.email,
+      userId: user.userId,
       needsSupabase: !config,
       ...(userCount === null ? {} : { userCount })
     })

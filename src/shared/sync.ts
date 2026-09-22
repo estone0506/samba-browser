@@ -41,6 +41,7 @@ export interface AuthState {
     configured: boolean
     signedIn: boolean
     email?: string
+    userId?: string
     needsSupabase: boolean
     /** 관리자에게만 서버가 돌려주는 가입 사용자 수. 그 외는 없음 */
     userCount?: number

@@ -917,7 +917,8 @@
     "needsSupabaseTitle": "이 계정의 Supabase 설정",
     "needsSupabaseDesc": "처음 로그인한 계정입니다. 데이터를 둘 내 Supabase 프로젝트 주소를 넣으면 계정에 저장돼 다른 PC 에서도 자동으로 붙습니다",
     "userCount": "가입 사용자 {{n}}명",
-    "accountSignedIn": "계정 로그인됨"
+    "accountSignedIn": "계정 로그인됨",
+    "gateHint": "로그인하면 이 계정의 북마크·대화·키마스터가 열립니다"
   },
   "sync": {
     "title": "동기화",

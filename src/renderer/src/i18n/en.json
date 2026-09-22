@@ -917,7 +917,8 @@
     "needsSupabaseTitle": "Supabase for this account",
     "needsSupabaseDesc": "First sign-in for this account. Enter your own Supabase project so it is saved to the account and follows you to other PCs",
     "userCount": "{{n}} registered users",
-    "accountSignedIn": "Account signed in"
+    "accountSignedIn": "Account signed in",
+    "gateHint": "Sign in to open this account’s bookmarks, chats and KeyMaster"
   },
   "sync": {
     "title": "Sync",

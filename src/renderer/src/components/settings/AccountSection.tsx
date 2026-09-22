@@ -268,7 +268,7 @@ function AccountCard({
 }
 
 // 미로그인 — 이메일/비밀번호 가입·로그인 + 구글로 계속하기
-function SignInCard(): React.JSX.Element {
+export function SignInCard(): React.JSX.Element {
   const { t } = useTranslation()
   const auth = useAuthStore()
   const [mode, setMode] = useState<'signIn' | 'signUp'>('signIn')
