@@ -918,7 +918,11 @@
     "needsSupabaseDesc": "First sign-in for this account. Enter your own Supabase project so it is saved to the account and follows you to other PCs",
     "userCount": "{{n}} registered users",
     "accountSignedIn": "Account signed in",
-    "gateHint": "Sign in to open this account’s bookmarks, chats and KeyMaster"
+    "gateHint": "Sign in to open this account’s bookmarks, chats and KeyMaster",
+    "forgotPassword": "Forgot your password? Set a new one using the {{email}} session still on this PC",
+    "resetHint": "Set a new password for {{email}} and you will be signed in with it right away (no email needed)",
+    "newPassword": "New password (8+ characters)",
+    "resetAndSignIn": "Sign in with new password"
   },
   "sync": {
     "title": "Sync",

@@ -279,3 +279,46 @@ describe('이미 같은 프로젝트에 붙어 있을 때', () => {
     expect(account.accountState()).toMatchObject({ signedIn: true, needsSupabase: false })
   })
 })
+
+describe('비밀번호를 잊었을 때 — 이 PC 의 살아 있는 세션으로 새로 정한다', () => {
+  it('데이터 세션이 있으면 새 비밀번호를 정하고 그것으로 디렉터리에 로그인한다', async () => {
+    const directory = createFakeBackend()
+    const data = createFakeBackend()
+    const auth = authFor(data)
+    await auth.signIn('me@example.com', 'old-pw')
+    const update = vi.spyOn(data, 'updatePassword')
+    const dirSignIn = vi.spyOn(directory, 'signIn')
+    const settings = { syncSupabaseUrl: URL, syncSupabaseAnonKey: KEY }
+    const account = new AccountService({
+      directory,
+      directoryAuth: authFor(directory),
+      auth,
+      createDataBackend: () => data,
+      onDataBackend: () => {},
+      settings: { get: () => settings, set: (p) => Object.assign(settings, p) },
+      applyEnv: () => {}
+    })
+    await account.resetPasswordWithSession('new-password-1')
+    expect(update).toHaveBeenCalledWith('new-password-1')
+    expect(dirSignIn).toHaveBeenCalledWith('me@example.com', 'new-password-1')
+    expect(account.accountState()).toMatchObject({ signedIn: true, email: 'me@example.com' })
+  })
+
+  it('세션이 없거나 비밀번호가 짧으면 거부한다', async () => {
+    const h = setup()
+    await expect(h.account.resetPasswordWithSession('new-password-1')).rejects.toThrow('no-session')
+    const data = createFakeBackend()
+    const auth = authFor(data)
+    await auth.signIn('me@example.com', 'old')
+    const account = new AccountService({
+      directory: createFakeBackend(),
+      directoryAuth: authFor(createFakeBackend()),
+      auth,
+      createDataBackend: () => data,
+      onDataBackend: () => {},
+      settings: { get: () => ({ syncSupabaseUrl: '', syncSupabaseAnonKey: '' }), set: () => {} },
+      applyEnv: () => {}
+    })
+    await expect(account.resetPasswordWithSession('short')).rejects.toThrow('weak password')
+  })
+})

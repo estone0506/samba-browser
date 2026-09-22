@@ -964,6 +964,9 @@ export function registerIpc(
     return authStateWithAccount()
   })
   // 로그인한 계정에 데이터 Supabase 주소를 저장하고 곧바로 붙는다(재시작 불필요)
+  handleFromRenderer(IPC.authResetPassword, (password: string) =>
+    logged('비밀번호 재설정', () => account.resetPasswordWithSession(String(password ?? '')))
+  )
   handleFromRenderer(IPC.authSaveSupabase, (raw: unknown) => {
     const o = raw as { url?: unknown; anonKey?: unknown }
     const url = typeof o?.url === 'string' ? o.url.trim() : ''

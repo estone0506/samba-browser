@@ -144,6 +144,19 @@ export class AccountService {
     return this.deps.auth.state()
   }
 
+  /**
+   * 비밀번호를 잊었을 때: 이 PC 에 살아 있는 데이터 세션으로 새 비밀번호를 정하고, 그 비밀번호로 디렉터리에 로그인한다.
+   * 디렉터리와 데이터가 같은 프로젝트일 때 통한다(다르면 디렉터리 로그인은 실패하고 그 사유를 돌려준다)
+   */
+  async resetPasswordWithSession(password: string): Promise<AuthState> {
+    const data = this.deps.auth.state()
+    const backend = this.deps.auth.currentBackend()
+    if (!data.signedIn || !data.email || !backend) throw new Error('no-session')
+    if (password.length < 8) throw new Error('weak password')
+    await backend.updatePassword(password)
+    return this.signIn(data.email, password)
+  }
+
   async signOut(): Promise<AuthState> {
     this.pendingCredential = null
     const state = await this.deps.auth.signOut()

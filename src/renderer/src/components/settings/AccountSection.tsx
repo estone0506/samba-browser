@@ -274,6 +274,10 @@ export function SignInCard(): React.JSX.Element {
   const [mode, setMode] = useState<'signIn' | 'signUp'>('signIn')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  // 비밀번호를 잊었을 때: 이 PC 에 데이터 세션이 살아 있으면 메일 없이 새 비밀번호를 정할 수 있다
+  const [resetting, setResetting] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const canReset = auth.state?.signedIn === true && !!auth.state.email
 
   const busy = auth.pending !== null
   const canSubmit = email.trim().length > 0 && password.length > 0 && !busy
@@ -341,6 +345,44 @@ export function SignInCard(): React.JSX.Element {
       <SecondaryButton disabled={busy} onClick={() => void auth.signInGoogle()}>
         {t('account.continueWithGoogle')}
       </SecondaryButton>
+      {canReset && !resetting && (
+        <button
+          type="button"
+          className="w-fit text-[11.5px] text-[var(--text2)] underline"
+          onClick={() => {
+            auth.clearError()
+            setResetting(true)
+          }}
+        >
+          {t('account.forgotPassword', { email: auth.state?.email ?? '' })}
+        </button>
+      )}
+      {canReset && resetting && (
+        <>
+          <p className="text-[11.5px] text-[var(--text2)]">
+            {t('account.resetHint', { email: auth.state?.email ?? '' })}
+          </p>
+          <SettingsRow label={t('account.newPassword')}>
+            <TextInput
+              value={newPassword}
+              onChange={setNewPassword}
+              type="password"
+              autoComplete="new-password"
+            />
+          </SettingsRow>
+          <div className="flex flex-wrap items-center gap-2">
+            <PrimaryButton
+              disabled={newPassword.length < 8 || busy}
+              onClick={() => void auth.resetPassword(newPassword)}
+            >
+              {t('account.resetAndSignIn')}
+            </PrimaryButton>
+            <SecondaryButton disabled={busy} onClick={() => setResetting(false)}>
+              {t('account.googleCancel')}
+            </SecondaryButton>
+          </div>
+        </>
+      )}
     </SettingsSection>
   )
 }

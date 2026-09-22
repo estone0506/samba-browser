@@ -111,6 +111,9 @@ export function createFakeBackend(): FakeBackend {
     async clearLocalSession() {
       signedIn = null
     },
+    async updatePassword() {
+      if (!signedIn) throw new Error('not signed in')
+    },
     async currentUser() {
       return signedIn
     },
