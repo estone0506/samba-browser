@@ -116,6 +116,8 @@ export class AccountService {
     if (!user) return this.deps.auth.state()
     const config = await this.afterDirectorySignIn(user)
     if (!config) return this.deps.auth.state()
+    // 데이터 프로젝트에 이미 세션이 살아 있으면 브라우저를 또 열지 않는다
+    if (this.deps.auth.state().signedIn) return this.deps.auth.state()
     return this.deps.auth.signInGoogle()
   }
 
@@ -181,7 +183,7 @@ export class AccountService {
       }
       return this.deps.auth.state()
     }
-    await this.signInData(email, password)
+    if (!this.deps.auth.state().signedIn) await this.signInData(email, password)
     return this.deps.auth.state()
   }
 
@@ -225,6 +227,16 @@ export class AccountService {
     }
     this.deps.applyEnv(config.url, config.anonKey)
     if (this.currentUrl === config.url && this.deps.auth.hasBackend()) return
+    // 설정에 이미 같은 주소가 있고 백엔드가 떠 있으면 그 프로젝트다 — 세션을 살려 둔 채 그대로 쓴다
+    // (앱 시작 때 복구된 데이터 세션을 디렉터리 로그인이 도로 끊고 다시 로그인시키지 않게)
+    if (
+      current.syncSupabaseUrl === config.url &&
+      current.syncSupabaseAnonKey === config.anonKey &&
+      this.deps.auth.hasBackend()
+    ) {
+      this.currentUrl = config.url
+      return
+    }
     this.currentUrl = config.url
     const backend = this.deps.createDataBackend(config)
     this.deps.auth.setBackend(backend)

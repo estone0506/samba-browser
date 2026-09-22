@@ -235,3 +235,47 @@ describe('AuthService.setBackend', () => {
     expect(seen).toEqual([true, true, false])
   })
 })
+
+describe('이미 같은 프로젝트에 붙어 있을 때', () => {
+  it('앱 시작 때 복구된 데이터 세션을 끊지 않고 디렉터리만 로그인한다', async () => {
+    const directory = createFakeBackend()
+    directory.seedKeyed('settings_sync', [
+      {
+        user_id: FAKE_USER_ID,
+        workspace_id: DIRECTORY_WORKSPACE_ID,
+        key: DIRECTORY_URL_KEY,
+        value: URL,
+        updated_at: new Date(1000).toISOString(),
+        deleted_at: null
+      },
+      {
+        user_id: FAKE_USER_ID,
+        workspace_id: DIRECTORY_WORKSPACE_ID,
+        key: DIRECTORY_ANON_KEY,
+        value: KEY,
+        updated_at: new Date(1000).toISOString(),
+        deleted_at: null
+      }
+    ])
+    const data = createFakeBackend()
+    const auth = authFor(data)
+    await auth.signIn('me@example.com', 'pw')
+    const dataSignIn = vi.spyOn(data, 'signIn')
+    const settings = { syncSupabaseUrl: URL, syncSupabaseAnonKey: KEY }
+    const onDataBackend = vi.fn()
+    const account = new AccountService({
+      directory,
+      directoryAuth: authFor(directory),
+      auth,
+      createDataBackend: () => createFakeBackend(),
+      onDataBackend,
+      settings: { get: () => settings, set: (p) => Object.assign(settings, p) },
+      applyEnv: () => {}
+    })
+    await account.signIn('me@example.com', 'pw')
+    expect(onDataBackend).not.toHaveBeenCalled()
+    expect(dataSignIn).not.toHaveBeenCalled()
+    expect(auth.state()).toMatchObject({ signedIn: true, email: 'me@example.com' })
+    expect(account.accountState()).toMatchObject({ signedIn: true, needsSupabase: false })
+  })
+})
