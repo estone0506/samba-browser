@@ -404,6 +404,20 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
             </>
           )}
 
+          {appHost !== undefined && !onAppSite && (
+            // 네이버페이는 다른 결제 수단과 구조가 다르다 — 처음 보는 사람에게 왜 비밀번호 칸이 없는지 설명한다
+            <div className="flex flex-col gap-1 rounded-[10px] bg-[var(--bg2)] px-3 py-2.5 text-[11.5px] leading-relaxed text-[var(--text2)]">
+              <p className="font-medium text-[var(--text)]">{t('vault.editor.naverPayTitle')}</p>
+              <p>{t('vault.editor.naverPayHow', { host: appHost })}</p>
+              <p>
+                {linkMode
+                  ? t('vault.editor.naverPayPick')
+                  : t('vault.editor.naverPayNone', { host: appHost })}
+              </p>
+              <p>{t('vault.editor.naverPayCheck')}</p>
+            </div>
+          )}
+
           {specs.map((section) => (
             <section key={section.key} className="flex flex-col gap-2">
               <h4 className="text-[12px] font-semibold text-[var(--text2)]">
@@ -426,11 +440,6 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
                         </option>
                       ))}
                     </select>
-                  ) : null}
-                  {field.key === PAYMENT_ACCOUNT_FIELD_KEY ? (
-                    <p className="text-[11px] text-[var(--text3)]">
-                      {t('vault.editor.paymentAccountHint', { host: appHost ?? '' })}
-                    </p>
                   ) : null}
                   {field.kind === 'select' ? null : (
                     <div className="flex items-center gap-1.5">
