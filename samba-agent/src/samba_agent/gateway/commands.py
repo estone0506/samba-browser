@@ -1,0 +1,65 @@
+"""슬랙 명령 파싱. 슬랙 SDK 를 모르는 순수 함수라 테스트가 쉽다(스펙 §4.1)."""
+
+import re
+from dataclasses import dataclass, field
+from typing import Literal
+
+CommandKind = Literal[
+    'process', 'status', 'cancel', 'resume', 'diagnose', 'version', 'approve', 'unknown'
+]
+
+# 주문번호는 숫자 8자 이상 또는 영문+숫자 혼합 코드
+ORDER_RE = re.compile(r'\b([0-9]{8,}|[A-Za-z][A-Za-z0-9_-]{1,31})\b')
+MENTION_RE = re.compile(r'<@[A-Z0-9]+>')
+VERSION_RE = re.compile(r'\bv[0-9a-f]{12}\b')
+KNOWN_CARDS = ('현대', '삼성', '신한', '국민', '롯데', '하나', 'BC', '농협')
+
+
+@dataclass(frozen=True)
+class Command:
+    """한 줄 명령의 해석 결과."""
+
+    kind: CommandKind
+    order_no: str | None = None
+    options: dict[str, str] = field(default_factory=dict)
+    version: str | None = None
+
+
+def _first_order(words: list[str]) -> str | None:
+    for w in words:
+        m = ORDER_RE.fullmatch(w)
+        if m:
+            return m.group(1)
+    return None
+
+
+def parse_command(text: str) -> Command:
+    """`@삼바 …` 한 줄 → Command. 모르는 말은 unknown(봇은 답하지 않는다)."""
+    body = MENTION_RE.sub(' ', text).strip()
+    words = [w for w in body.split() if w]
+    if not words:
+        return Command('unknown')
+    head = words[0]
+    rest = words[1:]
+    if head == '상태':
+        return Command('status')
+    if head == '버전':
+        return Command('version')
+    if head == '승인':
+        m = VERSION_RE.search(' '.join(rest))
+        return Command('approve', version=m.group(0)) if m else Command('unknown')
+    if head in ('취소', '이어서', '진단'):
+        order = _first_order(rest)
+        kind: CommandKind = {'취소': 'cancel', '이어서': 'resume', '진단': 'diagnose'}[head]
+        return Command(kind, order_no=order) if order else Command('unknown')
+    if any(w.startswith('처리') for w in words):
+        order = _first_order(words)
+        if not order:
+            return Command('unknown')
+        options: dict[str, str] = {}
+        for card in KNOWN_CARDS:
+            if any(card in w for w in words):
+                options['card'] = card
+                break
+        return Command('process', order_no=order, options=options)
+    return Command('unknown')
