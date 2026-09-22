@@ -16,7 +16,7 @@ from samba_agent.failures import FailReason
 from samba_agent.supervisor.approval import approval_request
 from samba_agent.supervisor.assign import build_assignment
 from samba_agent.supervisor.policy import KIND_OF_STAGE, STAGES, check_buyer, should_retry
-from samba_agent.supervisor.state import RunState
+from samba_agent.supervisor.state import RunState, sanitize_result
 
 AgentFn = Callable[..., AgentResult]
 
@@ -26,13 +26,15 @@ EXTERNAL_STAGES = ('pay', 'record')
 
 def _stop(state: RunState, name: str, result: AgentResult) -> RunState:
     """사람에게 넘기고 멈춘다."""
-    results = {**state.get('results', {}), name: result}
+    results = {**state.get('results', {}), name: sanitize_result(result)}
+    # 불변조건: status != 'ok' 인 AgentResult 는 fail_reason 이 반드시 있다
+    # (AgentResult._check_fail_reason 모델 검증기가 보장한다). None 폴백은 필요 없다.
     return {
         **state,
         'results': results,
         'stage': 'done',
         'outcome': 'needs_human',
-        'fail_reason': result.fail_reason or FailReason.UNKNOWN,
+        'fail_reason': result.fail_reason,
     }
 
 
@@ -76,6 +78,7 @@ def _run_stage(
         if should_retry(spec, result, attempts[spec.name]):
             continue
         return _stop({**state, 'attempts': attempts}, spec.name, result)
+    result = sanitize_result(result)
     return {
         **state,
         'results': {**state.get('results', {}), spec.name: result},
@@ -98,6 +101,10 @@ class _ResumeSafeGraph:
     LangGraph 는 진행 중(중단 포함)인 스레드에 dict 입력을 다시 주면 그 입력으로 새로
     시작해버린다. 승인 대기 중에 같은 요청이 중복으로 들어와도(예: 재시도 큐, 재배포) 이미 한
     구매·결제를 다시 돌리지 않도록, 대기 중인 스레드에는 입력을 무시하고 그냥 재개한다.
+
+    invoke 뿐 아니라 stream·ainvoke·astream 도 같은 진입점이다 — 하나만 감싸면 나머지
+    경로로 같은 스레드를 다시 부를 때(예: `.stream()` 두 번) 중복 실행이 그대로 샌다.
+    `get_state`/`aget_state` 는 LangGraph 공개 API 다(비공개 아님).
     """
 
     def __init__(self, compiled: object) -> None:
@@ -109,10 +116,34 @@ class _ResumeSafeGraph:
         snapshot = self._compiled.get_state(config)  # type: ignore[attr-defined]
         return bool(snapshot.next)
 
+    async def _aresume_in_place(self, input_: object, config: object | None) -> bool:
+        if config is None or isinstance(input_, Command) or input_ is None:
+            return False
+        snapshot = await self._compiled.aget_state(config)  # type: ignore[attr-defined]
+        return bool(snapshot.next)
+
     def invoke(self, input_: object, config: object | None = None, **kwargs: object) -> object:
         if self._resume_in_place(input_, config):
             input_ = None
         return self._compiled.invoke(input_, config, **kwargs)  # type: ignore[attr-defined]
+
+    def stream(self, input_: object, config: object | None = None, **kwargs: object) -> object:
+        if self._resume_in_place(input_, config):
+            input_ = None
+        return self._compiled.stream(input_, config, **kwargs)  # type: ignore[attr-defined]
+
+    async def ainvoke(
+        self, input_: object, config: object | None = None, **kwargs: object
+    ) -> object:
+        if await self._aresume_in_place(input_, config):
+            input_ = None
+        return await self._compiled.ainvoke(input_, config, **kwargs)  # type: ignore[attr-defined]
+
+    async def astream(self, input_: object, config: object | None = None, **kwargs: object):
+        if await self._aresume_in_place(input_, config):
+            input_ = None
+        async for chunk in self._compiled.astream(input_, config, **kwargs):  # type: ignore[attr-defined]
+            yield chunk
 
     def __getattr__(self, name: str) -> object:
         return getattr(self._compiled, name)
@@ -168,5 +199,23 @@ def build_supervisor(
         )
     graph.add_edge('finish', END)
     if checkpointer:
+        checkpointer = _with_pydantic_allowlist(checkpointer)
         return _ResumeSafeGraph(graph.compile(checkpointer=checkpointer))
     return graph.compile()
+
+
+# state 에 그대로 저장되는 pydantic 모델 — 체크포인터 msgpack 직렬화기에 등록해 두지 않으면
+# 재개할 때마다 "Deserializing unregistered type" 경고가 난다(LangGraph JsonPlusSerializer).
+_PYDANTIC_MODULES_IN_STATE = (
+    ('samba_agent.agents.contracts', 'OrderRef'),
+    ('samba_agent.agents.contracts', 'Evidence'),
+    ('samba_agent.agents.contracts', 'AgentResult'),
+)
+
+
+def _with_pydantic_allowlist(checkpointer: object) -> object:
+    """체크포인터가 지원하면(BaseCheckpointSaver.with_allowlist) 위 모듈을 허용 목록에 더한다."""
+    with_allowlist = getattr(checkpointer, 'with_allowlist', None)
+    if callable(with_allowlist):
+        return with_allowlist(_PYDANTIC_MODULES_IN_STATE)
+    return checkpointer

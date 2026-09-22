@@ -115,6 +115,18 @@ def test_카드가_없으면_감독자가_결제로_넘기지_않는다(reg):
     assert 'payer' not in out['results']
 
 
+def test_카드가_없으면_재시도하지_않는다(reg):
+    calls = {'n': 0}
+
+    def no_card(_a):
+        calls['n'] += 1
+        return ok('buyer', account='a***@x.com', cost=89000, margin_pct=12.5)
+
+    out = run(reg, agents(**{'buyer.musinsa': no_card}))
+    assert calls['n'] == 1  # 다시 해도 카드가 안 생긴다 — 재시도 없이 바로 사람에게
+    assert out['fail_reason'] is FailReason.CARD_MISSING
+
+
 def test_마진이_미달이면_결제로_넘기지_않는다(reg):
     def thin(_a):
         return ok('buyer', account='a***@x.com', card='현대', cost=89000, margin_pct=-1.0)

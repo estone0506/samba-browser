@@ -1,4 +1,6 @@
 # 사람 검토 게이트 — 승인 전에는 결제·기록이 돌지 않는다 / 거부 / 재개 / 재시작 뒤 재개
+import warnings
+
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
@@ -9,6 +11,7 @@ from samba_agent.failures import FailReason
 from samba_agent.settings import DEFAULT_ROOT
 from samba_agent.supervisor.approval import APPROVAL_INTERRUPT_KEY
 from samba_agent.supervisor.graph import build_supervisor
+from samba_agent.supervisor.state import sanitize_payload
 
 ORDER = OrderRef(order_no='A1', source='무신사', seller='포이즌', sku='S1', qty=1)
 
@@ -106,3 +109,52 @@ def test_같은_스레드로_다시_부르면_중복_실행되지_않는다(reg)
     g.invoke({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG)
     g.invoke({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG)
     assert log.count('buy') == 1  # 체크포인트가 있어 구매를 다시 하지 않는다
+
+
+def test_stream_도_같은_스레드면_구매가_두_번_돌지_않는다(reg):
+    log: list[str] = []
+    g = graph_of(reg, log)
+    list(g.stream({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG))
+    list(g.stream({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG))
+    assert log.count('buy') == 1  # invoke 뿐 아니라 stream 도 재개 규칙을 따라야 한다
+
+
+async def test_ainvoke_도_같은_스레드면_구매가_두_번_돌지_않는다(reg):
+    log: list[str] = []
+    g = graph_of(reg, log)
+    await g.ainvoke({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG)
+    await g.ainvoke({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG)
+    assert log.count('buy') == 1
+
+
+async def test_astream_도_같은_스레드면_구매가_두_번_돌지_않는다(reg):
+    log: list[str] = []
+    g = graph_of(reg, log)
+    async for _ in g.astream({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG):
+        pass
+    async for _ in g.astream({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG):
+        pass
+    assert log.count('buy') == 1
+
+
+def test_재개해도_체크포인트_역직렬화_경고가_없다(reg):
+    log: list[str] = []
+    g = graph_of(reg, log)
+    g.invoke({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        g.invoke(Command(resume={'approved': True, 'by': 'U1'}), CFG)  # 결제 승인
+        g.invoke(Command(resume={'approved': True, 'by': 'U1'}), CFG)  # 기록 승인
+    messages = [str(w.message) for w in caught]
+    assert not any('Deserializing unregistered type' in m for m in messages)
+
+
+def test_비밀로_보이는_키가_있으면_payload_저장을_거부한다():
+    with pytest.raises(ValueError):
+        sanitize_payload({'card_number': '1234-5678', 'card': '현대'})
+
+
+def test_전화번호는_가리고_카드_브랜드명은_남긴다():
+    out = sanitize_payload({'phone': '010-1234-5678', 'card': '현대'})
+    assert out['phone'] == '***'
+    assert out['card'] == '현대'
