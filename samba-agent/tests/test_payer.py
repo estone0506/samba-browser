@@ -1,4 +1,6 @@
 # 결제 에이전트 — dry-run / 정상 / 카드 없음 / 캡차 / 승인 거절 / 성공 문구 미확인
+import json
+
 import httpx
 import pytest
 import respx
@@ -124,6 +126,77 @@ def test_결제_응답에_비밀값이_실리지_않는다(reg):
     assert 'pin' not in str(out.payload).lower()
     assert not find_leaks(out.payload)
     assert not find_leaks(out.reason)
+    assert not find_leaks([e.detail for e in out.evidence])
+
+
+@respx.mock
+def test_결제창_진입_인자는_카드명에_따옴표가_있어도_유효한_JSON이다(reg):
+    """수기 문자열 포맷 대신 json.dumps 를 쓴다 — 카드명에 따옴표가 섞여도 깨지지 않는다."""
+    enter = respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=True, card='현대"카드'))
+    assert out.status == 'ok'
+    body = json.loads(enter.calls.last.request.content.decode('utf-8'))
+    script_args = json.loads(
+        body['args']['args']
+    )  # 스크립트 args 자체도 유효 JSON 문자열이어야 한다
+    assert script_args == {'card': '현대"카드'}
+
+
+@respx.mock
+def test_카드_요구_거절은_카드_없음으로_분류한다(reg):
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/phone_approve_payment').mock(
+        return_value=page('refused: card-required - call again with card set')
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=False))
+    assert (out.status, out.fail_reason) == ('fail', FailReason.CARD_MISSING)
+
+
+@respx.mock
+def test_카드를_못_찾으면_카드_없음으로_분류한다(reg):
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/phone_approve_payment').mock(
+        return_value=page('refused: card-not-found')
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=False))
+    assert (out.status, out.fail_reason) == ('fail', FailReason.CARD_MISSING)
+
+
+@pytest.mark.parametrize(
+    'refusal',
+    [
+        'refused: pay-account-ambiguous (choose payAccount: a, b)',
+        'refused: pay-account-mismatch (a != b)',
+        'refused: no-account',
+        'refused: vault-locked',
+        'refused: verify-failed',
+    ],
+)
+@respx.mock
+def test_계정_모호_불일치_잠김_인증실패는_사람에게_넘기고_사유를_담는다(reg, refusal):
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page(refusal))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=False))
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.UNKNOWN)
+    # refused: 뒤 사유 원문(비밀 없음)이 reason 에 남는다 — 사람이 무엇 때문인지 바로 안다
+    assert refusal.removeprefix('refused:').strip()[:20] in out.reason
+
+
+@respx.mock
+def test_거절_한글_표기도_사람에게_넘긴다(reg):
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('refused: 거절됨'))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=False))
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.UNKNOWN)
 
 
 @respx.mock
