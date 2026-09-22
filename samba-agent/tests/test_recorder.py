@@ -7,7 +7,7 @@ import pytest
 import respx
 
 from samba_agent.agents.contracts import Assignment, OrderRef
-from samba_agent.agents.recorder import RecorderAgent
+from samba_agent.agents.recorder import SAVE_SCRIPT, RecorderAgent
 from samba_agent.agents.registry import Registry
 from samba_agent.bridge.client import BridgeClient
 from samba_agent.failures import FailReason
@@ -32,15 +32,16 @@ def reg():
     return Registry.load(DEFAULT_ROOT)
 
 
-def assignment(reg, *, dry_run: bool, expected=None, account=ACCOUNT) -> Assignment:
+def assignment(reg, *, dry_run: bool, expected=None, account=ACCOUNT, handoff=None) -> Assignment:
     spec = reg['recorder']
     return Assignment(
         order=ORDER,
-        options={'account': account},
+        options={'account': account} if account else {},
         allowed_tools=spec.tools,
         rules=reg.rules_text(spec),
         dry_run=dry_run,
         expected=EXPECTED if expected is None else expected,
+        handoff=handoff or {},
     )
 
 
@@ -201,3 +202,32 @@ def test_저장_결과에_개인정보가_남지_않는다(reg):
     assert find_leaks(out.payload) == []
     assert find_leaks(out.reason) == []
     assert find_leaks([e.detail for e in out.evidence]) == []
+
+
+@respx.mock
+def test_계정은_인계값에서_받아_저장한다(reg):
+    # 리뷰 지적 — I1: options 에 account 를 채우는 곳이 없어 빈 계정으로 저장됐다
+    saved: list[dict] = []
+
+    def handler(request):
+        body = json.loads(request.content.decode('utf-8'))
+        args = json.loads(body['args']['args'])
+        if body['args']['name'] == SAVE_SCRIPT:
+            saved.append(args)
+            return httpx.Response(200, json={'ok': True, 'result': 'saved', 'steps': []})
+        stored = saved[-1] if saved else {}
+        return httpx.Response(200, json={'ok': True, 'result': json.dumps(stored), 'steps': []})
+
+    respx.post(f'{URL}/tool/run_script').mock(side_effect=handler)
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(
+        assignment(
+            reg,
+            dry_run=False,
+            expected={'real_price': 89000, 'source_order_no': 'M-1', 'shipping_fee': 0},
+            account=None,
+            handoff={'account': 'samba01@wave.co.kr'},
+        )
+    )
+    assert out.status == 'ok'
+    assert saved[0]['account'] == 'samba01@wave.co.kr'

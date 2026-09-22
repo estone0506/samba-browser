@@ -22,7 +22,7 @@ def reg():
     return Registry.load(DEFAULT_ROOT)
 
 
-def assignment(reg, *, dry_run: bool, card: str | None = '현대') -> Assignment:
+def assignment(reg, *, dry_run: bool, card: str | None = '현대', handoff=None) -> Assignment:
     spec = reg['payer']
     return Assignment(
         order=ORDER,
@@ -30,6 +30,7 @@ def assignment(reg, *, dry_run: bool, card: str | None = '현대') -> Assignment
         allowed_tools=spec.tools,
         rules=reg.rules_text(spec),
         dry_run=dry_run,
+        handoff={'cost': 89000, **(handoff or {})},
     )
 
 
@@ -253,3 +254,30 @@ def test_이미_결제된_화면이면_폰_승인을_부르지_않는다(reg):
     assert (out.status, out.fail_reason) == ('needs_human', FailReason.PAY_INTERRUPTED)
     assert not pay.called
     assert not fill.called
+
+
+@respx.mock
+def test_요청자가_카드를_안_주면_구매가_고른_카드로_결제한다(reg):
+    # 리뷰 지적 — C3: options 에 카드가 없으면 인계값의 카드를 쓴다
+    enter = respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=True, card=None, handoff={'card': '현대'}))
+    assert out.status == 'ok'
+    body = json.loads(enter.calls.last.request.content.decode('utf-8'))
+    assert json.loads(body['args']['args'])['card'] == '현대'
+
+
+@respx.mock
+def test_성공_화면에서_소싱_주문번호를_뽑아_넘긴다(reg):
+    # 리뷰 지적 — I2: 아무도 source_order_no 를 만들지 않아 기록·검증이 비어 있었다
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[7] textbox "이름"'))
+    respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/get_page').mock(
+        side_effect=[page('결제 진행 중'), page('결제 완료되었습니다 주문번호 M-20260922-77')]
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=False))
+    assert out.status == 'ok'
+    assert out.payload['source_order_no'] == 'M-20260922-77'

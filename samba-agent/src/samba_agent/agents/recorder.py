@@ -50,12 +50,16 @@ class RecorderAgent(AgentBase):
             f'{a.rules}\n\n주문 {a.order.order_no}({a.order.source})의 메모 한 문장을 쓰라.',
             Decision,
         )
-        # account 는 내부 판매 계정 식별자다 — state 결과에 실려 오면 마스킹(이메일 패턴)에
-        # 뭉개질 수 있어, 마스킹을 거치지 않는 배정 옵션에서 직접 받는다
+        # account 는 내부 판매 계정 식별자다. 요청자가 지정했으면 그 값을, 아니면 구매
+        # 에이전트가 고른 계정을 인계값에서 받는다 — 둘 다 없으면 빈 계정으로 저장된다
+        # (리뷰 지적 — I1)
         values: dict[str, object] = {
             f: a.expected.get(f) for f in self.RECORD_FIELDS if f not in ('account', 'shipping_fee')
         }
-        values['account'] = a.options.get('account')
+        account = a.options.get('account') or a.handoff.get('account')
+        if not account:
+            raise AgentFailure('needs_human', '저장할 판매 계정이 없다', FailReason.UNKNOWN)
+        values['account'] = account
         values['shipping_fee'] = a.expected.get('shipping_fee', 0)
         values['memo'] = memo.choice
         self.note('저장할 값', json.dumps(values, ensure_ascii=False))

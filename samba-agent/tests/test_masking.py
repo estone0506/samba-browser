@@ -1,5 +1,6 @@
 # 마스킹 — 개인정보는 가리고 주문·금액·근거는 남긴다
 from samba_agent.ops.masking import MASK, find_leaks, mask_text, mask_value
+from samba_agent.supervisor.state import sanitize_payload
 
 
 def test_전화번호를_가린다():
@@ -61,3 +62,12 @@ def test_이름을_가려도_주문번호와_금액은_남는다():
     assert '734501000740906' in out
     assert '89,000' in out
     assert '홍길동' not in out
+
+
+def test_내부_판매_계정은_state에서_가리지_않는다():
+    # 리뷰 지적 — I1: 이메일 꼴 내부 계정이 '***' 로 뭉개지면 기록 에이전트가 빈 계정을 저장한다.
+    # 마스킹은 고객 개인정보(이름·전화·주소·이메일)용이다 — 우리 판매 계정은 대상이 아니다.
+    out = sanitize_payload({'account': 'samba01@wave.co.kr', 'memo': '수취인 홍길동 010-1234-5678'})
+    assert out['account'] == 'samba01@wave.co.kr'
+    assert '홍길동' not in str(out['memo'])
+    assert '010-1234-5678' not in str(out['memo'])

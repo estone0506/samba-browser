@@ -205,3 +205,64 @@ def test_결제_마커가_있으면_payer를_다시_부르지_않는다(reg):
     assert calls['n'] == 0
     assert out['outcome'] == 'needs_human'
     assert out['fail_reason'] is FailReason.PAY_INTERRUPTED
+
+
+def test_구매_결과가_결제_기록_검증까지_계약으로_흐른다(reg):
+    """리뷰 지적 — C3·I1·I2: buyer 가 고른 카드·계정·원가와 payer 가 뽑은 소싱 주문번호가
+    다음 단계 Assignment 에 실려야 한다. 하나라도 비면 payer 는 card_missing,
+    recorder 는 빈 계정으로 저장한다."""
+    seen: dict[str, object] = {}
+
+    def buyer(_a):
+        return ok(
+            'buyer',
+            account='samba01@wave.co.kr',
+            card='현대',
+            cost=89000,
+            margin_pct=12.5,
+            option='270',
+        )
+
+    def payer(a):
+        seen['payer'] = a
+        return ok('payer', paid=True, card='현대', source_order_no='M-123456')
+
+    def recorder(a):
+        seen['recorder'] = a
+        return ok('recorder', saved=True)
+
+    def verifier(a):
+        seen['verifier'] = a
+        return ok('verifier')
+
+    out = run(
+        reg,
+        agents(
+            **{'buyer.musinsa': buyer, 'payer': payer, 'recorder': recorder, 'verifier': verifier}
+        ),
+    )
+    assert out['outcome'] == 'done'
+
+    pay_a = seen['payer']
+    assert pay_a.handoff['card'] == '현대'
+    assert pay_a.handoff['cost'] == 89000
+    assert pay_a.handoff['account'] == 'samba01@wave.co.kr'  # 마스킹에 뭉개지지 않는다
+
+    rec_a = seen['recorder']
+    assert rec_a.handoff['account'] == 'samba01@wave.co.kr'
+    assert rec_a.expected['source_order_no'] == 'M-123456'
+    assert rec_a.expected['real_price'] == 89000
+
+    assert seen['verifier'].expected['source_order_no'] == 'M-123456'
+
+
+def test_요청자가_카드를_지정하지_않아도_payer는_buyer의_카드를_쓴다(reg):
+    # 리뷰 지적 — C3
+    seen: dict[str, object] = {}
+
+    def payer(a):
+        seen['a'] = a
+        return plain_ok(a)
+
+    run(reg, agents(payer=payer), options={})
+    assert seen['a'].handoff['card'] == '현대'

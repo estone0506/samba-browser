@@ -6,6 +6,7 @@
 """
 
 import json
+import re
 
 from samba_agent.agents.base import AgentBase, AgentFailure, run_agent
 from samba_agent.agents.contracts import AgentResult, Assignment
@@ -41,6 +42,9 @@ DEFAULT_CHECKOUT_SCRIPT = 'checkout_enter'
 # tool() 에서도 한 번 더 막아 이중으로 지킨다(불변조건)
 DRY_RUN_BLOCKED_TOOLS = frozenset({'fill_secret', 'phone_approve_payment'})
 
+# 결제 성공 화면에서 소싱처 주문번호를 뽑는 표현 — 기록·검증이 이 값으로 대조한다(리뷰 지적 — I2)
+SOURCE_ORDER_NO_RE = re.compile(r'주문\s?번호[^0-9A-Za-z]{0,4}([A-Za-z0-9][A-Za-z0-9-]{4,31})')
+
 
 def _classify_refusal(result: str) -> str | None:
     """phone_approve_payment 응답을 분류한다.
@@ -61,6 +65,12 @@ def _classify_refusal(result: str) -> str | None:
         # refused: 접두사 없는 과거 형식과도 호환한다
         return 'needs_human'
     return None
+
+
+def _source_order_no(page: str) -> str | None:
+    """결제 성공 화면에서 소싱처 주문번호를 뽑는다. 못 찾으면 None(기록이 사람에게 넘어간다)."""
+    m = SOURCE_ORDER_NO_RE.search(page)
+    return m.group(1) if m else None
 
 
 class PayerAgent(AgentBase):
@@ -84,7 +94,9 @@ class PayerAgent(AgentBase):
 
     def _pay(self, a: Assignment) -> AgentResult:
         self.evidence = []
-        card = a.options.get('card')
+        # 요청자가 지정한 카드가 먼저, 없으면 구매 에이전트가 고른 카드다(리뷰 지적 — C3)
+        card = a.options.get('card') or a.handoff.get('card')
+        card = str(card) if card else None
         if not card:
             # 감독자가 이미 검사하지만, 결제 직전에 한 번 더 막는다
             raise AgentFailure('fail', '결제할 카드가 없다', FailReason.CARD_MISSING)
@@ -153,9 +165,14 @@ class PayerAgent(AgentBase):
                 FailReason.VERIFY_MISMATCH,
             )
         self.note('결제 성공', mask_text(page[:200]))
+        payload: dict[str, object] = {'dry_run': False, 'paid': True, 'card': card}
+        source_order_no = _source_order_no(page)
+        if source_order_no is not None:
+            payload['source_order_no'] = source_order_no
+            self.note('소싱 주문번호', source_order_no)
         return AgentResult(
             status='ok',
             reason=f'{card} 로 결제 완료를 화면에서 확인했다',
-            payload={'dry_run': False, 'paid': True, 'card': card},
+            payload=payload,
             evidence=tuple(self.evidence),
         )
