@@ -436,7 +436,6 @@
       "accountCount": "계정 {{count}}개",
       "deleteAccount": "계정 삭제",
       "deleteSite": "이 사이트의 계정 모두 삭제",
-      "deleteConfirm": "{{count}}개 계정 삭제?",
       "deleted": "삭제됨",
       "undo": "되돌리기",
       "merge": "중복 {{count}}개 합치기",
