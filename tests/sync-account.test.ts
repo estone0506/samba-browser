@@ -329,3 +329,30 @@ describe('비밀번호를 잊었을 때 — 이 PC 의 살아 있는 세션으�
     ).rejects.toThrow('Invalid login credentials')
   })
 })
+
+describe('이 PC 설정에 주소가 있는데 계정에는 없을 때', () => {
+  it('로그인하면 그 주소를 계정에 올리고 곧바로 붙는다(폼을 다시 채우지 않는다)', async () => {
+    const directory = createFakeBackend()
+    const data = createFakeBackend()
+    const auth = authFor(null)
+    const settings = { syncSupabaseUrl: URL, syncSupabaseAnonKey: KEY }
+    const onDataBackend = vi.fn()
+    const account = new AccountService({
+      directory,
+      directoryAuth: authFor(directory),
+      auth,
+      createDataBackend: () => data,
+      onDataBackend,
+      settings: { get: () => settings, set: (p) => Object.assign(settings, p) },
+      applyEnv: () => {}
+    })
+    await account.signIn('me@example.com', 'pw')
+    expect(account.accountState().needsSupabase).toBe(false)
+    expect(directory.keyedRows('settings_sync').map((r) => [r.key, r.value])).toEqual([
+      [DIRECTORY_URL_KEY, URL],
+      [DIRECTORY_ANON_KEY, KEY]
+    ])
+    expect(onDataBackend).toHaveBeenCalledWith(data)
+    expect(auth.state()).toMatchObject({ signedIn: true, email: 'me@example.com' })
+  })
+})
