@@ -54,6 +54,8 @@ class AgentBase:
         self.bridge = bridge.scoped(spec.tools)
         self._decide = decide
         self.evidence: list[Evidence] = []
+        # 진행 보고 횟수 — 앱 progress 도구는 done/total 정수가 필수다(실기: label 만 보내 거절당함)
+        self._steps = 0
 
     def tool(self, name: str, /, **args: object) -> str:
         """도구 1건. 캡차 표시는 사람에게, 브릿지 오류는 사유 그대로 실패로 바꾼다."""
@@ -101,9 +103,14 @@ class AgentBase:
         self.evidence.append(Evidence(label=label, detail=detail))
 
     def step(self, label: str) -> None:
-        """진행 보고 — 슬랙 스레드에 한 줄로 뜬다."""
+        """진행 보고 — 슬랙 스레드에 한 줄로 뜬다.
+
+        앱의 progress 도구는 0 <= done <= total, total >= 1 을 요구한다. 단계 총수는 미리 모르니
+        n번째 보고를 'n-1 / n'(n번째 진행 중)으로 보낸다.
+        """
         if 'progress' in self.spec.tools:
-            self.tool('progress', label=label)
+            self._steps += 1
+            self.tool('progress', label=label, done=self._steps - 1, total=self._steps)
 
 
 def run_agent(fn: Callable[[], AgentResult]) -> AgentResult:
