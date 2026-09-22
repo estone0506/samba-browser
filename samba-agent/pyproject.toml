@@ -36,3 +36,8 @@ quote-style = "single"
 pythonpath = ["src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "werkzeug>=3.0",
+]

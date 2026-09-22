@@ -15,6 +15,10 @@ NO_RETRY_REASONS = frozenset(
         FailReason.CAPTCHA,
         FailReason.MARGIN,
         FailReason.CARD_MISSING,
+        # 되읽기 불일치는 다시 시도해도 같은 결과다 — 사람이 확인해야 한다
+        FailReason.VERIFY_MISMATCH,
+        # 결제 진행 중 재시작 — 다시 돌리면 재결제다
+        FailReason.PAY_INTERRUPTED,
     }
 )
 

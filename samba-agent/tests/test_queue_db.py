@@ -3,7 +3,8 @@ import threading
 
 import pytest
 
-from samba_agent.queue.db import JobQueue
+from samba_agent.failures import FailReason
+from samba_agent.queue.db import PAY_STARTED_STEP, JobQueue
 
 
 @pytest.fixture()
@@ -78,6 +79,13 @@ def test_재시도는_상한을_넘지_못한다(q):
         q.retry(job.id)
 
 
+def test_하네스_버전을_기록한다(q):
+    job, _ = q.enqueue('A1', 'U1', {}, 'ts1')
+    q.claim()
+    q.set_version(job.id, 'v1.2.3')
+    assert q.get('A1').harness_version == 'v1.2.3'
+
+
 def test_취소는_살아_있는_건만(q):
     q.enqueue('A1', 'U1', {}, 'ts1')
     cancelled = q.cancel('A1')
@@ -124,3 +132,30 @@ def test_같은_주문을_두_연결이_동시에_접수해도_행은_하나(tmp
     assert errors == []
     assert sorted(results) == [False, True]  # 한쪽만 새로 만들고 한쪽은 거절
     assert len(q1.live()) == 1
+
+
+def test_결제_진행_중_재시작은_큐로_돌리지_않고_사람에게_넘긴다(tmp_path):
+    # 리뷰 지적 — Critical 2: 결제 승인이 나간 뒤 죽으면 다시 돌려 재결제하면 안 된다
+    path = tmp_path / 'jobs.sqlite'
+    first = JobQueue(path)
+    first.enqueue('A1', 'U1', {}, 'ts1')
+    job = first.claim()
+    first.progress(job.id, agent='payer', step=PAY_STARTED_STEP)
+
+    restarted = JobQueue(path)  # 프로세스 재시작
+    recovered = restarted.get('A1')
+    assert recovered.state == 'needs_human'
+    assert recovered.error == FailReason.PAY_INTERRUPTED.value
+    assert restarted.claim() is None  # 실행기가 다시 집지 않는다
+
+
+def test_결제_전_단계에서_죽었으면_다시_큐에_들어간다(tmp_path):
+    path = tmp_path / 'jobs.sqlite'
+    first = JobQueue(path)
+    first.enqueue('A1', 'U1', {}, 'ts1')
+    job = first.claim()
+    first.progress(job.id, agent='buyer.musinsa', step='옵션 선택')
+
+    restarted = JobQueue(path)
+    assert restarted.get('A1').state == 'queued'
+    assert restarted.claim() is not None

@@ -13,6 +13,12 @@ Outcome = Literal['done', 'failed', 'needs_human', 'cancelled']
 # 애초에 state/체크포인트/승인 요약에 담기면 안 되는 키 — 있으면 저장을 거부한다
 _SECRET_KEY_PATTERN = re.compile(r'password|secret|token|card_number|cvc|pin', re.IGNORECASE)
 
+# 마스킹을 거치지 않는 키 — 우리 내부 판매 계정 식별자다. ops.masking 이 가리는 것은
+# 고객의 이름·전화·주소·이메일이고, 이 값은 그 대상이 아니다. 여기서 가려 버리면
+# 이메일 꼴 계정이 '***' 가 되어 기록 에이전트가 빈 계정을 저장한다(리뷰 지적 — I1).
+# 슬랙·LangSmith 로 나갈 때는 발신 경계(SambaBot.post·ops.tracing)에서 다시 가려진다.
+INTERNAL_ID_KEYS = ('account',)
+
 
 def sanitize_payload(payload: dict[str, object]) -> dict[str, object]:
     """state/체크포인트/승인 요약에 담기 전에 payload 를 가린다.
@@ -24,9 +30,9 @@ def sanitize_payload(payload: dict[str, object]) -> dict[str, object]:
     for key in payload:
         if _SECRET_KEY_PATTERN.search(key):
             raise ValueError(f'payload 에 비밀·카드 정보로 보이는 키가 있다: {key}')
-    masked = mask_value(payload)
+    masked = mask_value({k: v for k, v in payload.items() if k not in INTERNAL_ID_KEYS})
     assert isinstance(masked, dict)  # mask_value(dict) 는 항상 dict 를 돌려준다
-    return masked
+    return {**masked, **{k: payload[k] for k in INTERNAL_ID_KEYS if k in payload}}
 
 
 def sanitize_result(result: AgentResult) -> AgentResult:
@@ -50,3 +56,5 @@ class RunState(TypedDict, total=False):
     outcome: Outcome | None
     fail_reason: FailReason | None
     approvals: dict[str, str]
+    # 결제 노드에 들어갔다는 표시 — 재시작·재진입 시 재결제를 막는다(스펙 §6)
+    pay_started: bool

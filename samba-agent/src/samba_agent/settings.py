@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     )
     root: Path = Field(default=DEFAULT_ROOT, alias='SAMBA_AGENT_ROOT')
     db_path: Path = Field(default=DEFAULT_ROOT / 'jobs.sqlite', alias='SAMBA_DB_PATH')
+    # 판정·진단 산출물 위치. gate·eval·API 가 같은 곳을 본다(리뷰 지적 — I4)
+    report_dir: Path = Field(default=DEFAULT_ROOT / 'ops' / 'reports', alias='SAMBA_REPORT_DIR')
+    # 프롬프트 허브 커밋 — 추적 메타데이터에 실린다. 허브를 안 쓰면 'local' 이다
+    prompt_commit: str = Field(default='local', alias='SAMBA_PROMPT_COMMIT')
     # 기본은 dry-run 이다. 외부 변경은 사용자 검토를 거친 뒤 명시로만 켠다(스펙 §10-1)
     dry_run: bool = Field(default=True, alias='SAMBA_DRY_RUN')
 
@@ -40,6 +44,24 @@ class Settings(BaseSettings):
         return v
 
 
-def load_settings() -> Settings:
-    """설정을 읽는다. 필수 값(브릿지 토큰)이 없으면 여기서 실패한다."""
-    return Settings()  # type: ignore[call-arg]
+def load_settings(env_file: str | Path | None = '.env') -> Settings:
+    """설정을 읽는다. 필수 값(브릿지 토큰)이 없으면 여기서 실패한다.
+
+    env_file=None 이면 `.env` 를 읽지 않고 환경변수만 본다(테스트가 로컬 .env 에 물들지 않게)."""
+    return Settings(_env_file=env_file)  # type: ignore[call-arg]
+
+
+def default_report_dir() -> Path:
+    """판정·실험 산출물 폴더. `SAMBA_REPORT_DIR` 가 있으면 그것, 없으면 `root/ops/reports`.
+
+    gate·eval 은 모듈 상수로, API 는 root 기준 경로로 각자 다른 곳을 보고 있었다
+    (리뷰 지적 — I4). 설정 하나로 모은다. `.env` 는 읽지 않는다 — 모듈 로딩 시점에
+    불리는 함수라 환경변수만 본다.
+    """
+    import os
+
+    raw = os.environ.get('SAMBA_REPORT_DIR')
+    if raw:
+        return Path(raw)
+    root = os.environ.get('SAMBA_AGENT_ROOT')
+    return (Path(root) if root else DEFAULT_ROOT) / 'ops' / 'reports'
