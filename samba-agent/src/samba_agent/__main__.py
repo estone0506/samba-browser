@@ -17,6 +17,7 @@ from samba_agent.agents.registry import Registry
 from samba_agent.api.server import build_app, serve
 from samba_agent.bridge.client import BridgeClient
 from samba_agent.gateway.slack_bot import SambaBot
+from samba_agent.llm.decide import make_decide
 from samba_agent.ops.diagnose import diagnose
 from samba_agent.ops.events import EventLog
 from samba_agent.ops.masking import mask_text
@@ -59,11 +60,10 @@ def main() -> None:
         allowed=(),  # 최상위 클라이언트는 도구를 직접 부르지 않는다 — 에이전트마다 scoped() 로 좁힌다
     )
 
-    def _decide(prompt: str, model):  # type: ignore[no-untyped-def]
-        """구조화 판단. claude-agent-sdk 연결은 별도 작업 범위라 지금은 자리만 잡는다."""
-        raise NotImplementedError('decide 함수는 claude-agent-sdk 배선 작업에서 채운다')
+    # 모델명은 settings 에 없다 — llm.decide 의 상수(claude-sonnet-5) 를 그대로 쓴다
+    decide = make_decide()
 
-    agents = build_agents(reg, bridge, _decide)
+    agents = build_agents(reg, bridge, decide)
 
     version_fn = functools.partial(harness_version, settings.root, {})
     checkpointer = SqliteSaver.from_conn_string(str(settings.root / 'checkpoints.sqlite'))
