@@ -1,0 +1,7 @@
+.env
+.venv/
+*.sqlite
+*.sqlite-*
+__pycache__/
+src/samba_agent/ops/reports/*.md
+!src/samba_agent/ops/reports/.gitkeep
