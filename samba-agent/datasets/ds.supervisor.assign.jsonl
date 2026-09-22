@@ -1,0 +1,11 @@
+{"inputs": {"order": {"order_no": "S1", "source": "무신사", "seller": "포이즌", "sku": "SKU-1", "qty": 1}, "options": {}}, "outputs": {"status": "ok", "agent": "buyer.musinsa"}, "tags": ["success"]}
+{"inputs": {"order": {"order_no": "S2", "source": "29CM", "seller": "널디", "sku": "SKU-1", "qty": 1}, "options": {}}, "outputs": {"status": "ok", "agent": "buyer.29cm"}, "tags": ["success"]}
+{"inputs": {"order": {"order_no": "S3", "source": "ABC마트", "seller": "나이키", "sku": "SKU-1", "qty": 1}, "options": {}}, "outputs": {"status": "ok", "agent": "buyer.abc"}, "tags": ["success"]}
+{"inputs": {"order": {"order_no": "S4", "source": "롯데온", "seller": "휠라", "sku": "SKU-1", "qty": 1}, "options": {}}, "outputs": {"status": "ok", "agent": "buyer.lotteon"}, "tags": ["success"]}
+{"inputs": {"order": {"order_no": "S5", "source": "쿠팡", "seller": "포이즌", "sku": "SKU-1", "qty": 1}, "options": {}}, "outputs": {"status": "needs_human", "fail_reason": "unknown"}, "tags": ["failure"]}
+{"inputs": {"order": {"order_no": "S6", "source": "무신사", "seller": "포이즌", "sku": "SKU-1", "qty": 1}, "options": {"source": "29CM"}}, "outputs": {"status": "ok", "agent": "buyer.29cm"}, "tags": ["success"]}
+{"inputs": {"order": {"order_no": "S7", "source": "29CM", "seller": "널디", "sku": "SKU-1", "qty": 1}, "options": {}}, "outputs": {"status": "ok", "agent": "buyer.29cm"}, "tags": ["success"]}
+{"inputs": {"order": {"order_no": "S8", "source": "롯데온", "seller": "휠라", "sku": "SKU-1", "qty": 1}, "options": {}}, "outputs": {"status": "ok", "agent": "buyer.lotteon"}, "tags": ["success"]}
+{"inputs": {"order": {"order_no": "S9", "source": "", "seller": "포이즌", "sku": "SKU-1", "qty": 1}, "options": {}}, "outputs": {"status": "needs_human", "fail_reason": "unknown"}, "tags": ["failure"]}
+{"inputs": {"order": {"order_no": "S10", "source": "무신사", "seller": "포이즌", "sku": "SKU-1", "qty": 1}, "options": {"source": "기타"}}, "outputs": {"status": "needs_human", "fail_reason": "unknown"}, "tags": ["failure"]}
+{"inputs": {"order": {"order_no": "S11", "source": "무신사", "seller": "포이즌", "sku": "SKU-1", "qty": 1}, "options": {}, "tool": "phone_approve_payment"}, "outputs": {"status": "fail", "fail_reason": "permission_denied"}, "tags": ["failure", "permission"]}

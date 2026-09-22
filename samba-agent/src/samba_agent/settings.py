@@ -1,10 +1,10 @@
 """`.env` → 설정 객체. 비밀은 SecretStr 로만 들고 다녀 로그·프롬프트에 새지 않는다."""
 
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # 이 파일 기준 samba-agent/ 폴더 — registry.yaml 과 rules/ 가 있는 곳
 DEFAULT_ROOT = Path(__file__).resolve().parents[2]
@@ -22,7 +22,10 @@ class Settings(BaseSettings):
     slack_bot_token: SecretStr | None = Field(default=None, alias='SLACK_BOT_TOKEN')
     slack_app_token: SecretStr | None = Field(default=None, alias='SLACK_APP_TOKEN')
     slack_channel: str = Field(default='#sambaorder', alias='SLACK_CHANNEL')
-    slack_allowed_users: tuple[str, ...] = Field(default=(), alias='SLACK_ALLOWED_USERS')
+    # NoDecode: 환경변수 값을 JSON 으로 풀지 않고 아래 검증기가 쉼표로 나눈다(예: U1,U2)
+    slack_allowed_users: Annotated[tuple[str, ...], NoDecode] = Field(
+        default=(), alias='SLACK_ALLOWED_USERS'
+    )
     root: Path = Field(default=DEFAULT_ROOT, alias='SAMBA_AGENT_ROOT')
     db_path: Path = Field(default=DEFAULT_ROOT / 'jobs.sqlite', alias='SAMBA_DB_PATH')
     # 기본은 dry-run 이다. 외부 변경은 사용자 검토를 거친 뒤 명시로만 켠다(스펙 §10-1)

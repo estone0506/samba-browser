@@ -10,7 +10,7 @@ from typing import Literal
 from langgraph.types import Command
 
 from samba_agent.agents.contracts import Evidence
-from samba_agent.supervisor.state import RunState
+from samba_agent.supervisor.state import RunState, sanitize_payload
 
 APPROVAL_INTERRUPT_KEY = 'samba.approval'
 
@@ -42,7 +42,7 @@ def approval_request(stage: str, state: RunState) -> ApprovalRequest:
     buyer = next(
         (r for name, r in state.get('results', {}).items() if name.startswith('buyer.')), None
     )
-    payload = buyer.payload if buyer else {}
+    payload = sanitize_payload(buyer.payload) if buyer else {}
     cost = payload.get('cost')
     cost_text = f'{int(cost):,}원' if isinstance(cost, (int, float)) else '미정'
     lines = [
@@ -62,5 +62,9 @@ def approval_request(stage: str, state: RunState) -> ApprovalRequest:
 
 
 def resume_command(approved: bool, by: str) -> Command:
-    """슬랙 버튼 → 그래프 재개."""
+    """슬랙 버튼 → 그래프 재개.
+
+    `by` 가 이 단계를 승인할 권한이 있는 사람인지는 이 계층이 검사하지 않는다 —
+    승인자 권한 검사(허용 목록)는 호출자(슬랙 봇, Task 11) 책임이다.
+    """
     return Command(resume={'approved': approved, 'by': by})

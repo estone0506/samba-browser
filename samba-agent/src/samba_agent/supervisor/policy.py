@@ -9,7 +9,13 @@ KIND_OF_STAGE = {'buy': 'buyer', 'pay': 'payer', 'record': 'recorder', 'verify':
 
 # 다시 해도 같은 답이 나오는 사유 — 재시도 없이 사람에게 넘긴다
 NO_RETRY_REASONS = frozenset(
-    {FailReason.PERMISSION_DENIED, FailReason.DUPLICATE, FailReason.CAPTCHA, FailReason.MARGIN}
+    {
+        FailReason.PERMISSION_DENIED,
+        FailReason.DUPLICATE,
+        FailReason.CAPTCHA,
+        FailReason.MARGIN,
+        FailReason.CARD_MISSING,
+    }
 )
 
 

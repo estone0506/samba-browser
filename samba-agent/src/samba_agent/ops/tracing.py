@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable, Mapping
 
 from samba_agent.ops.events import EventLog
-from samba_agent.ops.masking import mask_value
+from samba_agent.ops.masking import mask_text, mask_value
 from samba_agent.settings import Settings
 
 log = logging.getLogger(__name__)
@@ -79,8 +79,9 @@ def outcome_metadata(
     return {
         'outcome': outcome,
         'fail_reason': fail_reason or '',
-        'cost_krw': cost_krw or 0,
-        'margin_pct': margin_pct or 0,
+        # `or 0` 은 0.0 같은 정상값도 없앤다 — None 인지만 본다.
+        'cost_krw': cost_krw if cost_krw is not None else 0,
+        'margin_pct': margin_pct if margin_pct is not None else 0,
         'duration_ms': duration_ms,
     }
 
@@ -94,35 +95,50 @@ def traced(name: str, *, metadata: Mapping[str, str], events: EventLog | None = 
             started = time.monotonic()
             try:
                 from langsmith import traceable
-
-                runner = traceable(
-                    name=name,
-                    metadata=dict(metadata),
-                    process_inputs=mask_value,
-                    process_outputs=mask_value,
-                )(fn)
-            except Exception:  # noqa: BLE001 — langsmith 가 없거나 꺼져 있다, 로컬만 남긴다
+            except ImportError:  # langsmith 미설치 — 로컬만 남긴다
                 runner = fn
+            else:
+                try:
+                    runner = traceable(
+                        name=name,
+                        metadata=dict(metadata),
+                        process_inputs=mask_value,
+                        process_outputs=mask_value,
+                    )(fn)
+                except Exception as setup_exc:  # noqa: BLE001 — traceable 설정 실패, 로컬만 남긴다
+                    log.warning('LangSmith traceable 설정 실패(%s), 로컬만 남긴다', setup_exc)
+                    runner = fn
             ok = True
+            masked_error: str | None = None
             try:
                 return runner(*args, **kwargs)
-            except Exception:
+            except Exception as exc:
                 ok = False
-                raise
+                masked_error = mask_text(str(exc))
+                # 원래 타입을 유지해 재던진다(불가하면 RuntimeError) — 예외 메시지에
+                # 개인정보가 있어도 LangSmith·로컬 events 로는 가려진 메시지만 나간다.
+                try:
+                    reraised = type(exc)(masked_error)
+                except Exception:  # noqa: BLE001 — 타입이 문자열 1개로 생성 안 되면 폴백
+                    reraised = RuntimeError(masked_error)
+                raise reraised from exc
             finally:
                 if events is not None:
+                    payload: dict[str, object] = {
+                        'ok': ok,
+                        'duration_ms': int((time.monotonic() - started) * 1000),
+                        'args': mask_value(list(args)),
+                        'kwargs': mask_value(dict(kwargs)),
+                    }
+                    if masked_error is not None:
+                        payload['error'] = masked_error
                     events.write(
                         job_id=int(metadata.get('job_id', 0)),
                         version=str(metadata.get('harness_version', '')),
                         env=str(metadata.get('env', '')),
                         agent=str(metadata.get('agent', name)),
                         kind=name,
-                        payload={
-                            'ok': ok,
-                            'duration_ms': int((time.monotonic() - started) * 1000),
-                            'args': mask_value(list(args)),
-                            'kwargs': mask_value(dict(kwargs)),
-                        },
+                        payload=payload,
                     )
 
         return inner
