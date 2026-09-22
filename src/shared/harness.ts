@@ -80,6 +80,13 @@ export interface HarnessRulesSaved {
   version: string
 }
 
+/** GET /graph/rules/{agent} 응답(하네스에는 이 엔드포인트 하나만 있는 읽기다) */
+export interface HarnessRules {
+  agent: string
+  text: string
+  version: string
+}
+
 /** 판정 리포트에서 읽어 낸 것 */
 export interface GateReport {
   version: string

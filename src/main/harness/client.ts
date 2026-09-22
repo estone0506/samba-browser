@@ -8,6 +8,7 @@ import type {
   HarnessGraph,
   HarnessJobs,
   HarnessReleases,
+  HarnessRules,
   HarnessRulesSaved
 } from '../../shared/harness'
 
@@ -26,13 +27,6 @@ export interface HarnessDeps {
   fetchImpl?: typeof globalThis.fetch
   /** 한 요청 제한 시간(ms). 기본 4000 */
   timeoutMs?: number
-}
-
-/** GET /graph/rules/{agent} 응답(하네스에는 이 엔드포인트 하나만 있는 읽기다) */
-export interface HarnessRules {
-  agent: string
-  text: string
-  version: string
 }
 
 const DEFAULT_TIMEOUT_MS = 4000
