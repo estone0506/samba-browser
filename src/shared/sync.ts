@@ -158,7 +158,44 @@ export const SYNCED_SETTING_KEYS = [
   'translateAutoDomains',
   // 자동화 플레이북 — 절차는 기기와 무관한 사용자 자산이라 PC 간 같아야 한다.
   // 값은 사용자가 쓴 절차 마크다운일 뿐, 비밀값은 담기지 않는다(계정은 키마스터가 쥔다)
-  'playbooks'
+  'playbooks',
+  // === 계정에 딸린 설정은 전부 따라온다(사용자 요구: "설정에 저장된 건 모두 동기화") ===
+  // 기기 고유값(경로·창 크기·접힘·이 PC 의 CLI 로그인·확장 설치 경로·Supabase 주소)만 뺀다
+  'ocrEnabled',
+  'aiProvider',
+  'taskModels',
+  'agentNotify',
+  'agentSound',
+  'agentTabCleanupMinutes',
+  'theme',
+  'uiZoom',
+  'sidebarShowBookmarks',
+  'sidebarShowChat',
+  'sidebarSections',
+  'vaultHoldLockDuringAgent',
+  'phoneScreenMaxSize',
+  'phoneScreenFps',
+  'phoneAutoReconnect',
+  'phoneKeypadVisual',
+  'paymentLimitKrw',
+  'firstPaymentLimitKrw',
+  'captureFormat',
+  'captureMicrophone',
+  'captureCopyToClipboard',
+  'captureShortcuts',
+  'activityRecording',
+  'siteMemoryEnabled',
+  // 알림 연동 — 웹훅·봇 토큰도 계정 설정으로 따라온다(내 프로젝트의 내 행에만 저장되고 RLS 로 남은 못 본다)
+  'notifySlackEnabled',
+  'notifySlackWebhook',
+  'notifyDiscordEnabled',
+  'notifyDiscordWebhook',
+  'notifyTelegramEnabled',
+  'notifyTelegramToken',
+  'notifyTelegramChatId',
+  'notifyOnDone',
+  'notifyOnFailed',
+  'notifyOnAttention'
 ] as const
 
 /**

@@ -160,8 +160,8 @@ describe('알림 설정 저장', () => {
     expect(DEFAULT_SETTINGS.notifyOnAttention).toBe(true)
   })
 
-  it('웹훅 주소·봇 토큰은 이 기기에만 남는다(동기화 금지)', () => {
-    const local = [
+  it('알림 연동 설정은 전부 계정에 따라온다(사용자 요구: 설정 모두 동기화)', () => {
+    const synced = [
       'notifySlackEnabled',
       'notifySlackWebhook',
       'notifyDiscordEnabled',
@@ -173,8 +173,8 @@ describe('알림 설정 저장', () => {
       'notifyOnFailed',
       'notifyOnAttention'
     ]
-    for (const key of local) {
-      expect([...SYNCED_SETTING_KEYS]).not.toContain(key)
+    for (const key of synced) {
+      expect([...SYNCED_SETTING_KEYS]).toContain(key)
     }
   })
 })

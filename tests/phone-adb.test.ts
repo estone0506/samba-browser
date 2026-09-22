@@ -137,18 +137,19 @@ describe('폰 설정', () => {
     expect(s.paymentLimitKrw).toBe(0)
   })
 
-  it('경로는 기기별 값이라 동기화 대상이 아니다', () => {
+  it('실행 파일 경로만 기기별 값이고, 나머지 폰 설정은 계정에 따라온다', () => {
     const synced: readonly string[] = SYNCED_SETTING_KEYS
+    for (const key of ['adbPath', 'scrcpyPath', 'phoneIgnoredSerials']) {
+      expect(synced).not.toContain(key)
+    }
     for (const key of [
-      'adbPath',
-      'scrcpyPath',
       'phoneScreenMaxSize',
       'phoneScreenFps',
       'phoneAutoReconnect',
       'paymentLimitKrw',
       'phoneKeypadVisual'
     ]) {
-      expect(synced).not.toContain(key)
+      expect(synced).toContain(key)
     }
   })
 })

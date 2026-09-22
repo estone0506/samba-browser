@@ -148,7 +148,7 @@ describe('설정 라운드트립', () => {
     const synced: readonly string[] = SYNCED_SETTING_KEYS
     expect(synced).toContain('agentEffort')
     expect(synced).not.toContain('sidebarCollapsed')
-    expect(synced).not.toContain('sidebarSections')
+    expect(synced).toContain('sidebarSections')
   })
 })
 
