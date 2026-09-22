@@ -22,4 +22,22 @@ def build_assignment(reg: Registry, spec: AgentSpec, state: RunState) -> Assignm
         allowed_tools=spec.tools,
         rules=reg.rules_text(spec),
         dry_run=bool(state.get('dry_run', True)),
+        expected=_expected(state),
     )
+
+
+def _expected(state: RunState) -> dict[str, object]:
+    """구매·결제 결과에서 기록·검증이 대조할 값만 뽑는다."""
+    out: dict[str, object] = {}
+    for name, r in state.get('results', {}).items():
+        if name.startswith('buyer.'):
+            out.update(
+                {
+                    'account': r.payload.get('account'),
+                    'real_price': r.payload.get('cost'),
+                    'source_order_no': r.payload.get('source_order_no'),
+                }
+            )
+        if name == 'payer':
+            out.setdefault('source_order_no', r.payload.get('source_order_no'))
+    return {k: v for k, v in out.items() if v is not None}

@@ -39,6 +39,8 @@ class Assignment(BaseModel):
     rules: str
     # True 면 외부를 바꾸는 도구(결제·기록)를 부르지 않고 계획만 돌려준다
     dry_run: bool = True
+    # 감독자가 아는 기대값(계정·소싱주문번호·실구매가·배송비·플래그). 기록·검증이 대조한다
+    expected: dict[str, object] = Field(default_factory=dict)
 
 
 class AgentResult(BaseModel):
