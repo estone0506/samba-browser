@@ -1,10 +1,9 @@
 // 계정별 로컬 공간 — 같은 PC 를 다른 계정이 써도 서로의 북마크·대화·금고가 보이지 않게 한다.
 //
 // 기존 "작업공간"(금고·북마크·대화·탭 파티션이 작업공간 단위로 갈린다)을 계정에 자동으로 묶는다:
-//   - 계정이 로그인하면 그 계정의 작업공간으로 전환한다(없으면 만든다)
-//   - 이 PC 에서 처음 로그인하는 계정은 **기존 첫(기본) 작업공간을 물려받는다** — 로그인 기능이 생기기 전에
-//     쌓아 둔 데이터가 사라져 보이지 않게(그 데이터의 주인은 이 PC 의 첫 사용자다)
-//   - 그 뒤의 계정은 새 작업공간을 받는다
+//   - 계정이 로그인하면 그 계정의 작업공간으로 전환한다(없으면 새로 만든다)
+//   - 로그인 전에 이 PC 에 쌓인 데이터(기본 작업공간)는 **어느 계정에도 붙지 않는다** —
+//     남이 로그인 없이 넣어 둔 것이 내 계정 것처럼 보이면 안 된다(실기: 다른 PC 의 키마스터가 내 계정에 보였다)
 // 계정 ↔ 작업공간 대응은 이 PC 의 파일(userData/account-workspaces.json)에만 둔다(동기화 대상 아님)
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
@@ -60,16 +59,11 @@ export class AccountWorkspaceStore {
   isAccountWorkspace(workspaceId: number): boolean {
     return Object.values(this.map).includes(workspaceId)
   }
-
-  /** 아직 아무 계정에도 배정되지 않은 작업공간인가 */
-  isUnclaimed(workspaceId: number): boolean {
-    return !this.isAccountWorkspace(workspaceId)
-  }
 }
 
 /**
- * 계정의 작업공간으로 전환한다(없으면 만든다). 돌려주는 값은 그 작업공간 id.
- * 첫 로그인 계정은 이 PC 의 첫 작업공간(기존 데이터)을 물려받는다
+ * 계정의 작업공간으로 전환한다(없으면 새로 만든다). 돌려주는 값은 그 작업공간 id.
+ * 로그인 전 데이터가 든 첫 작업공간은 물려주지 않는다 — 계정마다 자기 공간뿐이다
  */
 export function ensureAccountWorkspace(
   workspace: WorkspaceLike,
@@ -82,12 +76,6 @@ export function ensureAccountWorkspace(
   if (mapped !== null && rows.some((r) => r.id === mapped)) {
     workspace.switchTo(mapped)
     return mapped
-  }
-  const first = rows[0]
-  if (first && store.isUnclaimed(first.id)) {
-    store.set(userId, first.id)
-    workspace.switchTo(first.id)
-    return first.id
   }
   const created = workspace.create(label.trim() === '' ? userId.slice(0, 8) : label)
   store.set(userId, created.id)
