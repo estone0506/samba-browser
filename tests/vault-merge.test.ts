@@ -27,11 +27,19 @@ describe('서브도메인 계정 합치기', () => {
     db.close()
   })
 
-  it('서브도메인별로 계정이 다른 사이트(네이버)는 합치지 않는다', () => {
+  it('네이버 개인 계정(nid·mail)은 합쳐지고, 판매자 계정(accounts.commerce)은 다른 그룹이라 남는다', () => {
     repo.upsertAccount({ host: 'nid.naver.com', username: 'buyer02' })
+    repo.upsertAccount({ host: 'mail.naver.com', username: 'buyer02' })
     repo.upsertAccount({ host: 'accounts.commerce.naver.com', username: 'buyer02' })
-    expect(vault.mergeDomainAccounts('naver.com')).toEqual({ token: null, kept: 0, removed: 0 })
-    expect(vault.listAccounts()).toHaveLength(2)
+    const r = vault.mergeDomainAccounts('naver.com')
+    expect(r).toMatchObject({ kept: 1, removed: 1 })
+    const left = vault.listAccounts()
+    expect(left.map((a) => a.host).sort()).toEqual(['accounts.commerce.naver.com', 'naver.com'])
+    // 커머스 페이지에서는 개인 계정이 후보로 나오지 않는다(반대도 같다)
+    expect(vault.listAccounts('accounts.commerce.naver.com').map((a) => a.host)).toEqual([
+      'accounts.commerce.naver.com'
+    ])
+    expect(vault.listAccounts('shopping.naver.com').map((a) => a.host)).toEqual(['naver.com'])
   })
 
   it('다른 서브도메인에서 같은 아이디를 저장하면 별개 계정이다(비밀번호가 다를 수 있다)', () => {

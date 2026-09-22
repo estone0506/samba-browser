@@ -33,3 +33,14 @@ describe('네이버페이 창 계정', () => {
     expect(maskedNaverAccountMatches('******', 'buyer02')).toBe(false)
   })
 })
+
+describe('accountGroupKey', () => {
+  it('네이버 커머스만 따로, 나머지는 등록 도메인', async () => {
+    const { accountGroupKey } = await import('../src/shared/host')
+    expect(accountGroupKey('nid.naver.com')).toBe('naver.com')
+    expect(accountGroupKey('mail.naver.com')).toBe('naver.com')
+    expect(accountGroupKey('accounts.commerce.naver.com')).toBe('commerce.naver.com')
+    expect(accountGroupKey('commerce.naver.com')).toBe('commerce.naver.com')
+    expect(accountGroupKey('abcmart.a-rt.com')).toBe('a-rt.com')
+  })
+})

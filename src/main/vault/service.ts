@@ -81,7 +81,7 @@ import {
   type VaultKeySyncKey,
   type WorkspaceScope
 } from '../../shared/sync'
-import { normalizeHost, registrableDomain, isSeparateLoginDomain } from '../../shared/host'
+import { normalizeHost, accountGroupKey } from '../../shared/host'
 
 // electron safeStorage 중 실제로 쓰는 부분만 좁혀 둔 인터페이스(테스트에서 스텁 주입)
 export interface SafeStorageLike {
@@ -964,10 +964,10 @@ export class VaultService {
   private matchAccountRows(host?: string): AccountRow[] {
     if (host === undefined) return this.repo.listAccounts()
     const exact = this.repo.listAccounts(host)
-    const domain = registrableDomain(host)
+    const domain = accountGroupKey(host)
     const domainMatches = this.repo
       .listAccounts()
-      .filter((a) => a.host !== host && registrableDomain(a.host) === domain)
+      .filter((a) => a.host !== host && accountGroupKey(a.host) === domain)
     return [...exact, ...domainMatches]
   }
 
@@ -1155,11 +1155,8 @@ export class VaultService {
    */
   mergeDomainAccounts(domain: string): { token: string | null; kept: number; removed: number } {
     this.requireKey()
-    const key = registrableDomain(domain) || domain
-    if (isSeparateLoginDomain(key)) return { token: null, kept: 0, removed: 0 }
-    const rows = this.repo
-      .listAccounts()
-      .filter((a) => (registrableDomain(a.host) || a.host) === key)
+    const key = accountGroupKey(domain) || domain
+    const rows = this.repo.listAccounts().filter((a) => (accountGroupKey(a.host) || a.host) === key)
     const byUser = new Map<string, AccountRow[]>()
     for (const a of rows) byUser.set(a.username, [...(byUser.get(a.username) ?? []), a])
     const types = this.repo.itemTypesByAccount()
@@ -1368,7 +1365,7 @@ export class VaultService {
     if (!appHost) return null
     const account = this.repo.getAccount(accountId)
     if (!account) return null
-    if (registrableDomain(account.host) === appHost) return account.username
+    if (accountGroupKey(account.host) === appHost) return account.username
     const found = this.repo.findPaymentItemRow(accountId, provider)
     if (!found.row) return null
     return paymentAccountOfSections(found.row.sections)
