@@ -13,14 +13,18 @@ DURATION_LIMIT = 1.50
 
 
 def check_alerts(today: Mapping[str, float], yesterday: Mapping[str, float]) -> list[str]:
-    """터진 규칙 이름들. 봇이 진단 표를 붙여 슬랙에 올린다."""
+    """터진 규칙 이름들. 봇이 진단 표를 붙여 슬랙에 올린다.
+
+    세 규칙 모두 경계 연산자를 "초과"(`>`) 로 통일한다 — 정확히 경계값(2배·30%·50%)에
+    걸친 경우는 알리지 않는다.
+    """
     fired: list[str] = []
     prev_fail = float(yesterday.get('fail_rate', 0))
-    if prev_fail > 0 and float(today.get('fail_rate', 0)) >= prev_fail * 2:
+    if prev_fail > 0 and float(today.get('fail_rate', 0)) > prev_fail * 2:
         fired.append('fail_rate_2x')
     if float(today.get('needs_human_rate', 0)) > NEEDS_HUMAN_LIMIT:
         fired.append('needs_human_30pct')
     prev_ms = float(yesterday.get('avg_duration_ms', 0))
-    if prev_ms > 0 and float(today.get('avg_duration_ms', 0)) >= prev_ms * DURATION_LIMIT:
+    if prev_ms > 0 and float(today.get('avg_duration_ms', 0)) > prev_ms * DURATION_LIMIT:
         fired.append('duration_50pct')
     return fired

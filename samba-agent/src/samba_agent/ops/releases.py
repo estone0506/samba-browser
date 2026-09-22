@@ -17,10 +17,14 @@ CREATE TABLE IF NOT EXISTS releases (
 
 @dataclass(frozen=True)
 class Release:
-    """판정 1건."""
+    """판정 1건.
+
+    verdict 는 'rollback' 도 들어온다(`ops.gate --rollback` 이 남기는 기록) — 태그를
+    자동으로 옮기지는 않으므로 `current_prod()` 는 여전히 'promote' 행만 고른다.
+    """
 
     version: str
-    verdict: Literal['promote', 'improve']
+    verdict: Literal['promote', 'improve', 'rollback']
     decided_by: str
     decided_at: str
     report_path: str

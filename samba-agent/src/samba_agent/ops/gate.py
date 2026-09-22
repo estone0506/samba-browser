@@ -5,13 +5,14 @@
 
 `eval.py` 는 아직 buyer.* 를 뺀 나머지 데이터셋을 참조 재생기(시드 규칙 재계산)로만
 돌리기 때문에 요약 JSON 최상위에 `gate_eligible: false` 를 못박아 둔다(Task 13 리뷰
-지적 1). 이 값이 명시적으로 false 면 점수가 만점이어도 절대 promote 가 나오지 않는다
-— `accuracy` 조건에서 막는다.
+지적 1). 이 값이 명시적으로 false 거나 아예 없으면(요약을 못 채운 것도 승격 근거가
+못 된다) 점수가 만점이어도 절대 promote 가 나오지 않는다 — `accuracy` 조건에서 막는다.
 """
 
 import argparse
 import json
 import logging
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -20,12 +21,18 @@ from typing import Literal
 
 from samba_agent.ops.datasets import MIN_EXAMPLES
 from samba_agent.ops.diagnose import Diagnosis
+from samba_agent.ops.masking import find_leaks
 from samba_agent.ops.releases import Release, ReleaseStore
+from samba_agent.ops.tracing import REQUIRED_METADATA
 
 log = logging.getLogger(__name__)
 
 GATE_RULES = ('observe', 'accuracy', 'regression', 'dry_run', 'review_queue', 'approval')
 REPORT_DIR = Path(__file__).resolve().parent / 'reports'
+
+# `--version` 은 파일명(`ops/reports/<version>.md`·`.eval.json`)으로 그대로 쓰인다.
+# 경로 조작(`../`)·공백·구분자 등을 막는다.
+VERSION_RE = re.compile(r'^[A-Za-z0-9._-]{1,64}$')
 
 
 @dataclass(frozen=True)
@@ -63,24 +70,34 @@ def evaluate_gate(
     datasets: Mapping[str, Mapping[str, object]] = eval_summary.get('datasets', {})  # type: ignore
     reasons: list[str] = []
 
-    enough = all(int(d.get('count', 0)) >= MIN_EXAMPLES for d in datasets.values()) and bool(
-        datasets
-    )
-    checks = {'observe': bool(observe_ok and enough)}
+    # observe 는 관측(trace·마스킹) 완료 여부만 본다 — 호출부(main())가 판정 대상
+    # `version` 의 이벤트만 걸러 `_observe_ok()` 로 계산해서 넘겨준다.
+    checks = {'observe': bool(observe_ok)}
     if not observe_ok:
-        reasons.append('Observe 완료 조건 미달(trace 항목·마스킹 검사)')
-    if not enough:
-        reasons.append(f'데이터셋이 {MIN_EXAMPLES}건 미만인 것이 있다')
+        reasons.append(
+            'Observe 완료 조건 미달(대상 버전 이벤트 없음·필수 메타데이터 누락·마스킹 누락)'
+        )
 
-    # 키가 아예 없으면(직접 만든 요약처럼) 기본은 승격 가능한 것으로 본다.
+    # 키가 아예 없으면(요약을 못 채운 것) 승격 근거가 못 된다 — 기본은 False.
     # eval.py 가 실제로 만드는 요약은 이 키를 항상 명시해서 채워 넣는다(현재는 false 고정).
-    gate_eligible = bool(eval_summary.get('gate_eligible', True))
+    gate_eligible = bool(eval_summary.get('gate_eligible', False))
     accuracy = True
     if not gate_eligible:
         accuracy = False
         reasons.append(
-            '실험 요약이 아직 승격 근거가 못 된다(gate_eligible=false, 참조 재생기 결과 포함)'
+            '실험 요약이 아직 승격 근거가 못 된다(gate_eligible 이 false 거나 없다, '
+            '참조 재생기 결과 포함)'
         )
+
+    # 데이터셋 최소 건수(MIN_EXAMPLES) 는 observe(관측)가 아니라 정확도 판단의
+    # 전제조건이다 — 표본이 부족하면 accuracy 자체를 신뢰할 수 없다.
+    min_examples_ok = bool(datasets) and all(
+        int(d.get('count', 0)) >= MIN_EXAMPLES for d in datasets.values()
+    )
+    if not min_examples_ok:
+        accuracy = False
+        reasons.append(f'데이터셋이 {MIN_EXAMPLES}건 미만이거나 비어 있다')
+
     for name, d in datasets.items():
         scores: Mapping[str, float] = d.get('scores', {})  # type: ignore[assignment]
         if float(scores.get('safety', 0)) < 1.0:
@@ -121,6 +138,39 @@ def evaluate_gate(
     )
 
 
+def _observe_ok(rows: Sequence[Mapping[str, object]], *, version: str) -> bool:
+    """Observe 완료 조건 — 판정 대상 `version` 의 이벤트만 본다.
+
+    필수 메타데이터(`ops.tracing.REQUIRED_METADATA`) 누락 0건 + 이벤트 payload 에
+    `ops.masking.find_leaks` 가 0건일 때만 참이다. 그 버전 이벤트가 하나도 없으면
+    (다른 버전 이벤트가 아무리 많아도) 관측 자체가 안 된 것이므로 거짓이다.
+    """
+    version_rows = [r for r in rows if r.get('version') == version]
+    if not version_rows:
+        return False
+    for row in version_rows:
+        payload = row.get('payload')
+        payload = payload if isinstance(payload, dict) else {}
+        metadata = payload.get('metadata')
+        metadata = metadata if isinstance(metadata, dict) else {}
+        # events 테이블 컬럼(job_id·version·env·agent)과 payload.metadata 를 합쳐서
+        # REQUIRED_METADATA 8개를 확인한다 — 현재 tracing.traced() 가 로컬 이벤트에
+        # 남기는 값은 컬럼 4개뿐이라, 나머지(order_no·source·requester·prompt_commit)는
+        # payload 안에 `metadata` 로 실려 와야 채워진다.
+        available: dict[str, object] = {
+            'harness_version': row.get('version'),
+            'env': row.get('env'),
+            'agent': row.get('agent'),
+            'job_id': row.get('job_id'),
+            **metadata,
+        }
+        if any(available.get(name) in (None, '') for name in REQUIRED_METADATA):
+            return False
+        if find_leaks(payload):
+            return False
+    return True
+
+
 def _load_eval_summary(path: Path) -> dict[str, object]:
     """요약 JSON 을 읽는다. 없거나 손상됐으면 빈 데이터셋으로 대체해 improve 로 떨어뜨린다.
 
@@ -137,24 +187,71 @@ def _load_eval_summary(path: Path) -> dict[str, object]:
         return {'datasets': {}}
 
 
+def _version_arg(value: str) -> str:
+    """`--version` 값을 파일명으로 안전한 문자만 허용해 새니타이즈한다."""
+    if not VERSION_RE.match(value):
+        raise argparse.ArgumentTypeError(
+            f"'{value}' 은(는) 올바른 --version 값이 아니다(영문·숫자·.·_·- 만, 1~64자)"
+        )
+    return value
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     from samba_agent.ops.diagnose import diagnose
     from samba_agent.ops.events import EventLog
     from samba_agent.settings import load_settings
 
     parser = argparse.ArgumentParser(prog='ops.gate')
-    parser.add_argument('--version', required=True)
+    parser.add_argument('--version', required=True, type=_version_arg)
     parser.add_argument('--approve', default=None, help='승인한 사람(슬랙 ID)')
     parser.add_argument('--rollback', action='store_true')
-    parser.add_argument('--dry-run-ok', action='store_true')
+    parser.add_argument(
+        '--apply',
+        action='store_true',
+        help=(
+            'promote 판정을 프롬프트 허브 prod 태그에 실제로 반영하지 않는다 — '
+            '무엇을(대상 버전·옮길 태그·현재 운영 버전) 바꿀지만 출력한다. '
+            '실제 태그 이동은 사람이 별도로 한다(스펙 §10-1).'
+        ),
+    )
+    parser.add_argument(
+        '--dry-run-ok',
+        action='store_true',
+        help=(
+            'staging dry-run 실기 1건 통과 여부. gate 가 직접 실행하지 않는다 — '
+            '외부(사람 또는 별도 파이프라인)에서 이미 실행한 staging dry-run 결과를 '
+            '호출부가 이 값으로 대입해 알려준다.'
+        ),
+    )
     args = parser.parse_args(argv)
     settings = load_settings()
     store = ReleaseStore(settings.root / 'releases.sqlite')
 
     if args.rollback:
         prev = store.current_prod()
-        # 자동 롤백은 없다 — 무엇으로 되돌릴지 알려 주고 사람이 태그를 옮긴다
+        # 자동 롤백은 없다 — 무엇으로 되돌릴지 알려 주고 사람이 태그를 옮긴다.
+        # releases 에는 'rollback' 결정 행만 남긴다(태그는 자동으로 옮기지 않는다).
+        rollback_version = prev.version if prev else args.version
         print(f'되돌릴 운영 버전: {prev.version if prev else "없음"}')
+        store.record(
+            Release(
+                version=rollback_version,
+                verdict='rollback',
+                decided_by=args.approve or '-',
+                decided_at=datetime.now(UTC).isoformat(timespec='seconds'),
+                report_path='-',
+                prompt_commits={},
+            )
+        )
+        return 0
+
+    if args.apply:
+        # 무엇을 바꿀지만 출력한다 — 실제 태그 이동·releases 기록은 하지 않는다.
+        prev = store.current_prod()
+        print(f'적용 대상 버전: {args.version}')
+        print(f'현재 운영(prod) 버전: {prev.version if prev else "없음"}')
+        print(f'옮길 프롬프트 허브 태그: prod → {args.version}')
+        print('실제 태그 이동은 하지 않았다 — 사람이 검토 후 별도로 한다(스펙 §10-1)')
         return 0
 
     summary_path = REPORT_DIR / f'{args.version}.eval.json'
@@ -176,7 +273,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         version=args.version,
         eval_summary=eval_summary,
         diagnosis=diagnosis,
-        observe_ok=bool(events.since(30)),
+        observe_ok=_observe_ok(events.since(30), version=args.version),
         dry_run_ok=bool(args.dry_run_ok),
         review_queue_blocking=diagnosis.review_queue_pending,
         approved_by=args.approve,
@@ -196,7 +293,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     print(result.to_markdown())
     if result.verdict == 'promote':
-        # 태그 이동과 실행기 재시작은 외부 변경이라 사람이 한다(스펙 §10-1)
+        # 태그 이동과 실행기 재시작은 외부 변경이라 사람이 한다(스펙 §10-1) — `--apply` 로
+        # 무엇을 바꿀지만 미리 볼 수 있다.
         print('promote — 프롬프트 허브 prod 태그 이동과 HARNESS_ENV=prod 재시작은 사람이 한다')
     return 0
 

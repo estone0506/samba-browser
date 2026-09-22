@@ -2,8 +2,8 @@
 from samba_agent.ops.alerts import ALERT_RULES, check_alerts
 
 
-def test_실패율이_두_배가_되면_알린다():
-    got = check_alerts({'fail_rate': 0.2}, {'fail_rate': 0.1})
+def test_실패율이_두_배를_넘으면_알린다():
+    got = check_alerts({'fail_rate': 0.21}, {'fail_rate': 0.1})
     assert 'fail_rate_2x' in got
 
 
@@ -11,8 +11,21 @@ def test_needs_human_이_30퍼센트를_넘으면_알린다():
     assert 'needs_human_30pct' in check_alerts({'needs_human_rate': 0.31}, {})
 
 
-def test_평균_소요가_50퍼센트_늘면_알린다():
-    assert 'duration_50pct' in check_alerts({'avg_duration_ms': 15000}, {'avg_duration_ms': 10000})
+def test_평균_소요가_50퍼센트_넘게_늘면_알린다():
+    assert 'duration_50pct' in check_alerts({'avg_duration_ms': 15001}, {'avg_duration_ms': 10000})
+
+
+def test_실패율이_정확히_두_배면_경계값이라_알리지_않는다():
+    # 경계 연산자는 "초과"(>) 다 — 정확히 2배는 알리지 않는다
+    assert check_alerts({'fail_rate': 0.2}, {'fail_rate': 0.1}) == []
+
+
+def test_needs_human_이_정확히_30퍼센트면_경계값이라_알리지_않는다():
+    assert check_alerts({'needs_human_rate': 0.30}, {}) == []
+
+
+def test_평균_소요가_정확히_50퍼센트_늘면_경계값이라_알리지_않는다():
+    assert check_alerts({'avg_duration_ms': 15000}, {'avg_duration_ms': 10000}) == []
 
 
 def test_평온하면_아무것도_알리지_않는다():
