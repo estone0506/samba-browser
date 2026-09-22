@@ -1,4 +1,6 @@
 # 워커 공통 껍데기 — 허용 목록 / 캡차 감지 / 구조화 출력 재요청 / 실패 변환
+import json
+
 import httpx
 import pytest
 import respx
@@ -147,3 +149,34 @@ def test_거절이_아닌_응답은_그대로_돌려준다():
         )
     )
     assert base().tool('get_page') == '주문이 refused 된 적 없음'
+
+
+@respx.mock
+def test_진행_보고는_done_total_정수를_함께_보낸다():
+    # 앱 progress 도구는 done/total 이 없으면 'refused: progress needs …' 로 거절한다(실기)
+    route = respx.post(f'{URL}/tool/progress').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'result': 'ok', 'steps': []})
+    )
+    b = base(allowed=('progress',))
+    b.step('상품 확인')
+    b.step('옵션 선택')
+    sent = [json.loads(c.request.content)['args'] for c in route.calls]
+    assert sent[0] == {'label': '상품 확인', 'done': 0, 'total': 1}
+    assert sent[1] == {'label': '옵션 선택', 'done': 1, 'total': 2}
+
+
+@respx.mock
+def test_로그인_제출_응답의_captcha_글자는_캡차가_아니다():
+    # 앱 login 도구는 제출 뒤 'submitted: check the page for success or captcha/2FA' 를 돌려준다
+    respx.post(f'{URL}/tool/login').mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                'ok': True,
+                'result': 'submitted: check the page for success or captcha/2FA',
+                'steps': [],
+            },
+        )
+    )
+    b = base(allowed=('login',))
+    assert b.tool('login', accountLabel='x').startswith('submitted')

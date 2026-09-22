@@ -19,6 +19,9 @@ from samba_agent.ops.masking import mask_text
 
 # 앱 도구가 캡차·2단계 인증에서 돌려주는 표시(docs/bridge.md)
 NEEDS_USER_MARKERS = ('needs_user', '캡차', 'captcha')
+# 표식 검사에서 뺄 결과 머리 — login 도구의 정상 응답 'submitted: check the page for success or
+# captcha/2FA' 가 'captcha' 글자만으로 캡차로 읽혀 로그인마다 사람에게 넘어갔다(실기)
+_MARKER_EXEMPT_PREFIXES = ('submitted:',)
 # 구조화 출력은 한 번만 다시 묻는다(스펙 §6)
 DECIDE_RETRIES = 1
 
@@ -54,6 +57,8 @@ class AgentBase:
         self.bridge = bridge.scoped(spec.tools)
         self._decide = decide
         self.evidence: list[Evidence] = []
+        # 진행 보고 횟수 — 앱 progress 도구는 done/total 정수가 필수다(실기: label 만 보내 거절당함)
+        self._steps = 0
 
     def tool(self, name: str, /, **args: object) -> str:
         """도구 1건. 캡차 표시는 사람에게, 브릿지 오류는 사유 그대로 실패로 바꾼다."""
@@ -63,7 +68,9 @@ class AgentBase:
             # 항상 fail 로 던진다. 권한 부족·중복은 감독자의 NO_RETRY_REASONS 가
             # 재시도 없이 바로 needs_human 으로 넘긴다(스펙 §6) — 여기서 판단하지 않는다
             raise AgentFailure('fail', str(e), e.reason) from e
-        if any(m in out.result for m in NEEDS_USER_MARKERS):
+        if not out.result.lstrip().startswith(_MARKER_EXEMPT_PREFIXES) and any(
+            m in out.result for m in NEEDS_USER_MARKERS
+        ):
             raise AgentFailure('needs_human', f'사람 확인 필요: {name}', FailReason.CAPTCHA)
         # 앱은 거절을 HTTP 오류가 아니라 200 + 'refused: …' 로 돌려준다 — 성공으로 읽으면
         # 잠긴 금고·읽기 전용 모드에서도 다음 단계로 넘어간다(리뷰 지적 — I5)
@@ -101,14 +108,30 @@ class AgentBase:
         self.evidence.append(Evidence(label=label, detail=detail))
 
     def step(self, label: str) -> None:
-        """진행 보고 — 슬랙 스레드에 한 줄로 뜬다."""
+        """진행 보고 — 슬랙 스레드에 한 줄로 뜬다.
+
+        앱의 progress 도구는 0 <= done <= total, total >= 1 을 요구한다. 단계 총수는 미리 모르니
+        n번째 보고를 'n-1 / n'(n번째 진행 중)으로 보낸다.
+        """
         if 'progress' in self.spec.tools:
-            self.tool('progress', label=label)
+            self._steps += 1
+            self.tool('progress', label=label, done=self._steps - 1, total=self._steps)
 
 
-def run_agent(fn: Callable[[], AgentResult]) -> AgentResult:
-    """AgentFailure 를 AgentResult 로 바꾼다. 감독자는 예외를 보지 않는다."""
+def run_agent(
+    fn: Callable[[], AgentResult], evidence: Callable[[], list[Evidence]] | None = None
+) -> AgentResult:
+    """AgentFailure 를 AgentResult 로 바꾼다. 감독자는 예외를 보지 않는다.
+
+    ``evidence`` 를 주면 실패 결과에도 그때까지의 근거를 싣는다 — 실기에서 실패 사유만 남고
+    어느 단계까지 갔는지(옵션 목록·계정·배송지) 알 수 없어 진단이 막혔다.
+    """
     try:
         return fn()
     except AgentFailure as e:
-        return AgentResult(status=e.status, reason=e.reason, fail_reason=e.fail_reason)
+        return AgentResult(
+            status=e.status,
+            reason=e.reason,
+            fail_reason=e.fail_reason,
+            evidence=tuple(evidence()) if evidence is not None else (),
+        )

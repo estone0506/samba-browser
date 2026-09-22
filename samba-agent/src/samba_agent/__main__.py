@@ -26,7 +26,7 @@ from samba_agent.ops.masking import mask_text
 from samba_agent.ops.releases import ReleaseStore
 from samba_agent.ops.tracing import configure_tracing
 from samba_agent.queue.db import Job, JobQueue
-from samba_agent.queue.orders import lookup_order
+from samba_agent.queue.orders import LOOKUP_TOOLS, lookup_order
 from samba_agent.queue.worker import Worker, WorkerDeps
 from samba_agent.settings import load_settings
 from samba_agent.supervisor.graph import build_supervisor
@@ -72,8 +72,8 @@ def main() -> None:
         settings.bridge_token.get_secret_value(),
         allowed=(),  # 최상위 클라이언트는 도구를 직접 부르지 않는다 — 에이전트마다 scoped() 로 좁힌다
     )
-    # 주문 조회는 앱 저장 스크립트(samba_find_order) 하나만 부른다
-    lookup_bridge = bridge.scoped(['run_script'])
+    # 주문 조회 = 삼바웨이브 탭 앞에 두기(list_tabs·switch_tab·new_tab·wait) + 저장 스크립트 1회
+    lookup_bridge = bridge.scoped(list(LOOKUP_TOOLS))
 
     # 모델명은 settings 에 없다 — llm.decide 의 상수(claude-sonnet-5) 를 그대로 쓴다
     decide = make_decide()
@@ -87,13 +87,39 @@ def main() -> None:
     checkpointer = SqliteSaver(
         sqlite3.connect(str(settings.root / 'checkpoints.sqlite'), check_same_thread=False)
     )
+
     # 결제 진입 표시를 큐에 남기려면 실행기가 필요하다 — 아래에서 만들고 콜백으로 잇는다
+    def _record_agent(
+        state: dict, stage: str, agent: str, result: object, duration_ms: int, attempt: int
+    ) -> None:
+        """에이전트 1회 실행 → kind='agent' 이벤트. ops.diagnose 가 이 종류만 집계한다."""
+        status = str(getattr(result, 'status', ''))
+        fail_reason = getattr(result, 'fail_reason', None)
+        events.write(
+            job_id=int(state.get('job_id', 0)),
+            version=version_fn(),
+            env=settings.harness_env,
+            agent=agent,
+            kind='agent',
+            payload={
+                'step': stage,
+                'ok': status == 'ok',
+                'status': status,
+                'fail_reason': str(fail_reason) if fail_reason else None,
+                'duration_ms': duration_ms,
+                'retries': attempt - 1,
+                'order_no': str(getattr(state.get('order'), 'order_no', '')),
+                'reason': mask_text(str(getattr(result, 'reason', '')))[:200],
+            },
+        )
+
     graph = build_supervisor(
         reg,
         agents,
         checkpointer=checkpointer,
         gate=True,
         on_stage_start=lambda state, stage: worker.mark_stage(state, stage),
+        on_agent_result=_record_agent,
     )
 
     _report, _approval_report = make_reporters(lambda: bot)
@@ -105,6 +131,9 @@ def main() -> None:
             version=version_fn,  # 콜러블 그대로 넘긴다 — tick 마다 다시 불러 규칙 변경을 반영한다
             report=_report,
             parse_order=lambda job: lookup_order(lookup_bridge, job.order_no, job.options),
+            # 같은 주문을 취소 뒤 다시 접수하면 job id(=스레드)가 같다 — 끝난 실행의 attempts·results 가
+            # 남은 채 새 입력이 들어가면 재시도 횟수가 이어져 버린다(실기). 끝난 스레드는 지우고 시작한다
+            reset_thread=checkpointer.delete_thread,
             approval_report=_approval_report,
             dry_run=settings.dry_run,
             dry_run_digits=settings.dry_run_digits,

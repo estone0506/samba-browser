@@ -6,7 +6,7 @@ import pytest
 import respx
 
 from samba_agent.agents.base import AgentFailure
-from samba_agent.agents.buyer import BuyerAgent
+from samba_agent.agents.buyer import BuyerAgent, snapshot_args
 from samba_agent.agents.contracts import Assignment, OrderRef
 from samba_agent.agents.registry import Registry
 from samba_agent.bridge.client import BridgeClient
@@ -225,3 +225,126 @@ def test_dry_run이_아니면_부수효과_도구_호출은_막지_않는다(reg
     b._dry_run = False
     b.tool('save_script', name='x', args='{}')
     assert route.called
+
+
+def _login_mocks(*login_results: str):
+    """로그인 확인 경로의 도구 3개를 mock 한다. login 은 호출 순서대로 답한다."""
+    respx.post(f'{URL}/tool/new_tab').mock(return_value=page('ok: tab t9'))
+    respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
+    results = list(login_results)
+    return respx.post(f'{URL}/tool/login').mock(
+        side_effect=lambda _req: page(results.pop(0) if len(results) > 1 else results[0])
+    )
+
+
+ORDER_WITH_ACCOUNT = ORDER.model_copy(update={'account': 'buyer01'})
+
+
+def assignment_with_account(reg) -> Assignment:
+    return assignment(reg).model_copy(update={'order': ORDER_WITH_ACCOUNT})
+
+
+@respx.mock
+def test_소싱_계정이_있으면_스냅샷_전에_로그인한다(reg):
+    login = _login_mocks(
+        'submitted: check the page for success or captcha/2FA', 'already signed in (logout)'
+    )
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=route_run_script(
+            {'musinsa_product_snapshot': SNAPSHOT_OK, 'musinsa_set_shipping': SHIPPING}
+        )
+    )
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제수단 선택'))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment_with_account(reg))
+    assert out.status == 'ok'
+    assert login.call_count == 2  # 제출 뒤 한 번 더 불러 로그인됐는지 확인한다
+    assert json.loads(login.calls[0].request.content)['args'] == {'accountLabel': 'buyer01'}
+    assert any('로그인 완료' in e.detail for e in out.evidence)
+
+
+@respx.mock
+def test_이미_로그인돼_있으면_바로_진행한다(reg):
+    login = _login_mocks('already signed in (logout)')
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=route_run_script(
+            {'musinsa_product_snapshot': SNAPSHOT_OK, 'musinsa_set_shipping': SHIPPING}
+        )
+    )
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제수단 선택'))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment_with_account(reg))
+    assert out.status == 'ok'
+    assert login.call_count == 1
+
+
+@respx.mock
+def test_저장된_계정이_없으면_사람에게_넘긴다(reg):
+    _login_mocks('account not found: use list_accounts')
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment_with_account(reg))
+    assert out.status == 'needs_human'
+    assert out.fail_reason is FailReason.PERMISSION_DENIED
+    assert '로그인 실패' in out.reason
+
+
+@respx.mock
+def test_스냅샷의_계정이_주문_계정과_다르면_사람에게_넘긴다(reg):
+    _login_mocks('already signed in (logout)')
+    other = {**SNAPSHOT_OK, 'account': 'buyer02'}
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=route_run_script({'musinsa_product_snapshot': other})
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment_with_account(reg))
+    assert out.status == 'needs_human'
+    assert out.fail_reason is FailReason.PERMISSION_DENIED
+    assert 'buyer02' in out.reason
+
+
+@respx.mock
+def test_실패해도_그때까지의_근거는_결과에_남는다(reg):
+    # 실기: 실패 사유만 남고 옵션 목록 등 근거가 비어 진단이 막혔다
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=route_run_script({'musinsa_product_snapshot': {**SNAPSHOT_OK, 'coupons': {}}})
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
+    assert out.status == 'fail'
+    assert [e.label for e in out.evidence] == ['옵션 목록', '옵션 선택']
+
+
+def test_스냅샷_인자는_상품_ID와_사이즈를_우선한다():
+    """실기: 판매 상품명을 ABC마트 검색어로 써서 검색 결과 페이지에서 '품절'로 오판했다."""
+    abc = OrderRef(
+        order_no='A1',
+        source='ABC마트',
+        seller='신세계몰',
+        sku='매장정품 코르테즈 [265]',
+        qty=1,
+        option='265',
+        product_url='https://abcmart.a-rt.com/product/new?prdtNo=1010118346',
+    )
+    assert json.loads(snapshot_args('buyer.abc', abc)) == {
+        'sku': '1010118346',
+        'qty': 1,
+        'size': '265',
+    }
+    # ID 규칙이 없는 소싱처는 URL 그대로, URL 도 없으면 판매 상품명
+    musinsa = abc.model_copy(update={'product_url': 'https://www.musinsa.com/products/1'})
+    assert (
+        json.loads(snapshot_args('buyer.musinsa', musinsa))['sku']
+        == 'https://www.musinsa.com/products/1'
+    )
+    plain = abc.model_copy(update={'product_url': None, 'option': None})
+    assert json.loads(snapshot_args('buyer.abc', plain)) == {
+        'sku': '매장정품 코르테즈 [265]',
+        'qty': 1,
+    }
+    with_account = abc.model_copy(update={'account': 'buyer01'})
+    assert json.loads(snapshot_args('buyer.abc', with_account))['account'] == 'buyer01'
+
+
+def test_스냅샷_인자는_따옴표가_있어도_JSON_이다():
+    order = OrderRef(order_no='A1', source='무신사', seller='포이즌', sku='SKU "A"', qty=2)
+    assert json.loads(snapshot_args('buyer.musinsa', order)) == {'sku': 'SKU "A"', 'qty': 2}

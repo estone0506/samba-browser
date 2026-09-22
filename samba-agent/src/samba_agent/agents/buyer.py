@@ -5,13 +5,54 @@
 """
 
 import json
+import re
 
 from samba_agent.agents.base import AgentBase, AgentFailure, Decision, run_agent
-from samba_agent.agents.contracts import AgentResult, Assignment
+from samba_agent.agents.contracts import AgentResult, Assignment, OrderRef
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_text
 
 # 소싱처별 "상품 상태 한 번에 읽기" 저장 스크립트 이름. 앱에 save_script 로 저장해 둔다
+# 소싱처 상품 URL 에서 스냅샷 스크립트가 바로 여는 상품 ID 를 뽑는 규칙(없는 소싱처는 URL 그대로)
+_PRODUCT_ID_OF = {
+    'buyer.abc': re.compile(r'[?&]prdtNo=(\d+)'),
+}
+
+
+def product_ref(agent_name: str, order: OrderRef) -> str:
+    """스냅샷 스크립트의 sku 인자 — 상품 ID > 상품 URL > 판매 상품명 순으로 확실한 것을 쓴다."""
+    if order.product_url:
+        pattern = _PRODUCT_ID_OF.get(agent_name)
+        m = pattern.search(order.product_url) if pattern else None
+        return m.group(1) if m else order.product_url
+    return order.sku
+
+
+def snapshot_args(agent_name: str, order: OrderRef) -> str:
+    """run_script 에 넘길 JSON 문자열. 옵션이 있으면 size 로, 계정이 있으면 account 로 같이 준다."""
+    args: dict[str, object] = {'sku': product_ref(agent_name, order), 'qty': order.qty}
+    if order.option:
+        args['size'] = order.option
+    if order.account:
+        args['account'] = order.account
+    return json.dumps(args, ensure_ascii=False)
+
+
+# 로그인 확인을 시작할 소싱처 첫 페이지. 앱의 login 도구는 폼이 없으면 이미 로그인됐는지 보고,
+# 아니면 알려진 로그인 URL(shared/site-rules)로 스스로 옮겨 간다 — 여기서 로그인 URL 을 알 필요 없다
+SITE_HOME = {
+    'buyer.musinsa': 'https://www.musinsa.com/',
+    'buyer.29cm': 'https://www.29cm.co.kr/',
+    'buyer.abc': 'https://abcmart.a-rt.com/',
+    'buyer.lotteon': 'https://www.lotteon.com/',
+}
+# 앱 login 도구의 결과 문자열 머리(src/main/agent/tools.ts)
+ALREADY_SIGNED_IN = 'already signed in'
+LOGIN_SUBMITTED = 'submitted'
+# 페이지 이동·로그인 제출 뒤 화면이 안정되길 기다리는 시간
+_LOGIN_SETTLE_MS = 2500
+
+
 SNAPSHOT_SCRIPT = {
     'buyer.musinsa': 'musinsa_product_snapshot',
     'buyer.29cm': 'cm29_product_snapshot',
@@ -55,7 +96,7 @@ class BuyerAgent(AgentBase):
 
     def __call__(self, assignment: Assignment) -> AgentResult:
         self._dry_run = assignment.dry_run
-        return run_agent(lambda: self._buy(assignment))
+        return run_agent(lambda: self._buy(assignment), lambda: self.evidence)
 
     def tool(self, name: str, /, **args: object) -> str:
         """dry_run 이면 부수효과 도구는 허용 목록에 있어도 아예 부르지 않는다(불변조건)."""
@@ -67,15 +108,56 @@ class BuyerAgent(AgentBase):
             )
         return super().tool(name, **args)
 
+    def _ensure_login(self, a: Assignment) -> None:
+        """주문의 소싱 계정으로 로그인돼 있게 한다(실기: 로그인 안 된 채 스냅샷 → 주문서 대신 로그인 페이지).
+
+        앱 login 도구는 이미 로그인돼 있으면 누구인지까지는 말해 주지 않는다 — 계정 일치는
+        스냅샷의 account 로 한 번 더 본다(_check_account).
+        """
+        account = a.order.account
+        if not account:
+            return
+        self.step(f'{self.spec.name}: 로그인 확인({account})')
+        self.tool('new_tab', url=SITE_HOME[self.spec.name])
+        self.tool('wait', ms=_LOGIN_SETTLE_MS)
+        out = self.tool('login', accountLabel=account).strip()
+        if out.startswith(ALREADY_SIGNED_IN):
+            self.note('로그인', '이미 로그인돼 있음')
+            return
+        if out.startswith(LOGIN_SUBMITTED):
+            self.tool('wait', ms=_LOGIN_SETTLE_MS)
+            out = self.tool('login', accountLabel=account).strip()
+            if out.startswith(ALREADY_SIGNED_IN):
+                self.note('로그인', f'{account} 로 로그인 완료')
+                return
+        raise AgentFailure(
+            'needs_human',
+            f'로그인 실패({account}): {mask_text(out[:120])}',
+            FailReason.PERMISSION_DENIED,
+        )
+
+    def _check_account(self, a: Assignment, snap: dict[str, object]) -> None:
+        """스냅샷이 로그인 계정을 알려 주면 주문의 소싱 계정과 대조한다. 다르면 사람에게 넘긴다."""
+        seen = str(snap.get('account') or '').strip()
+        want = a.order.account
+        if want and seen and want.lower() not in seen.lower():
+            raise AgentFailure(
+                'needs_human',
+                f'다른 계정으로 로그인돼 있다: {seen} (주문 계정 {want})',
+                FailReason.PERMISSION_DENIED,
+            )
+
     def _buy(self, a: Assignment) -> AgentResult:
         self.evidence = []
+        self._ensure_login(a)
         self.step(f'{self.spec.name}: 상품 확인')
         snap = self.json_tool(
             'run_script',
             name=SNAPSHOT_SCRIPT[self.spec.name],
-            args=f'{{"sku":"{a.order.sku}","qty":{a.order.qty}}}',
+            args=snapshot_args(self.spec.name, a.order),
         )
 
+        self._check_account(a, snap)
         # 같은 상품을 이미 산 흔적 — 옵션 선택 전에 끝낸다(규칙 파일 §3)
         if snap.get('already_ordered') or snap.get('existing_order_no'):
             raise AgentFailure(

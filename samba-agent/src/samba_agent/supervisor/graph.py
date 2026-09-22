@@ -4,6 +4,8 @@
 `agents` 에 등록된 함수를 부르고, 결과를 검사해 다음 단계로 갈지 사람에게 넘길지 정한다.
 """
 
+import logging
+import time
 from collections.abc import Callable, Mapping
 
 from langgraph.graph import END, StateGraph
@@ -17,6 +19,8 @@ from samba_agent.supervisor.approval import approval_request
 from samba_agent.supervisor.assign import build_assignment
 from samba_agent.supervisor.policy import KIND_OF_STAGE, STAGES, check_buyer, should_retry
 from samba_agent.supervisor.state import RunState, sanitize_result
+
+_log = logging.getLogger(__name__)
 
 AgentFn = Callable[..., AgentResult]
 
@@ -40,10 +44,22 @@ def _stop(state: RunState, name: str, result: AgentResult) -> RunState:
     }
 
 
+# 에이전트 1회 실행 결과 훅 — (state, stage, 에이전트 이름, 결과, 소요 ms, 몇 번째 시도)
+AgentResultHook = Callable[[RunState, str, str, AgentResult, int, int], None]
+
+
 def _run_stage(
-    reg: Registry, agents: Mapping[str, AgentFn], stage: str, state: RunState
+    reg: Registry,
+    agents: Mapping[str, AgentFn],
+    stage: str,
+    state: RunState,
+    on_agent_result: 'AgentResultHook | None' = None,
 ) -> RunState:
-    """한 단계 — 배정 → 실행 → 검사 → (필요하면) 재시도 1회."""
+    """한 단계 — 배정 → 실행 → 검사 → (필요하면) 재시도 1회.
+
+    실행(재시도 포함) 한 번마다 ``on_agent_result`` 를 부른다 — 진단 표(ops.diagnose)는
+    에이전트·단계별 실패율·재시도·소요를 이 기록으로 만든다. 훅 오류가 실행을 막지는 않는다.
+    """
     spec = reg.pick(KIND_OF_STAGE[stage], state['order'], state.get('options', {}))
     if spec is None:
         return _stop(
@@ -69,12 +85,19 @@ def _run_stage(
     attempts = dict(state.get('attempts', {}))
     while True:
         attempts[spec.name] = attempts.get(spec.name, 0) + 1
+        started = time.monotonic()
         try:
             result = fn(build_assignment(reg, spec, state))
         except BridgeError as e:
             result = AgentResult(status='fail', reason=f'브릿지 오류: {e}', fail_reason=e.reason)
         if stage == 'buy':
             result = check_buyer(result)
+        if on_agent_result is not None:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            try:
+                on_agent_result(state, stage, spec.name, result, elapsed_ms, attempts[spec.name])
+            except Exception:  # noqa: BLE001 — 기록 실패가 주문 처리를 막으면 안 된다
+                _log.exception('에이전트 결과 기록 실패 — 계속한다: %s', spec.name)
         if result.status == 'ok':
             break
         if should_retry(spec, result, attempts[spec.name]):
@@ -158,6 +181,7 @@ def build_supervisor(
     checkpointer: object | None = None,
     gate: bool = False,
     on_stage_start: 'StageHook | None' = None,
+    on_agent_result: 'AgentResultHook | None' = None,
 ):
     """감독자 그래프를 만든다. agents 는 이름 → 함수(실제 에이전트 또는 테스트용 가짜)."""
     if gate and checkpointer is None:
@@ -202,7 +226,7 @@ def build_supervisor(
                 state = {**state, 'pay_started': True}
             if on_stage_start is not None:
                 on_stage_start(state, stage)
-            return _run_stage(reg, agents, stage, state)
+            return _run_stage(reg, agents, stage, state, on_agent_result)
 
         return node
 
