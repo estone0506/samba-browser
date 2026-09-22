@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus } from 'lucide-react'
-import { runPhraseOf, type PlaybookInput } from '@shared/playbook'
+import { runPhraseOf, BUILTIN_UNFULFILLED_ID, type PlaybookInput } from '@shared/playbook'
 import type { PlaybookSchedule } from '@shared/schedule'
 import { usePlaybookStore } from '@renderer/stores/playbookStore'
 import { useScheduleStore } from '@renderer/stores/scheduleStore'
@@ -13,6 +13,7 @@ import { PrimaryButton } from '@renderer/components/settings/shared'
 import { PlaybookCard } from '@renderer/components/automation/PlaybookCard'
 import { PlaybookEditor } from '@renderer/components/automation/PlaybookEditor'
 import { RecommendCard } from '@renderer/components/automation/RecommendCard'
+import { HarnessPanel } from '@renderer/components/automation/HarnessPanel'
 
 // 편집 중인 대상. 'new' 는 새로 만들기 폼, 문자열 id 는 그 카드의 편집 폼
 type EditTarget = 'new' | string | null
@@ -128,41 +129,44 @@ export function AutomationPage(): React.JSX.Element {
         )}
 
         {items.map((playbook) => (
-          <PlaybookCard
-            key={playbook.id}
-            playbook={playbook}
-            editing={editing === playbook.id}
-            onEdit={() => setEditing(playbook.id)}
-            onSave={commit}
-            onCancel={() => setEditing(null)}
-            onToggle={(enabled) =>
-              void save({
-                id: playbook.id,
-                name: playbook.name,
-                triggers: playbook.triggers,
-                instructions: playbook.instructions,
-                enabled
-              })
-            }
-            onRun={() => run(runPhraseOf(playbook))}
-            onRemove={() => void remove(playbook.id)}
-            onRestore={() => void restore(playbook.id)}
-            scheduleStatus={scheduleById[playbook.id]}
-            modelChoices={modelChoices}
-            onSchedule={(schedule: PlaybookSchedule) =>
-              void save({
-                id: playbook.id,
-                name: playbook.name,
-                triggers: playbook.triggers,
-                instructions: playbook.instructions,
-                enabled: playbook.enabled,
-                schedule
-              }).then(() => loadSchedules())
-            }
-            // 예약 경로로 실행한다 — 결과가 예약 기록(마지막 실행·이력)에 남는다
-            onRunNow={() => void scheduleRunNow(playbook.id)}
-            onSetPaused={(paused) => void setSchedulePaused(playbook.id, paused)}
-          />
+          <Fragment key={playbook.id}>
+            <PlaybookCard
+              playbook={playbook}
+              editing={editing === playbook.id}
+              onEdit={() => setEditing(playbook.id)}
+              onSave={commit}
+              onCancel={() => setEditing(null)}
+              onToggle={(enabled) =>
+                void save({
+                  id: playbook.id,
+                  name: playbook.name,
+                  triggers: playbook.triggers,
+                  instructions: playbook.instructions,
+                  enabled
+                })
+              }
+              onRun={() => run(runPhraseOf(playbook))}
+              onRemove={() => void remove(playbook.id)}
+              onRestore={() => void restore(playbook.id)}
+              scheduleStatus={scheduleById[playbook.id]}
+              modelChoices={modelChoices}
+              onSchedule={(schedule: PlaybookSchedule) =>
+                void save({
+                  id: playbook.id,
+                  name: playbook.name,
+                  triggers: playbook.triggers,
+                  instructions: playbook.instructions,
+                  enabled: playbook.enabled,
+                  schedule
+                }).then(() => loadSchedules())
+              }
+              // 예약 경로로 실행한다 — 결과가 예약 기록(마지막 실행·이력)에 남는다
+              onRunNow={() => void scheduleRunNow(playbook.id)}
+              onSetPaused={(paused) => void setSchedulePaused(playbook.id, paused)}
+            />
+            {/* 하네스가 맡는 절차의 카드 아래에만 처리 흐름을 보인다(스펙 §4.4b) */}
+            {playbook.id === BUILTIN_UNFULFILLED_ID && <HarnessPanel />}
+          </Fragment>
         ))}
 
         {!loading && items.length === 0 && (
