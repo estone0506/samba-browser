@@ -374,8 +374,8 @@ const api = {
     saveSupabase: (url: string, anonKey: string): Promise<IpcResult<AuthState>> =>
       invoke(IPC.authSaveSupabase, { url, anonKey }),
     // 비밀번호를 잊었을 때 — 이 PC 에 살아 있는 세션으로 새 비밀번호를 정하고 로그인한다
-    resetPassword: (password: string): Promise<IpcResult<AuthState>> =>
-      invoke(IPC.authResetPassword, password),
+    resetPassword: (email: string, password: string): Promise<IpcResult<AuthState>> =>
+      invoke(IPC.authResetPassword, email, password),
     onStateChanged: (cb: (state: AuthState) => void): (() => void) => {
       const h = (_: unknown, state: AuthState): void => cb(state)
       ipcRenderer.on(IPC.authStateChanged, h)

@@ -924,10 +924,14 @@ export function registerIpc(
     applyEnv: setSupabaseEnvFromSettings
   })
   // 렌더러에는 데이터 인증 상태 + 디렉터리 상태를 한 덩어리로 보낸다(토큰·비밀번호 없음)
-  const authStateWithAccount = (): AuthState => ({
-    ...auth.state(),
-    account: account.accountState()
-  })
+  // 계정 로그인 전(게이트)에는 이 PC 에 남은 데이터 세션의 이메일을 화면에 내보내지 않는다 —
+  // 자리를 비운 사이 다른 사람이 누구 계정인지 알 수 없어야 한다
+  const authStateWithAccount = (): AuthState => {
+    const acct = account.accountState()
+    const data = auth.state()
+    const gated = acct.configured && !acct.signedIn
+    return { ...data, ...(gated ? { email: undefined } : {}), account: acct }
+  }
   auth.onStateChanged(() => send(IPC.authStateChanged, authStateWithAccount()))
   account.onStateChanged(() => send(IPC.authStateChanged, authStateWithAccount()))
   // 구글 로그인을 기다리는 중에 창이 닫히면 루프백 서버가 최대 5분 남는다
@@ -964,8 +968,10 @@ export function registerIpc(
     return authStateWithAccount()
   })
   // 로그인한 계정에 데이터 Supabase 주소를 저장하고 곧바로 붙는다(재시작 불필요)
-  handleFromRenderer(IPC.authResetPassword, (password: string) =>
-    logged('비밀번호 재설정', () => account.resetPasswordWithSession(String(password ?? '')))
+  handleFromRenderer(IPC.authResetPassword, (email: string, password: string) =>
+    logged('비밀번호 재설정', () =>
+      account.resetPasswordWithSession(String(email ?? ''), String(password ?? ''))
+    )
   )
   handleFromRenderer(IPC.authSaveSupabase, (raw: unknown) => {
     const o = raw as { url?: unknown; anonKey?: unknown }

@@ -277,7 +277,8 @@ export function SignInCard(): React.JSX.Element {
   // 비밀번호를 잊었을 때: 이 PC 에 데이터 세션이 살아 있으면 메일 없이 새 비밀번호를 정할 수 있다
   const [resetting, setResetting] = useState(false)
   const [newPassword, setNewPassword] = useState('')
-  const canReset = auth.state?.signedIn === true && !!auth.state.email
+  // 세션이 남아 있는지만 안다(누구 것인지는 화면에 내보내지 않는다 — 이메일은 사용자가 직접 친다)
+  const canReset = auth.state?.signedIn === true
 
   const busy = auth.pending !== null
   const canSubmit = email.trim().length > 0 && password.length > 0 && !busy
@@ -354,14 +355,12 @@ export function SignInCard(): React.JSX.Element {
             setResetting(true)
           }}
         >
-          {t('account.forgotPassword', { email: auth.state?.email ?? '' })}
+          {t('account.forgotPassword')}
         </button>
       )}
       {canReset && resetting && (
         <>
-          <p className="text-[11.5px] text-[var(--text2)]">
-            {t('account.resetHint', { email: auth.state?.email ?? '' })}
-          </p>
+          <p className="text-[11.5px] text-[var(--text2)]">{t('account.resetHint')}</p>
           <SettingsRow label={t('account.newPassword')}>
             <TextInput
               value={newPassword}
@@ -372,8 +371,8 @@ export function SignInCard(): React.JSX.Element {
           </SettingsRow>
           <div className="flex flex-wrap items-center gap-2">
             <PrimaryButton
-              disabled={newPassword.length < 8 || busy}
-              onClick={() => void auth.resetPassword(newPassword)}
+              disabled={newPassword.length < 8 || email.trim().length === 0 || busy}
+              onClick={() => void auth.resetPassword(email.trim(), newPassword)}
             >
               {t('account.resetAndSignIn')}
             </PrimaryButton>

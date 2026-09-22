@@ -298,7 +298,7 @@ describe('비밀번호를 잊었을 때 — 이 PC 의 살아 있는 세션으�
       settings: { get: () => settings, set: (p) => Object.assign(settings, p) },
       applyEnv: () => {}
     })
-    await account.resetPasswordWithSession('new-password-1')
+    await account.resetPasswordWithSession('me@example.com', 'new-password-1')
     expect(update).toHaveBeenCalledWith('new-password-1')
     expect(dirSignIn).toHaveBeenCalledWith('me@example.com', 'new-password-1')
     expect(account.accountState()).toMatchObject({ signedIn: true, email: 'me@example.com' })
@@ -306,7 +306,9 @@ describe('비밀번호를 잊었을 때 — 이 PC 의 살아 있는 세션으�
 
   it('세션이 없거나 비밀번호가 짧으면 거부한다', async () => {
     const h = setup()
-    await expect(h.account.resetPasswordWithSession('new-password-1')).rejects.toThrow('no-session')
+    await expect(
+      h.account.resetPasswordWithSession('me@example.com', 'new-password-1')
+    ).rejects.toThrow('no-session')
     const data = createFakeBackend()
     const auth = authFor(data)
     await auth.signIn('me@example.com', 'old')
@@ -319,6 +321,11 @@ describe('비밀번호를 잊었을 때 — 이 PC 의 살아 있는 세션으�
       settings: { get: () => ({ syncSupabaseUrl: '', syncSupabaseAnonKey: '' }), set: () => {} },
       applyEnv: () => {}
     })
-    await expect(account.resetPasswordWithSession('short')).rejects.toThrow('weak password')
+    await expect(account.resetPasswordWithSession('me@example.com', 'short')).rejects.toThrow(
+      'weak password'
+    )
+    await expect(
+      account.resetPasswordWithSession('other@example.com', 'new-password-1')
+    ).rejects.toThrow('Invalid login credentials')
   })
 })
