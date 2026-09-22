@@ -138,6 +138,9 @@ export const DEFAULT_SETTINGS = {
   bridgePort: 47811,
   // 32바이트 hex. 비어 있으면 켤 때 만든다
   bridgeToken: '',
+  // 밖에서 도는 하네스(samba-agent)의 읽기 API 주소. 자동화 페이지의 흐름 그래프·판정 카드가 읽는다.
+  // 로컬 전용이라 127.0.0.1(또는 localhost) 만 허용한다 — 이 PC 값이라 동기화하지 않는다
+  harnessApiUrl: 'http://127.0.0.1:47812',
   // 에이전트가 연 탭을 몇 분 뒤 정리할지(0 이면 정리 안 함)
   agentTabCleanupMinutes: 15,
   // 작업공간(기기 로컬 — 동기화하지 않는다)
@@ -327,6 +330,7 @@ export const settingsSchema = z.object({
   bridgeEnabled: z.boolean().catch(DEFAULT_SETTINGS.bridgeEnabled),
   bridgePort: z.number().int().min(1024).max(65535).catch(DEFAULT_SETTINGS.bridgePort),
   bridgeToken: z.string().max(128).catch(DEFAULT_SETTINGS.bridgeToken),
+  harnessApiUrl: z.string().max(200).catch(DEFAULT_SETTINGS.harnessApiUrl),
   agentTabCleanupMinutes: z.number().int().min(0).catch(DEFAULT_SETTINGS.agentTabCleanupMinutes),
   activeWorkspaceId: z.number().int().min(0).catch(DEFAULT_SETTINGS.activeWorkspaceId),
   extensionPaths: z.array(z.string()).catch(DEFAULT_SETTINGS.extensionPaths),
