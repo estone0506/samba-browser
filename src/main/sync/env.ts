@@ -3,6 +3,8 @@
 // 어느 쪽에도 값이 없으면 동기화를 끄고 로컬 전용으로 돈다.
 // 서비스 롤 키는 읽지 않는다 — 앱에는 publishable(anon) 키만 들어간다
 
+import { DEFAULT_DIRECTORY_ANON_KEY, DEFAULT_DIRECTORY_URL } from './directory-default'
+
 export interface SupabaseEnv {
   url: string
   anonKey: string
@@ -52,7 +54,11 @@ const DIRECTORY_URL_KEY = 'SAMBA_DIRECTORY_URL'
 const DIRECTORY_ANON_KEY = 'SAMBA_DIRECTORY_ANON_KEY'
 
 export function readDirectoryEnv(): SupabaseEnv {
-  return { url: readEnv(DIRECTORY_URL_KEY).trim(), anonKey: readEnv(DIRECTORY_ANON_KEY).trim() }
+  // 환경변수가 없으면 앱에 내장된 기본 중앙 프로젝트를 쓴다(다운받은 누구나 로그인 화면부터 본다)
+  return {
+    url: readEnv(DIRECTORY_URL_KEY).trim() || DEFAULT_DIRECTORY_URL,
+    anonKey: readEnv(DIRECTORY_ANON_KEY).trim() || DEFAULT_DIRECTORY_ANON_KEY
+  }
 }
 
 export function hasDirectoryEnv(): boolean {
