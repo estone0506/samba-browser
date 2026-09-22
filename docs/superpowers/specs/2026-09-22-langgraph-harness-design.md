@@ -1,6 +1,6 @@
 # SAMBA 주문처리 에이전트 — LangGraph 하네스 + LangSmith LLMOps 설계
 
-작성: 2026-09-22 · 상태: 승인 대기
+작성: 2026-09-22 · 상태: 승인됨(2026-09-22)
 
 ## 1. 목적
 
@@ -102,6 +102,12 @@
   - `POST /samba/order/get`, `/samba/order/update`, `/samba/order/flag`
   - `GET /screenshot` (비밀 화면이면 거부)
 - 브릿지가 켜져 있으면 앱 채팅창의 AI 는 그대로 쓸 수 있다(두 경로 병존). 브릿지 호출 중에는 채팅 실행을 막는다(한 손발).
+
+### 4.4b 앱 화면: 자동화 페이지의 "처리 흐름" (`src/renderer/src/components/automation/FlowGraph.tsx`)
+- 플레이북 카드 **아래**에 9노드 그래프를 그린다(세로 순서도, 사람 확인 분기 포함).
+- 하네스가 내주는 `GET /graph`(노드 목록·순서·각 노드 규칙 텍스트)와 `GET /jobs`(큐·실행 중 주문의 현재 노드)를 앱이 5초마다 읽어 현재 단계를 색으로 표시. 하네스가 꺼져 있으면 "하네스 연결 안 됨"만 보이고 그래프는 회색.
+- 노드 클릭 → 그 노드 규칙(플레이북에서 쪼개 넣은 짧은 규칙 파일)이 펼쳐지고 편집·저장 가능(`PUT /graph/rules/{node}`). 다음 실행부터 반영. 저장 전 확인 카드.
+- 하네스 쪽: 로컬 HTTP(127.0.0.1:47812, 같은 토큰)로 위 세 엔드포인트 제공.
 
 ### 4.5 LangSmith (`ops/`)
 - 추적: 그래프 실행 전체가 1 trace, 노드 = span, LLM 호출·브릿지 호출 = 하위 span. 메타데이터: `order_no, source, requester, job_id`.
