@@ -192,7 +192,11 @@ export function AgentSection({ settings, update }: SectionProps): React.JSX.Elem
               {t('settingsPage.behavior.bridgeCopy')}
             </SecondaryButton>
             <SecondaryButton
-              onClick={() => void window.samba.bridge.regenerateToken().then(() => update({}))}
+              onClick={() =>
+                void window.samba.bridge
+                  .regenerateToken()
+                  .then((r) => r.ok && update({ bridgeToken: r.data.token }))
+              }
             >
               {t('settingsPage.behavior.bridgeRegenerate')}
             </SecondaryButton>

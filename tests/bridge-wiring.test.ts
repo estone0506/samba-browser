@@ -7,6 +7,7 @@ function fakeServer(): {
   start: ReturnType<typeof vi.fn>
   stop: ReturnType<typeof vi.fn>
   listening: () => boolean
+  address: () => { address: string; port: number } | null
   port: number | null
 } {
   const s = {
@@ -18,7 +19,8 @@ function fakeServer(): {
     stop: vi.fn(async () => {
       s.port = null
     }),
-    listening: () => s.port !== null
+    listening: () => s.port !== null,
+    address: () => (s.port === null ? null : { address: '127.0.0.1', port: s.port })
   }
   return s
 }
@@ -27,8 +29,10 @@ describe('applyBridgeSettings', () => {
   it('켜면 토큰을 만들어 저장하고 그 포트로 듣는다', async () => {
     const server = fakeServer()
     const saved: Record<string, unknown>[] = []
-    await applyBridgeSettings(server, { ...DEFAULT_SETTINGS, bridgeEnabled: true }, (p) =>
-      saved.push(p)
+    await applyBridgeSettings(
+      server,
+      () => ({ ...DEFAULT_SETTINGS, bridgeEnabled: true }),
+      (p) => saved.push(p)
     )
     expect(server.start).toHaveBeenCalledWith(47811)
     expect(saved).toHaveLength(1)
@@ -40,7 +44,7 @@ describe('applyBridgeSettings', () => {
     const saved: unknown[] = []
     await applyBridgeSettings(
       server,
-      { ...DEFAULT_SETTINGS, bridgeEnabled: true, bridgeToken: 'f'.repeat(64) },
+      () => ({ ...DEFAULT_SETTINGS, bridgeEnabled: true, bridgeToken: 'f'.repeat(64) }),
       (p) => saved.push(p)
     )
     expect(saved).toHaveLength(0)
@@ -50,22 +54,39 @@ describe('applyBridgeSettings', () => {
     const server = fakeServer()
     await applyBridgeSettings(
       server,
-      { ...DEFAULT_SETTINGS, bridgeEnabled: true, bridgeToken: 'f'.repeat(64) },
+      () => ({ ...DEFAULT_SETTINGS, bridgeEnabled: true, bridgeToken: 'f'.repeat(64) }),
       () => {}
     )
     await applyBridgeSettings(
       server,
-      { ...DEFAULT_SETTINGS, bridgeEnabled: true, bridgeToken: 'f'.repeat(64), bridgePort: 47900 },
+      () => ({
+        ...DEFAULT_SETTINGS,
+        bridgeEnabled: true,
+        bridgeToken: 'f'.repeat(64),
+        bridgePort: 47900
+      }),
       () => {}
     )
     expect(server.start).toHaveBeenLastCalledWith(47900)
     await applyBridgeSettings(
       server,
-      { ...DEFAULT_SETTINGS, bridgeEnabled: false, bridgeToken: 'f'.repeat(64) },
+      () => ({ ...DEFAULT_SETTINGS, bridgeEnabled: false, bridgeToken: 'f'.repeat(64) }),
       () => {}
     )
     expect(server.stop).toHaveBeenCalled()
     expect(server.listening()).toBe(false)
+  })
+
+  it('호출이 겹쳐도 순서대로 처리된다(레이스 없음)', async () => {
+    const server = fakeServer()
+    let s = { ...DEFAULT_SETTINGS, bridgeEnabled: true, bridgeToken: 'f'.repeat(64) }
+    const getSettings = (): typeof s => s
+    const p1 = applyBridgeSettings(server, getSettings, () => {})
+    s = { ...s, bridgePort: 48000 }
+    const p2 = applyBridgeSettings(server, getSettings, () => {})
+    await Promise.all([p1, p2])
+    expect(server.start).toHaveBeenLastCalledWith(48000)
+    expect(server.listening()).toBe(true)
   })
 
   it('새 토큰은 64자 hex 다', () => {

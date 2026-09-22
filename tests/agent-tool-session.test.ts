@@ -69,6 +69,32 @@ describe('createToolSession', () => {
     again.dispose()
   })
 
+  it('세션이 이미 열려 있으면 두 번째 createToolSession 은 거부된다', () => {
+    const r = runner()
+    const s = r.createToolSession({})
+    expect(() => r.createToolSession({})).toThrow('브릿지 세션 사용 중')
+    s.dispose()
+  })
+
+  it('읽기 전용 모드에서는 세션을 열 수 없다', () => {
+    const tabs = {
+      active: () => ({
+        id: 't1',
+        view: { webContents: { getURL: () => 'https://a.test/', isDestroyed: () => false } }
+      }),
+      list: () => [],
+      listTargets: () => [],
+      create: vi.fn(),
+      activate: vi.fn(),
+      navigate: vi.fn(async () => {})
+    } as unknown as TabManager
+    const settings = {
+      get: () => ({ ...DEFAULT_SETTINGS, permissionMode: 'read_only' as const })
+    } as unknown as SettingsStore
+    const r = new AgentRunner(tabs, settings, () => {})
+    expect(() => r.createToolSession({})).toThrow('읽기 전용 모드에서는 브릿지를 쓸 수 없음')
+  })
+
   it('도구 호출은 진행 로그를 onStep 으로 넘긴다', async () => {
     const steps: string[] = []
     const s = runner().createToolSession({ onStep: (label) => steps.push(label) })

@@ -53,6 +53,24 @@ describe('BridgeServer', () => {
     )
   })
 
+  it('길이는 맞지만 틀린 토큰도 401', async () => {
+    const base = await up()
+    const wrong = 'b'.repeat(64)
+    expect(wrong).not.toBe(TOKEN)
+    expect((await fetch(`${base}/health`, { headers: { 'X-Samba-Token': wrong } })).status).toBe(
+      401
+    )
+  })
+
+  it('설정된 토큰이 빈 문자열이면 빈 헤더로도 401', async () => {
+    const fs = fakeSession()
+    server = new BridgeServer({ openSession: fs.make, token: () => '' })
+    const port = await server.start(0)
+    expect(
+      (await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'X-Samba-Token': '' } })).status
+    ).toBe(401)
+  })
+
   it('health 는 도구 이름을 준다', async () => {
     const base = await up()
     const r = await fetch(`${base}/health`, { headers: H })

@@ -281,9 +281,9 @@ export class AgentRunner {
     }
   }
 
-  /** 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다) */
+  /** 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다). 브릿지 세션이 열려 있는 동안도 포함한다 */
   isRunning(): boolean {
-    return this.abort !== null
+    return this.abort !== null || this.session !== null
   }
 
   /**
@@ -861,6 +861,9 @@ ${CODEX_NO_IMAGE_NOTE}`
   createToolSession(opts: { onStep?: (label: string, ok: boolean) => void }): ToolSession {
     if (this.abort) throw new Error('이미 실행 중')
     if (this.session) throw new Error('브릿지 세션 사용 중')
+    if (this.settings.get().permissionMode === 'read_only') {
+      throw new Error('읽기 전용 모드에서는 브릿지를 쓸 수 없음')
+    }
     const s = this.settings.get()
     const jobId = randomUUID()
     const emit = (e: AgentEvent): void => {
@@ -898,6 +901,8 @@ ${CODEX_NO_IMAGE_NOTE}`
       })
     )
     const tools = extractSdkTools(server).filter((t) => t.name !== 'done')
+    // 브릿지 세션이 열려 있는 동안은 금고 자동 잠금을 보류한다(run() 과 같은 패턴). 두 번 풀려도 안전하다
+    let releaseVaultHold: (() => void) | null = this.vault?.holdAutoLock('bridge session') ?? null
     const session: ToolSession = {
       names: () => tools.map((t) => t.name),
       call: async (name, args) => {
@@ -908,6 +913,8 @@ ${CODEX_NO_IMAGE_NOTE}`
       },
       dispose: () => {
         if (this.session === session) this.session = null
+        releaseVaultHold?.()
+        releaseVaultHold = null
       }
     }
     this.session = session

@@ -786,7 +786,7 @@
     },
     "behavior": {
       "bridgeTitle": "Harness bridge",
-      "bridgeDesc": "Lets the external order-processing harness (LangGraph) drive this browser. Listens only on 127.0.0.1",
+      "bridgeDesc": "Lets the external order-processing harness (LangGraph) drive this browser. Listens only on 127.0.0.1. While the bridge is on, any harness holding the token acts with full permission regardless of the permission mode setting — no confirmation cards; clicks, typing, login, and payment-password entry happen unattended. Read-only mode blocks the bridge",
       "bridgeEnabled": "Enable bridge",
       "bridgePort": "Port",
       "bridgeToken": "Token",

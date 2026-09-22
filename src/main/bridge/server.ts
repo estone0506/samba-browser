@@ -36,6 +36,7 @@ export class BridgeServer {
 
   async start(port: number): Promise<number> {
     await this.stop()
+    this.busy = false
     const server = createServer((req, res) => {
       void this.handle(req, res).catch((e: unknown) => {
         json(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) })
@@ -58,22 +59,28 @@ export class BridgeServer {
     const server = this.server
     this.server = null
     if (!server) return
-    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve())
+      // keep-alive 소켓이 열려 있으면 close 콜백이 영영 안 온다 — 바로 끊는다
+      server.closeAllConnections()
+    })
   }
 
   private authorized(req: IncomingMessage): boolean {
     const given = req.headers['x-samba-token']
     const expected = this.deps.token()
-    if (typeof given !== 'string' || expected === '' || given.length !== expected.length)
-      return false
-    return timingSafeEqual(Buffer.from(given), Buffer.from(expected))
+    if (typeof given !== 'string' || expected === '') return false
+    const givenBuf = Buffer.from(given)
+    const expectedBuf = Buffer.from(expected)
+    if (givenBuf.length !== expectedBuf.length) return false
+    return timingSafeEqual(givenBuf, expectedBuf)
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.authorized(req)) return json(res, 401, { error: 'unauthorized' })
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     if (req.method === 'GET' && url.pathname === '/health') return this.health(res)
-    const m = /^\/tool\/([a-z_]+)$/.exec(url.pathname)
+    const m = /^\/tool\/([a-z0-9_]{1,64})$/.exec(url.pathname)
     if (req.method === 'POST' && m) return this.tool(m[1], req, res)
     return json(res, 404, { error: 'not found' })
   }
