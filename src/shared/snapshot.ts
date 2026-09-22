@@ -7,6 +7,8 @@ export interface PageElement {
   name?: string
   href?: string
   inputType?: string
+  // 입력칸·선택칸·체크박스의 현재 값(비밀 입력칸은 절대 담지 않는다). 스크립트가 기록 뒤 되읽기 검증에 쓴다
+  value?: string
   isSecret: boolean
   // iframe 안 요소면 프레임 번호와 호스트. 메인 프레임 요소에는 없다.
   // 나열할 때 [frame N: host] 구분 헤더를 붙이는 데 쓴다(id 자체에도 번호가 들어 있다)
@@ -79,6 +81,7 @@ function formatElement(e: PageElement): string {
   if (e.text) parts.push(`"${e.text.slice(0, 80)}"`)
   if (e.name) parts.push(`name=${e.name}`)
   if (e.href) parts.push(`href=${e.href.slice(0, 120)}`)
+  if (e.value !== undefined && !e.isSecret) parts.push(`value="${e.value.slice(0, 80)}"`)
   if (e.isSecret) parts.push('(SECRET)')
   return parts.join(' ')
 }
