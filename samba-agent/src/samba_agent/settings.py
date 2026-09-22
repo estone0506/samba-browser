@@ -40,6 +40,8 @@ class Settings(BaseSettings):
         return v
 
 
-def load_settings() -> Settings:
-    """설정을 읽는다. 필수 값(브릿지 토큰)이 없으면 여기서 실패한다."""
-    return Settings()  # type: ignore[call-arg]
+def load_settings(env_file: str | Path | None = '.env') -> Settings:
+    """설정을 읽는다. 필수 값(브릿지 토큰)이 없으면 여기서 실패한다.
+
+    env_file=None 이면 `.env` 를 읽지 않고 환경변수만 본다(테스트가 로컬 .env 에 물들지 않게)."""
+    return Settings(_env_file=env_file)  # type: ignore[call-arg]
