@@ -70,7 +70,8 @@
       "instructions": "Steps",
       "instructionsDesc": "Write the steps the AI should follow, in Markdown.",
       "length": "{{n}} / {{max}} chars"
-    }
+    },
+    "updatedAt": "Last edited {{time}}"
   },
   "schedule": {
     "title": "Schedule",

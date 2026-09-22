@@ -70,7 +70,8 @@
       "instructions": "절차",
       "instructionsDesc": "AI 가 그대로 따를 절차를 마크다운으로 적어 주세요.",
       "length": "{{n}} / {{max}}자"
-    }
+    },
+    "updatedAt": "최근 수정 {{time}}"
   },
   "schedule": {
     "title": "예약",

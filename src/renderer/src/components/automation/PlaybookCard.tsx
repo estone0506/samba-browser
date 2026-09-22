@@ -45,8 +45,16 @@ export function PlaybookCard({
   onRunNow: () => void
   onSetPaused: (paused: boolean) => void
 }): React.JSX.Element {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const preview = previewOf(playbook.instructions)
+  // 최근 수정 일시 — 절차를 누가 언제 고쳤는지 한눈에(하네스 버전 판정의 기준점이기도 하다)
+  const updatedText = new Date(playbook.updatedAt).toLocaleString(i18n.language, {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
   return (
     <section className="rounded-2xl border border-[var(--line)] bg-white p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -83,6 +91,9 @@ export function PlaybookCard({
           {preview !== '' && (
             <p className="mt-2.5 text-[11.5px] leading-snug text-[var(--text2)]">{preview}</p>
           )}
+          <p className="mt-1.5 text-[11px] text-[var(--text3)]">
+            {t('automation.updatedAt', { time: updatedText })}
+          </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <PrimaryButton onClick={onRun} disabled={!playbook.enabled}>
               <span className="flex items-center gap-1.5">
