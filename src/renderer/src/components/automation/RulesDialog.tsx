@@ -5,8 +5,9 @@
 // 그래도 저장은 여전히 "전체 교체"라서 저장 전에 한 번 더 확인을 받고(2단계),
 // 새 버전이 된다는 사실을 함께 알린다(스펙 §10-1)
 //
-// 내부 폼(RulesForm)을 agent 이름으로 key 를 주어, 열 때마다 새로 마운트되게 한다 —
-// 이펙트 안에서 곧바로 setState 하지 않고도(react-hooks 규칙 위반 없이) 상태가 매번 새로 시작된다
+// 내부 폼(RulesForm)을 agent 이름 + 다시시도 횟수로 key 를 주어, 열 때·다시 시도할 때마다
+// 새로 마운트되게 한다 — 이펙트 안에서 곧바로 setState 하지 않고도(react-hooks 규칙 위반 없이)
+// loading·loadFailed·text 가 매번 깨끗하게 새로 시작된다
 import { useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
@@ -32,6 +33,8 @@ export function RulesDialog({
   onSave: (text: string) => Promise<boolean>
 }): React.JSX.Element {
   const { t } = useTranslation()
+  // "다시 시도" 를 누르면 늘려서 RulesForm 의 key 를 바꾼다 — 새로 마운트되어 원문을 다시 읽는다
+  const [retryTick, setRetryTick] = useState(0)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -42,7 +45,7 @@ export function RulesDialog({
         </DialogHeader>
         {open && agent !== null && (
           <RulesForm
-            key={agent.name}
+            key={`${agent.name}-${retryTick}`}
             agent={agent}
             saving={saving}
             error={error}
@@ -50,6 +53,7 @@ export function RulesDialog({
             onCancel={() => onOpenChange(false)}
             onSave={onSave}
             onSaved={() => onOpenChange(false)}
+            onRetry={() => setRetryTick((n) => n + 1)}
           />
         )}
       </DialogContent>
@@ -64,7 +68,8 @@ function RulesForm({
   t,
   onCancel,
   onSave,
-  onSaved
+  onSaved,
+  onRetry
 }: {
   agent: HarnessAgent
   saving: boolean
@@ -73,6 +78,8 @@ function RulesForm({
   onCancel: () => void
   onSave: (text: string) => Promise<boolean>
   onSaved: () => void
+  /** 원문을 못 불러왔을 때 "다시 시도" — 부모가 key 를 바꿔 이 폼을 통째로 다시 마운트한다 */
+  onRetry: () => void
 }): React.JSX.Element {
   const getRules = useHarnessStore((s) => s.getRules)
   // 마운트 시점의 초기값이므로 여기서 정해도 이펙트 안에서 다시 setState 하지 않는다
@@ -111,19 +118,23 @@ function RulesForm({
       {loading && (
         <p className="text-[11.5px] text-[var(--text2)]">{t('automation.harness.rules.loading')}</p>
       )}
-      {loadFailed && (
-        <p className="rounded-[9px] border border-[#b91c1c] px-2.5 py-2 text-[11.5px] text-[#b91c1c]">
-          {t('automation.harness.rules.loadFailed')}
+      {loadFailed ? (
+        // 원문을 못 불러왔으면 "저장하면 전체가 바뀐다" 경고는 오히려 헷갈린다 —
+        // 무엇을 덮어쓸지 모르는 채로 저장을 유도하지 않도록 이 경고 자체를 뺀다(리뷰 지적 — Important 2)
+        <div className="flex items-center justify-between gap-2 rounded-[9px] border border-[#b91c1c] px-2.5 py-2">
+          <p className="text-[11.5px] text-[#b91c1c]">{t('automation.harness.rules.loadFailed')}</p>
+          <SecondaryButton onClick={onRetry}>{t('automation.harness.rules.retry')}</SecondaryButton>
+        </div>
+      ) : (
+        <p className="rounded-[9px] border border-[#b45309] px-2.5 py-2 text-[11.5px] text-[#b45309]">
+          {t('automation.harness.rules.warn')}
         </p>
       )}
-      <p className="rounded-[9px] border border-[#b45309] px-2.5 py-2 text-[11.5px] text-[#b45309]">
-        {t('automation.harness.rules.warn')}
-      </p>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder={t('automation.harness.rules.placeholder')}
-        disabled={loading}
+        disabled={loading || loadFailed}
         className="min-h-[220px] w-full rounded-[9px] border border-[var(--line)] bg-white p-2 font-mono text-[12px] text-[var(--text)] disabled:opacity-60"
       />
       <p className="text-[11.5px] text-[var(--text2)]">
@@ -147,7 +158,7 @@ function RulesForm({
           </PrimaryButton>
         ) : (
           <PrimaryButton
-            disabled={text.trim() === '' || saving || loading}
+            disabled={text.trim() === '' || saving || loading || loadFailed}
             onClick={() => setConfirming(true)}
           >
             {t('automation.harness.rules.save')}

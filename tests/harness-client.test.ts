@@ -18,6 +18,7 @@ describe('localHarnessBase', () => {
   it('127.0.0.1·localhost 의 http 주소만 받는다', () => {
     expect(localHarnessBase('http://127.0.0.1:47812')).toBe('http://127.0.0.1:47812')
     expect(localHarnessBase('http://localhost:47812/')).toBe('http://localhost:47812')
+    expect(localHarnessBase('http://[::1]:47812')).toBe('http://[::1]:47812')
     expect(localHarnessBase('http://10.0.0.5:47812')).toBeNull()
     expect(localHarnessBase('https://example.com')).toBeNull()
     expect(localHarnessBase('그냥 글자')).toBeNull()
@@ -71,6 +72,42 @@ describe('HarnessClient', () => {
     const r = await new HarnessClient({ url: () => URL_OK, fetchImpl }).graph()
     expect(r.status).toBe('bad-response')
     expect(r.error).not.toBe('')
+  })
+
+  it('200 이어도 모양이 다르면 bad-response(리뷰 지적 — Important 1)', async () => {
+    // 라우팅이 어긋나 다른 서버(혹은 하네스 버전)의 오류 JSON 이 200 으로 오는 경우
+    const fetchImpl = jsonFetch({ detail: 'x' })
+    const r = await new HarnessClient({ url: () => URL_OK, fetchImpl }).graph()
+    expect(r.status).toBe('bad-response')
+    expect(r.data).toBeNull()
+    expect(r.error).not.toBe('')
+  })
+
+  it('jobs·releases·getRules 도 모양이 다르면 bad-response', async () => {
+    const bad = jsonFetch({ nope: true })
+    expect((await new HarnessClient({ url: () => URL_OK, fetchImpl: bad }).jobs()).status).toBe(
+      'bad-response'
+    )
+    expect((await new HarnessClient({ url: () => URL_OK, fetchImpl: bad }).releases()).status).toBe(
+      'bad-response'
+    )
+    expect(
+      (await new HarnessClient({ url: () => URL_OK, fetchImpl: bad }).getRules('x')).status
+    ).toBe('bad-response')
+  })
+
+  it('응답이 너무 크면 파싱 전에 bad-response', async () => {
+    const huge = JSON.stringify({
+      version: 'v1',
+      stages: ['buy'],
+      agents: [],
+      pad: 'x'.repeat(1024 * 1024 + 1)
+    })
+    const fetchImpl = vi.fn(
+      async () => new Response(huge, { status: 200 })
+    ) as unknown as typeof globalThis.fetch
+    const r = await new HarnessClient({ url: () => URL_OK, fetchImpl }).graph()
+    expect(r.status).toBe('bad-response')
   })
 
   it('401·404 는 사유를 담아 bad-response', async () => {

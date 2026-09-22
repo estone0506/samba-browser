@@ -141,6 +141,7 @@ describe('FlowGraph·RulesDialog 가 쓰는 i18n 키(ko·en 양쪽)', () => {
     'automation.harness.rules.path',
     'automation.harness.rules.loading',
     'automation.harness.rules.loadFailed',
+    'automation.harness.rules.retry',
     'automation.harness.rules.warn',
     'automation.harness.rules.newVersion',
     'automation.harness.rules.placeholder',

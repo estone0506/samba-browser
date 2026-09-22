@@ -3,6 +3,7 @@
 // 진실은 하네스 코드다 — samba-agent/src/samba_agent/api/server.py(응답),
 // ops/gate.py(판정 조건·리포트 마크다운), ops/releases.py(Release).
 // 앱은 읽기만 한다. 승격·승인은 슬랙 `@삼바 승인 <버전>` 또는 명령줄에서만 일어난다(스펙 §10-4)
+import { z } from 'zod'
 
 /** 감독자가 넘기는 순서. 하네스 supervisor/policy.py 의 STAGES 와 같다 */
 export const HARNESS_STAGES = ['buy', 'pay', 'record', 'verify'] as const
@@ -87,6 +88,67 @@ export interface HarnessRules {
   version: string
 }
 
+// 아래는 클라이언트(main/harness/client.ts)가 JSON.parse 뒤 모양을 확인하는 데 쓰는 스키마다.
+// 하네스가 200 을 주더라도 모양이 다르면(배포 어긋남·버그) bad-response 로 다뤄야
+// 화면(JobList·FlowGraph 등)이 엉뚱한 값으로 죽지 않는다(리뷰 지적 — Important 1).
+// z.ZodType<T> 로 못박아 위 인터페이스와 어긋나면 타입 체크에서 바로 드러난다
+
+const harnessAgentSchema: z.ZodType<HarnessAgent> = z.object({
+  name: z.string(),
+  kind: z.enum(['buyer', 'payer', 'recorder', 'verifier']),
+  match: z.record(z.string(), z.string()),
+  tools: z.array(z.string()),
+  rules: z.string(),
+  retry: z.number()
+})
+
+export const harnessGraphSchema: z.ZodType<HarnessGraph> = z.object({
+  version: z.string(),
+  stages: z.array(z.string()),
+  agents: z.array(harnessAgentSchema)
+})
+
+const harnessJobSchema: z.ZodType<HarnessJob> = z.object({
+  order_no: z.string(),
+  state: z.enum(['queued', 'running', 'done', 'failed', 'needs_human', 'cancelled']),
+  assignee_agent: z.string().nullable(),
+  step: z.string().nullable(),
+  requester: z.string(),
+  harness_version: z.string(),
+  attempts: z.number(),
+  updated_at: z.string()
+})
+
+export const harnessJobsSchema: z.ZodType<HarnessJobs> = z.object({
+  jobs: z.array(harnessJobSchema)
+})
+
+const harnessReleaseSchema: z.ZodType<HarnessRelease> = z.object({
+  version: z.string(),
+  verdict: z.enum(['promote', 'improve', 'rollback']),
+  decided_by: z.string(),
+  decided_at: z.string(),
+  report_path: z.string(),
+  prompt_commits: z.record(z.string(), z.string())
+})
+
+export const harnessReleasesSchema: z.ZodType<HarnessReleases> = z.object({
+  current: harnessReleaseSchema.nullable(),
+  history: z.array(harnessReleaseSchema),
+  candidate: z.object({ version: z.string(), report: z.string() }).nullable()
+})
+
+export const harnessRulesSchema: z.ZodType<HarnessRules> = z.object({
+  agent: z.string(),
+  text: z.string(),
+  version: z.string()
+})
+
+export const harnessRulesSavedSchema: z.ZodType<HarnessRulesSaved> = z.object({
+  ok: z.boolean(),
+  version: z.string()
+})
+
 /** 판정 리포트에서 읽어 낸 것 */
 export interface GateReport {
   version: string
@@ -96,6 +158,8 @@ export interface GateReport {
   reasons: string[]
 }
 
+// promote|improve 만 잡는다 — rollback 은 사람이 명령줄에서 내리는 결정이라
+// ops/gate.py 가 만드는 판정 리포트 md 에는 애초에 나오지 않는다(리뷰 지적 — Minor 9)
 const HEAD_RE = /^#\s*판정\s*—\s*(\S+)\s*:\s*\*\*(promote|improve)\*\*/m
 const ROW_RE = /^\|\s*([a-z_]+)\s*\|\s*(통과|미달)\s*\|/gm
 const REASONS_RE = /^##\s*다음 할 일\s*$/m
