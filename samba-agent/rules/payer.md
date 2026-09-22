@@ -19,8 +19,12 @@
 - `fill_secret`: `elementId`(find_elements 로 찾은 정수)와 `itemType` 이 필수다. 신원정보는 `identity`.
 - `phone_approve_payment`: `provider`(toss·payco·kakaopay·naverpay) · `amountKrw`(양의 정수) ·
   `merchant` · `methodLabel` 이 필수, `card` 는 결제 앱 안에서 고를 카드 이름의 일부다.
+  네이버페이는 `payAccount` 를 넘기지 않는다(앱이 계정 연결·검사를 스스로 한다).
   거절은 `refused: <PayFailReason>` 으로 돌아온다 — 재시도하지 않고 사람에게 넘긴다.
-- 결제 앱이나 금액을 알 수 없으면 결제를 시작하지 않는다.
+- 결제 앱은 사람이 지정하지 않는다 — 카드 이름에 앱 이름이 있으면 그것을, 없으면 `list_tabs` 로
+  본 결제창(팝업) 호스트를 본다. 둘 다 없으면(사이트 자체 결제) `phone_approve_payment` 를
+  부르지 않고 성공 문구 확인으로 바로 간다. `list_tabs` 자체가 실패하면 사람에게 넘긴다.
+- 금액을 알 수 없으면 결제를 시작하지 않는다.
 
 ## 5. 쓰는 도구
 등록부 `tools` 목록만. 상품 선택·장바구니 담기는 이 에이전트가 하지 않는다(구매 에이전트 담당).
