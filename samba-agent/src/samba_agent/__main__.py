@@ -81,7 +81,14 @@ def main() -> None:
     checkpointer = SqliteSaver.from_conn_string(str(settings.root / 'checkpoints.sqlite'))
     if hasattr(checkpointer, '__enter__'):
         checkpointer = checkpointer.__enter__()
-    graph = build_supervisor(reg, agents, checkpointer=checkpointer, gate=True)
+    # 결제 진입 표시를 큐에 남기려면 실행기가 필요하다 — 아래에서 만들고 콜백으로 잇는다
+    graph = build_supervisor(
+        reg,
+        agents,
+        checkpointer=checkpointer,
+        gate=True,
+        on_stage_start=lambda state, stage: worker.mark_stage(state, stage),
+    )
 
     _report, _approval_report = make_reporters(lambda: bot)
 

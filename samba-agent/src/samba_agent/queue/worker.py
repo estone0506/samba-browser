@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from samba_agent.agents.contracts import OrderRef
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_text
-from samba_agent.queue.db import Job, JobQueue
+from samba_agent.queue.db import PAY_STARTED_STEP, Job, JobQueue
 from samba_agent.supervisor.approval import resume_command
 
 THREAD_PREFIX = 'job:'
@@ -94,6 +94,19 @@ class Worker:
                 caught_none = True
             if caught_none:
                 time.sleep(interval_s)
+
+    def mark_stage(self, state: object, stage: str) -> None:
+        """감독자가 단계에 들어갈 때 부른다 — 결제 진입만 큐에 적는다.
+
+        이 표시가 남은 채로 프로세스가 죽으면 큐가 그 행을 다시 집지 않고 사람에게 넘긴다
+        (리뷰 지적 — Critical 2 ①②). 결제 이외 단계는 부수효과가 없어 적지 않는다.
+        """
+        if stage != 'pay' or not isinstance(state, dict):
+            return
+        job_id = state.get('job_id')
+        if job_id is None:
+            return
+        self.d.queue.progress(int(job_id), agent='payer', step=PAY_STARTED_STEP)
 
     def _config(self, job_id: int) -> dict[str, object]:
         return {'configurable': {'thread_id': f'{THREAD_PREFIX}{job_id}'}}

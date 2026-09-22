@@ -29,7 +29,7 @@ def test_토큰이_없으면_실패한다(monkeypatch):
         load_settings(env_file=None)
 
 
-def test_실패_사유는_스펙_9종이다():
+def test_실패_사유는_스펙_9종에_결제_중단을_더한_10종이다():
     assert {r.value for r in FailReason} == {
         'out_of_stock',
         'margin',
@@ -40,4 +40,5 @@ def test_실패_사유는_스펙_9종이다():
         'duplicate',
         'verify_mismatch',
         'unknown',
+        'pay_interrupted',
     }

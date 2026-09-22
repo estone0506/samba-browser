@@ -14,11 +14,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from samba_agent.failures import FailReason
+
 JobState = Literal['queued', 'running', 'done', 'failed', 'needs_human', 'cancelled']
 # 살아 있는 상태 — 이 중 하나면 같은 주문의 새 요청을 거절한다
 LIVE_STATES: tuple[JobState, ...] = ('queued', 'running', 'needs_human')
 # 최초 1회 + 재시도 1회(스펙 §4.3-4)
 MAX_ATTEMPTS = 2
+# 결제 노드에 들어갔다는 표시. 이 단계에서 죽은 행은 재시작해도 다시 돌리지 않는다
+# (폰 승인이 이미 나갔을 수 있다 — 재결제 금지, 스펙 §6)
+PAY_STARTED_STEP = '결제 진행 중'
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -74,7 +79,14 @@ class JobQueue:
         # 앞선 트랜잭션이 끝날 때까지 기다린다
         self._db.execute('PRAGMA busy_timeout=5000')
         self._db.executescript(_SCHEMA)
-        # 실행기가 도중에 죽었다면 running 인 행이 남는다 — 다시 집을 수 있게 되돌린다
+        # 실행기가 도중에 죽었다면 running 인 행이 남는다. 결제 진행 중이던 행은
+        # 다시 집으면 재결제가 되므로(리뷰 지적 — Critical 2) 사람에게 넘긴다.
+        self._db.execute(
+            "UPDATE jobs SET state='needs_human', error=?, updated_at=? "
+            "WHERE state='running' AND step=?",
+            (FailReason.PAY_INTERRUPTED.value, _now(), PAY_STARTED_STEP),
+        )
+        # 그 밖의 단계는 부수효과가 없으니 다시 집을 수 있게 되돌린다
         self._db.execute(
             "UPDATE jobs SET state='queued', updated_at=? WHERE state='running'", (_now(),)
         )

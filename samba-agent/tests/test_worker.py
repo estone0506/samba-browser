@@ -267,3 +267,47 @@ def test_approval_report가_없으면_평문_보고로_떨어진다(setup):
     q.enqueue('A1', 'U1', {}, 'ts1')
     make(gate=True).tick()
     assert any('승인 요청' in s for s in sent)
+
+
+def test_결제_중_죽어도_재시작_뒤_결제를_다시_하지_않는다(tmp_path):
+    # 리뷰 지적 — Critical 2: 폰 승인이 나간 뒤 프로세스가 죽어도 재결제 경로가 없어야 한다
+    reg = Registry.load(DEFAULT_ROOT)
+    path = tmp_path / 'jobs.sqlite'
+    q = JobQueue(path)
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    paid = {'n': 0}
+
+    def dying_payer(_a):
+        paid['n'] += 1
+        raise KeyboardInterrupt('폰 승인 직후 프로세스 급사')
+
+    log: list[str] = []
+    w = Worker(
+        WorkerDeps(
+            queue=q, graph=None, version='vtest', report=lambda j, s: None, parse_order=order_of
+        )
+    )
+    graph = build_supervisor(
+        reg,
+        agents(log) | {'payer': dying_payer},
+        checkpointer=MemorySaver(),
+        gate=False,
+        on_stage_start=w.mark_stage,  # 결제 진입을 큐에 적는 배선
+    )
+    w.d.graph = graph
+    with pytest.raises(KeyboardInterrupt):
+        w.tick()
+
+    restarted = JobQueue(path)  # 프로세스 재시작
+    assert restarted.get('A1').state == 'needs_human'
+    w2 = Worker(
+        WorkerDeps(
+            queue=restarted,
+            graph=graph,
+            version='vtest',
+            report=lambda j, s: None,
+            parse_order=order_of,
+        )
+    )
+    assert w2.tick() is None  # 집을 게 없다 — payer 가 다시 불리지 않는다
+    assert paid['n'] == 1

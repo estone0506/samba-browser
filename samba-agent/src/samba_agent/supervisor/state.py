@@ -50,3 +50,5 @@ class RunState(TypedDict, total=False):
     outcome: Outcome | None
     fail_reason: FailReason | None
     approvals: dict[str, str]
+    # 결제 노드에 들어갔다는 표시 — 재시작·재진입 시 재결제를 막는다(스펙 §6)
+    pay_started: bool

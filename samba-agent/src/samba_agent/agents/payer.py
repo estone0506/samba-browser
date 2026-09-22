@@ -105,6 +105,18 @@ class PayerAgent(AgentBase):
                 evidence=tuple(self.evidence),
             )
 
+        # 폰 승인 전에 주문 상세를 딱 한 번 읽어 이미 결제됐는지 본다 — 재시작·재진입으로
+        # 여기까지 다시 왔을 때 결제를 두 번 하지 않는다(리뷰 지적 — Critical 2 ③)
+        self.step('payer: 이미 결제됐는지 확인')
+        before = self.tool('get_page')
+        if any(m in before for m in PAY_SUCCESS_MARKERS):
+            self.note('결제 전 확인', mask_text(before[:200]))
+            raise AgentFailure(
+                'needs_human',
+                '이미 결제된 화면이다 — 사람이 확인한다(재결제 금지)',
+                FailReason.PAY_INTERRUPTED,
+            )
+
         self.step('payer: 신원정보 입력')
         # 값은 앱이 직접 채운다 — 여기서는 어떤 비밀값도 보내거나 받지 않는다
         self.tool('fill_secret', field='identity', provider='site')

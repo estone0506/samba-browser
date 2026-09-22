@@ -62,8 +62,11 @@ def test_dry_run_이면_결제하지_않는다(reg):
 def test_실제_결제는_폰_승인까지_하고_성공_문구를_확인한다(reg):
     respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
     pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('approved'))
-    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 완료되었습니다'))
+    respx.post(f'{URL}/tool/get_page').mock(
+        side_effect=[page('결제 진행 중'), page('결제 완료되었습니다')]
+    )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg)(assignment(reg, dry_run=False))
     assert out.status == 'ok'
@@ -94,6 +97,7 @@ def test_캡차는_사람에게_넘긴다(reg):
 def test_폰_승인이_거절되면_사람에게_넘긴다(reg):
     respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
     respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('declined: 한도 초과'))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg)(assignment(reg, dry_run=False))
@@ -105,6 +109,7 @@ def test_폰_승인이_거절되면_사람에게_넘긴다(reg):
 def test_성공_문구를_못_보면_ok_를_내지_않는다(reg):
     respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
     respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('approved'))
     respx.post(f'{URL}/tool/get_page').mock(return_value=page('처리 중입니다'))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
@@ -117,8 +122,9 @@ def test_성공_문구를_못_보면_ok_를_내지_않는다(reg):
 def test_결제_응답에_비밀값이_실리지_않는다(reg):
     respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
     fill = respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
     respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('approved'))
-    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 완료'))
+    respx.post(f'{URL}/tool/get_page').mock(side_effect=[page('결제 진행 중'), page('결제 완료')])
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg)(assignment(reg, dry_run=False))
     body = fill.calls.last.request.content.decode('utf-8')
@@ -147,6 +153,7 @@ def test_결제창_진입_인자는_카드명에_따옴표가_있어도_유효�
 def test_카드_요구_거절은_카드_없음으로_분류한다(reg):
     respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
     respx.post(f'{URL}/tool/phone_approve_payment').mock(
         return_value=page('refused: card-required - call again with card set')
     )
@@ -159,6 +166,7 @@ def test_카드_요구_거절은_카드_없음으로_분류한다(reg):
 def test_카드를_못_찾으면_카드_없음으로_분류한다(reg):
     respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
     respx.post(f'{URL}/tool/phone_approve_payment').mock(
         return_value=page('refused: card-not-found')
     )
@@ -181,6 +189,7 @@ def test_카드를_못_찾으면_카드_없음으로_분류한다(reg):
 def test_계정_모호_불일치_잠김_인증실패는_사람에게_넘기고_사유를_담는다(reg, refusal):
     respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
     respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page(refusal))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg)(assignment(reg, dry_run=False))
@@ -193,6 +202,7 @@ def test_계정_모호_불일치_잠김_인증실패는_사람에게_넘기고_�
 def test_거절_한글_표기도_사람에게_넘긴다(reg):
     respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
     respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('refused: 거절됨'))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg)(assignment(reg, dry_run=False))
@@ -209,6 +219,7 @@ def test_결제_에이전트는_재시도하지_않는다(reg):
     assert spec.retry == 0
     respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
     pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(
         return_value=page('declined: 한도 초과')
     )
@@ -228,3 +239,17 @@ def test_권한_부족이면_재시도_없이_바로_실패한다(reg):
     out = agent(reg)(assignment(reg, dry_run=False))
     assert out.status == 'fail'
     assert out.fail_reason == FailReason.PERMISSION_DENIED
+
+
+@respx.mock
+def test_이미_결제된_화면이면_폰_승인을_부르지_않는다(reg):
+    # 리뷰 지적 — Critical 2 ③: 폰 승인 전에 주문 상세를 1회 읽어 재결제를 막는다
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 완료되었습니다'))
+    fill = respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=False))
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.PAY_INTERRUPTED)
+    assert not pay.called
+    assert not fill.called

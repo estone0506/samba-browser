@@ -39,9 +39,11 @@ def reg() -> Registry:
     return Registry.load(DEFAULT_ROOT)
 
 
-def run(reg, agents_map, order: OrderRef = ORDER, options=None) -> dict:
+def run(reg, agents_map, order: OrderRef = ORDER, options=None, state_over=None) -> dict:
     graph = build_supervisor(reg, agents_map)
-    return graph.invoke({'order': order, 'options': options or {}, 'job_id': 1, 'dry_run': True})
+    state = {'order': order, 'options': options or {}, 'job_id': 1, 'dry_run': True}
+    state.update(state_over or {})
+    return graph.invoke(state)
 
 
 def test_정상_한_건은_네_단계를_거쳐_done(reg):
@@ -180,3 +182,26 @@ def test_되읽기_불일치는_재시도하지_않고_바로_사람에게(reg):
     assert calls['n'] == 1  # 재시도 없이 바로 사람에게
     assert out['outcome'] == 'needs_human'
     assert out['fail_reason'] is FailReason.VERIFY_MISMATCH
+
+
+def test_결제_단계_진입_직후_마커를_남긴다(reg):
+    # 리뷰 지적 — Critical 2: 결제에 들어갔다는 사실을 체크포인트와 큐에 먼저 적는다
+    marks: list[str] = []
+    graph = build_supervisor(reg, agents(), on_stage_start=lambda _s, stage: marks.append(stage))
+    out = graph.invoke({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True})
+    assert marks == ['buy', 'pay', 'record', 'verify']
+    assert out['pay_started'] is True
+
+
+def test_결제_마커가_있으면_payer를_다시_부르지_않는다(reg):
+    # 재시작·중복 재개로 결제 노드에 다시 들어와도 폰 승인을 두 번 내지 않는다
+    calls = {'n': 0}
+
+    def counting_payer(a):
+        calls['n'] += 1
+        return plain_ok(a)
+
+    out = run(reg, agents(payer=counting_payer), state_over={'pay_started': True})
+    assert calls['n'] == 0
+    assert out['outcome'] == 'needs_human'
+    assert out['fail_reason'] is FailReason.PAY_INTERRUPTED

@@ -22,6 +22,8 @@ AgentFn = Callable[..., AgentResult]
 
 # 외부 시스템을 실제로 바꾸는 단계 — 사람 승인 없이는 들어가지 않는다(스펙 §10-1)
 EXTERNAL_STAGES = ('pay', 'record')
+# 단계 진입을 밖(큐)에 알리는 콜백. 결제 진입 표시를 큐에 남겨 재시작 재결제를 막는다
+StageHook = Callable[[RunState, str], None]
 
 
 def _stop(state: RunState, name: str, result: AgentResult) -> RunState:
@@ -155,6 +157,7 @@ def build_supervisor(
     *,
     checkpointer: object | None = None,
     gate: bool = False,
+    on_stage_start: 'StageHook | None' = None,
 ):
     """감독자 그래프를 만든다. agents 는 이름 → 함수(실제 에이전트 또는 테스트용 가짜)."""
     if gate and checkpointer is None:
@@ -166,6 +169,18 @@ def build_supervisor(
         def node(state: RunState) -> RunState:
             if state.get('outcome') is not None:
                 return state
+            # 결제 노드 재진입 — 재시작이든 중복 재개든 폰 승인이 이미 나갔을 수 있다.
+            # 여기서 payer 를 다시 부르면 결제 2회다(리뷰 지적 — Critical 2 ②)
+            if stage == 'pay' and state.get('pay_started'):
+                return _stop(
+                    state,
+                    'payer',
+                    AgentResult(
+                        status='needs_human',
+                        reason='결제 진행 중 재시작 — 결제 여부를 사람이 확인한다(재결제 금지)',
+                        fail_reason=FailReason.PAY_INTERRUPTED,
+                    ),
+                )
             # 외부를 바꾸는 단계는 여기서 멈춘다. 슬랙 승인 버튼이 Command(resume=...) 로 깨운다
             if gate and stage in EXTERNAL_STAGES:
                 answer = interrupt(approval_request(stage, state).as_dict())
@@ -182,6 +197,11 @@ def build_supervisor(
                         ),
                     )
                 state = {**state, 'approvals': {**state.get('approvals', {}), stage: by}}
+            if stage == 'pay':
+                # 승인이 끝난 뒤, payer 를 부르기 전에 먼저 적는다 — 체크포인트와 큐 양쪽에
+                state = {**state, 'pay_started': True}
+            if on_stage_start is not None:
+                on_stage_start(state, stage)
             return _run_stage(reg, agents, stage, state)
 
         return node

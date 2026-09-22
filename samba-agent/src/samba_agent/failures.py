@@ -14,4 +14,6 @@ class FailReason(StrEnum):
     PERMISSION_DENIED = 'permission_denied'  # 허용 목록 밖 도구·토큰 오류·키마스터 잠김
     DUPLICATE = 'duplicate'  # 이미 처리된 주문
     VERIFY_MISMATCH = 'verify_mismatch'  # 대조 불일치
+    # 결제 진행 중 재시작·재진입 — 재결제를 막고 사람이 결제 여부를 확인해야 한다
+    PAY_INTERRUPTED = 'pay_interrupted'
     UNKNOWN = 'unknown'
