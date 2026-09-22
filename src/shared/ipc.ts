@@ -27,6 +27,14 @@ export const IPC = {
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   bridgeRegenerateToken: 'bridge:regenerateToken', // 하네스 브릿지 토큰 새로 만들기(설정에 저장)
+  // 하네스 읽기 API — 자동화 페이지의 흐름 그래프·판정 카드가 읽는다(127.0.0.1 만)
+  harnessGraph: 'harness:graph',
+  harnessJobs: 'harness:jobs',
+  harnessReleases: 'harness:releases',
+  // 규칙 파일 원문 조회(편집 모달을 채우는 용도). 저장 전용 채널과 달리 밖을 바꾸지 않는다
+  harnessGetRules: 'harness:getRules',
+  // 바꾸는 유일한 채널 — 규칙 파일 전체 교체(화면에서 확인을 받은 뒤에만 부른다)
+  harnessPutRules: 'harness:putRules',
   // 금고 — vaultReveal 만이 비밀값(평문)을 돌려주는 유일한 채널이다
   vaultState: 'vault:state',
   vaultKeyFromSync: 'vault:keyFromSync', // 키 재료가 다른 PC 에서 내려왔는가(안내 문구용)

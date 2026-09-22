@@ -25,6 +25,8 @@ export function AgentSection({ settings, update }: SectionProps): React.JSX.Elem
   const [queueFollowUps, setQueueFollowUps] = useState(true)
   // 활동 기록 지우기 — 한 번 누르면 버튼 문구를 "지웠습니다" 로 바꿔 두 번 누르지 않게 한다
   const [cleared, setCleared] = useState(false)
+  // "연결 확인" 결과. 화면에만 남는 값이라 설정에 저장하지 않는다
+  const [harnessCheck, setHarnessCheck] = useState<'none' | 'ok' | 'fail'>('none')
   const clearHistory = useRecommendStore((s) => s.clearHistory)
   const clearActivity = (): void => {
     void clearHistory().then((ok) => setCleared(ok))
@@ -202,6 +204,33 @@ export function AgentSection({ settings, update }: SectionProps): React.JSX.Elem
             </SecondaryButton>
           </div>
         </SettingsRow>
+        <SettingsRow label={t('settingsPage.behavior.harnessUrl')}>
+          <div className="flex items-center gap-2">
+            <TextInput
+              value={settings.harnessApiUrl}
+              onChange={(v) => update({ harnessApiUrl: v.trim() })}
+            />
+            <SecondaryButton
+              onClick={() =>
+                void window.samba.harness.graph().then((r) => {
+                  if (!r.ok) return setHarnessCheck('fail')
+                  setHarnessCheck(r.data.status === 'ok' ? 'ok' : 'fail')
+                })
+              }
+            >
+              {t('settingsPage.behavior.harnessCheck')}
+            </SecondaryButton>
+          </div>
+        </SettingsRow>
+        {harnessCheck !== 'none' && (
+          <p className="text-[11.5px] text-[var(--text2)]">
+            {t(
+              harnessCheck === 'ok'
+                ? 'settingsPage.behavior.harnessOk'
+                : 'settingsPage.behavior.harnessFail'
+            )}
+          </p>
+        )}
         <p className="text-[11.5px] text-[var(--text2)]">{t('settingsPage.behavior.bridgeHint')}</p>
       </SettingsSection>
     </>

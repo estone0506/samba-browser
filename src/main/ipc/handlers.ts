@@ -23,6 +23,7 @@ import { setOcrEnabled } from '../agent/tools-ocr'
 import { AgentRunner } from '../agent/runner'
 import { BridgeServer } from '../bridge/server'
 import { applyBridgeSettings, newBridgeToken } from '../bridge/wiring'
+import { createHarnessApi } from '../harness/wiring'
 import { createAgentNotifier } from '../notify'
 import type { NotifyChannel } from '../../shared/notify'
 import type { Db } from '../db/client'
@@ -259,6 +260,15 @@ export function registerIpc(
     settings.set({ bridgeToken: token })
     return { token }
   })
+  // 하네스 읽기 API — 자동화 페이지가 5초마다 부른다. 바꾸는 것은 규칙 파일 하나뿐이다
+  const harness = createHarnessApi(() => settings.get())
+  handleFromRenderer(IPC.harnessGraph, () => harness.graph())
+  handleFromRenderer(IPC.harnessJobs, () => harness.jobs())
+  handleFromRenderer(IPC.harnessReleases, () => harness.releases())
+  handleFromRenderer(IPC.harnessGetRules, (agent: string) => harness.getRules(agent))
+  handleFromRenderer(IPC.harnessPutRules, (agent: string, text: string) =>
+    harness.putRules(agent, text)
+  )
   // 같은 대화의 다음 지시는 SDK 세션을 이어받아 앞선 지시·도구 결과를 기억한다(세션 연결은 이 PC 에만 남는다)
   agent.setChatSessions(
     new ChatSessionStore(join(app.getPath('userData'), 'chat-sessions.json')),

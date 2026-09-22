@@ -818,7 +818,11 @@
       "bridgeToken": "Token",
       "bridgeCopy": "Copy",
       "bridgeRegenerate": "Regenerate",
-      "bridgeHint": "Put SAMBA_BRIDGE_URL=http://127.0.0.1:<port> and SAMBA_BRIDGE_TOKEN=<token> in the harness .env. While the bridge is using tools, the chat AI is unavailable"
+      "bridgeHint": "Put SAMBA_BRIDGE_URL=http://127.0.0.1:<port> and SAMBA_BRIDGE_TOKEN=<token> in the harness .env. While the bridge is using tools, the chat AI is unavailable",
+      "harnessUrl": "Harness address",
+      "harnessCheck": "Test connection",
+      "harnessOk": "Connected. The process flow now shows on the Automation page",
+      "harnessFail": "Could not reach the harness. Check that it is running and that the address is on 127.0.0.1"
     },
     "security": {
       "autofillTitle": "Autofill"
