@@ -5,9 +5,14 @@
 """
 
 import json
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+from langsmith.utils import LangSmithAuthError, LangSmithNotFoundError
+
+log = logging.getLogger(__name__)
 
 MIN_EXAMPLES = 10
 REQUIRED_TAGS = ('success', 'failure')
@@ -64,7 +69,11 @@ def push_to_langsmith(examples: Sequence[Example], *, client: object | None = No
             from langsmith import Client
 
             client = Client()
-        except Exception:  # noqa: BLE001 — langsmith 가 없거나 키가 없다, 0 건
+        except ImportError:
+            log.warning('langsmith 패키지가 없다 — push_to_langsmith 는 0 건')
+            return 0
+        except LangSmithAuthError as e:
+            log.warning('LangSmith 인증 실패 — push_to_langsmith 는 0 건: %s', e)
             return 0
     count = 0
     for name in sorted({e.name for e in examples}):
@@ -85,11 +94,18 @@ def push_to_langsmith(examples: Sequence[Example], *, client: object | None = No
 
 
 def _has(client: object, name: str) -> bool:
+    """데이터셋이 이미 있는가. "없다" 는 신호(LangSmithNotFoundError, 가짜 client 는 ValueError)만
+    False 로 본다. 그 외 예외(자격 오류·시그니처 불일치 등)는 "없다"로 조용히 넘기면 안 된다 —
+    원인을 로그에 남기고 그대로 던진다.
+    """
     try:
         client.read_dataset(dataset_name=name)  # type: ignore[attr-defined]
         return True
-    except Exception:  # noqa: BLE001 — 없는 데이터셋이면 뭐가 나든 새로 만든다
+    except (LangSmithNotFoundError, ValueError):
         return False
+    except LangSmithAuthError as e:
+        log.warning('LangSmith 인증 실패 — 데이터셋 존재 확인 불가: %s', e)
+        raise
 
 
 def ensure_online_evaluator(*, client: object | None = None) -> int:
@@ -104,15 +120,23 @@ def ensure_online_evaluator(*, client: object | None = None) -> int:
             from langsmith import Client
 
             client = Client()
-        except Exception:  # noqa: BLE001 — langsmith 가 없거나 키가 없다, 0 건
+        except ImportError:
+            log.warning('langsmith 패키지가 없다 — ensure_online_evaluator 는 0 건')
+            return 0
+        except LangSmithAuthError as e:
+            log.warning('LangSmith 인증 실패 — ensure_online_evaluator 는 0 건: %s', e)
             return 0
     creator = getattr(client, 'ensure_online_evaluator', None)
     if creator is None:
         return 0
     try:
         already = bool(creator(name=ONLINE_EVALUATOR_NAME, review_queue=REVIEW_QUEUE_NAME))
-    except Exception:  # noqa: BLE001 — 연결 지점일 뿐, 실패하면 0
+    except LangSmithAuthError as e:
+        log.warning('LangSmith 인증 실패 — ensure_online_evaluator 는 0 건: %s', e)
         return 0
+    except Exception as e:
+        log.warning('온라인 채점기 연결 중 예상 밖 오류: %s', e)
+        raise
     return 0 if already else 1
 
 
@@ -127,15 +151,23 @@ def pull_reviewed_examples(*, client: object | None = None) -> list[Example]:
             from langsmith import Client
 
             client = Client()
-        except Exception:  # noqa: BLE001 — langsmith 가 없거나 키가 없다, 빈 목록
+        except ImportError:
+            log.warning('langsmith 패키지가 없다 — pull_reviewed_examples 는 빈 목록')
+            return []
+        except LangSmithAuthError as e:
+            log.warning('LangSmith 인증 실패 — pull_reviewed_examples 는 빈 목록: %s', e)
             return []
     getter = getattr(client, 'list_reviewed_examples', None)
     if getter is None:
         return []
     try:
         rows = list(getter(queue_name=REVIEW_QUEUE_NAME))
-    except Exception:  # noqa: BLE001 — 연결 지점일 뿐, 실패하면 빈 목록
+    except LangSmithAuthError as e:
+        log.warning('LangSmith 인증 실패 — pull_reviewed_examples 는 빈 목록: %s', e)
         return []
+    except Exception as e:
+        log.warning('검수 큐 조회 중 예상 밖 오류: %s', e)
+        raise
     out: list[Example] = []
     for row in rows:
         out.append(

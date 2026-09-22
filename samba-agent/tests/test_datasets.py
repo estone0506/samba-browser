@@ -45,6 +45,18 @@ def test_권한_부족과_중복_사례가_들어_있다():
     assert 'duplicate' in tags
 
 
+def test_recorder_verifier_supervisor에도_권한_부족_사례가_있다():
+    for name in ('ds.recorder', 'ds.verifier', 'ds.supervisor.assign'):
+        tags = {t for e in load_seed(DEFAULT_ROOT, name) for t in e.tags}
+        assert 'permission' in tags, f'{name} 에 permission 사례가 없다'
+
+
+def test_verifier에_중복과_재시도_사례가_있다():
+    tags = {t for e in load_seed(DEFAULT_ROOT, 'ds.verifier') for t in e.tags}
+    assert 'duplicate' in tags
+    assert 'retry' in tags
+
+
 # ---- LangSmith 연동 — 실제로는 아무것도 나가지 않는다. 가짜 client 로만 돈다 ----
 
 
@@ -135,3 +147,28 @@ def test_검수_큐에서_사람이_고친_예시를_가져온다():
     assert len(got) == 1
     assert got[0].name == 'ds.buyer.musinsa'
     assert 'reviewed' in got[0].tags
+
+
+# ---- 시그니처 불일치 같은 진짜 버그는 조용히 0/빈 목록으로 삼켜지면 안 된다(리뷰 지적 4) ----
+
+
+class _BrokenOnlineClient:
+    """실제 LangSmith SDK 와 키워드 인자가 어긋난 것을 흉내 낸다 — TypeError 가 나야 정상."""
+
+    def ensure_online_evaluator(self, *, wrong_kwarg: str) -> bool:
+        return False
+
+
+def test_시그니처가_어긋나면_TypeError가_조용히_0이_되지_않는다():
+    with pytest.raises(TypeError):
+        ensure_online_evaluator(client=_BrokenOnlineClient())
+
+
+class _BrokenReviewClient:
+    def list_reviewed_examples(self, *, wrong_kwarg: str):
+        return []
+
+
+def test_검수_큐도_시그니처가_어긋나면_TypeError가_조용히_빈_목록이_되지_않는다():
+    with pytest.raises(TypeError):
+        pull_reviewed_examples(client=_BrokenReviewClient())
