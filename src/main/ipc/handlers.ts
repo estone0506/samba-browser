@@ -1017,6 +1017,8 @@ export function registerIpc(
       } catch (e: unknown) {
         console.error('계정 작업공간 전환 실패', e instanceof Error ? e.message : String(e))
       }
+      // 로그인하면 키마스터도 연다 — 이 PC 에 기억해 둔 기기 키가 있으면 마스터 입력 없이(없으면 잠긴 채)
+      void vault.ensureUnlockedByDevice()
     }
   }
   account.onStateChanged(applyAccountGate)
