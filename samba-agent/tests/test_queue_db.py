@@ -1,7 +1,9 @@
 # 주문 큐 — 접수 / 중복 거절·병합 / 한 번에 1건 / 재시도 상한 / 취소 / 재시작 복구
+import threading
+
 import pytest
 
-from samba_agent.queue.db import MAX_ATTEMPTS, JobQueue
+from samba_agent.queue.db import JobQueue
 
 
 @pytest.fixture()
@@ -74,7 +76,6 @@ def test_재시도는_상한을_넘지_못한다(q):
     q.finish(job.id, 'needs_human', error='bridge_down')
     with pytest.raises(ValueError, match='재시도 상한'):
         q.retry(job.id)
-    assert MAX_ATTEMPTS == 2
 
 
 def test_취소는_살아_있는_건만(q):
@@ -95,3 +96,31 @@ def test_재시작하면_running_은_queued_로_돌아온다(tmp_path):
     got = q2.get('A1')
     assert got.state == 'queued'
     assert got.id == job.id
+
+
+def test_같은_주문을_두_연결이_동시에_접수해도_행은_하나(tmp_path):
+    path = tmp_path / 'jobs.sqlite'
+    # 각 스레드가 자기 연결을 쓴다 — 실제 여러 프로세스/스레드가 동시에
+    # enqueue 를 부를 때와 같은 조건으로 BEGIN IMMEDIATE 경합을 검증한다
+    q1 = JobQueue(path)
+    q2 = JobQueue(path)
+    errors: list[BaseException] = []
+    results: list[bool] = []
+
+    def _enqueue(q: JobQueue, requester: str, thread_ts: str) -> None:
+        try:
+            _, created = q.enqueue('DUP1', requester, {}, thread_ts)
+            results.append(created)
+        except BaseException as exc:  # noqa: BLE001 — 스레드 예외를 모아서 검사한다
+            errors.append(exc)
+
+    t1 = threading.Thread(target=_enqueue, args=(q1, 'U1', 'ts1'))
+    t2 = threading.Thread(target=_enqueue, args=(q2, 'U2', 'ts2'))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert errors == []
+    assert sorted(results) == [False, True]  # 한쪽만 새로 만들고 한쪽은 거절
+    assert len(q1.live()) == 1

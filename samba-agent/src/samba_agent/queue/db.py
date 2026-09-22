@@ -1,11 +1,13 @@
-"""주문 큐 — SQLite. 잠금은 order_no UNIQUE + 살아 있는 상태로 건다(스펙 §4.2).
+"""주문 큐 — SQLite. 잠금은 order_no UNIQUE + BEGIN IMMEDIATE 트랜잭션으로 건다(스펙 §4.2).
 
 손발(앱)이 하나라 실행은 한 번에 1건이다. 같은 주문 재요청은 새 행을 만들지 않고
 기존 행을 돌려준다 — 봇이 "이미 ○○님이 처리 중" 이라고 답한다.
 """
 
+import contextlib
 import json
 import sqlite3
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -65,19 +67,39 @@ class JobQueue:
 
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(path, isolation_level=None)
+        self._db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
+        # 여러 연결이 동시에 BEGIN IMMEDIATE 로 부딪히면 즉시 실패하지 않고
+        # 앞선 트랜잭션이 끝날 때까지 기다린다
+        self._db.execute('PRAGMA busy_timeout=5000')
         self._db.executescript(_SCHEMA)
         # 실행기가 도중에 죽었다면 running 인 행이 남는다 — 다시 집을 수 있게 되돌린다
         self._db.execute(
             "UPDATE jobs SET state='queued', updated_at=? WHERE state='running'", (_now(),)
         )
 
+    @contextlib.contextmanager
+    def _immediate(self) -> Iterator[None]:
+        """SELECT → INSERT/UPDATE 를 진짜 한 트랜잭션으로 묶는다.
+
+        ``isolation_level=None`` (오토커밋) 상태라 BEGIN 을 직접 열지 않으면
+        조회와 쓰기 사이에 다른 연결이 끼어들 수 있다. BEGIN IMMEDIATE 로
+        쓰기 잠금을 즉시 잡아 그 틈을 없앤다.
+        """
+        self._db.execute('BEGIN IMMEDIATE')
+        try:
+            yield
+        except BaseException:
+            self._db.execute('ROLLBACK')
+            raise
+        else:
+            self._db.execute('COMMIT')
+
     def enqueue(
         self, order_no: str, requester: str, options: dict[str, object], thread_ts: str | None
     ) -> tuple[Job, bool]:
         """접수. 살아 있는 같은 주문이 있으면 그 행과 False 를 준다(중복 거절)."""
-        with self._db:
+        with self._immediate():
             existing = self._row(order_no)
             if existing is not None:
                 if existing['state'] in LIVE_STATES:
@@ -96,24 +118,32 @@ class JobQueue:
                 )
                 return self._job(self._row(order_no)), True
             now = _now()
-            self._db.execute(
-                'INSERT INTO jobs(order_no, requester, options, state, thread_ts, '
-                'created_at, updated_at) VALUES(?,?,?,?,?,?,?)',
-                (
-                    order_no,
-                    requester,
-                    json.dumps(options, ensure_ascii=False),
-                    'queued',
-                    thread_ts,
-                    now,
-                    now,
-                ),
-            )
+            try:
+                self._db.execute(
+                    'INSERT INTO jobs(order_no, requester, options, state, thread_ts, '
+                    'created_at, updated_at) VALUES(?,?,?,?,?,?,?)',
+                    (
+                        order_no,
+                        requester,
+                        json.dumps(options, ensure_ascii=False),
+                        'queued',
+                        thread_ts,
+                        now,
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                # order_no UNIQUE 충돌 — 그 사이 다른 연결이 먼저 넣었다.
+                # 새로 만들지 않고 그 행을 중복 거절로 돌려준다
+                winner = self._row(order_no)
+                if winner is None:
+                    raise
+                return self._job(winner), False
             return self._job(self._row(order_no)), True
 
     def claim(self) -> Job | None:
         """queued 1건을 running 으로. 이미 도는 게 있으면 None."""
-        with self._db:
+        with self._immediate():
             running = self._db.execute(
                 "SELECT 1 FROM jobs WHERE state='running' LIMIT 1"
             ).fetchone()
@@ -136,12 +166,6 @@ class JobQueue:
         self._db.execute(
             'UPDATE jobs SET assignee_agent=?, step=?, updated_at=? WHERE id=?',
             (agent, step, _now(), job_id),
-        )
-
-    def set_version(self, job_id: int, version: str) -> None:
-        """이 실행이 어느 하네스 버전으로 돌았는지."""
-        self._db.execute(
-            'UPDATE jobs SET harness_version=?, updated_at=? WHERE id=?', (version, _now(), job_id)
         )
 
     def finish(self, job_id: int, state: JobState, *, error: str | None = None) -> None:
