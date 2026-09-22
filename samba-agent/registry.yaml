@@ -46,7 +46,7 @@ agents:
     kind: payer
     match: {}
     tools: [get_page, find_elements, ocr, run_js, run_script, click, fill_secret,
-            phone_approve_payment,
+            phone_approve_payment, list_tabs, wait,
             phone_screenshot, phone_get_screen, progress]
     rules: rules/payer.md
     prompts: samba/payer

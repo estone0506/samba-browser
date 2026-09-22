@@ -71,7 +71,107 @@
       "instructionsDesc": "Write the steps the AI should follow, in Markdown.",
       "length": "{{n}} / {{max}} chars"
     },
-    "updatedAt": "Last edited {{time}}"
+    "updatedAt": "Last edited {{time}}",
+    "harness": {
+      "title": "Process flow",
+      "desc": "The supervisor and agents of the external order-processing harness. Colors show where the running job is",
+      "version": "Version {{version}}",
+      "refresh": "Refresh",
+      "expand": "Show process flow",
+      "collapse": "Hide",
+      "conn": {
+        "ok": "Connected to harness",
+        "offline": "Harness not connected - it looks turned off",
+        "timeout": "The harness is not responding",
+        "badResponse": "The harness reply could not be read",
+        "badUrl": "The harness address is not on 127.0.0.1"
+      },
+      "state": {
+        "queued": "Queued",
+        "running": "Running",
+        "done": "Done",
+        "failed": "Failed",
+        "needs_human": "Needs a person",
+        "cancelled": "Cancelled"
+      },
+      "stage": {
+        "buy": "Buy",
+        "pay": "Pay",
+        "record": "Record",
+        "verify": "Verify"
+      },
+      "node": {
+        "supervisor": "Supervisor",
+        "retry": "Retries {{n}}",
+        "noRetry": "No retry",
+        "tools": "{{n}} tools",
+        "edit": "Edit rules",
+        "status": {
+          "running": "Running",
+          "waiting": "Awaiting approval",
+          "attention": "Needs a person"
+        }
+      },
+      "empty": "No agents in the registry",
+      "rules": {
+        "title": "{{agent}} rules file",
+        "path": "File: {{path}}",
+        "loading": "Loading the current text",
+        "loadFailed": "Could not load the current text - saving is blocked until it loads, since we don't know what it would overwrite. Try again",
+        "retry": "Try again",
+        "warn": "Saving replaces the whole rules file with what you type here. The current text was loaded in, but double-check before you save",
+        "newVersion": "Editing creates a new harness version. It must pass the gate and be approved by a person before it runs in production",
+        "placeholder": "Write the rules in Markdown",
+        "save": "Save",
+        "confirm": "Yes, save",
+        "confirmDesc": "Replace the rules file with this text?",
+        "cancel": "Cancel",
+        "saved": "Saved. New version {{version}}",
+        "failed": "Could not save: {{error}}"
+      },
+      "verdict": {
+        "title": "Release verdict",
+        "desc": "The version running in production and the verdict for the candidate built from the current code and rules",
+        "prod": "Production version",
+        "prodNone": "No version has been promoted yet",
+        "candidate": "Candidate version",
+        "candidateNone": "No verdict yet. Run ops.gate on the harness",
+        "promote": "Ready for production",
+        "improve": "Needs debugging",
+        "rollback": "Rolled back",
+        "checks": "Six conditions",
+        "pass": "Pass",
+        "fail": "Fail",
+        "unknown": "Unknown",
+        "rule": {
+          "observe": "Observe (traces, masking)",
+          "accuracy": "Accuracy and safety",
+          "regression": "Duration and tool-call regression",
+          "dry_run": "One staging dry run",
+          "review_queue": "No blocking review items",
+          "approval": "User approval"
+        },
+        "todo": "Next steps",
+        "report": "Show verdict report",
+        "reportHide": "Hide report",
+        "reportPath": "Report file: {{path}}",
+        "approveTitle": "Approval does not happen in this app",
+        "approveDesc": "Post `@samba approve {{version}}` in Slack, or run the command below on the harness",
+        "approveCopy": "Copy command",
+        "approveCopied": "Copied",
+        "approveCopyFailed": "Could not copy - please select and copy it yourself",
+        "history": "Past verdicts (last 3)"
+      },
+      "jobs": {
+        "title": "Jobs",
+        "empty": "No jobs running",
+        "order": "Order {{orderNo}}",
+        "agent": "Agent {{agent}}",
+        "requester": "Requested by {{requester}}",
+        "attempts": "{{n}} retries",
+        "needsHuman": "Needs a person"
+      }
+    }
   },
   "schedule": {
     "title": "Schedule",
@@ -801,7 +901,11 @@
       "bridgeToken": "Token",
       "bridgeCopy": "Copy",
       "bridgeRegenerate": "Regenerate",
-      "bridgeHint": "Put SAMBA_BRIDGE_URL=http://127.0.0.1:<port> and SAMBA_BRIDGE_TOKEN=<token> in the harness .env. While the bridge is using tools, the chat AI is unavailable"
+      "bridgeHint": "Put SAMBA_BRIDGE_URL=http://127.0.0.1:<port> and SAMBA_BRIDGE_TOKEN=<token> in the harness .env. While the bridge is using tools, the chat AI is unavailable",
+      "harnessUrl": "Harness address",
+      "harnessCheck": "Test connection",
+      "harnessOk": "Connected. The process flow now shows on the Automation page",
+      "harnessFail": "Could not reach the harness. Check that it is running and that the address is on 127.0.0.1"
     },
     "security": {
       "autofillTitle": "Autofill"

@@ -7,6 +7,7 @@
 import json
 import os
 import tempfile
+import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
 
@@ -43,6 +44,8 @@ def build_app(
             resp = _get_jobs(queue)
         elif req.method == 'GET' and path == '/releases':
             resp = _get_releases(releases, version, reports)
+        elif req.method == 'GET' and path.startswith('/graph/rules/'):
+            resp = _get_rules(reg, root, version, path[len('/graph/rules/') :])
         elif req.method == 'PUT' and path.startswith('/graph/rules/'):
             resp = _put_rules(reg, root, version, path[len('/graph/rules/') :], req)
         else:
@@ -103,16 +106,57 @@ def _get_releases(releases: ReleaseStore, version: Callable[[], str], reports: P
     )
 
 
+def _resolve_rules_path(
+    reg: Registry, root: Path, name: str
+) -> tuple[Path, str, None] | tuple[None, None, Response]:
+    """이름 → 규칙 파일 경로. PUT/GET 이 같은 검사를 쓴다(경로 이탈·미등록 에이전트).
+
+    이름은 URL 경로 조각이라 퍼센트 인코딩된 채로 올 수 있다(리뷰 지적 — Important 3).
+    디코딩 전 원문에서 먼저 걸러내고, 디코딩한 뒤 한 번 더 같은 검사를 한다 —
+    이중 인코딩(``%252f`` 등)으로 첫 검사를 피해 가는 경우를 잡기 위해서다.
+    """
+    if '/' in name or '..' in name or '%2f' in name.lower():
+        return None, None, _json({'error': 'bad name'}, 400)
+    name = urllib.parse.unquote(name)
+    if '/' in name or '..' in name:
+        return None, None, _json({'error': 'bad name'}, 400)
+    try:
+        spec = reg[name]
+    except KeyError:
+        return None, None, _json({'error': f'unknown agent: {name}'}, 404)
+    rules_path = (root / spec.rules).resolve()
+    # 등록부 경로 자체가 탈출하지 않는 한 여기까지 오지만, 한 번 더 root 밖으로
+    # 안 나가는지 확인한다(스펙 §10-3 — 실패 케이스는 항상 한 번 더 검사한다)
+    if root.resolve() not in rules_path.parents and rules_path != root.resolve():
+        return None, None, _json({'error': 'bad path'}, 400)
+    return rules_path, name, None
+
+
+def _get_rules(reg: Registry, root: Path, version: Callable[[], str], name: str) -> Response:
+    """규칙 파일 원문. 앱의 편집 모달이 고치기 전에 현재 내용을 받는다(플랜 3/3)."""
+    rules_path, name, err = _resolve_rules_path(reg, root, name)
+    if err is not None:
+        return err
+    assert rules_path is not None
+    try:
+        text = rules_path.read_text(encoding='utf-8')
+    except OSError:
+        # 등록부에는 있지만 파일이 없거나(지워짐) 읽을 수 없다 — 500 대신 404 로
+        # 돌려줘야 화면이 "저장하지 못했다"가 아니라 "불러오지 못했다"로 구분한다
+        return _json({'error': f'rules file not found: {name}'}, 404)
+    except UnicodeDecodeError:
+        return _json({'error': 'rules file is not utf-8'}, 400)
+    return _json({'agent': name, 'text': text, 'version': version()})
+
+
 def _put_rules(
     reg: Registry, root: Path, version: Callable[[], str], name: str, req: Request
 ) -> Response:
     """규칙 파일 수정. 고치면 새 버전이 되어 판정 시스템을 다시 통과해야 한다."""
-    if '/' in name or '..' in name or '%2f' in name.lower():
-        return _json({'error': 'bad name'}, 400)
-    try:
-        spec = reg[name]
-    except KeyError:
-        return _json({'error': f'unknown agent: {name}'}, 404)
+    rules_path, name, err = _resolve_rules_path(reg, root, name)
+    if err is not None:
+        return err
+    assert rules_path is not None
     # content-length 로 먼저 거른다(스트림 다 읽기 전에 413 — 리뷰 지적 — Important 2).
     # 헤더가 없거나 거짓이어도 아래에서 실제 바이트 길이로 다시 확인한다.
     if (req.content_length or 0) > MAX_RULES_BODY:
@@ -129,19 +173,18 @@ def _put_rules(
     text = str(body.get('text', ''))
     if not text.strip():
         return _json({'error': 'empty rules'}, 400)
-    rules_path = (root / spec.rules).resolve()
-    # 등록부 경로 자체가 탈출하지 않는 한 여기까지 오지만, 한 번 더 root 밖으로
-    # 안 나가는지 확인한다(스펙 §10-3 — 실패 케이스는 항상 한 번 더 검사한다)
-    if root.resolve() not in rules_path.parents and rules_path != root.resolve():
-        return _json({'error': 'bad path'}, 400)
-    _atomic_write(rules_path, text)
+    try:
+        _atomic_write(rules_path, text)
+    except OSError as e:
+        return _json({'error': f'could not write rules file: {e}'}, 500)
     return _json({'ok': True, 'version': version()})
 
 
 def _atomic_write(path: Path, text: str) -> None:
     """임시 파일에 쓰고 ``os.replace`` 로 갈아치운다(리뷰 지적 — Important 3).
 
-    중간에 죽어도 원본 규칙 파일이 반쯤 쓰인 채로 남지 않는다.
+    중간에 죽어도 원본 규칙 파일이 반쯤 쓰인 채로 남지 않는다. 디스크가 꽉 찼거나
+    권한이 없어 ``OSError`` 가 나면 호출부가 500 JSON 으로 돌려준다(HTML 스택트레이스 대신).
     """
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f'.{path.name}.', suffix='.tmp')
     try:

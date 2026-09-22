@@ -69,6 +69,14 @@ import type { AgentImage } from '../shared/agent-image'
 import type { AiUsage } from '../shared/ai'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
+import type { HarnessResult } from '../main/harness/client'
+import type {
+  HarnessGraph,
+  HarnessJobs,
+  HarnessReleases,
+  HarnessRules,
+  HarnessRulesSaved
+} from '../shared/harness'
 
 // 북마크 관리자 페이지용 요청 입력 타입
 interface BookmarkMoveInput {
@@ -240,6 +248,16 @@ const api = {
   },
   bridge: {
     regenerateToken: (): Promise<IpcResult<{ token: string }>> => invoke(IPC.bridgeRegenerateToken)
+  },
+  // 하네스(밖에서 도는 주문처리 하네스)의 읽기 API. 오류는 status 로 온다
+  harness: {
+    graph: (): Promise<IpcResult<HarnessResult<HarnessGraph>>> => invoke(IPC.harnessGraph),
+    jobs: (): Promise<IpcResult<HarnessResult<HarnessJobs>>> => invoke(IPC.harnessJobs),
+    releases: (): Promise<IpcResult<HarnessResult<HarnessReleases>>> => invoke(IPC.harnessReleases),
+    getRules: (agent: string): Promise<IpcResult<HarnessResult<HarnessRules>>> =>
+      invoke(IPC.harnessGetRules, agent),
+    putRules: (agent: string, text: string): Promise<IpcResult<HarnessResult<HarnessRulesSaved>>> =>
+      invoke(IPC.harnessPutRules, agent, text)
   },
   // 금고 — reveal 만이 평문을 돌려준다. 나머지는 상태·메타뿐이다
   vault: {

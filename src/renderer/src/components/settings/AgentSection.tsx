@@ -5,6 +5,8 @@ import { Switch } from '@renderer/components/ui/switch'
 import type { PermissionMode } from '@shared/settings'
 import { useRecommendStore } from '@renderer/stores/recommendStore'
 import { useSiteMemoryStore } from '@renderer/stores/siteMemoryStore'
+import { connectionKeyOf } from '@renderer/components/automation/flowgraph-view'
+import type { HarnessStatus } from '../../../../main/harness/client'
 import {
   SecondaryButton,
   SegmentedGroup,
@@ -25,6 +27,17 @@ export function AgentSection({ settings, update }: SectionProps): React.JSX.Elem
   const [queueFollowUps, setQueueFollowUps] = useState(true)
   // 활동 기록 지우기 — 한 번 누르면 버튼 문구를 "지웠습니다" 로 바꿔 두 번 누르지 않게 한다
   const [cleared, setCleared] = useState(false)
+  // "연결 확인" 결과. 화면에만 남는 값이라 설정에 저장하지 않는다.
+  // ok/fail 둘로만 뭉치지 않고 connectionKeyOf 로 사유(꺼짐·시간초과·엉뚱한 응답·주소 오류)를 구분한다
+  const [harnessCheck, setHarnessCheck] = useState<HarnessStatus | 'none'>('none')
+  // 주소를 바꾸면 이전 확인 결과는 더 이상 유효하지 않다 — 다시 확인하기 전까지 지운다(리뷰 지적 — Minor 7).
+  // 이펙트 대신 렌더 중 비교로 한다(react-hooks/set-state-in-effect 위반 없이 "prop 이 바뀌면
+  // 상태 조정" 하는 React 권장 패턴 — VerdictCard 의 후보 버전 초기화와 같은 방식)
+  const [checkedUrl, setCheckedUrl] = useState(settings.harnessApiUrl)
+  if (checkedUrl !== settings.harnessApiUrl) {
+    setCheckedUrl(settings.harnessApiUrl)
+    setHarnessCheck('none')
+  }
   const clearHistory = useRecommendStore((s) => s.clearHistory)
   const clearActivity = (): void => {
     void clearHistory().then((ok) => setCleared(ok))
@@ -202,6 +215,27 @@ export function AgentSection({ settings, update }: SectionProps): React.JSX.Elem
             </SecondaryButton>
           </div>
         </SettingsRow>
+        <SettingsRow label={t('settingsPage.behavior.harnessUrl')}>
+          <div className="flex items-center gap-2">
+            <TextInput
+              value={settings.harnessApiUrl}
+              onChange={(v) => update({ harnessApiUrl: v.trim() })}
+            />
+            <SecondaryButton
+              onClick={() =>
+                void window.samba.harness.graph().then((r) => {
+                  // IPC 자체가 실패해도(r.ok === false) 사람에게는 "연결 안 됨"과 같은 얘기다
+                  setHarnessCheck(r.ok ? r.data.status : 'offline')
+                })
+              }
+            >
+              {t('settingsPage.behavior.harnessCheck')}
+            </SecondaryButton>
+          </div>
+        </SettingsRow>
+        {harnessCheck !== 'none' && (
+          <p className="text-[11.5px] text-[var(--text2)]">{t(connectionKeyOf(harnessCheck))}</p>
+        )}
         <p className="text-[11.5px] text-[var(--text2)]">{t('settingsPage.behavior.bridgeHint')}</p>
       </SettingsSection>
     </>

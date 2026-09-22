@@ -7,6 +7,7 @@
 
 import json
 import re
+from urllib.parse import urlsplit
 
 from samba_agent.agents.base import AgentBase, AgentFailure, run_agent
 from samba_agent.agents.contracts import AgentResult, Assignment
@@ -33,6 +34,26 @@ PAY_PROVIDER_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ('kakaopay', ('카카오', 'kakao')),
     ('naverpay', ('네이버', 'naver')),
 )
+
+# 결제창(팝업) 호스트 → 결제 앱. 결제 앱은 사람이 지정하지 않는다 — 사이트 결제 흐름에서
+# 열리는 결제창을 보고 정한다(브리프 §결제앱 자동판별). 앱의 판단표(src/main/agent/tools.ts
+# PAY_HOST_PROVIDERS)와 같은 호스트를 쓰되, 값은 이 저장소의 PayProvider(src/main/phone/pay.ts)로
+# 맞춘다 — kakao→kakaopay, naver→naverpay
+PAY_HOST_PROVIDERS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r'(^|\.)toss\.im$|(^|\.)tosspayments\.com$'), 'toss'),
+    (re.compile(r'(^|\.)payco\.com$'), 'payco'),
+    (re.compile(r'(^|\.)kakaopay\.com$|(^|\.)kakao\.com$'), 'kakaopay'),
+    (re.compile(r'(^|\.)pay\.naver\.com$'), 'naverpay'),
+)
+
+# run_script checkout_enter_* 직후 결제창(팝업)이 아직 하나도 없을 때 한 번 더 보기 전 기다리는
+# 시간(ms) — 사이트가 팝업을 띄우는 타이밍과 어긋나 곧장 웹 결제 경로로 새지 않게 한다(리뷰 지적 — Minor 4)
+PAY_POPUP_WAIT_MS = 2000
+
+# list_tabs 응답에서 팝업 kind 만 그물망으로 건질 때 쓰는 보조 정규식.
+# 정상 응답은 JSON 배열(id·kind·title·url·…)이지만, 형식이 바뀌어도 최소한
+# "kind":"popup" 옆의 url 값은 이걸로 건진다(문자열 형식 대비)
+POPUP_URL_FALLBACK_RE = re.compile(r'"kind"\s*:\s*"popup"[^{}]*?"url"\s*:\s*"([^"]*)"')
 
 # 소싱처별 "결제창 진입" 저장 스크립트 이름. buyer.py 의 소싱처 키(무신사·29CM·ABC마트·롯데온)를
 # 그대로 쓴다 — 등록부 match.source 값과 같다. 매핑에 없는 소싱처는 기본 checkout_enter 로 진입한다
@@ -62,6 +83,49 @@ def _pay_provider(*candidates: object) -> str | None:
         for provider, keywords in PAY_PROVIDER_KEYWORDS:
             if any(k in text for k in keywords):
                 return provider
+    return None
+
+
+def _popups_and_active_tabs(list_tabs_output: str) -> tuple[list[dict[str, object]], set[str]]:
+    """list_tabs 출력(list_tabs, src/main/agent/tools.ts)에서 팝업 창 목록과 활성 탭 id 집합을
+    뽑는다. 결제창은 kind가 popup 인 창이다(주소 검색창 등 다른 팝업도 섞일 수 있어 호스트로
+    다시 거른다). 팝업이 여럿일 때 우선순위를 매기려면 openerId(팝업을 연 탭)와 active(그 탭이
+    지금 활성 탭인지)가 있어야 하므로, 정상 JSON 응답에서만 그 값을 함께 돌려준다 — 형식이 바뀌어
+    문자열만 훑는 예비 경로에서는 URL만 남고 우선순위 정보는 없다."""
+    try:
+        targets = json.loads(list_tabs_output)
+    except (json.JSONDecodeError, TypeError):
+        targets = None
+    if isinstance(targets, list):
+        popups = [
+            t for t in targets if isinstance(t, dict) and t.get('kind') == 'popup' and t.get('url')
+        ]
+        active_tab_ids = {
+            str(t['id'])
+            for t in targets
+            if isinstance(t, dict)
+            and t.get('kind') == 'tab'
+            and t.get('active') is True
+            and t.get('id')
+        }
+        return popups, active_tab_ids
+    fallback = [
+        {'url': m.group(1)} for m in POPUP_URL_FALLBACK_RE.finditer(list_tabs_output) if m.group(1)
+    ]
+    return fallback, set()
+
+
+def _pay_provider_from_host(url: str) -> str | None:
+    """팝업 URL 호스트로 결제 앱을 고른다. 앱의 payProviderOfUrl(tools.ts)과 같은 표를 쓴다."""
+    try:
+        host = (urlsplit(url).hostname or '').lower()
+    except ValueError:
+        return None
+    if not host:
+        return None
+    for pattern, provider in PAY_HOST_PROVIDERS:
+        if pattern.search(host):
+            return provider
     return None
 
 
@@ -105,6 +169,64 @@ class PayerAgent(AgentBase):
             )
         return super().tool(name, **args)
 
+    def _list_tabs_popups(self) -> tuple[list[dict[str, object]], set[str]]:
+        """list_tabs 를 불러 팝업 목록과 활성 탭 id 집합을 돌려준다. list_tabs 자체가 실패하면
+        (브릿지 오류 등) 결제창을 못 본 채로 찍어 승인하면 안 되므로 바로 사람에게 넘긴다 —
+        이때 사유를 UNKNOWN 으로 뭉개지 않고 브릿지가 준 fail_reason 을 그대로 살린다(리뷰 지적 — Minor 3)."""
+        try:
+            listed = self.tool('list_tabs')
+        except AgentFailure as e:
+            raise AgentFailure(
+                'needs_human',
+                f'결제창 목록을 확인할 수 없다: {e.reason}',
+                e.fail_reason,
+            ) from e
+        return _popups_and_active_tabs(listed)
+
+    def _provider_from_payment_popup(self) -> str | None:
+        """지금 열린 결제창(팝업)의 호스트로 결제 앱을 고른다. 결제창이 없거나 아는 결제
+        앱의 호스트가 아니면 None — 그때는 phone_approve_payment 를 부르지 않고 웹 결제
+        경로로 간다.
+
+        결제창이 하나도 없으면(팝업 0개) 사이트가 아직 못 띄웠을 수 있으니 wait 로 한 번만
+        기다렸다 다시 본다(리뷰 지적 — Minor 4). 그래도 없으면 웹 결제 경로다.
+
+        결제 호스트에 매칭되는 팝업이 여럿이면 그 팝업을 연 탭(openerId)이 지금 활성 탭인
+        것을 우선 쓴다 — 지금 사람이 보고 있는 흐름에서 뜬 결제창이라는 뜻이라 다른 팝업과
+        provider 가 갈려도 그것을 쓴다. 활성 탭이 연 팝업이 하나도 없으면, 모두 같은 결제
+        앱이면 목록의 마지막(가장 최근에 뜬 것)을 쓰지만 서로 다른 결제 앱을 가리키면 어느
+        쪽인지 코드가 짐작하지 않고 사람에게 넘긴다(근거에 호스트를 남긴다, 리뷰 지적 — Important 2)."""
+        popups, active_tab_ids = self._list_tabs_popups()
+        if not popups:
+            self.tool('wait', ms=PAY_POPUP_WAIT_MS)
+            popups, active_tab_ids = self._list_tabs_popups()
+        if not popups:
+            return None
+
+        matches = [
+            (str(p['url']), _pay_provider_from_host(str(p['url'])), p.get('openerId'))
+            for p in popups
+        ]
+        matches = [
+            (url, provider, opener) for url, provider, opener in matches if provider is not None
+        ]
+        if not matches:
+            return None
+
+        for url, provider, opener in matches:
+            if opener is not None and str(opener) in active_tab_ids:
+                return provider
+
+        providers = {provider for _, provider, _ in matches}
+        if len(providers) > 1:
+            hosts = ', '.join(url for url, _, _ in matches)
+            raise AgentFailure(
+                'needs_human',
+                f'결제창이 여럿이고 서로 다른 결제 앱을 가리킨다 — 사람이 확인한다: {hosts}',
+                FailReason.UNKNOWN,
+            )
+        return matches[-1][1]
+
     def _pay(self, a: Assignment) -> AgentResult:
         self.evidence = []
         # 요청자가 지정한 카드가 먼저, 없으면 구매 에이전트가 고른 카드다(리뷰 지적 — C3)
@@ -142,15 +264,8 @@ class PayerAgent(AgentBase):
                 FailReason.PAY_INTERRUPTED,
             )
 
-        # 폰 승인에 필요한 값을 먼저 갖춘다 — 하나라도 없으면 결제 자체를 시작하지 않는다.
-        # 앱 스키마(tools-phone.ts)가 provider enum 과 양의 정수 amountKrw 를 요구한다(I7)
-        provider = _pay_provider(card, a.options.get('pay_provider'), a.handoff.get('pay_provider'))
-        if provider is None:
-            raise AgentFailure(
-                'needs_human',
-                f'어느 결제 앱으로 승인할지 정할 수 없다: {card}',
-                FailReason.UNKNOWN,
-            )
+        # 결제 금액이 없으면 무엇을 결제하는지도 모르는 것이다 — 시작 자체를 하지 않는다.
+        # 앱 스키마(tools-phone.ts)가 양의 정수 amountKrw 를 요구한다(I7)
         amount = _amount_krw(a.handoff.get('cost'))
         if amount is None:
             raise AgentFailure(
@@ -168,25 +283,42 @@ class PayerAgent(AgentBase):
             raise AgentFailure('needs_human', '신원정보 입력칸을 찾지 못했다', FailReason.UNKNOWN)
         self.tool('fill_secret', elementId=element_id, itemType='identity')
 
-        self.step('payer: 폰 승인')
-        # 카드 이름 자체가 결제 앱을 가리키면(예: 토스페이) 앱 안에서 고를 카드가 아니다
-        card_hint = None if _pay_provider(card) else card
-        approved = self.tool(
-            'phone_approve_payment',
-            provider=provider,
-            amountKrw=amount,
-            merchant=a.order.source,
-            methodLabel=card,
-            **({'card': card_hint} if card_hint else {}),
-        )
-        self.note('폰 승인', mask_text(approved[:200]))
-        if any(m in approved for m in DECLINED_MARKERS):
-            # 'refused:' 접두사 없는 과거 형식. 재시도 없음 — 그대로 사람에게 넘긴다(재결제 위험)
-            raise AgentFailure(
-                'needs_human',
-                f'폰 승인 실패: {mask_text(approved[:100])}',
-                FailReason.UNKNOWN,
+        # 결제 앱은 사람이 지정하지 않는다 — 카드 이름 자체가 앱을 가리키면(예: 토스페이) 그것을,
+        # 아니면 지금 뜬 결제창(팝업)의 호스트를 보고 정한다. phone_approve_payment 를 부르기
+        # 직전에 판단해야 그사이 열린 결제창까지 본다
+        self.step('payer: 결제 앱 확인')
+        provider = _pay_provider(card)
+        if provider is None:
+            provider = self._provider_from_payment_popup()
+
+        if provider is not None:
+            self.step('payer: 폰 승인')
+            # 카드 이름 자체가 결제 앱을 가리키면(예: 토스페이) 앱 안에서 고를 카드가 아니다
+            card_hint = None if _pay_provider(card) else card
+            # payAccount 는 앱 스키마상 네이버페이 전용이다. 사용자 결정 — 결제 앱이 쇼핑몰
+            # 계정에 연결된 네이버 계정으로 스스로 고르게 두고, 어떤 provider 에도 payAccount 를
+            # 넘기지 않는다(리뷰 지적 — Critical 1)
+            approved = self.tool(
+                'phone_approve_payment',
+                provider=provider,
+                amountKrw=amount,
+                merchant=a.order.source,
+                methodLabel=card,
+                **({'card': card_hint} if card_hint else {}),
             )
+            self.note('폰 승인', mask_text(approved[:200]))
+            if any(m in approved for m in DECLINED_MARKERS):
+                # 'refused:' 접두사 없는 과거 형식. 재시도 없음 — 그대로 사람에게 넘긴다(재결제 위험)
+                raise AgentFailure(
+                    'needs_human',
+                    f'폰 승인 실패: {mask_text(approved[:100])}',
+                    FailReason.UNKNOWN,
+                )
+        else:
+            # 결제 앱을 정할 수 없다 — 사이트 자체 결제(카드 직접 결제)다. phone_approve_payment 는
+            # 부르지 않는다(승인 앱이 없으니 승인할 것도 없다). 이 경로도 성공 문구를 확인하기
+            # 전에는 ok 를 내지 않는다 — 아래 공통 성공 확인이 그대로 지킨다
+            self.step('payer: 결제 앱을 정할 수 없다 — 웹 결제 경로로 진행')
 
         self.step('payer: 성공 확인')
         page = self.tool('get_page')
