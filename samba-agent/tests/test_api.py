@@ -129,3 +129,17 @@ def test_candidate는_root_기준_ops_reports를_본다(tmp_path, client):
     (reports / 'vtest.md').write_text('# 판정 — vtest\n', encoding='utf-8')
     body = _json(client.get('/releases'))
     assert body['candidate'] == {'version': 'vtest', 'report': '# 판정 — vtest\n'}
+
+
+def test_releases_는_다른_스레드에서_읽어도_된다(tmp_path):
+    """API 는 werkzeug 스레드에서 도는데 ReleaseStore 는 메인 스레드에서 만든다 — 실기에서 500 이 났다."""
+    import threading
+
+    from samba_agent.ops.releases import ReleaseStore
+
+    store = ReleaseStore(tmp_path / 'releases.sqlite')
+    out: list[object] = []
+    t = threading.Thread(target=lambda: out.append(store.current_prod()))
+    t.start()
+    t.join()
+    assert out == [None]

@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -34,37 +35,43 @@ class Release:
 class ReleaseStore:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(path, isolation_level=None)
+        # API 스레드(werkzeug)와 판정 CLI·워커가 같은 저장소를 읽는다 — 스레드 제약을 풀고 잠금으로 직렬화
+        self._db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
-        self._db.executescript(_SCHEMA)
+        self._lock = threading.Lock()
+        with self._lock:
+            self._db.executescript(_SCHEMA)
 
     def record(self, release: Release) -> None:
         # 같은 버전을 다시 판정해도 막지 않는다 — 판정 이력은 쌓이는 것이고, 무엇이
         # 운영인지는 항상 "가장 최근 promote" 로 계산한다(중복 판정 자체가 문제가 아니다).
-        self._db.execute(
-            'INSERT INTO releases(version, verdict, decided_by, decided_at, report_path, '
-            'prompt_commits) VALUES(?,?,?,?,?,?)',
-            (
-                release.version,
-                release.verdict,
-                release.decided_by,
-                release.decided_at,
-                release.report_path,
-                json.dumps(release.prompt_commits, ensure_ascii=False),
-            ),
-        )
+        with self._lock:
+            self._db.execute(
+                'INSERT INTO releases(version, verdict, decided_by, decided_at, report_path, '
+                'prompt_commits) VALUES(?,?,?,?,?,?)',
+                (
+                    release.version,
+                    release.verdict,
+                    release.decided_by,
+                    release.decided_at,
+                    release.report_path,
+                    json.dumps(release.prompt_commits, ensure_ascii=False),
+                ),
+            )
 
     def current_prod(self) -> Release | None:
         """가장 최근 promote. 운영에 도는 버전이다."""
-        row = self._db.execute(
-            "SELECT * FROM releases WHERE verdict='promote' ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+        with self._lock:
+            row = self._db.execute(
+                "SELECT * FROM releases WHERE verdict='promote' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
         return self._row(row) if row else None
 
     def history(self, limit: int = 20) -> list[Release]:
-        rows = self._db.execute(
-            'SELECT * FROM releases ORDER BY id DESC LIMIT ?', (limit,)
-        ).fetchall()
+        with self._lock:
+            rows = self._db.execute(
+                'SELECT * FROM releases ORDER BY id DESC LIMIT ?', (limit,)
+            ).fetchall()
         return [self._row(r) for r in rows]
 
     @staticmethod
