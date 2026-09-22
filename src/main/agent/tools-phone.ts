@@ -6,6 +6,7 @@
 //  - 비밀 입력 화면의 캡처는 모델에게 넘기지 않는다(phone_screenshot 이 거부).
 //  - 결과 문자열에는 화면 값이 아닌 상태만 담는다.
 
+import { tr } from '../i18n'
 import { tool, type SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import type { PermissionMode } from '../../shared/settings'
@@ -419,6 +420,11 @@ export interface PayToolRequest {
 export interface PayToolContext {
   tick: () => string | null
   onStep: (label: string, ok: boolean) => void
+  /**
+   * 사용자 지시문에 적힌 카드 이름(예: "현대카드"). 있으면 card 없는 호출은 실행기까지 가지 않고 거부한다 —
+   * 실기: "현대카드 결제"라고 시켰는데 card 를 빼고 불러 앱에 선택돼 있던 롯데카드로 나갔다
+   */
+  requiredCard?: string
   // 결제 실행기(배선부가 runPayApproval 에 금고·폰·확인 카드를 묶어 넣는다)
   run: (req: PayToolRequest) => Promise<PayResult>
 }
@@ -449,6 +455,12 @@ export function createPayTool(ctx: PayToolContext): PhoneTool {
       const over = ctx.tick()
       // 상한 도달은 실행기까지 가지 않는다(별도 step 은 폰 도구 쪽에서 이미 남는다)
       if (over) return text(over)
+      if (ctx.requiredCard !== undefined && (args.card === undefined || args.card.trim() === '')) {
+        ctx.onStep(tr('phone.payCardRequired', { card: ctx.requiredCard }), false)
+        return text(
+          `refused: card-required - the instruction says to pay with ${ctx.requiredCard}; call again with card set`
+        )
+      }
       try {
         const r = await ctx.run({
           provider: args.provider,

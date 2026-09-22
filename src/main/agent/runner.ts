@@ -38,6 +38,14 @@ import {
 
 // 확인 요청 응답 대기 상한 30분
 const CONFIRM_TIMEOUT_MS = 30 * 60 * 1000
+
+/** 지시문에 적힌 카드사 이름("현대카드"·"롯데카드"). 결제 도구가 card 를 빠뜨리면 이 값으로 거부한다 */
+const CARD_NAME_RE =
+  /(현대|롯데|국민|KB국민|KB|신한|삼성|우리|하나|농협|NH농협|NH|BC|비씨|씨티|카카오뱅크|토스뱅크)\s*카드/
+export function cardNamedIn(prompt: string): string | undefined {
+  const m = CARD_NAME_RE.exec(prompt)
+  return m ? m[0].replace(/\s+/g, '') : undefined
+}
 // 답 없이 멈춘 실행을 자동으로 이어갈 때 쓰는 지시문 머리. 이걸로 시작하면 사용자 지시가 아니다
 const AUTO_CONTINUE_PROMPT = '직전 작업을 그 자리에서 이어서'
 
@@ -540,7 +548,9 @@ export class AgentRunner {
           ? {
               tick: counter.tick,
               onStep: (label, ok) => emit({ type: 'step', label, ok }),
-              run: (req) => runPay(req)
+              run: (req) => runPay(req),
+              // 지시문에 카드사가 적혀 있으면 card 없는 결제 호출을 거부한다(다른 카드로 나가지 않게)
+              ...(cardNamedIn(prompt) === undefined ? {} : { requiredCard: cardNamedIn(prompt) })
             }
           : undefined
     })
@@ -661,12 +671,17 @@ ${CODEX_NO_IMAGE_NOTE}`
             followUp = `${AUTO_CONTINUE_PROMPT} 끝까지 진행하고, 끝나면 done 으로 보고해.`
           } else if (scripts && shouldLearn(prompt, runJsLog)) {
             // 성공이든 실패든, 통한 구간까지는 다음에 재생할 수 있게 스스로 저장하게 한다
-            emit({ type: 'text', text: '(이번에 통한 절차를 다음부터 한 번에 재생하도록 저장합니다)' })
+            emit({
+              type: 'text',
+              text: '(이번에 통한 절차를 다음부터 한 번에 재생하도록 저장합니다)'
+            })
             followUp = buildLearnPrompt({
               userPrompt: prompt,
               runs: runJsLog,
               steps: entry.steps,
-              savedScripts: scripts.list().map((sc) => ({ name: sc.name, description: sc.description }))
+              savedScripts: scripts
+                .list()
+                .map((sc) => ({ name: sc.name, description: sc.description }))
             })
           }
         }

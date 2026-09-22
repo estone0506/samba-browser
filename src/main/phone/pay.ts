@@ -51,6 +51,11 @@ export interface PayProviderSpec {
    * 앱 홈이나 다른 서비스 화면의 [확인]·[다음]을 눌러 엉뚱한 곳으로 들어가지 않게 한다(실기: 토스 홈 → 용돈 화면)
    */
   payScreenHint?: RegExp
+  /**
+   * 결제 요청 화면으로 들어가는 길. 'app' 이면 알림창을 거치지 않고 앱을 바로 연다 —
+   * 알림 클릭이 엉뚱한 곳으로 들어가던 앱(토스)에 쓴다. 생략하면 결제 알림을 먼저 누른다
+   */
+  openBy?: 'app' | 'notification'
 }
 
 export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
@@ -66,7 +71,9 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     unlockHint: /앱을 켜려면/,
     changeMethodText: /결제수단 변경/,
     methodSheetTitle: /결제수단 선택/,
-    payScreenHint: /결제수단 변경/
+    payScreenHint: /결제수단 변경/,
+    // 실기: 알림창의 결제 알림을 눌러 들어가면 엉뚱한 곳을 누르기 일쑤였다 — 앱을 열면 결제 요청 화면이 뜬다
+    openBy: 'app'
   },
   payco: {
     id: 'payco',
@@ -232,7 +239,29 @@ export function cardPatternOf(hint: string): RegExp {
 const MAX_CARD_TAPS = 4
 
 type CardStep =
-  { kind: 'ready' } | { kind: 'wait' } | { kind: 'missing' } | { kind: 'tap'; x: number; y: number }
+  | { kind: 'ready'; card: string }
+  | { kind: 'wait' }
+  | { kind: 'missing' }
+  | { kind: 'tap'; x: number; y: number; label: string }
+
+/** 결제 화면에서 [결제수단 변경] 위로 이만큼 안의 글자를 "지금 선택된 카드" 줄로 본다(카드명·일시불 안내) */
+const SELECTED_CARD_LOOKBACK = 3
+
+/**
+ * 결제 화면에 지금 선택돼 있는 카드 이름. [결제수단 변경] 버튼 바로 위 몇 줄만 본다 —
+ * 화면 다른 곳(혜택 안내·상품명)에 든 카드사 이름을 "이미 선택됨"으로 잘못 보지 않게 한다
+ * (실기: 현대카드를 지정했는데 롯데(LOCA)로 결제됐다). 변경 버튼이 없으면 빈 문자열
+ */
+export function selectedCardOf(screen: PhoneScreen, spec: PayProviderSpec): string {
+  if (!spec.changeMethodText) return ''
+  const idx = screen.elements.findIndex((e) => spec.changeMethodText?.test(e.text))
+  if (idx < 0) return ''
+  return screen.elements
+    .slice(Math.max(0, idx - SELECTED_CARD_LOOKBACK), idx)
+    .map((e) => e.text.trim())
+    .filter((t) => t !== '')
+    .join(' ')
+}
 
 /**
  * 결제 화면에서 지정한 카드를 고르기 위한 다음 한 수.
@@ -244,14 +273,17 @@ export function cardStep(screen: PhoneScreen, spec: PayProviderSpec, card: RegEx
   const at = (e: PhoneScreen['elements'][number]): CardStep => ({
     kind: 'tap',
     x: e.center.x,
-    y: e.center.y
+    y: e.center.y,
+    label: e.text.trim()
   })
   if (spec.methodSheetTitle && hasText(screen, spec.methodSheetTitle)) {
     const match = screen.elements.find((e) => card.test(e.text))
     return match ? at(match) : { kind: 'missing' }
   }
   if (findConfirm(screen, spec.confirmText) === undefined) return { kind: 'wait' }
-  if (screen.elements.some((e) => card.test(e.text))) return { kind: 'ready' }
+  // "이미 선택됨"은 [결제수단 변경] 바로 위 카드 줄로만 판정한다 — 화면 전체에서 찾지 않는다
+  const selected = selectedCardOf(screen, spec)
+  if (selected !== '' && card.test(selected)) return { kind: 'ready', card: selected }
   const change = spec.changeMethodText
     ? screen.elements.find((e) => spec.changeMethodText?.test(e.text))
     : undefined
@@ -505,8 +537,10 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
 
   // 가장 짧은 길은 결제 요청 알림을 누르는 것이다(누르면 바로 결제 화면). 그 앱이 올린 결제 알림이 없을 때만
   // 앱을 직접 연다 — 앱만 열면 홈 화면이라 알림함을 거쳐야 해서 길다
+  // openBy 가 'app' 인 앱(토스)은 알림창을 거치지 않고 앱을 바로 연다 — 결제 요청이 걸려 있으면 그 화면이 뜬다.
+  // 앱을 열어도 결제 화면이 안 나오면 아래 루프에서 몇 번 기다린 뒤에야 알림창을 시도한다
   let notificationTried = false
-  if (deps.notifications) {
+  if (deps.notifications && spec.openBy !== 'app') {
     notificationTried = true
     if (!(await openPayNotification(deps, req.serial, spec))) {
       await deps.launchApp(req.serial, spec.deepLink)
@@ -531,6 +565,8 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
       : null
   let cardReady = false
   let cardTaps = 0
+  // 카드를 지정하지 않은 결제는 앱에 선택된 카드로 나간다 — 어떤 카드였는지 진행 로그에 한 번 남긴다
+  let cardNoted = false
 
   for (let i = 0; i < MAX_PAY_STEPS && state !== 'done'; i++) {
     screen = await deps.phones.screen(req.serial)
@@ -573,16 +609,30 @@ export async function runPayApproval(deps: PayRunDeps, req: PayRequest): Promise
     // 카드 지정: 결제하기를 누르기 전에 선택된 카드를 맞춘다
     if (cardPattern && !cardReady && state === 'app_steps') {
       const step = cardStep(screen, spec, cardPattern)
-      if (step.kind === 'ready') cardReady = true
-      else if (step.kind === 'missing') return fail('card-not-found', screen)
+      if (step.kind === 'ready') {
+        cardReady = true
+        deps.onStep(tr('phone.payCardReady', { card: step.card }), true)
+      } else if (step.kind === 'missing') return fail('card-not-found', screen)
       else if (step.kind === 'tap' && cardTaps < MAX_CARD_TAPS) {
         cardTaps += 1
         idlePolls = 0
         lastTapped = null
+        deps.onStep(tr('phone.payCardTap', { label: step.label }), true)
         await deps.phones.tap(req.serial, step.x, step.y)
         await sleep(PAY_POLL_MS)
         continue
       } else if (step.kind === 'tap') return fail('card-not-found', screen)
+    } else if (
+      !cardPattern &&
+      !cardNoted &&
+      state === 'app_steps' &&
+      next.tapElementId !== undefined
+    ) {
+      const selected = selectedCardOf(screen, spec)
+      if (selected !== '') {
+        cardNoted = true
+        deps.onStep(tr('phone.payCardUnspecified', { card: selected }), true)
+      }
     }
 
     // 같은 요소를 두 번 연속 누르지 않는다(무한 탭 방지)

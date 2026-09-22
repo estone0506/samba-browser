@@ -38,7 +38,8 @@ export const phoneMessages = defineMessages({
     'phone.gateVaultLocked': '키마스터 잠김',
     'phone.gateNoAccount': '이 사이트의 계정을 특정할 수 없음',
     'phone.gateNoPhone': '연결된 폰 없음',
-    'phone.gateAssignedOffline': '담당 폰({name})이 연결되어 있지 않음 — 폰의 무선 디버깅·와이파이를 확인',
+    'phone.gateAssignedOffline':
+      '담당 폰({name})이 연결되어 있지 않음 — 폰의 무선 디버깅·와이파이를 확인',
     'phone.payConfirmDeclined': '결제 확인 거부',
     'phone.payFailedStep': '결제 실패: {reason}',
     'phone.payFailedNotice': '결제를 끝내지 못했습니다({reason}). 폰에서 직접 확인해 주세요.',
@@ -46,6 +47,11 @@ export const phoneMessages = defineMessages({
     'phone.payDoneByUser': '결제 완료(사용자 확인)',
     'phone.payDone': '결제 완료',
     'phone.payNotificationOpened': '폰 알림창에서 결제 요청 알림을 열었습니다',
+    'phone.payCardReady': '카드 확인: {card}',
+    'phone.payCardTap': '카드 맞추기: [{label}] 누름',
+    'phone.payCardUnspecified': '카드 미지정 — 앱에 선택된 카드로 결제: {card}',
+    'phone.payCardRequired':
+      '카드 미지정 거부: 지시문에 {card}가 있는데 결제 도구에 card 를 넘기지 않음',
     'phone.payPasswordEntered': '결제 비밀번호 입력({digits}자리)',
     'phone.arsNotice': '전화 인증 수신 감지: 폰 화면을 확인하세요'
   },
@@ -91,6 +97,12 @@ export const phoneMessages = defineMessages({
     'phone.payDoneByUser': 'Payment complete (confirmed by user)',
     'phone.payDone': 'Payment complete',
     'phone.payNotificationOpened': 'Opened the payment request from the phone’s notifications',
+    'phone.payCardReady': 'Card confirmed: {card}',
+    'phone.payCardTap': 'Matching card: tapped [{label}]',
+    'phone.payCardUnspecified':
+      'No card specified — paying with the card selected in the app: {card}',
+    'phone.payCardRequired':
+      'Refused: the instruction names {card} but the payment tool was called without card',
     'phone.payPasswordEntered': 'Payment password entered ({digits} digits)',
     'phone.arsNotice': 'Incoming verification call detected: check the phone screen'
   }

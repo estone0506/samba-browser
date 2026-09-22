@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowUp, X } from 'lucide-react'
+import { ArrowUp, Square, X } from 'lucide-react'
 import { useChatStore } from '@renderer/stores/chatStore'
 import { imageFilesOf, readAgentImage } from '@renderer/lib/paste-image'
 import {
@@ -18,7 +18,7 @@ import { ModelEffortMenu } from './ModelEffortMenu'
 
 export function ChatInput(): React.JSX.Element {
   const { t } = useTranslation()
-  const { send, status } = useChatStore()
+  const { send, status, stop } = useChatStore()
   const [text, setText] = useState('')
   // 클립보드에서 붙여 넣은 이미지. 보내면 비운다
   const [images, setImages] = useState<AgentImage[]>([])
@@ -103,12 +103,7 @@ export function ChatInput(): React.JSX.Element {
             if (e.nativeEvent.isComposing) return
             if (e.key === 'Enter') return submit()
             if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
-            const step = stepHistory(
-              history,
-              cursor,
-              e.key === 'ArrowUp' ? 'older' : 'newer',
-              text
-            )
+            const step = stepHistory(history, cursor, e.key === 'ArrowUp' ? 'older' : 'newer', text)
             if (!step) return
             e.preventDefault()
             setCursor(step.cursor)
@@ -118,13 +113,24 @@ export function ChatInput(): React.JSX.Element {
           disabled={status === 'running'}
           className="flex-1 bg-transparent outline-none"
         />
-        <button
-          onClick={submit}
-          disabled={status === 'running'}
-          className="flex h-6.5 w-6.5 items-center justify-center rounded-lg bg-[var(--text)] text-white disabled:opacity-40"
-        >
-          <ArrowUp className="h-3.5 w-3.5" />
-        </button>
+        {status === 'running' ? (
+          // 실행 중에는 보내기 자리에 중단 버튼 — 위쪽 진행 바가 안 보여도 여기서 멈출 수 있다
+          <button
+            onClick={() => void stop()}
+            aria-label={t('chat.stop')}
+            title={t('chat.stop')}
+            className="flex h-6.5 w-6.5 items-center justify-center rounded-lg bg-[var(--text)] text-white"
+          >
+            <Square className="h-3 w-3 fill-current" />
+          </button>
+        ) : (
+          <button
+            onClick={submit}
+            className="flex h-6.5 w-6.5 items-center justify-center rounded-lg bg-[var(--text)] text-white disabled:opacity-40"
+          >
+            <ArrowUp className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
       {/* 권한 모드 옆에 모델 · 추론 강도 선택(Aside 하단 줄과 같은 자리) */}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
