@@ -47,10 +47,14 @@ def lookup_order(bridge: BridgeClient, order_no: str, options: Mapping[str, str]
     if missing:
         raise ValueError(f'order lookup incomplete: {", ".join(missing)}')
 
+    qty = int(values['qty'])  # type: ignore[arg-type]
+    if qty < 1:
+        raise ValueError(f'{order_no} qty 는 1 이상이어야 한다 (받은 값: {qty})')
+
     return OrderRef(
         order_no=order_no,
         source=str(values['source']),
         seller=str(values['seller']),
         sku=str(values['sku']),
-        qty=int(values['qty']),  # type: ignore[arg-type]
+        qty=qty,
     )

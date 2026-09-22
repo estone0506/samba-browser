@@ -4,7 +4,9 @@ import json
 import httpx
 import pytest
 import respx
+from pydantic import ValidationError
 
+from samba_agent.agents.contracts import OrderRef
 from samba_agent.bridge.client import BridgeClient, BridgeError
 from samba_agent.failures import FailReason
 from samba_agent.queue.orders import lookup_order
@@ -54,6 +56,20 @@ def test_권한_부족은_BridgeError_로_전파된다():
     with pytest.raises(BridgeError) as e:
         lookup_order(client(), '1001', {})
     assert e.value.reason is FailReason.PERMISSION_DENIED
+
+
+def test_OrderRef_는_qty_0_을_거부한다():
+    with pytest.raises(ValidationError):
+        OrderRef(order_no='1001', source='무신사', seller='포이즌', sku='SKU1', qty=0)
+
+
+@respx.mock
+def test_qty_가_1_미만이면_실패한다():
+    respx.post(f'{URL}/tool/run_script').mock(
+        return_value=found({'source': '무신사', 'seller': '포이즌', 'sku': 'SKU1', 'qty': 0})
+    )
+    with pytest.raises(ValueError, match='qty'):
+        lookup_order(client(), '1001', {})
 
 
 @respx.mock

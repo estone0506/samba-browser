@@ -1,13 +1,19 @@
 """`DecideFn`(프롬프트 → pydantic 모델) 을 claude-agent-sdk 로 구현한다.
 
 `agents/base.py` 의 `DecideFn = Callable[[str, type[BaseModel]], BaseModel]` 과 모양을 맞춘다.
-도구는 쓰지 않는다(`allowed_tools=[]`) — 판단은 구조화 출력만 하면 된다.
+도구는 쓰지 않는다 — `allowed_tools=[]` 는 빈 리스트를 그냥 무시하고(SDK 는 이를
+"자동 승인 목록 없음" 으로만 읽는다), `allowed_tools` 자체가 승인 목록일 뿐 도구를
+막는 옵션이 아니다. 도구를 아예 끄려면 `tools=[]`(CLI 로는 `--tools ""`) 를 써야 한다.
+헤드리스 실행이 권한 프롬프트에 멎지 않도록 `permission_mode='bypassPermissions'` 도
+같이 준다 — 도구가 하나도 없어 실제로 승인할 호출은 없지만, CLI 가 다른 사유로
+프롬프트를 띄워 멎는 상황 자체를 막는다.
 Claude 구독 로그인(로컬 Claude Code 인증)을 그대로 쓴다 — API 키는 쓰지 않는다.
 
 비밀·개인정보 보호를 위해 프롬프트와 응답 원문은 어디에도 로그로 남기지 않는다.
 """
 
 import asyncio
+import concurrent.futures
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -34,9 +40,27 @@ def make_decide(
     qf = query_fn or _default_query
 
     def decide(prompt: str, schema: type[BaseModel]) -> BaseModel:
-        return asyncio.run(_ask(qf, prompt, schema, model, max_turns))
+        return _run(_ask(qf, prompt, schema, model, max_turns))
 
     return decide
+
+
+def _run(coro: Any) -> BaseModel:
+    """코루틴을 돌려 결과를 받는다.
+
+    이미 실행 중인 이벤트 루프 안에서는 ``asyncio.run`` 이 바로 죽는다
+    (``RuntimeError: asyncio.run() cannot be called from a running event loop``).
+    그런 경우엔 별도 스레드를 하나 띄워 그 안에서 새 루프로 돌린다.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # 실행 중인 루프가 없다 — 평소대로 돌린다
+        return asyncio.run(coro)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, coro)
+        return future.result()
 
 
 async def _ask(
@@ -48,7 +72,8 @@ async def _ask(
 ) -> BaseModel:
     """한 번 물어서 스키마에 맞는 모델을 돌려준다. 실패는 전부 ValueError 로 바꾼다."""
     options = ClaudeAgentOptions(
-        allowed_tools=[],
+        tools=[],  # 도구 전체 비활성화(--tools ""). allowed_tools=[] 는 도구를 막지 못한다
+        permission_mode='bypassPermissions',  # 헤드리스에서 권한 프롬프트로 멎지 않게
         system_prompt=(
             f'JSON 만 출력하라. 다른 말은 붙이지 마라. 스키마: {schema.model_json_schema()}'
         ),
@@ -70,7 +95,12 @@ async def _ask(
     try:
         return schema.model_validate_json(raw)
     except ValidationError as e:
-        raise ValueError(f'응답이 스키마와 맞지 않다: {e}') from e
+        # 응답 원문(e 의 input_value)은 개인정보를 담을 수 있어 메시지에 넣지 않는다 —
+        # 오류 개수와 필드 경로만 남긴다
+        paths = ', '.join('.'.join(str(p) for p in err['loc']) for err in e.errors())
+        raise ValueError(
+            f'응답이 스키마와 맞지 않다: 오류 {e.error_count()}건, 필드 [{paths}]'
+        ) from None
 
 
 def _extract_first_json_object(text: str) -> str | None:

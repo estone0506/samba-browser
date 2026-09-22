@@ -18,7 +18,7 @@ class OrderRef(BaseModel):
     source: str  # 소싱처: 무신사 · 29CM · ABC마트 · 롯데온
     seller: str  # 판매처: 포이즌 등
     sku: str
-    qty: int = 1
+    qty: int = Field(default=1, gt=0)  # 0 이하 수량은 애초에 만들 수 없다
 
 
 class Evidence(BaseModel):
