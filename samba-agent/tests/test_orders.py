@@ -91,3 +91,40 @@ def test_결과에_개인정보가_있어도_OrderRef_에는_없다():
     dumped = ref.model_dump()
     assert set(dumped) == {'order_no', 'source', 'seller', 'sku', 'qty'}
     assert '홍길동' not in str(ref)
+
+
+def test_스크립트가_별칭_키로_돌려줘도_OrderRef_를_만든다():
+    """실기: samba_find_order 가 sourcingPlatform·sellerAccount·option 키로 돌려줬다."""
+    import json
+
+    import httpx
+
+    from samba_agent.bridge.client import BridgeClient
+    from samba_agent.queue.orders import lookup_order
+
+    body = {
+        'found': True,
+        'productOrderNo': '20260922BBAE44',
+        'market': 'ABCmart',
+        'sellerAccount': '신세계몰(seller01)',
+        'qty': 1,
+        'productName': '나이키 코르테즈',
+        'option': '265',
+        'sourcingPlatform': 'ABC마트',
+        'sourcingAccount': 'ABCmart · 사무(mjkim88)',
+    }
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={'ok': True, 'result': json.dumps(body), 'steps': []})
+
+    client = BridgeClient(
+        'http://127.0.0.1:1',
+        'x' * 64,
+        allowed=['run_script'],
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    ref = lookup_order(client, '20260922BBAE44', {})
+    assert ref.source == 'ABC마트'
+    assert ref.seller == '신세계몰(seller01)'
+    assert ref.sku == '나이키 코르테즈 [265]'
+    assert ref.qty == 1
