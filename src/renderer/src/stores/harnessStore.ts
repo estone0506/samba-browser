@@ -31,6 +31,11 @@ interface HarnessState {
 }
 
 let timer: ReturnType<typeof setInterval> | null = null
+// 폴링이 겹치지 않게(하네스가 느려 5초 안에 응답이 안 오면 다음 틱을 건너뛴다)와
+// 응답이 보낸 순서와 반대로 돌아와도(느린 요청이 나중에 끝나는 경우) 낡은 값으로
+// 덮어쓰지 않게 하는 두 가지 장치(리뷰 지적 — Minor 6)
+let polling = false
+let pollSeq = 0
 
 export const useHarnessStore = create<HarnessState>((set, get) => ({
   graph: null,
@@ -43,18 +48,25 @@ export const useHarnessStore = create<HarnessState>((set, get) => ({
 
   refresh: async () => {
     const api = window.samba.harness
-    const [graph, jobs, releases] = await Promise.all([api.graph(), api.jobs(), api.releases()])
-    // 세 응답 중 아무거나 하나라도 실패하면 그 사유를 연결 상태로 보인다(원인은 대개 하나다)
-    const failed = [graph, jobs, releases].find((r) => !r.ok || r.data.status !== 'ok')
-    if (failed !== undefined) {
-      const reason = failed.ok ? failed.data : { status: 'offline' as HarnessStatus, error: 'ipc' }
-      set({ status: reason.status, error: reason.error })
-    } else {
-      set({ status: 'ok', error: '' })
+    try {
+      const [graph, jobs, releases] = await Promise.all([api.graph(), api.jobs(), api.releases()])
+      // 세 응답 중 아무거나 하나라도 실패하면 그 사유를 연결 상태로 보인다(원인은 대개 하나다)
+      const failed = [graph, jobs, releases].find((r) => !r.ok || r.data.status !== 'ok')
+      if (failed !== undefined) {
+        const reason = failed.ok
+          ? failed.data
+          : { status: 'offline' as HarnessStatus, error: 'ipc' }
+        set({ status: reason.status, error: reason.error })
+      } else {
+        set({ status: 'ok', error: '' })
+      }
+      if (graph.ok && graph.data.data !== null) set({ graph: graph.data.data })
+      if (jobs.ok && jobs.data.data !== null) set({ jobs: jobs.data.data.jobs })
+      if (releases.ok && releases.data.data !== null) set({ releases: releases.data.data })
+    } catch {
+      // IPC 채널 자체가 던지는 경우(프리로드 오류 등) — 여기서 삼켜 화면이 죽지 않게 한다
+      set({ status: 'offline', error: 'ipc' })
     }
-    if (graph.ok && graph.data.data !== null) set({ graph: graph.data.data })
-    if (jobs.ok && jobs.data.data !== null) set({ jobs: jobs.data.data.jobs })
-    if (releases.ok && releases.data.data !== null) set({ releases: releases.data.data })
   },
 
   start: () => {
@@ -62,20 +74,34 @@ export const useHarnessStore = create<HarnessState>((set, get) => ({
     if (timer === null) {
       // 등록부(그래프)는 자주 바뀌지 않는다 — 폴링은 작업·판정만 다시 읽는다
       timer = setInterval(() => {
+        // 이전 폴링이 5초 안에 안 끝났으면 겹쳐 쏘지 않고 이번 틱은 건너뛴다
+        if (polling) return
+        polling = true
+        const mySeq = ++pollSeq
         const api = window.samba.harness
-        void Promise.all([api.jobs(), api.releases()]).then(([jobs, releases]) => {
-          const failed = [jobs, releases].find((r) => !r.ok || r.data.status !== 'ok')
-          if (failed !== undefined) {
-            const reason = failed.ok
-              ? failed.data
-              : { status: 'offline' as HarnessStatus, error: 'ipc' }
-            set({ status: reason.status, error: reason.error })
-          } else {
-            set({ status: 'ok', error: '' })
-          }
-          if (jobs.ok && jobs.data.data !== null) set({ jobs: jobs.data.data.jobs })
-          if (releases.ok && releases.data.data !== null) set({ releases: releases.data.data })
-        })
+        Promise.all([api.jobs(), api.releases()])
+          .then(([jobs, releases]) => {
+            // 그사이 더 최근 폴링이 시작됐으면(이례적으로 응답이 역전되면) 낡은 결과는 버린다
+            if (mySeq !== pollSeq) return
+            const failed = [jobs, releases].find((r) => !r.ok || r.data.status !== 'ok')
+            if (failed !== undefined) {
+              const reason = failed.ok
+                ? failed.data
+                : { status: 'offline' as HarnessStatus, error: 'ipc' }
+              set({ status: reason.status, error: reason.error })
+            } else {
+              set({ status: 'ok', error: '' })
+            }
+            if (jobs.ok && jobs.data.data !== null) set({ jobs: jobs.data.data.jobs })
+            if (releases.ok && releases.data.data !== null) set({ releases: releases.data.data })
+          })
+          .catch(() => {
+            if (mySeq !== pollSeq) return
+            set({ status: 'offline', error: 'ipc' })
+          })
+          .finally(() => {
+            polling = false
+          })
       }, HARNESS_POLL_MS)
     }
     return () => {

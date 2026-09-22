@@ -106,4 +106,37 @@ describe('harnessStore', () => {
     expect(api.getRules).toHaveBeenCalledWith('buyer.musinsa')
     expect(r?.text).toBe('규칙')
   })
+
+  it('이전 폴링이 5초 안에 안 끝나면 다음 틱은 겹쳐 쏘지 않는다(리뷰 지적 — Minor 6)', async () => {
+    const stop = useHarnessStore.getState().start()
+    // 진입 시 refresh 한 번은 기본 mock 으로 바로 끝난다
+    await vi.advanceTimersByTimeAsync(0)
+    expect(api.jobs).toHaveBeenCalledTimes(1)
+
+    let resolveJobs: (v: unknown) => void = () => {}
+    api.jobs.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveJobs = resolve
+      })
+    )
+    // 첫 폴링 틱 — jobs 가 응답하지 않는다
+    await vi.advanceTimersByTimeAsync(HARNESS_POLL_MS)
+    expect(api.jobs).toHaveBeenCalledTimes(2)
+    // 아직 첫 폴링이 안 끝났으니 다음 틱은 건너뛴다(겹쳐 쏘지 않는다)
+    await vi.advanceTimersByTimeAsync(HARNESS_POLL_MS)
+    expect(api.jobs).toHaveBeenCalledTimes(2)
+
+    resolveJobs(ok({ jobs: [] }))
+    await vi.advanceTimersByTimeAsync(0)
+    // 밀린 폴링이 풀렸으니 다음 틱부터는 다시 부른다
+    await vi.advanceTimersByTimeAsync(HARNESS_POLL_MS)
+    expect(api.jobs).toHaveBeenCalledTimes(3)
+    stop()
+  })
+
+  it('IPC 가 던져도 refresh 가 죽지 않고 offline 으로 남는다', async () => {
+    api.graph.mockRejectedValueOnce(new Error('ipc broken'))
+    await useHarnessStore.getState().refresh()
+    expect(useHarnessStore.getState().status).toBe('offline')
+  })
 })

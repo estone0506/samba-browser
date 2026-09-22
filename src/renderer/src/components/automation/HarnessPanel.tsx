@@ -19,6 +19,9 @@ export function HarnessPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<HarnessAgent | null>(null)
+  // 저장 성공 알림에 쓸 새 버전(rules.saved 는 브리프 이후 죽은 키였다 — 실제로 연결한다.
+  // 리뷰 지적 — Minor 8). null 이면 안 보인다
+  const [savedVersion, setSavedVersion] = useState<string | null>(null)
   const graph = useHarnessStore((s) => s.graph)
   const jobs = useHarnessStore((s) => s.jobs)
   const releases = useHarnessStore((s) => s.releases)
@@ -33,6 +36,13 @@ export function HarnessPanel(): React.JSX.Element {
     if (!open) return
     return start()
   }, [open, start])
+
+  // 몇 초 뒤 스스로 사라진다 — 계속 떠 있을 이유가 없다
+  useEffect(() => {
+    if (savedVersion === null) return
+    const id = setTimeout(() => setSavedVersion(null), 4000)
+    return () => clearTimeout(id)
+  }, [savedVersion])
 
   return (
     <section className="rounded-2xl border border-[var(--line)] bg-white p-4">
@@ -55,6 +65,11 @@ export function HarnessPanel(): React.JSX.Element {
 
       {open && (
         <div className="mt-3 flex flex-col gap-3">
+          {savedVersion !== null && (
+            <p className="rounded-[9px] border border-[#15803d] px-2.5 py-2 text-[11.5px] text-[#15803d]">
+              {t('automation.harness.rules.saved', { version: savedVersion })}
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <p
               className={`min-w-0 flex-1 truncate text-[11.5px] ${
@@ -94,7 +109,12 @@ export function HarnessPanel(): React.JSX.Element {
         onOpenChange={(v) => {
           if (!v) setEditing(null)
         }}
-        onSave={(text) => putRules(editing?.name ?? '', text)}
+        onSave={async (text) => {
+          const ok = await putRules(editing?.name ?? '', text)
+          // putRules 가 성공하면 안에서 그래프를 다시 읽어 두므로, 그 새 버전을 그대로 보인다
+          if (ok) setSavedVersion(useHarnessStore.getState().graph?.version ?? '')
+          return ok
+        }}
       />
     </section>
   )

@@ -138,6 +138,7 @@
         "candidateNone": "아직 판정을 돌리지 않았어요. 하네스에서 ops.gate 를 실행하세요",
         "promote": "운영 배포 가능",
         "improve": "디버그·개선 필요",
+        "rollback": "롤백됨",
         "checks": "여섯 조건",
         "pass": "통과",
         "fail": "미달",
@@ -157,7 +158,9 @@
         "approveTitle": "사용자 승인은 앱에서 하지 않아요",
         "approveDesc": "슬랙에 `@삼바 승인 {{version}}` 을 쓰거나, 하네스에서 아래 명령을 실행하세요",
         "approveCopy": "명령 복사",
-        "approveCopied": "복사했어요"
+        "approveCopied": "복사했어요",
+        "approveCopyFailed": "복사하지 못했어요 — 직접 선택해 복사해 주세요",
+        "history": "지난 판정(최근 3건)"
       },
       "jobs": {
         "title": "작업",

@@ -16,8 +16,18 @@ function approveCommand(version: string): string {
 export function VerdictCard({ releases }: { releases: HarnessReleases }): React.JSX.Element {
   const { t } = useTranslation()
   const [showReport, setShowReport] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const report = releases.candidate ? parseGateReport(releases.candidate.report) : null
+
+  // 후보 버전이 바뀌면(새로 저장·판정) 이전 복사 상태가 남아 헷갈리지 않게 초기화한다(리뷰 지적 — Minor 5).
+  // 이펙트 대신 렌더 중 비교(React 가 권하는 "prop 이 바뀌면 상태 조정" 패턴)로 한다 —
+  // 이펙트 안에서 곧바로 setState 하면 리렌더가 한 번 더 겹친다(react-hooks/set-state-in-effect)
+  const candidateVersion = releases.candidate?.version ?? null
+  const [prevVersion, setPrevVersion] = useState(candidateVersion)
+  if (prevVersion !== candidateVersion) {
+    setPrevVersion(candidateVersion)
+    setCopyState('idle')
+  }
 
   return (
     <section className="rounded-[9px] border border-[var(--line)] bg-white p-3">
@@ -126,16 +136,18 @@ export function VerdictCard({ releases }: { releases: HarnessReleases }): React.
             </code>
             <SecondaryButton
               onClick={() => {
-                void navigator.clipboard.writeText(
-                  approveCommand(releases.candidate?.version ?? '')
-                )
-                setCopied(true)
+                navigator.clipboard
+                  .writeText(approveCommand(releases.candidate?.version ?? ''))
+                  .then(() => setCopyState('copied'))
+                  .catch(() => setCopyState('failed'))
               }}
             >
               {t(
-                copied
+                copyState === 'copied'
                   ? 'automation.harness.verdict.approveCopied'
-                  : 'automation.harness.verdict.approveCopy'
+                  : copyState === 'failed'
+                    ? 'automation.harness.verdict.approveCopyFailed'
+                    : 'automation.harness.verdict.approveCopy'
               )}
             </SecondaryButton>
           </div>
@@ -146,6 +158,28 @@ export function VerdictCard({ releases }: { releases: HarnessReleases }): React.
         <p className="mt-2 truncate text-[11px] text-[var(--text2)]">
           {t('automation.harness.verdict.reportPath', { path: releases.current.report_path })}
         </p>
+      )}
+
+      {releases.history.length > 0 && (
+        <div className="mt-2">
+          <p className="text-[11px] font-semibold text-[var(--text2)]">
+            {t('automation.harness.verdict.history')}
+          </p>
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {releases.history.slice(0, 3).map((r) => (
+              <li
+                key={r.version}
+                className="flex items-center justify-between gap-2 text-[11.5px] text-[var(--text)]"
+              >
+                <span className="min-w-0 truncate font-mono">{r.version}</span>
+                <StatusBadge
+                  label={t(`automation.harness.verdict.${r.verdict}`)}
+                  tone={r.verdict === 'promote' ? 'strong' : 'warn'}
+                />
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </section>
   )

@@ -138,6 +138,7 @@
         "candidateNone": "No verdict yet. Run ops.gate on the harness",
         "promote": "Ready for production",
         "improve": "Needs debugging",
+        "rollback": "Rolled back",
         "checks": "Six conditions",
         "pass": "Pass",
         "fail": "Fail",
@@ -157,7 +158,9 @@
         "approveTitle": "Approval does not happen in this app",
         "approveDesc": "Post `@samba approve {{version}}` in Slack, or run the command below on the harness",
         "approveCopy": "Copy command",
-        "approveCopied": "Copied"
+        "approveCopied": "Copied",
+        "approveCopyFailed": "Could not copy - please select and copy it yourself",
+        "history": "Past verdicts (last 3)"
       },
       "jobs": {
         "title": "Jobs",
