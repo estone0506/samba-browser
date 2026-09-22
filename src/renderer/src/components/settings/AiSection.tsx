@@ -84,8 +84,8 @@ export function AiSection(): React.JSX.Element {
         {status?.state === 'available' && (
           <p className="text-[11.5px] text-[var(--text2)]">{t('ai.availableHint')}</p>
         )}
-        {provider === 'claude_subscription' && status?.state === 'connected' && ai.usage && (
-          <UsageRows usage={ai.usage} />
+        {status?.state === 'connected' && ai.usage[provider] && (
+          <UsageRows usage={ai.usage[provider] as AiUsage} />
         )}
         {/* 계정이 여럿일 때: 지금 붙은 계정을 로그아웃하고 다른 계정으로 로그인한다 */}
         {(status?.state === 'connected' || status?.state === 'available') && (

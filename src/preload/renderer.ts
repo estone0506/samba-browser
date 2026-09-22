@@ -340,7 +340,8 @@ const api = {
     switchAccount: (provider: SubscriptionProviderId): Promise<IpcResult<{ opened: boolean }>> =>
       invoke(IPC.aiSwitchAccount, provider),
     // Claude 구독 사용량(비율·재설정 시각). 조회 실패는 null
-    usage: (): Promise<IpcResult<AiUsage | null>> => invoke(IPC.aiUsage),
+    usage: (provider?: SubscriptionProviderId): Promise<IpcResult<AiUsage | null>> =>
+      invoke(IPC.aiUsage, provider),
     setProvider: (
       id: AiProviderId
     ): Promise<

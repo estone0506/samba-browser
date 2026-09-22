@@ -29,6 +29,7 @@ import { ChatRepo } from '../chat/repo'
 import { PlaybookStore } from '../playbooks/store'
 import { parseAgentImages } from '../../shared/agent-image'
 import { fetchClaudeUsage } from '../ai/usage'
+import { fetchCodexUsage } from '../ai/usage-codex'
 import type { PlaybookInput } from '../../shared/playbook'
 import { ScheduleRunStore } from '../schedule/runs'
 import { PlaybookScheduler } from '../schedule/scheduler'
@@ -817,8 +818,10 @@ export function registerIpc(
     })
     return { opened: openLoginTerminal(raw) }
   })
-  // 사용량: Claude 구독 경로만. 조회가 안 되면 null(화면은 줄을 숨긴다)
-  handleFromRenderer(IPC.aiUsage, () => fetchClaudeUsage())
+  // 사용량: 구독 경로별(Claude · Codex). 조회가 안 되면 null(화면은 줄을 숨긴다)
+  handleFromRenderer(IPC.aiUsage, (raw: unknown) =>
+    raw === 'codex_subscription' ? fetchCodexUsage() : fetchClaudeUsage()
+  )
   handleFromRenderer(IPC.aiSetProvider, (raw: unknown) => {
     if (!isAiProviderId(raw)) throw new Error(tr('ipc.unknownAiProvider'))
     const before = settings.get()
