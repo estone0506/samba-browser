@@ -38,6 +38,8 @@ import {
 
 // 확인 요청 응답 대기 상한 30분
 const CONFIRM_TIMEOUT_MS = 30 * 60 * 1000
+// 답 없이 멈춘 실행을 자동으로 이어갈 때 쓰는 지시문 머리. 이걸로 시작하면 사용자 지시가 아니다
+const AUTO_CONTINUE_PROMPT = '직전 작업을 그 자리에서 이어서'
 
 /**
  * 작업 1건이 남긴 대화 기록. 완료·실패·중단 어느 쪽으로 끝나도 한 번 전달된다.
@@ -93,6 +95,8 @@ export class AgentRunner {
   private transcript: TranscriptSink | null = null
   // 사용자 지시 하나당 자동 이어가기 허용 횟수(무한 반복 방지)
   private autoContinueLeft = 1
+  // 지금 도는 실행이 사용자 지시가 아닌 후속 턴(자동 이어가기·자동 학습)인지. 사용자 지시가 들어오면 양보한다
+  private followUpRunning = false
   // 폰 도구 배선. 없으면 폰 도구를 등록하지 않는다(3단계 전 실행·테스트)
   private phones: PhoneBridge | null = null
   // 자동화 플레이북 목록 공급자. 없으면 시스템 프롬프트에 아무것도 덧붙이지 않는다
@@ -363,7 +367,10 @@ export class AgentRunner {
     // 이미 실행 중이면 세대 가드 없이 status 를 emit 하면 진행 중인 실행의 UI 를 덮어쓸 수 있다.
     // 핸들러가 throw 를 { ok: false, error } 로 ack 하므로 에러만 던진다.
     if (this.abort) {
-      throw new Error('이미 실행 중')
+      // 자동 이어가기·자동 학습 턴이 도는 중에 들어온 사용자 지시는 그 턴을 끊고 우선한다.
+      // (실기: 결제 실패 뒤 학습 턴이 도는 사이 친 "연결됐어 다시해"가 조용히 버려졌다)
+      if (this.followUpRunning) this.stop()
+      else throw new Error('이미 실행 중')
     }
     // 이전 작업의 잔여 확인 요청 정리
     this.clearPending()
@@ -385,7 +392,9 @@ export class AgentRunner {
     // 이 실행이 남길 대화 기록. 화면으로 나가는 이벤트와 같은 값만 모은다(라벨·본문)
     const entry: TranscriptEntry = { prompt, text: '', steps: [] }
     // 자동 이어가기 문장이 아니면 사용자의 새 지시 — 허용 횟수를 되돌린다
-    if (!prompt.startsWith('직전 작업을 그 자리에서 이어서')) this.autoContinueLeft = 1
+    const autoContinuing = prompt.startsWith(AUTO_CONTINUE_PROMPT)
+    if (!autoContinuing) this.autoContinueLeft = 1
+    this.followUpRunning = autoContinuing || prompt.startsWith(LEARN_PROMPT_PREFIX)
     // 이 실행의 행동 도구 호출 기록. 성공으로 끝나면 사이트 기억이 여기서 경로를 뽑는다
     const calls: AgentToolCall[] = []
     // 이 실행에서 돌린 run_js 코드 전문. 실행이 끝나면 자동 학습 턴이 이것으로 재생용 스크립트를 만든다
@@ -649,7 +658,7 @@ ${CODEX_NO_IMAGE_NOTE}`
           if (silentStop) {
             this.autoContinueLeft -= 1
             emit({ type: 'text', text: '(답 없이 멈춰 자동으로 이어갑니다)' })
-            followUp = '직전 작업을 그 자리에서 이어서 끝까지 진행하고, 끝나면 done 으로 보고해.'
+            followUp = `${AUTO_CONTINUE_PROMPT} 끝까지 진행하고, 끝나면 done 으로 보고해.`
           } else if (scripts && shouldLearn(prompt, runJsLog)) {
             // 성공이든 실패든, 통한 구간까지는 다음에 재생할 수 있게 스스로 저장하게 한다
             emit({ type: 'text', text: '(이번에 통한 절차를 다음부터 한 번에 재생하도록 저장합니다)' })
