@@ -1,0 +1,71 @@
+# 에이전트 등록부(스펙 §4.3). 새 소싱처 = 여기 1행 + rules/ 파일 1개 + 저장 스크립트.
+# tools 는 브릿지 허용 목록이다 — 감독자가 그대로 에이전트에 넘기고, 목록 밖 호출은 거절된다.
+agents:
+  - name: buyer.musinsa
+    kind: buyer
+    match: { source: 무신사 }
+    tools: [get_page, find_elements, ocr, navigate, click, type, select, scroll,
+            dismiss_overlay, run_js, run_script, save_script, wait, new_tab, list_tabs,
+            switch_tab, close_tab, list_accounts, login, progress]
+    rules: rules/buyer_musinsa.md
+    prompts: samba/buyer-musinsa
+    dataset: ds.buyer.musinsa
+    retry: 1
+  - name: buyer.29cm
+    kind: buyer
+    match: { source: 29CM }
+    tools: [get_page, find_elements, ocr, navigate, click, type, select, scroll,
+            dismiss_overlay, run_js, run_script, save_script, wait, new_tab, list_tabs,
+            switch_tab, close_tab, list_accounts, login, progress]
+    rules: rules/buyer_29cm.md
+    prompts: samba/buyer-29cm
+    dataset: ds.buyer.29cm
+    retry: 1
+  - name: buyer.abc
+    kind: buyer
+    match: { source: ABC마트 }
+    tools: [get_page, find_elements, ocr, navigate, click, type, select, scroll,
+            dismiss_overlay, run_js, run_script, save_script, wait, new_tab, list_tabs,
+            switch_tab, close_tab, list_accounts, login, progress]
+    rules: rules/buyer_abc.md
+    prompts: samba/buyer-abc
+    dataset: ds.buyer.abc
+    retry: 1
+  - name: buyer.lotteon
+    kind: buyer
+    match: { source: 롯데온 }
+    tools: [get_page, find_elements, ocr, navigate, click, type, select, scroll,
+            dismiss_overlay, run_js, run_script, save_script, wait, new_tab, list_tabs,
+            switch_tab, close_tab, list_accounts, login, progress]
+    rules: rules/buyer_lotteon.md
+    prompts: samba/buyer-lotteon
+    dataset: ds.buyer.lotteon
+    retry: 1
+  # 결제는 재시도가 없다 — 재결제 위험(스펙 §4.3-4)
+  - name: payer
+    kind: payer
+    match: {}
+    tools: [get_page, ocr, run_js, run_script, click, fill_secret, phone_approve_payment,
+            phone_screenshot, phone_get_screen, progress]
+    rules: rules/payer.md
+    prompts: samba/payer
+    dataset: ds.payer
+    retry: 0
+  - name: recorder
+    kind: recorder
+    match: {}
+    tools: [get_page, find_elements, navigate, click, type, select, run_js, run_script,
+            switch_tab, new_tab, progress]
+    rules: rules/recorder.md
+    prompts: samba/recorder
+    dataset: ds.recorder
+    retry: 1
+  - name: verifier
+    kind: verifier
+    match: {}
+    tools: [get_page, find_elements, ocr, navigate, run_js, run_script, switch_tab,
+            list_tabs, progress]
+    rules: rules/verifier.md
+    prompts: samba/verifier
+    dataset: ds.verifier
+    retry: 1
