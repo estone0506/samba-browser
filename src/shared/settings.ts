@@ -3,12 +3,7 @@ import { AI_PROVIDERS, type AiConnections, type AiProviderId, type TaskModels } 
 import { DEFAULT_DANGER_WORDS, mergeDangerWords } from './danger'
 import { EXTENSION_SOURCES, type ExtensionSource } from './extensions'
 import { defaultMouseGestures, GESTURE_ACTIONS } from './gestures'
-import {
-  DEFAULT_PAYMENT_LIMIT_KRW,
-  FIRST_RUN_LIMIT_KRW,
-  type ScreenFps,
-  type ScreenSize
-} from './phone'
+import { type ScreenFps, type ScreenSize } from './phone'
 import { DEFAULT_TRANSLATE_LANG, TRANSLATE_LANGS, type TranslateLang } from './translate'
 import {
   CAPTURE_FORMATS,
@@ -174,11 +169,6 @@ export const DEFAULT_SETTINGS = {
   // 사용자가 목록에서 지운 폰의 시리얼. 같은 와이파이에 있으면 5초 검색이 다시 찾아오므로 여기 적어 건너뛴다.
   // 주소 연결·페어링을 직접 하면 비운다. 이 PC 의 사정이라 SYNCED_SETTING_KEYS 에 넣지 않는다
   phoneIgnoredSerials: [] as string[],
-  // 결제 상한(원). 초과하면 권한 모드와 무관하게 사람 확인을 받는다
-  paymentLimitKrw: DEFAULT_PAYMENT_LIMIT_KRW,
-  // 새 (사이트 × 결제수단) 조합의 첫 자동 결제에만 거는 소액 상한. 0 이면 따로 두지 않고 결제 상한만 본다.
-  // 결제 확인 카드는 이 값과 무관하게 매번 뜬다
-  firstPaymentLimitKrw: FIRST_RUN_LIMIT_KRW,
   // 결제 비밀번호 키패드 배치를 외부 AI(Visual)에게 물어볼지.
   // 켜면 키패드 화면 원본이 AI 제공자로 전송되므로 기본은 꺼짐이고,
   // 꺼져 있으면 UI 트리로 못 읽은 키패드는 사람에게 넘긴다
@@ -363,8 +353,6 @@ export const settingsSchema = z.object({
     .catch(DEFAULT_SETTINGS.phoneScreenFps),
   phoneAutoReconnect: z.boolean().catch(DEFAULT_SETTINGS.phoneAutoReconnect),
   phoneIgnoredSerials: z.array(z.string().max(120)).max(50).catch([]),
-  paymentLimitKrw: z.number().int().min(0).catch(DEFAULT_SETTINGS.paymentLimitKrw),
-  firstPaymentLimitKrw: z.number().int().min(0).catch(DEFAULT_SETTINGS.firstPaymentLimitKrw),
   phoneKeypadVisual: z.boolean().catch(DEFAULT_SETTINGS.phoneKeypadVisual),
   // === 폰 연동 끝 =============================================================
   // === 마우스 제스처 ==========================================================

@@ -38,8 +38,6 @@ export function PhoneSettingsPanel({ settings, update }: SectionProps): React.JS
   const { list, load, subscribe, setLabel } = usePhoneStore()
   const [adb, setAdb] = useState(settings.adbPath)
   const [scrcpy, setScrcpy] = useState(settings.scrcpyPath)
-  const [limit, setLimit] = useState(String(settings.paymentLimitKrw))
-  const [firstLimit, setFirstLimit] = useState(String(settings.firstPaymentLimitKrw))
   const [detecting, setDetecting] = useState(false)
   const [detectNote, setDetectNote] = useState<string | null>(null)
 
@@ -61,30 +59,6 @@ export function PhoneSettingsPanel({ settings, update }: SectionProps): React.JS
     setScrcpy(r.data.scrcpy)
     update({ adbPath: r.data.adb, scrcpyPath: r.data.scrcpy })
     setDetectNote(r.data.adb ? null : t('phone.settings.detectFailed'))
-  }
-
-  // 결제 상한은 숫자만 받고, 빈 값·음수는 저장하지 않는다
-  const commitLimit = (): void => {
-    const digits = limit.replace(/[^\d]/g, '')
-    if (digits === '') {
-      setLimit(String(settings.paymentLimitKrw))
-      return
-    }
-    const n = Number(digits)
-    setLimit(String(n))
-    update({ paymentLimitKrw: n })
-  }
-
-  // 첫 결제 상한은 0(끔)도 받는다. 숫자가 아니면 되돌린다
-  const commitFirstLimit = (): void => {
-    const digits = firstLimit.replace(/[^\d]/g, '')
-    if (digits === '') {
-      setFirstLimit(String(settings.firstPaymentLimitKrw))
-      return
-    }
-    const n = Number(digits)
-    setFirstLimit(String(n))
-    update({ firstPaymentLimitKrw: n })
   }
 
   return (
@@ -150,21 +124,6 @@ export function PhoneSettingsPanel({ settings, update }: SectionProps): React.JS
             onCheckedChange={(v) => update({ phoneAutoReconnect: v })}
           />
         </SettingsToggleRow>
-      </SettingsSection>
-
-      <SettingsSection
-        title={t('phone.settings.paymentTitle')}
-        description={t('phone.settings.paymentDesc')}
-      >
-        <SettingsRow label={t('phone.settings.paymentLimit')}>
-          <TextInput value={limit} onChange={setLimit} onBlur={commitLimit} />
-        </SettingsRow>
-        <SettingsRow
-          label={t('phone.settings.firstPaymentLimit')}
-          description={t('phone.settings.firstPaymentLimitDesc')}
-        >
-          <TextInput value={firstLimit} onChange={setFirstLimit} onBlur={commitFirstLimit} />
-        </SettingsRow>
       </SettingsSection>
     </>
   )

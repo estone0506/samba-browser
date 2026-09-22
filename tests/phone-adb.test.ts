@@ -110,15 +110,12 @@ describe('shellArgs', () => {
 })
 
 describe('폰 설정', () => {
-  it('기본값에 adb/scrcpy 경로와 화면 품질·결제 상한이 있다', () => {
+  it('기본값에 adb/scrcpy 경로와 화면 품질이 있다', () => {
     expect(DEFAULT_SETTINGS.adbPath).toBe('')
     expect(DEFAULT_SETTINGS.scrcpyPath).toBe('')
     expect(DEFAULT_SETTINGS.phoneScreenMaxSize).toBe(720)
     expect(DEFAULT_SETTINGS.phoneScreenFps).toBe(15)
     expect(DEFAULT_SETTINGS.phoneAutoReconnect).toBe(true)
-    // 결제 상한은 기본이 없음(0)이다 — 사용자가 적었을 때만 건다
-    expect(DEFAULT_SETTINGS.paymentLimitKrw).toBe(0)
-    expect(DEFAULT_SETTINGS.firstPaymentLimitKrw).toBe(0)
     // 결제 키패드 화면을 외부 AI 로 보내는 경로는 기본으로 꿫 둔다
     expect(DEFAULT_SETTINGS.phoneKeypadVisual).toBe(false)
   })
@@ -128,13 +125,11 @@ describe('폰 설정', () => {
       ...DEFAULT_SETTINGS,
       adbPath: 42,
       phoneScreenMaxSize: 999,
-      phoneScreenFps: 7,
-      paymentLimitKrw: -1
+      phoneScreenFps: 7
     })
     expect(s.adbPath).toBe('')
     expect(s.phoneScreenMaxSize).toBe(720)
     expect(s.phoneScreenFps).toBe(15)
-    expect(s.paymentLimitKrw).toBe(0)
   })
 
   it('실행 파일 경로만 기기별 값이고, 나머지 폰 설정은 계정에 따라온다', () => {
@@ -146,7 +141,6 @@ describe('폰 설정', () => {
       'phoneScreenMaxSize',
       'phoneScreenFps',
       'phoneAutoReconnect',
-      'paymentLimitKrw',
       'phoneKeypadVisual'
     ]) {
       expect(synced).toContain(key)

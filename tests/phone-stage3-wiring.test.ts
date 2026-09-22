@@ -428,7 +428,10 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
   /** 런처 → 토스 결제 확인 → 보안 키패드 → 완료 */
   function scriptPayScreens(adb: ScriptedAdb): void {
     adb.pushScreen('com.sec.android.app.launcher', hierarchy([button('홈', 0)]))
-    adb.pushScreen('viva.republica.toss', hierarchy([button('결제수단 변경 ・ 설정', 60), button('결제하기', 200)]))
+    adb.pushScreen(
+      'viva.republica.toss',
+      hierarchy([button('결제수단 변경 ・ 설정', 60), button('결제하기', 200)])
+    )
     adb.pushScreen('viva.republica.toss', keypadScreen())
     adb.pushScreen('viva.republica.toss', hierarchy([button('결제 완료', 300)]))
   }
@@ -499,37 +502,6 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     expect(seen).toEqual([true])
     // 끝나면 화면 전송이 되살아난다
     expect(h.gate.isSecret(SERIAL)).toBe(false)
-  })
-
-  it('첫 결제 상한을 적어 둔 경우: 새 (사이트 × 결제수단) 조합의 첫 결제는 그 값까지만, 성공하면 이력이 남는다', async () => {
-    const h = harness(db)
-    const base = h.deps.settings
-    h.deps.settings = () => ({ ...base(), firstPaymentLimitKrw: 10_000 })
-    scriptPayScreens(h.adb)
-    h.paySuccess.value = true
-    const bridge = createPhoneAgentBridge(h.deps)
-
-    const tooLarge = await bridge.approvePayment(h.ctx, {
-      provider: 'toss',
-      amountKrw: 12_000,
-      merchant: '삼바상회',
-      methodLabel: '토스페이'
-    })
-    expect(tooLarge).toEqual({ ok: false, reason: 'first-run-too-large' })
-    // 막힌 결제는 확인 카드도 띄우지 않는다
-    expect(h.confirms).toHaveLength(0)
-    expect(h.repo.hasPayApproval(HOST, '토스페이')).toBe(false)
-
-    const small = await bridge.approvePayment(h.ctx, {
-      provider: 'toss',
-      amountKrw: 9000,
-      merchant: '삼바상회',
-      methodLabel: '토스페이'
-    })
-    expect(small.ok).toBe(true)
-    expect(h.repo.hasPayApproval(HOST, '토스페이')).toBe(true)
-    // 다른 결제수단은 여전히 첫 결제다
-    expect(h.repo.hasPayApproval(HOST, '페이코')).toBe(false)
   })
 
   it('사용자가 확인 카드를 거부하면 앱을 열지도 않는다', async () => {

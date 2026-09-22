@@ -1076,13 +1076,8 @@
       "fps": "Frames per second",
       "autoReconnect": "Auto reconnect",
       "autoReconnectDesc": "Try to reattach once when the connection drops.",
-      "paymentTitle": "Payments",
-      "paymentDesc": "Set these only if you want an amount cap on phone-approved payments. Both are off (0) by default.",
-      "paymentLimit": "Payment limit (KRW, 0 = none)",
       "settingsOpen": "Phone settings",
-      "settingsClose": "Close phone settings",
-      "firstPaymentLimit": "First-payment limit (KRW, 0 = none)",
-      "firstPaymentLimitDesc": "A cap applied only to the first automatic payment for a new site and payment method. Off (0) by default."
+      "settingsClose": "Close phone settings"
     },
     "assign": {
       "label": "Assigned phone",

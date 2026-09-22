@@ -1076,13 +1076,8 @@
       "fps": "초당 프레임",
       "autoReconnect": "자동 재연결",
       "autoReconnectDesc": "연결이 끊기면 한 번만 다시 붙여 봐요",
-      "paymentTitle": "결제",
-      "paymentDesc": "폰으로 승인하는 간편결제에 금액 상한을 걸고 싶을 때만 적어 주세요. 기본은 둘 다 없음(0)이에요",
-      "paymentLimit": "결제 상한 (원, 0 = 없음)",
       "settingsOpen": "폰 설정",
-      "settingsClose": "폰 설정 닫기",
-      "firstPaymentLimit": "첫 결제 상한 (원, 0 = 없음)",
-      "firstPaymentLimitDesc": "처음 써 보는 사이트·결제수단 조합의 첫 자동 결제에만 거는 상한이에요. 기본은 없음(0)이에요"
+      "settingsClose": "폰 설정 닫기"
     },
     "assign": {
       "label": "담당 폰",

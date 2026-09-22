@@ -233,7 +233,6 @@ export interface WiringPhones {
 /** PhoneRepo 에서 쓰는 것만 적는다 */
 export interface WiringRepo {
   recordAuthEvent: (e: Omit<AuthEventDto, 'id'>) => void
-  hasPayApproval: (siteHost: string, payMethod: string) => boolean
 }
 
 /** VaultService 에서 쓰는 것만 적는다. 값 복호화는 pay-secret 안에서만 일어난다 */
@@ -388,7 +387,10 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
     const assigned = deps.phones.assignForJob(account.id)
     if (assigned && !online().some((p) => p.serial === assigned.serial)) {
       const name = assigned.label || assigned.model || assigned.serial
-      ctx.onStep(tr('phone.payRejected', { reason: tr('phone.gateAssignedOffline', { name }) }), false)
+      ctx.onStep(
+        tr('phone.payRejected', { reason: tr('phone.gateAssignedOffline', { name }) }),
+        false
+      )
       return { ok: false, reason: 'no-phone' }
     }
     const serial = serialsFor(account.id)[0]
@@ -469,10 +471,7 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
         serial,
         siteHost,
         jobId: ctx.jobId,
-        isFirstRunForCombo: !deps.repo.hasPayApproval(siteHost, req.methodLabel),
-        limitKrw: deps.settings().paymentLimitKrw,
-        confirmFirst: deps.settings().permissionMode !== 'full',
-        firstRunLimitKrw: deps.settings().firstPaymentLimitKrw
+        confirmFirst: deps.settings().permissionMode !== 'full'
       })
     } finally {
       // 결제가 끝나면 화면 전송을 곧바로 되살린다(만료를 기다리지 않는다)
