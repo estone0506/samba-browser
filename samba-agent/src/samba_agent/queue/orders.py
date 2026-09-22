@@ -15,6 +15,32 @@ from samba_agent.bridge.client import BridgeClient
 FIND_ORDER_SCRIPT = 'samba_find_order'
 # OrderRef 를 채우는 데 필요한 필드만 본다 — 결과에 다른 키(개인정보 등)가 있어도 무시한다
 _REQUIRED_FIELDS = ('source', 'seller', 'sku', 'qty')
+# 앱 저장 스크립트(samba_find_order)는 사람이 고쳐 쓰는 것이라 키 이름이 흔들린다 — 별칭을 받아 준다
+_ALIASES: dict[str, tuple[str, ...]] = {
+    'source': ('source', 'sourcingPlatform', 'sourcing_platform', 'sourcing'),
+    'seller': ('seller', 'sellerAccount', 'seller_account', 'market'),
+    'qty': ('qty', 'quantity', 'count'),
+}
+
+
+def _normalize(data: dict[str, object]) -> dict[str, object]:
+    """별칭 키를 표준 키로 옮기고, sku 가 없으면 상품명+옵션으로 만든다. 개인정보 키는 옮기지 않는다."""
+    out: dict[str, object] = dict(data)
+    for field, names in _ALIASES.items():
+        if out.get(field) in (None, ''):
+            for n in names:
+                if data.get(n) not in (None, ''):
+                    out[field] = data[n]
+                    break
+    if out.get('sku') in (None, ''):
+        name = next(
+            (str(data[k]) for k in ('productName', 'product', 'name', 'title') if data.get(k)), ''
+        )
+        option = str(data.get('option') or data.get('optionText') or '').strip()
+        sku = (name + (f' [{option}]' if option else '')).strip()
+        if sku:
+            out['sku'] = sku
+    return out
 
 
 def lookup_order(bridge: BridgeClient, order_no: str, options: Mapping[str, str]) -> OrderRef:
@@ -34,6 +60,7 @@ def lookup_order(bridge: BridgeClient, order_no: str, options: Mapping[str, str]
         # TRY004 무시 — 스키마 오류도 lookup_order 는 전부 ValueError 하나로 통일한다
         raise ValueError(f'{order_no} 조회 결과가 객체가 아니다')  # noqa: TRY004
 
+    data = _normalize(data)
     values: dict[str, object] = {}
     missing: list[str] = []
     for field in _REQUIRED_FIELDS:
