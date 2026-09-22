@@ -342,10 +342,6 @@ export function SignInCard(): React.JSX.Element {
           {mode === 'signIn' ? t('account.toSignUp') : t('account.toSignIn')}
         </SecondaryButton>
       </div>
-      <div className="h-px bg-[var(--line)]" />
-      <SecondaryButton disabled={busy} onClick={() => void auth.signInGoogle()}>
-        {t('account.continueWithGoogle')}
-      </SecondaryButton>
       {canReset && !resetting && (
         <button
           type="button"
