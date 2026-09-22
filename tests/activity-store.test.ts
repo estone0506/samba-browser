@@ -166,7 +166,8 @@ describe('기록기', () => {
 describe('설정 키는 기기 전용이다', () => {
   it('동기화 대상에 들어 있지 않다', () => {
     const keys = SYNCED_SETTING_KEYS as readonly string[]
-    expect(keys).not.toContain('activityRecording')
+    // 기록 켬/끔은 취향이라 따라오고, 숨긴 추천 목록은 이 PC 의 기록에 묶인다
+    expect(keys).toContain('activityRecording')
     expect(keys).not.toContain('dismissedRecommendations')
   })
 

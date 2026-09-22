@@ -524,8 +524,8 @@ describe('SiteMemoryService', () => {
 describe('설정 키', () => {
   it('기본은 켬', () => expect(DEFAULT_SETTINGS.siteMemoryEnabled).toBe(true))
 
-  it('기기 로컬이라 동기화 대상이 아니다', () => {
-    expect(SYNCED_SETTING_KEYS as readonly string[]).not.toContain('siteMemoryEnabled')
+  it('켬/끔은 계정 설정으로 따라온다(기억 파일 자체는 기기 로컬)', () => {
+    expect(SYNCED_SETTING_KEYS as readonly string[]).toContain('siteMemoryEnabled')
   })
 })
 

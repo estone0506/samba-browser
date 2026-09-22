@@ -152,8 +152,8 @@ describe('vaultHoldLockDuringAgent 설정 키', () => {
     expect(parseSettings({ vaultHoldLockDuringAgent: '켜짐' }).vaultHoldLockDuringAgent).toBe(true)
   })
 
-  it('기기 로컬 값이라 동기화 대상이 아니다', () => {
-    expect(SYNCED_SETTING_KEYS as readonly string[]).not.toContain('vaultHoldLockDuringAgent')
+  it('계정 설정으로 따라온다', () => {
+    expect(SYNCED_SETTING_KEYS as readonly string[]).toContain('vaultHoldLockDuringAgent')
   })
 })
 
