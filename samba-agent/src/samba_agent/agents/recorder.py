@@ -2,6 +2,9 @@
 
 결제 뒤 기록이 실패해도 재결제는 절대 하지 않는다(스펙 §6). 여기서 실패하면
 감독자가 needs_human 으로 넘기고 사람이 "결제됨, 기록만 남음" 을 처리한다.
+
+재시도가 재저장(중복 행)으로 이어지지 않도록, 저장 전에 먼저 읽어 이미 저장된
+주문인지 확인한다 — 있으면 저장을 건너뛰고 재확인만 한다.
 """
 
 import json
@@ -12,6 +15,23 @@ from samba_agent.failures import FailReason
 
 SAVE_SCRIPT = 'samba_save_order'
 READ_SCRIPT = 'samba_read_order'
+
+# 되읽어 숫자로 비교할 필드 — 문자열 "89000" 과 숫자 89000 을 같은 값으로 본다
+NUMERIC_FIELDS = ('real_price', 'shipping_fee')
+
+
+def _normalize(field: str, value: object) -> object:
+    """되읽기 비교용 타입 정규화 — 숫자 필드는 숫자로, 문자열은 strip 해서 비교한다."""
+    if value is None:
+        return None
+    if field in NUMERIC_FIELDS:
+        try:
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return value
+    if isinstance(value, str):
+        return value.strip()
+    return value
 
 
 class RecorderAgent(AgentBase):
@@ -30,9 +50,14 @@ class RecorderAgent(AgentBase):
             f'{a.rules}\n\n주문 {a.order.order_no}({a.order.source})의 메모 한 문장을 쓰라.',
             Decision,
         )
-        values: dict[str, object] = {f: a.expected.get(f) for f in self.RECORD_FIELDS}
+        # account 는 내부 판매 계정 식별자다 — state 결과에 실려 오면 마스킹(이메일 패턴)에
+        # 뭉개질 수 있어, 마스킹을 거치지 않는 배정 옵션에서 직접 받는다
+        values: dict[str, object] = {
+            f: a.expected.get(f) for f in self.RECORD_FIELDS if f not in ('account', 'shipping_fee')
+        }
+        values['account'] = a.options.get('account')
+        values['shipping_fee'] = a.expected.get('shipping_fee', 0)
         values['memo'] = memo.choice
-        values.setdefault('shipping_fee', 0)
         self.note('저장할 값', json.dumps(values, ensure_ascii=False))
 
         if a.dry_run:
@@ -44,22 +69,36 @@ class RecorderAgent(AgentBase):
                 evidence=tuple(self.evidence),
             )
 
-        self.step('recorder: 저장')
-        self.tool(
-            'run_script',
-            name=SAVE_SCRIPT,
-            args=json.dumps({'orderNo': a.order.order_no, **values}, ensure_ascii=False),
-        )
-        self.step('recorder: 저장 확인')
-        saved = self.json_tool(
+        self.step('recorder: 기존 저장 확인')
+        existing = self.json_tool(
             'run_script',
             name=READ_SCRIPT,
             args=json.dumps({'orderNo': a.order.order_no}, ensure_ascii=False),
         )
+        already_saved = bool(existing)
+        if already_saved:
+            # 저장은 됐는데 되읽기만 어긋난 경우일 수 있다 — 다시 저장하지 않고 재확인만 한다
+            self.step('recorder: 이미 저장됨 — 재저장 없이 재확인만')
+            saved = existing
+        else:
+            self.step('recorder: 저장')
+            self.tool(
+                'run_script',
+                name=SAVE_SCRIPT,
+                args=json.dumps({'orderNo': a.order.order_no, **values}, ensure_ascii=False),
+            )
+            self.step('recorder: 저장 확인')
+            saved = self.json_tool(
+                'run_script',
+                name=READ_SCRIPT,
+                args=json.dumps({'orderNo': a.order.order_no}, ensure_ascii=False),
+            )
+
         diffs = [
             f
             for f in self.RECORD_FIELDS
-            if values.get(f) is not None and saved.get(f) != values.get(f)
+            if values.get(f) is not None
+            and _normalize(f, saved.get(f)) != _normalize(f, values.get(f))
         ]
         if diffs:
             raise AgentFailure(
@@ -68,9 +107,19 @@ class RecorderAgent(AgentBase):
                 FailReason.VERIFY_MISMATCH,
             )
         self.note('저장 확인', json.dumps(saved, ensure_ascii=False))
+        reason = (
+            f'이미 저장된 주문이라 재저장 없이 재확인만 했다({memo.reason})'
+            if already_saved
+            else f'{len(self.RECORD_FIELDS)}개 필드를 저장하고 되읽어 확인했다({memo.reason})'
+        )
         return AgentResult(
             status='ok',
-            reason=f'{len(self.RECORD_FIELDS)}개 필드를 저장하고 되읽어 확인했다({memo.reason})',
-            payload={'dry_run': False, 'saved': True, 'values': values},
+            reason=reason,
+            payload={
+                'dry_run': False,
+                'saved': True,
+                'values': values,
+                'already_saved': already_saved,
+            },
             evidence=tuple(self.evidence),
         )

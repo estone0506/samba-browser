@@ -164,3 +164,19 @@ def test_감독자는_에이전트에_허용_도구와_규칙만_넘긴다(reg):
     assert 'phone_approve_payment' not in seen['tools']
     assert '원가 규칙' in seen['rules']
     assert seen['dry_run'] is True
+
+
+def test_되읽기_불일치는_재시도하지_않고_바로_사람에게(reg):
+    """verify_mismatch 는 다시 해도 같은 결과다 — 기록 에이전트의 retry:1 이 있어도 쓰지 않는다."""
+    calls = {'n': 0}
+
+    def mismatched(_a):
+        calls['n'] += 1
+        return AgentResult(
+            status='fail', reason='필드 불일치', fail_reason=FailReason.VERIFY_MISMATCH
+        )
+
+    out = run(reg, agents(recorder=mismatched))
+    assert calls['n'] == 1  # 재시도 없이 바로 사람에게
+    assert out['outcome'] == 'needs_human'
+    assert out['fail_reason'] is FailReason.VERIFY_MISMATCH

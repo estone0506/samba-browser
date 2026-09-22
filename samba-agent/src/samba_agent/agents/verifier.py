@@ -5,6 +5,7 @@ import json
 from samba_agent.agents.base import AgentBase, Decision, run_agent
 from samba_agent.agents.contracts import AgentResult, Assignment
 from samba_agent.failures import FailReason
+from samba_agent.ops.masking import mask_value
 
 SOURCE_DETAIL_SCRIPT = 'source_order_detail'
 SAMBA_READ_SCRIPT = 'samba_read_order'
@@ -32,21 +33,25 @@ class VerifierAgent(AgentBase):
             name=SAMBA_READ_SCRIPT,
             args=json.dumps({'orderNo': a.order.order_no}, ensure_ascii=False),
         )
+        # 대조 자체는 브릿지가 돌려준 날것 값으로 한다 — 마스킹은 밖으로 내보낼 때만 씌운다
         mismatches = [
             {'field': f, 'expected': v, 'source': source.get(f), 'samba': samba.get(f)}
             for f, v in a.expected.items()
             if source.get(f) != v or samba.get(f) != v
         ]
-        self.note('대조 결과', json.dumps(mismatches, ensure_ascii=False) or '없음')
+        # 여기서부터는 마스킹한 사본만 쓴다 — payload·reason·LLM 프롬프트 어디에도
+        # 브릿지의 날것 값(고객 개인정보일 수 있다)이 그대로 나가지 않게 한다
+        masked_mismatches = mask_value(mismatches)
+        self.note('대조 결과', json.dumps(masked_mismatches, ensure_ascii=False) or '없음')
         if mismatches:
             explain = self.decide_once(
-                f'{a.rules}\n\n다음 불일치를 한 문장으로 설명하라: {mismatches}', Decision
+                f'{a.rules}\n\n다음 불일치를 한 문장으로 설명하라: {masked_mismatches}', Decision
             )
             return AgentResult(
                 status='fail',
                 reason=f'불일치 {len(mismatches)}건: {explain.choice}',
                 fail_reason=FailReason.VERIFY_MISMATCH,
-                payload={'mismatches': mismatches},
+                payload={'mismatches': masked_mismatches},
                 evidence=tuple(self.evidence),
             )
         return AgentResult(

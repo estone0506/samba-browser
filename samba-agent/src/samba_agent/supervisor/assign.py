@@ -27,15 +27,22 @@ def build_assignment(reg: Registry, spec: AgentSpec, state: RunState) -> Assignm
 
 
 def _expected(state: RunState) -> dict[str, object]:
-    """구매·결제 결과에서 기록·검증이 대조할 값만 뽑는다."""
+    """구매·결제 결과에서 기록·검증이 대조할 값만 뽑는다.
+
+    account 는 여기 담지 않는다 — state['results'] 는 sanitize_result 로 이미 마스킹을
+    거친 값이라, 이메일 꼴 내부 판매 계정이 '***' 로 뭉개져 있을 수 있다(마스킹은 고객
+    개인정보용이지 내부 계정 식별자용이 아니다). 기록 에이전트는 계정을
+    Assignment.options['account'](마스킹을 거치지 않는 배정 옵션)에서 직접 받는다.
+    """
     out: dict[str, object] = {}
     for name, r in state.get('results', {}).items():
         if name.startswith('buyer.'):
             out.update(
                 {
-                    'account': r.payload.get('account'),
                     'real_price': r.payload.get('cost'),
                     'source_order_no': r.payload.get('source_order_no'),
+                    'shipping_fee': r.payload.get('shipping_fee', 0),
+                    'flags': r.payload.get('flags', []),
                 }
             )
         if name == 'payer':
