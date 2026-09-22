@@ -378,3 +378,20 @@ def test_이벤트_정리가_실패해도_고리는_계속_돈다(setup):
     w.d.prune = boom
     ticks = iter([False, True])
     w.run_forever(stop=lambda: next(ticks), interval_s=0)  # 예외가 새지 않는다
+
+
+def test_주문_조회가_실패하면_running으로_남기지_않고_사람에게_넘긴다(setup):
+    q, _log, sent, make = setup
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    w = make(gate=False)
+
+    def bad_lookup(_job):
+        raise ValueError('허용 목록 밖 도구: run_script (hong@example.com)')
+
+    w.d.parse_order = bad_lookup  # type: ignore[method-assign]
+    job = w.tick()
+
+    assert job is not None
+    assert job.state == 'needs_human'
+    assert '주문 조회 실패' in (q.get('A1').error or '')
+    assert all('hong@example.com' not in s for s in sent)

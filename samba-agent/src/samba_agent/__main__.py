@@ -71,6 +71,8 @@ def main() -> None:
         settings.bridge_token.get_secret_value(),
         allowed=(),  # 최상위 클라이언트는 도구를 직접 부르지 않는다 — 에이전트마다 scoped() 로 좁힌다
     )
+    # 주문 조회는 앱 저장 스크립트(samba_find_order) 하나만 부른다
+    lookup_bridge = bridge.scoped(['run_script'])
 
     # 모델명은 settings 에 없다 — llm.decide 의 상수(claude-sonnet-5) 를 그대로 쓴다
     decide = make_decide()
@@ -98,7 +100,7 @@ def main() -> None:
             graph=graph,
             version=version_fn,  # 콜러블 그대로 넘긴다 — tick 마다 다시 불러 규칙 변경을 반영한다
             report=_report,
-            parse_order=lambda job: lookup_order(bridge, job.order_no, job.options),
+            parse_order=lambda job: lookup_order(lookup_bridge, job.order_no, job.options),
             approval_report=_approval_report,
             dry_run=settings.dry_run,
             dry_run_digits=settings.dry_run_digits,
