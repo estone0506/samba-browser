@@ -71,7 +71,24 @@
       "instructionsDesc": "AI 가 그대로 따를 절차를 마크다운으로 적어 주세요.",
       "length": "{{n}} / {{max}}자"
     },
-    "updatedAt": "최근 수정 {{time}}"
+    "updatedAt": "최근 수정 {{time}}",
+    "harness": {
+      "conn": {
+        "ok": "하네스에 연결됨",
+        "offline": "하네스 연결 안 됨 — 하네스가 꺼져 있어요",
+        "timeout": "하네스가 응답하지 않아요",
+        "badResponse": "하네스 응답을 알아볼 수 없어요",
+        "badUrl": "하네스 주소가 127.0.0.1 이 아니에요"
+      },
+      "state": {
+        "queued": "대기",
+        "running": "진행 중",
+        "done": "완료",
+        "failed": "실패",
+        "needs_human": "사람 확인 필요",
+        "cancelled": "취소됨"
+      }
+    }
   },
   "schedule": {
     "title": "예약",

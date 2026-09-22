@@ -71,7 +71,24 @@
       "instructionsDesc": "Write the steps the AI should follow, in Markdown.",
       "length": "{{n}} / {{max}} chars"
     },
-    "updatedAt": "Last edited {{time}}"
+    "updatedAt": "Last edited {{time}}",
+    "harness": {
+      "conn": {
+        "ok": "Connected to harness",
+        "offline": "Harness not connected - it looks turned off",
+        "timeout": "The harness is not responding",
+        "badResponse": "The harness reply could not be read",
+        "badUrl": "The harness address is not on 127.0.0.1"
+      },
+      "state": {
+        "queued": "Queued",
+        "running": "Running",
+        "done": "Done",
+        "failed": "Failed",
+        "needs_human": "Needs a person",
+        "cancelled": "Cancelled"
+      }
+    }
   },
   "schedule": {
     "title": "Schedule",
