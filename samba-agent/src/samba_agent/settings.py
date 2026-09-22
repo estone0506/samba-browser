@@ -13,9 +13,7 @@ DEFAULT_ROOT = Path(__file__).resolve().parents[2]
 class Settings(BaseSettings):
     """하네스 설정. 이름은 환경변수 이름과 1:1 이다."""
 
-    model_config = SettingsConfigDict(
-        env_file='.env', env_file_encoding='utf-8', extra='ignore'
-    )
+    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
     bridge_url: str = Field(default='http://127.0.0.1:47811', alias='SAMBA_BRIDGE_URL')
     bridge_token: SecretStr = Field(alias='SAMBA_BRIDGE_TOKEN')
