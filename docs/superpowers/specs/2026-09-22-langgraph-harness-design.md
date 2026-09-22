@@ -37,7 +37,7 @@
 | 헤르메스 | 안 씀 | 메신저 창구+큐만 필요. 프레임워크 하나 더 배우는 비용이 큼 |
 | 일꾼 PC | 사무실 PC 1대 | 잠금·폰·키마스터가 한 곳. 직원은 슬랙에서 지시만 |
 | 하네스 | Python 3.12 + LangGraph, 로컬 `langgraph dev` 서버 | 그래프·체크포인트·재개가 기본 제공 |
-| 모델 | Claude(Anthropic API 키, `claude-opus-5` 기본) | 지금 러너와 같은 판단력. 노드별로 모델 교체 가능 |
+| 모델 | Claude **구독**(이 PC 의 Claude Code 로그인, Python `claude-agent-sdk`). API 키 없음 | 지금 앱과 같은 인증. Codex 구독으로 교체 가능하게 어댑터 1개. 구독 한도(5시간·주간) 도달 시 큐를 멈추고 슬랙에 알림 |
 | 손발 | SAMBA Browser 에 로컬 HTTP 브릿지(127.0.0.1, 토큰 인증) | 이미 있는 도구(page.get/click/type, run_js, 폰 결제, 키마스터)를 그대로 노출 |
 | 잠금 | SQLite `jobs` 표(일꾼 PC) + SAMBA-WAVE 상태 "다른 작업자 처리중" | 로컬 잠금이 진실, SAMBA-WAVE 는 표시용 |
 | 추적 | LangSmith 클라우드, 프로젝트 `samba-orders` | 요구사항 |
@@ -84,7 +84,7 @@
 | 8 | verify | 소싱처 주문 상세 + SAMBA 재조회로 대조, 슬랙 보고 | 불일치 → `failed(verify)` |
 
 - `needs_human`: 그래프는 체크포인트에 멈추고 슬랙에 스크린샷(비밀 화면 제외)과 사유. 직원이 브라우저에서 처리 후 `@삼바 이어서 734501000740906` 치면 같은 노드부터 재개(LangGraph interrupt/resume).
-- LLM 판단이 있는 노드(2·4·5)는 **구조화 출력**(Pydantic)만 받는다. 예: `decide_payment` 는 `{method, card, unit_cost, margin_pct, reason}`. 카드 없는 답은 스키마에서 거부.
+- LLM 판단이 있는 노드(2·4·5)는 `claude-agent-sdk` 로 부르고 **구조화 출력**(JSON 스키마 → Pydantic)만 받는다. 예: `decide_payment` 는 `{method, card, unit_cost, margin_pct, reason}`. 카드 없는 답은 스키마에서 거부.
 - 노드마다 프롬프트는 짧은 고정 문장 + 그 노드에 필요한 화면 요약만. 18,000자 플레이북은 노드별로 쪼개 넣는다(재사용 자산).
 
 ### 4.4 SAMBA Browser 브릿지 (`src/main/bridge/`)
@@ -145,7 +145,7 @@ samba-agent/              (신규, Python)
   bridge/client.py        (HTTP 클라이언트)
   ops/{tracing.py, masking.py, eval.py, datasets/}
   tests/
-  .env.example            (SLACK_BOT_TOKEN, SLACK_APP_TOKEN, ANTHROPIC_API_KEY, LANGSMITH_API_KEY, SAMBA_BRIDGE_TOKEN)
+  .env.example            (SLACK_BOT_TOKEN, SLACK_APP_TOKEN, LANGSMITH_API_KEY, SAMBA_BRIDGE_TOKEN — 모델은 Claude Code 로그인)
 ```
 
 ## 9. 남는 위험
