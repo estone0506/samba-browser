@@ -254,7 +254,10 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
     () =>
       appHost === undefined || onAppSite
         ? []
-        : accounts.filter((a) => registrableDomain(a.host) === appHost),
+        : // 결제 비밀번호를 넣어 둔 앱 계정만 고를 수 있다(없는 계정을 고르면 결제 때 못 찾는다)
+          accounts.filter(
+            (a) => registrableDomain(a.host) === appHost && a.itemTypes.includes('password')
+          ),
     [accounts, appHost, onAppSite]
   )
   // 앱 계정이 하나라도 있으면 비밀번호 칸 대신 계정 선택을 보여 준다. 없으면 예전처럼 직접 넣는다
