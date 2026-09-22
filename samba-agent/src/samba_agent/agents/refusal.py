@@ -13,6 +13,10 @@ from samba_agent.failures import FailReason
 
 REFUSED_PREFIX = 'refused:'
 
+# 시험 입력(dry-run)으로 결제 비밀번호를 일부만 누르고 취소했다 — 실패가 아니라 "결제하지 않음" 이다.
+# 앱은 이것도 `refused: …` 로 돌려주므로(phone: dry-run, 웹 키패드: DRY_RUN) 여기서 정상 응답으로 통과시킨다
+DRY_RUN_REFUSALS = ('dry-run', 'dry_run')
+
 # 카드 자체가 없다 — 시작 전 카드 누락과 같은 사유로 묶는다
 CARD_REFUSALS = ('card-required', 'card-not-found')
 
@@ -74,6 +78,9 @@ def classify_refusal(result: str) -> Verdict | None:
     if not text.lower().startswith(REFUSED_PREFIX):
         return None
     body = text[len(REFUSED_PREFIX) :].strip().lower()
+    # 시험 입력은 거절이 아니다 — 부르는 쪽이 문자열을 그대로 보고 판단한다
+    if any(body.startswith(m) for m in DRY_RUN_REFUSALS):
+        return None
     if any(body.startswith(m) for m in CARD_REFUSALS):
         return 'fail', FailReason.CARD_MISSING
     if any(body.startswith(m) for m in VAULT_LOCKED_REFUSALS):

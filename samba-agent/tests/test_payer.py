@@ -22,7 +22,14 @@ def reg():
     return Registry.load(DEFAULT_ROOT)
 
 
-def assignment(reg, *, dry_run: bool, card: str | None = '현대', handoff=None) -> Assignment:
+def assignment(
+    reg,
+    *,
+    dry_run: bool,
+    card: str | None = '현대',
+    handoff=None,
+    dry_run_digits: int = 0,
+) -> Assignment:
     spec = reg['payer']
     return Assignment(
         order=ORDER,
@@ -30,6 +37,7 @@ def assignment(reg, *, dry_run: bool, card: str | None = '현대', handoff=None)
         allowed_tools=spec.tools,
         rules=reg.rules_text(spec),
         dry_run=dry_run,
+        dry_run_digits=dry_run_digits,
         # 결제 앱(provider)은 여기서 사람이 정해 넘기지 않는다 — payer 가 카드 이름이나
         # 결제창(list_tabs) 을 보고 스스로 정한다(사용자 결정)
         handoff={'cost': 89000, **(handoff or {})},
@@ -673,3 +681,90 @@ def test_활성_탭이_연_팝업이_없으면_가장_최근_팝업을_쓴다(re
     assert out.status == 'ok'
     assert _args(pay)['provider'] == 'toss'
     assert _args(pay)['card'] == '현대카드'
+
+
+@respx.mock
+def test_시험_입력은_폰_승인을_자리수만_실어_한_번_부른다(reg):
+    """dry_run_digits 가 있으면 결제창 진입 뒤 결제 비밀번호를 그 자리수만 눌러 보고 취소한다."""
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    get_page = respx.post(f'{URL}/tool/get_page')
+    pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(
+        return_value=page('refused: dry-run (typed 3 digits then cancelled)')
+    )
+    out = agent(reg)(assignment(reg, dry_run=True, dry_run_digits=3))
+
+    assert out.status == 'ok'
+    assert out.payload == {
+        'dry_run': True,
+        'paid': False,
+        'keypad_tested': True,
+        'digits': 3,
+    }
+    assert pay.calls.call_count == 1
+    body = json.loads(pay.calls.last.request.content.decode('utf-8'))
+    assert body['args']['dryRunDigits'] == 3
+    assert body['args']['provider'] == 'toss'
+    # 결제 성공 확인 경로로는 가지 않는다(결제하지 않았으므로)
+    assert not get_page.called
+    assert not find_leaks(out.payload)
+    assert not find_leaks(out.reason)
+    assert not find_leaks([e.detail for e in out.evidence])
+
+
+@respx.mock
+def test_시험_입력에서_결제창이_웹_키패드면_fill_secret_을_부른다(reg):
+    """결제 앱을 정할 수 없으면(팝업 없음) 웹 키패드 경로로 같은 시험 입력을 한다."""
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(None))
+    respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[7] textbox "비밀번호"'))
+    pay = respx.post(f'{URL}/tool/phone_approve_payment')
+    fill = respx.post(f'{URL}/tool/fill_secret').mock(
+        return_value=page('refused: DRY_RUN — typed 3 digits then closed (popup closed)')
+    )
+    out = agent(reg)(assignment(reg, dry_run=True, dry_run_digits=3))
+
+    assert out.status == 'ok'
+    assert out.payload['keypad_tested'] is True
+    assert not pay.called
+    body = json.loads(fill.calls.last.request.content.decode('utf-8'))
+    assert body['args']['dryRunDigits'] == 3
+    assert body['args']['elementId'] == 7
+
+
+@respx.mock
+def test_시험_입력이_아닌_응답이_오면_사람에게_넘긴다(reg):
+    """시험 입력을 시켰는데 'ok'(결제됨)가 오면 그냥 넘기지 않는다."""
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=True, dry_run_digits=3))
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.PAY_INTERRUPTED)
+
+
+@respx.mock
+def test_시험_입력에서도_진짜_거절은_그대로_실패다(reg):
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/phone_approve_payment').mock(
+        return_value=page('refused: card-not-found')
+    )
+    out = agent(reg)(assignment(reg, dry_run=True, dry_run_digits=3))
+    assert (out.status, out.fail_reason) == ('fail', FailReason.CARD_MISSING)
+
+
+@respx.mock
+def test_자리수가_0이면_예전처럼_결제창까지만_간다(reg):
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    pay = respx.post(f'{URL}/tool/phone_approve_payment')
+    fill = respx.post(f'{URL}/tool/fill_secret')
+    out = agent(reg)(assignment(reg, dry_run=True, dry_run_digits=0))
+    assert out.payload == {'dry_run': True, 'paid': False}
+    assert not pay.called
+    assert not fill.called

@@ -39,6 +39,9 @@ class Assignment(BaseModel):
     rules: str
     # True 면 외부를 바꾸는 도구(결제·기록)를 부르지 않고 계획만 돌려준다
     dry_run: bool = True
+    # dry_run 에서 결제 비밀번호를 몇 자리만 눌러 보고 취소할지(0 이면 결제창까지만).
+    # 결제는 어느 값에서도 끝내지 않는다 — 키패드 자동 입력이 실기에서 되는지만 본다
+    dry_run_digits: int = Field(default=0, ge=0, le=3)
     # 감독자가 아는 기대값(소싱주문번호·실구매가·배송비·플래그). 기록·검증이 '대조' 에 쓴다 —
     # 검증 에이전트가 이 키를 전부 소싱처·SAMBA 행과 맞춰보므로 대조 대상만 담는다
     expected: dict[str, object] = Field(default_factory=dict)

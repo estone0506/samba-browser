@@ -49,6 +49,8 @@ class RunState(TypedDict, total=False):
     options: dict[str, str]
     job_id: int
     dry_run: bool
+    # dry-run 결제 비밀번호 시험 입력 자리수(0 이면 결제창까지만)
+    dry_run_digits: int
     stage: Stage
     results: dict[str, AgentResult]
     attempts: dict[str, int]
