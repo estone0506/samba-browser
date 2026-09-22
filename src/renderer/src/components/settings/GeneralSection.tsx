@@ -112,6 +112,25 @@ export function GeneralSection({ settings, update }: SectionProps): React.JSX.El
             {t('vault.import.bookmarksButton')}
           </SecondaryButton>
         </div>
+        {/* 형식 안내 — 패널을 열기 전에 어떤 파일을 준비해야 하는지 보이게 */}
+        <div className="flex flex-col gap-1 text-[11.5px] text-[var(--text2)]">
+          <p>
+            <span className="font-medium text-[var(--text)]">
+              {t('vault.import.guide.passwordsTitle')}
+            </span>{' '}
+            {t('vault.import.guide.passwordsExportSteps')}{' '}
+            {t('vault.import.guide.passwordsHeadersLabel')}{' '}
+            <code className="rounded bg-black/5 px-1 font-mono text-[11px]">
+              {t('vault.import.guide.passwordsHeadersExample')}
+            </code>
+          </p>
+          <p>
+            <span className="font-medium text-[var(--text)]">
+              {t('vault.import.guide.bookmarksTitle')}
+            </span>{' '}
+            {t('vault.import.guide.bookmarksExportSteps')}
+          </p>
+        </div>
       </SettingsSection>
 
       <ImportPanel open={importOpen} onOpenChange={setImportOpen} />
