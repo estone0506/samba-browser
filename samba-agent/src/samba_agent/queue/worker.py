@@ -74,8 +74,16 @@ class Worker:
         version = self.d.version()
         self.d.queue.set_version(job.id, version)
         self.d.report(job, f'접수: {job.order_no} 처리 시작(하네스 {version})')
+        # 주문 조회(브릿지)도 예외가 날 수 있다 — running 으로 남기지 않고 사람에게 넘긴다
+        try:
+            order = self.d.parse_order(job)
+        except Exception as e:  # noqa: BLE001 — 조회 실패 사유는 다양하다(브릿지·JSON·누락 필드)
+            msg = mask_text(str(e))[:300]
+            self.d.queue.finish(job.id, 'needs_human', error=f'주문 조회 실패: {msg}')
+            self.d.report(job, f'주문 조회 실패 — 사람 확인 필요: {msg}')
+            return self.d.queue.get(job.order_no)
         state = {
-            'order': self.d.parse_order(job),
+            'order': order,
             'options': {str(k): str(v) for k, v in job.options.items()},
             'job_id': job.id,
             'dry_run': self.d.dry_run,
