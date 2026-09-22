@@ -10,7 +10,7 @@
 // 비밀번호는 데이터 프로젝트 로그인에 한 번 더 쓰려고 **메모리에만** 잠깐 둔다(주소 설정을 기다리는 동안).
 // 디스크·로그·렌더러 어디에도 남기지 않고, 붙고 나면 즉시 지운다
 
-import type { AuthState } from '../../shared/sync'
+import { isSupabaseAnonKey, isSupabaseProjectUrl, type AuthState } from '../../shared/sync'
 import type { AuthService } from './auth'
 import type { SyncBackend } from './backend'
 import { readDirectoryConfig, writeDirectoryConfig, type DirectoryConfig } from './directory'
@@ -218,7 +218,27 @@ export class AccountService {
   }): Promise<DirectoryConfig | null> {
     const dir = this.directory()
     if (!dir) return null
-    const config = await readDirectoryConfig(dir.backend, user.userId)
+    let config = await readDirectoryConfig(dir.backend, user.userId)
+    if (!config) {
+      // 계정에는 아직 없는데 이 PC 설정에 주소가 있으면(로그인 기능 전부터 쓰던 PC) 계정에 올려 둔다 —
+      // 그래야 다른 PC 가 로그인만으로 따라온다. 사용자가 폼을 다시 채울 필요가 없다
+      const local = this.deps.settings.get()
+      if (
+        isSupabaseProjectUrl(local.syncSupabaseUrl) &&
+        isSupabaseAnonKey(local.syncSupabaseAnonKey)
+      ) {
+        config = { url: local.syncSupabaseUrl.trim(), anonKey: local.syncSupabaseAnonKey.trim() }
+        try {
+          await writeDirectoryConfig(dir.backend, user.userId, config, this.deps.now?.())
+        } catch (e: unknown) {
+          console.warn(
+            '계정에 Supabase 주소 올리기 실패',
+            e instanceof Error ? e.message : String(e)
+          )
+          config = null
+        }
+      }
+    }
     // 관리자에게만 숫자가 온다(서버 함수가 이메일을 검사). 그 외·함수 없음은 null
     const userCount = await dir.backend.rpcNumber(USER_COUNT_RPC).catch(() => null)
     this.next({
