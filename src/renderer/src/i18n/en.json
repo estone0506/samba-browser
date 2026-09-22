@@ -541,7 +541,7 @@
       "naverPayHow": "The payment password lives in the {{host}} account (your Naver account in KeyMaster), not in this site account. Whichever site you choose Naver Pay on, that one Naver password is used.",
       "naverPayPick": "Pick below which Naver account pays on this site. Only Naver accounts that have a payment password saved are listed.",
       "naverPayNone": "No {{host}} account with a payment password yet. Open your Naver account in KeyMaster and add a \"payment password (Naver Pay)\" item first. Until then you can also type it below.",
-      "naverPayCheck": "At checkout the app verifies that the signed-in ID at the top right of the Naver Pay window (e.g. edel******) matches the chosen account and refuses to pay otherwise."
+      "naverPayCheck": "At checkout the app verifies that the signed-in ID at the top right of the Naver Pay window (e.g. mjki******) matches the chosen account and refuses to pay otherwise."
     },
     "import": {
       "title": "Import",

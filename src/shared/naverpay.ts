@@ -1,6 +1,6 @@
 // 네이버페이 결제창(pay.naver.com)의 로그인 계정 검사.
 // 네이버페이는 네이버 계정으로 결제되는데, 결제창은 브라우저에 로그인돼 있던 네이버 계정을 그대로 쓴다 —
-// 키마스터에서 고른 계정(buyer01)과 다른 계정(cann******)으로 결제되면 안 되므로 결제창 우측 위의
+// 키마스터에서 고른 계정(mjkim88)과 다른 계정(mjki******)으로 결제되면 안 되므로 결제창 우측 위의
 // 마스킹된 아이디를 읽어 반드시 맞춰 본다. 마스킹은 "앞 4글자 + ******" 꼴이다
 
 /** 네이버페이 결제창 호스트인가(m.pay.naver.com · pay.naver.com …) */
@@ -10,7 +10,7 @@ export function isNaverPayHost(host: string): boolean {
 }
 
 /**
- * 결제창 본문에서 마스킹된 로그인 아이디(예: "cann******")를 찾는다.
+ * 결제창 본문에서 마스킹된 로그인 아이디(예: "mjki******")를 찾는다.
  * 보이는 앞부분과 별표 개수를 그대로 돌려준다. 없으면 null
  */
 export function maskedNaverAccount(text: string): string | null {

@@ -20,7 +20,7 @@ const input = {
   host: 'samba-wave.vercel.app',
   description: '상품주문번호로 주문 행을 찾아 금액·상태를 돌려준다',
   params: ['orderNo — 상품주문번호'],
-  code: "await page.type(57, args.orderNo, true); return { found: true }"
+  code: 'await page.type(57, args.orderNo, true); return { found: true }'
 }
 
 describe('validateScriptInput', () => {

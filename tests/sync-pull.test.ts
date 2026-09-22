@@ -128,12 +128,12 @@ describe('pullAll', () => {
 
   it('삭제 표식은 원격 id 로만 짝을 맞춘다 — 같은 host·아이디의 살아 있는 계정을 지우지 않는다', async () => {
     // 실기: a-rt.com 합치기로 지운 중복 계정의 표식이, 이름을 a-rt.com 으로 바꾼 남은 계정에 걸려 그것까지 지웠다
-    const kept = vault.upsertAccount({ host: 'a-rt.com', username: 'buyer01' })
+    const kept = vault.upsertAccount({ host: 'a-rt.com', username: 'mjkim88' })
     backend.seed('accounts_sync', [
       accountRow({
         id: 'acc-removed',
         host: 'a-rt.com',
-        username: 'buyer01',
+        username: 'mjkim88',
         updated_at: new Date(Date.now() + 60_000).toISOString(),
         deleted_at: new Date(Date.now() + 60_000).toISOString()
       })

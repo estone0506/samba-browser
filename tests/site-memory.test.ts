@@ -558,7 +558,10 @@ describe('메모 스키마 — 긴 메모 하나가 나머지를 지우지 않�
   it('길이 상한을 넘는 메모는 잘라서 살리고 다른 메모는 그대로 둔다', async () => {
     const { siteMemoryFileSchema, SITE_NOTE_LENGTH_MAX } = await import('../src/shared/site-memory')
     const parsed = siteMemoryFileSchema.parse({
-      'samba-wave.vercel.app': { recipes: [], notes: ['기간은 올해로 검색', 'x'.repeat(300), 7, ''] }
+      'samba-wave.vercel.app': {
+        recipes: [],
+        notes: ['기간은 올해로 검색', 'x'.repeat(300), 7, '']
+      }
     })
     const notes = parsed['samba-wave.vercel.app'].notes
     expect(notes).toHaveLength(2)

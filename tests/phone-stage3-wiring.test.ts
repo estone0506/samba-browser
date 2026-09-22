@@ -614,7 +614,7 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
         id: 21,
         host: 'nid.naver.com',
         label: 'a',
-        username: 'buyer01',
+        username: 'mjkim88',
         isDefault: false
       },
       { ...ACCOUNT, id: 22, host: 'nid.naver.com', label: 'b', username: 'other', isDefault: false }
@@ -642,10 +642,10 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     expect(r1).toEqual({
       ok: false,
       reason: 'pay-account-ambiguous',
-      detail: 'choose payAccount: buyer01, other'
+      detail: 'choose payAccount: mjkim88, other'
     })
     scriptPayScreens(h.adb)
-    const r2 = await bridge.approvePayment(h.ctx, { ...base, payAccount: 'buyer01' })
+    const r2 = await bridge.approvePayment(h.ctx, { ...base, payAccount: 'mjkim88' })
     expect(r2.ok === false && r2.reason === 'no-account').toBe(false)
     expect(asked.every((id) => id === 21)).toBe(true)
     // 모르는 아이디는 no-account
@@ -658,10 +658,10 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     const h = harness(db, {
       vault: {
         listAccounts: (host?: string) => (host === HOST ? [site] : []),
-        paymentAccountUsername: () => 'buyer01'
+        paymentAccountUsername: () => 'mjkim88'
       }
     })
-    h.deps.page.naverPayAccount = async () => 'cann******'
+    h.deps.page.naverPayAccount = async () => 'hong******'
     scriptPayScreens(h.adb)
     const req = {
       provider: 'naverpay',
@@ -673,7 +673,7 @@ describe('통합 ② 결제 도구 → 확인 카드 → 앱 승인 → 키패�
     expect(r).toMatchObject({ ok: false, reason: 'pay-account-mismatch' })
     expect(h.confirms).toHaveLength(0)
     // 맞는 계정이면 진행한다
-    h.deps.page.naverPayAccount = async () => 'edel******'
+    h.deps.page.naverPayAccount = async () => 'mjki******'
     scriptPayScreens(h.adb)
     const r2 = await createPhoneAgentBridge(h.deps).approvePayment(h.ctx, req)
     expect(r2.ok === false && r2.reason === 'pay-account-mismatch').toBe(false)

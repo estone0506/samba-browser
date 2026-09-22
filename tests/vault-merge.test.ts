@@ -28,9 +28,9 @@ describe('서브도메인 계정 합치기', () => {
   })
 
   it('네이버 개인 계정(nid·mail)은 합쳐지고, 판매자 계정(accounts.commerce)은 다른 그룹이라 남는다', () => {
-    repo.upsertAccount({ host: 'nid.naver.com', username: 'buyer02' })
-    repo.upsertAccount({ host: 'mail.naver.com', username: 'buyer02' })
-    repo.upsertAccount({ host: 'accounts.commerce.naver.com', username: 'buyer02' })
+    repo.upsertAccount({ host: 'nid.naver.com', username: 'hong77' })
+    repo.upsertAccount({ host: 'mail.naver.com', username: 'hong77' })
+    repo.upsertAccount({ host: 'accounts.commerce.naver.com', username: 'hong77' })
     const r = vault.mergeDomainAccounts('naver.com')
     expect(r).toMatchObject({ kept: 1, removed: 1 })
     const left = vault.listAccounts()
@@ -43,31 +43,31 @@ describe('서브도메인 계정 합치기', () => {
   })
 
   it('다른 서브도메인에서 같은 아이디를 저장하면 별개 계정이다(비밀번호가 다를 수 있다)', () => {
-    const a = vault.upsertAccount({ host: 'nid.naver.com', username: 'buyer02' })
-    const b = vault.upsertAccount({ host: 'mail.naver.com', username: 'buyer02' })
+    const a = vault.upsertAccount({ host: 'nid.naver.com', username: 'hong77' })
+    const b = vault.upsertAccount({ host: 'mail.naver.com', username: 'hong77' })
     expect(b.id).not.toBe(a.id)
   })
 
   it('hasSameSecret 도 같은 도메인의 계정을 본다', () => {
-    const a = vault.upsertAccount({ host: 'abcmart.a-rt.com', username: 'buyer02' })
+    const a = vault.upsertAccount({ host: 'abcmart.a-rt.com', username: 'hong77' })
     vault.putItem({ accountId: a.id, type: 'login', label: 'L', value: 'pw1' })
-    expect(vault.hasSameSecret('member.a-rt.com', 'buyer02', 'pw1')).toBe(true)
-    expect(vault.hasSameSecret('member.a-rt.com', 'buyer02', 'pw2')).toBe(false)
+    expect(vault.hasSameSecret('member.a-rt.com', 'hong77', 'pw1')).toBe(true)
+    expect(vault.hasSameSecret('member.a-rt.com', 'hong77', 'pw2')).toBe(false)
   })
 
   it('흩어진 계정을 합친다 — 항목을 옮기고 호스트를 등록 도메인으로, 나머지는 지우되 되돌릴 수 있다', () => {
     // 옛 데이터처럼 서브도메인마다 따로 만들어진 상태를 repo 로 직접 만든다
     const a = repo.upsertAccount({
       host: 'abcmart.a-rt.com',
-      username: 'buyer02',
+      username: 'hong77',
       urls: ['https://abcmart.a-rt.com']
     })
     const b = repo.upsertAccount({
       host: 'grandstage.a-rt.com',
-      username: 'buyer02',
+      username: 'hong77',
       isDefault: true
     })
-    const c = repo.upsertAccount({ host: 'member.a-rt.com', username: 'buyer02', tags: ['vip'] })
+    const c = repo.upsertAccount({ host: 'member.a-rt.com', username: 'hong77', tags: ['vip'] })
     const other = repo.upsertAccount({ host: 'member.a-rt.com', username: 'someone' })
     const login = vault.putItem({ accountId: a.id, type: 'login', label: 'L', value: 'pw1' })
     const pay = vault.putItem({ accountId: b.id, type: 'password', label: 'P', value: '1234' })
@@ -79,7 +79,7 @@ describe('서브도메인 계정 합치기', () => {
     expect(r.token).not.toBeNull()
     const left = vault.listAccounts()
     expect(left).toHaveLength(2)
-    const merged = left.find((x) => x.username === 'buyer02')
+    const merged = left.find((x) => x.username === 'hong77')
     // 항목 수가 같으면(각 1개) 기본 계정(b)이 남는다
     expect(merged?.id).toBe(b.id)
     expect(merged?.host).toBe('a-rt.com')
@@ -97,7 +97,7 @@ describe('서브도메인 계정 합치기', () => {
         .listAccounts('member.a-rt.com')
         .map((x) => x.username)
         .sort()
-    ).toEqual(['buyer02', 'someone'])
+    ).toEqual(['hong77', 'someone'])
     // 되돌리기
     expect(vault.undoDeleteAccounts(r.token as string)).toBe(true)
     expect(vault.listAccounts()).toHaveLength(4)
@@ -111,9 +111,9 @@ describe('서브도메인 계정 합치기', () => {
   })
 
   it('쇼핑몰 계정의 네이버페이 항목이 네이버 계정 연결이면 그 계정의 결제 비밀번호를 쓴다', () => {
-    const naverMail = vault.upsertAccount({ host: 'mail.naver.com', username: 'buyer01' })
-    const naver = vault.upsertAccount({ host: 'nid.naver.com', username: 'buyer01' })
-    const site = vault.upsertAccount({ host: 'abcmart.a-rt.com', username: 'buyer02' })
+    const naverMail = vault.upsertAccount({ host: 'mail.naver.com', username: 'mjkim88' })
+    const naver = vault.upsertAccount({ host: 'nid.naver.com', username: 'mjkim88' })
+    const site = vault.upsertAccount({ host: 'abcmart.a-rt.com', username: 'hong77' })
     const payFields = (
       extra: { key: string; label: string; kind: 'text' | 'secret'; value?: string }[]
     ) => [
@@ -133,19 +133,19 @@ describe('서브도메인 계정 합치기', () => {
       label: '네이버페이',
       sections: payFields([{ key: 'value', label: '비밀번호', kind: 'secret', value: '246810' }])
     })
-    // 쇼핑몰 계정에는 "buyer01 계정을 쓴다"만
+    // 쇼핑몰 계정에는 "mjkim88 계정을 쓴다"만
     vault.putItem({
       accountId: site.id,
       type: 'password',
       label: '네이버페이',
       sections: payFields([
-        { key: 'payment.account', label: '계정', kind: 'text', value: 'buyer01' }
+        { key: 'payment.account', label: '계정', kind: 'text', value: 'mjkim88' }
       ])
     })
     expect(vault.hasPaymentItem(site.id, 'naver')).toBe(true)
     // 결제창 계정 검사에 쓸 아이디: 쇼핑몰 계정은 연결된 아이디, 네이버 계정은 제 아이디
-    expect(vault.paymentAccountUsername(site.id, 'naver')).toBe('buyer01')
-    expect(vault.paymentAccountUsername(naver.id, 'naver')).toBe('buyer01')
+    expect(vault.paymentAccountUsername(site.id, 'naver')).toBe('mjkim88')
+    expect(vault.paymentAccountUsername(naver.id, 'naver')).toBe('mjkim88')
     expect(vault.paymentAccountUsername(site.id, 'toss')).toBeNull()
     expect(vault.getPaymentSecretForFill({ accountId: site.id, provider: 'naver' }).value).toBe(
       '246810'

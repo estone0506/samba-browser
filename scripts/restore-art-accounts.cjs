@@ -1,4 +1,4 @@
-// a-rt.com 에서 삭제 표식만 찍힌 계정 3개(buyer01·buyer03·buyer04)를 되살리고 서버에 다시 올리도록 예약한다.
+// a-rt.com 에서 삭제 표식만 찍힌 계정 3개(표식만 찍힌 3개)를 되살리고 서버에 다시 올리도록 예약한다.
 // 사용: 앱을 끈 상태에서  node scratchpad/restore-art.cjs "C:\Users\canno\AppData\Roaming\SAMBA Browser\data.db"
 const initSqlJs = require('sql.js')
 const fs = require('fs')
