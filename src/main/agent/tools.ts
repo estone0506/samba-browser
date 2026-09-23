@@ -830,10 +830,16 @@ ${raw}`
       }
     }
     const withItem = candidates.filter((a) => a.itemTypes.includes(wanted))
-    return (
+    const resolved =
       resolveAccount(withItem, accountLabel, profile) ??
       resolveAccount(candidates, accountLabel, profile)
-    )
+    if (resolved || accountLabel) return resolved
+    // 라벨도 프로필 단서도 없다(기본 프로필 탭에서 연 결제창, 실기 7차) — 결제창을 연 쇼핑몰 쪽 계정 중
+    // 이 결제 수단의 항목을 가진 계정이 하나뿐이면 그것이다(네이버 계정 수십 개 사이에서 고를 필요가 없다).
+    // 네이버페이는 이어지는 창 계정 검사가 그 계정으로 로그인돼 있는지 다시 맞춰 본다
+    const shopHosts = hosts.slice(1)
+    const fromShop = withItem.filter((a) => shopHosts.some((h) => sameRegistrableDomain(h, a.host)))
+    return fromShop.length === 1 ? fromShop[0] : null
   }
 
   /**

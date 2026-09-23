@@ -304,6 +304,76 @@ describe('fill_secret — 키패드 화면에서 앱이 결제 비밀번호를 �
     )
   })
 
+  it('라벨도 프로필도 없으면(기본 프로필 탭) 결제창을 연 쇼핑몰 계정 중 결제 비밀번호 항목이 있는 하나를 고른다(실기 7차)', async () => {
+    pageBridge.keypadSignals.mockResolvedValue(keypadSignals(PG))
+    const b = build({
+      tabUrl: PG,
+      openerUrl: SHOP,
+      tabProfile: 'default',
+      accounts: [
+        account({
+          id: 11,
+          host: 'niceepay.com',
+          label: 'pg-a',
+          isDefault: false,
+          itemTypes: ['login', 'password']
+        }),
+        account({
+          id: 12,
+          host: 'niceepay.com',
+          label: 'pg-b',
+          isDefault: false,
+          itemTypes: ['login', 'password']
+        }),
+        account({
+          id: 21,
+          host: 'musinsa.com',
+          label: 'shop-login-only',
+          isDefault: false,
+          itemTypes: ['login']
+        }),
+        account({
+          id: 22,
+          host: 'musinsa.com',
+          label: 'shop-with-pw',
+          isDefault: false,
+          itemTypes: ['login', 'password']
+        })
+      ]
+    })
+    expect(await fill(b)).toBe(KEYPAD_ENTERED_NEXT)
+    expect(b.getPaymentSecretForFill).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 22 })
+    )
+  })
+
+  it('쇼핑몰 쪽 후보가 둘 이상이면 고르지 않는다', async () => {
+    pageBridge.keypadSignals.mockResolvedValue(keypadSignals(PG))
+    const b = build({
+      tabUrl: PG,
+      openerUrl: SHOP,
+      tabProfile: 'default',
+      accounts: [
+        account({
+          id: 21,
+          host: 'musinsa.com',
+          label: 'a',
+          isDefault: false,
+          itemTypes: ['login', 'password']
+        }),
+        account({
+          id: 22,
+          host: 'musinsa.com',
+          label: 'b',
+          isDefault: false,
+          itemTypes: ['login', 'password']
+        })
+      ]
+    })
+    expect(await fill(b)).toContain('not linked to a saved account')
+    expect(b.steps.some((s) => s.label.startsWith('키패드 계정 못 고름('))).toBe(true)
+  })
+
   it('팝업 안에서 열린 팝업(무신사머니 창 → ePAY)도 opener 사슬을 따라 계정 사이트를 찾는다', async () => {
     pageBridge.keypadSignals.mockResolvedValue(keypadSignals(PG))
     const b = build({

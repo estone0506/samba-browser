@@ -312,11 +312,13 @@ class PayerAgent(AgentBase):
         else:
             # 결제 앱이 없다 — 사이트 결제창의 웹 키패드다. 요소 번호는 스키마가 요구해서 찾는다
             found = self.tool('find_elements', query=KEYPAD_QUERY)
+            # 주문 계정을 라벨로 넘긴다 — 기본 프로필 탭에서 연 결제창은 프로필 단서가 없어 앱이 계정을 못 고른다(실기 7차)
             out = self.tool(
                 'fill_secret',
                 elementId=_element_id(found) or 0,
                 itemType='password',
                 dryRunDigits=digits,
+                **({'accountLabel': a.order.account} if a.order.account else {}),
             )
         self.note('시험 입력', mask_text(out[:200]))
         if not any(m in out.lower() for m in DRY_RUN_MARKERS):
