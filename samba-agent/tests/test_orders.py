@@ -44,7 +44,8 @@ def test_정상_조회():
     )
     ref = lookup_order(client(), '1001', {})
     assert ref.order_no == '1001'
-    assert (ref.source, ref.seller, ref.sku, ref.qty) == ('무신사', '포이즌', 'SKU1', 2)
+    # 소싱처는 삼바웨이브 id 로 정규화된다('무신사' → 'MUSINSA')
+    assert (ref.source, ref.seller, ref.sku, ref.qty) == ('MUSINSA', '포이즌', 'SKU1', 2)
 
 
 @respx.mock
@@ -150,7 +151,7 @@ def test_스크립트가_별칭_키로_돌려줘도_OrderRef_를_만든다():
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
     ref = lookup_order(client, '20260922BBAE44', {})
-    assert ref.source == 'ABC마트'
+    assert ref.source == 'ABCmart'  # 한글 이름도 id 로 정규화된다
     assert ref.seller == '신세계몰(seller01)'
     assert ref.sku == '나이키 코르테즈 [265]'
     assert ref.qty == 1

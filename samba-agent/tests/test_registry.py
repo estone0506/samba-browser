@@ -19,13 +19,15 @@ def _order(source: str = '무신사', seller: str = '포이즌') -> OrderRef:
 
 def test_소싱처로_구매_에이전트를_고른다(reg):
     assert reg.pick('buyer', _order('무신사'), {}).name == 'buyer.musinsa'
-    assert reg.pick('buyer', _order('29CM'), {}).name == 'buyer.29cm'
+    # 에이전트 이름은 sources.yaml 의 key 를 따른다 — 29CM 의 key 는 스크립트 접두어 cm29 다
+    assert reg.pick('buyer', _order('29CM'), {}).name == 'buyer.cm29'
     assert reg.pick('buyer', _order('ABC마트'), {}).name == 'buyer.abc'
     assert reg.pick('buyer', _order('롯데온'), {}).name == 'buyer.lotteon'
 
 
 def test_모르는_소싱처는_고르지_못한다(reg):
     assert reg.pick('buyer', _order('쿠팡'), {}) is None
+    assert reg.pick('buyer', _order('KREAM'), {}) is None  # 보류(hold)는 등록하지 않는다
 
 
 def test_결제_기록_검증은_소싱처와_무관하게_하나다(reg):

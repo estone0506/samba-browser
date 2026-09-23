@@ -19,6 +19,7 @@ def client(tmp_path):
     root = tmp_path / 'root'
     shutil.copytree(DEFAULT_ROOT / 'rules', root / 'rules')
     shutil.copy(DEFAULT_ROOT / 'registry.yaml', root / 'registry.yaml')
+    shutil.copy(DEFAULT_ROOT / 'sources.yaml', root / 'sources.yaml')
     reg = Registry.load(root)
     q = JobQueue(tmp_path / 'jobs.sqlite')
     q.enqueue('A1', 'U1', {'card': '현대'}, 'ts1')

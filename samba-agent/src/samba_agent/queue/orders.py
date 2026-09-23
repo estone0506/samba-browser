@@ -12,6 +12,7 @@ from collections.abc import Mapping
 
 from samba_agent.agents.contracts import OrderRef
 from samba_agent.bridge.client import BridgeClient
+from samba_agent.sources import default_sources
 
 FIND_ORDER_SCRIPT = 'samba_find_order'
 # 조회 스크립트는 앱의 활성 탭에서 돈다 — 이 주소가 앞에 있어야 한다
@@ -47,6 +48,10 @@ def _normalize(data: dict[str, object]) -> dict[str, object]:
                 if data.get(n) not in (None, ''):
                     out[field] = data[n]
                     break
+    # 소싱처는 한글 이름('ABC마트')·id('ABCmart')·key('abc') 어느 쪽으로 와도 삼바웨이브 id 로 맞춘다
+    source = out.get('source')
+    if isinstance(source, str):
+        out['source'] = default_sources().normalize(source.strip())
     account = out.get('account')
     if isinstance(account, str):
         m = _ACCOUNT_ID.search(account)

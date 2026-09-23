@@ -13,6 +13,7 @@ from samba_agent.agents.base import AgentBase, AgentFailure, run_agent
 from samba_agent.agents.contracts import AgentResult, Assignment
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_text
+from samba_agent.sources import default_sources
 
 # 결제 성공을 확인하는 문구. 이걸 보기 전에는 ok 를 내지 않는다(브리프 §완료조건)
 PAY_SUCCESS_MARKERS = ('결제 완료', '결제완료', '주문완료', '주문 완료', 'approved')
@@ -63,15 +64,17 @@ PAY_POPUP_WAIT_MS = 2000
 # "kind":"popup" 옆의 url 값은 이걸로 건진다(문자열 형식 대비)
 POPUP_URL_FALLBACK_RE = re.compile(r'"kind"\s*:\s*"popup"[^{}]*?"url"\s*:\s*"([^"]*)"')
 
-# 소싱처별 "결제창 진입" 저장 스크립트 이름. buyer.py 의 소싱처 키(무신사·29CM·ABC마트·롯데온)를
-# 그대로 쓴다 — 등록부 match.source 값과 같다. 매핑에 없는 소싱처는 기본 checkout_enter 로 진입한다
-CHECKOUT_SCRIPT = {
-    '무신사': 'checkout_enter_musinsa',
-    '29CM': 'checkout_enter_29cm',
-    'ABC마트': 'checkout_enter_abc',
-    '롯데온': 'checkout_enter_lotteon',
-}
+# 소싱처별 "결제창 진입" 저장 스크립트 이름은 소싱처 표(sources.yaml)가 준다 —
+# checkout_enter_<key>(29CM 만 checkout_enter_29cm 으로 표에 적어 둔 예외).
+# 표에 없는 소싱처는 기본 checkout_enter 로 진입한다
 DEFAULT_CHECKOUT_SCRIPT = 'checkout_enter'
+
+
+def checkout_script_for(source: str) -> str:
+    """소싱처(한글 이름·id 어느 쪽이든) → 결제창 진입 스크립트 이름."""
+    found = default_sources().by_id(source)
+    return found.checkout_script_name if found else DEFAULT_CHECKOUT_SCRIPT
+
 
 # dry_run 이면 결제 에이전트가 절대 부르지 않는 부수효과 도구(허용 목록에 있어도 막는다).
 # 코드 흐름상 dry_run 은 결제창 진입 뒤 곧바로 끝나 이 도구들을 호출하지 않지만, buyer.py 처럼
@@ -302,7 +305,7 @@ class PayerAgent(AgentBase):
             raise AgentFailure('fail', '결제할 카드가 없다', FailReason.CARD_MISSING)
 
         self.step('payer: 결제창 진입')
-        script = CHECKOUT_SCRIPT.get(a.order.source, DEFAULT_CHECKOUT_SCRIPT)
+        script = checkout_script_for(a.order.source)
         args = json.dumps({'card': card}, ensure_ascii=False)
         enter = self.tool('run_script', name=script, args=args)
         self.note('결제창', mask_text(enter[:200]))

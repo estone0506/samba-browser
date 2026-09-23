@@ -5,24 +5,29 @@
 """
 
 import json
-import re
 
 from samba_agent.agents.base import AgentBase, AgentFailure, Decision, run_agent
 from samba_agent.agents.contracts import AgentResult, Assignment, OrderRef
+from samba_agent.agents.registry import AgentSpec
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_text
+from samba_agent.sources import Source, default_sources
 
-# 소싱처별 "상품 상태 한 번에 읽기" 저장 스크립트 이름. 앱에 save_script 로 저장해 둔다
-# 소싱처 상품 URL 에서 스냅샷 스크립트가 바로 여는 상품 ID 를 뽑는 규칙(없는 소싱처는 URL 그대로)
-_PRODUCT_ID_OF = {
-    'buyer.abc': re.compile(r'[?&]prdtNo=(\d+)'),
-}
+
+def source_of(agent_name: str) -> Source:
+    """'buyer.abc' → 소싱처 표(sources.yaml)의 행. 표에 없는 이름은 등록부가 만들지 않는다."""
+    source = default_sources().by_agent(agent_name)
+    if source is None:
+        raise AgentFailure(
+            'needs_human', f'소싱처 표에 없는 에이전트: {agent_name}', FailReason.UNKNOWN
+        )
+    return source
 
 
 def product_ref(agent_name: str, order: OrderRef) -> str:
     """스냅샷 스크립트의 sku 인자 — 상품 ID > 상품 URL > 판매 상품명 순으로 확실한 것을 쓴다."""
     if order.product_url:
-        pattern = _PRODUCT_ID_OF.get(agent_name)
+        pattern = source_of(agent_name).product_id_re
         m = pattern.search(order.product_url) if pattern else None
         return m.group(1) if m else order.product_url
     return order.sku
@@ -38,14 +43,9 @@ def snapshot_args(agent_name: str, order: OrderRef) -> str:
     return json.dumps(args, ensure_ascii=False)
 
 
-# 로그인 확인을 시작할 소싱처 첫 페이지. 앱의 login 도구는 폼이 없으면 이미 로그인됐는지 보고,
-# 아니면 알려진 로그인 URL(shared/site-rules)로 스스로 옮겨 간다 — 여기서 로그인 URL 을 알 필요 없다
-SITE_HOME = {
-    'buyer.musinsa': 'https://www.musinsa.com/',
-    'buyer.29cm': 'https://www.29cm.co.kr/',
-    'buyer.abc': 'https://abcmart.a-rt.com/',
-    'buyer.lotteon': 'https://www.lotteon.com/',
-}
+# 로그인 확인은 소싱처 첫 페이지(sources.yaml 의 home)에서 시작한다. 앱의 login 도구는 폼이 없으면
+# 이미 로그인됐는지 보고, 아니면 알려진 로그인 URL(shared/site-rules)로 스스로 옮겨 간다 —
+# 여기서 로그인 URL 을 알 필요가 없다
 # 앱 login 도구의 결과 문자열 머리(src/main/agent/tools.ts)
 ALREADY_SIGNED_IN = 'already signed in'
 LOGIN_SUBMITTED = 'submitted'
@@ -53,23 +53,8 @@ LOGIN_SUBMITTED = 'submitted'
 _LOGIN_SETTLE_MS = 2500
 
 
-SNAPSHOT_SCRIPT = {
-    'buyer.musinsa': 'musinsa_product_snapshot',
-    'buyer.29cm': 'cm29_product_snapshot',
-    'buyer.abc': 'abc_product_snapshot',
-    'buyer.lotteon': 'lotteon_product_snapshot',
-}
-
 # 주문의 배송지를 앱에서 실행 시점에 읽어오는 전역 스크립트(소싱처 무관 — 주문 관리 쪽 데이터)
 SHIPPING_SCRIPT = 'samba_order_shipping'
-
-# 소싱처별 "배송지 입력" 저장 스크립트 이름
-SET_SHIPPING_SCRIPT = {
-    'buyer.musinsa': 'musinsa_set_shipping',
-    'buyer.29cm': 'cm29_set_shipping',
-    'buyer.abc': 'abc_set_shipping',
-    'buyer.lotteon': 'lotteon_set_shipping',
-}
 
 # 배송지로 다루는 필드 — 전부 개인정보라 어디에도 원문을 남기지 않는다
 SHIPPING_FIELDS = ('name', 'phone', 'address')
@@ -117,8 +102,15 @@ class BuyerAgent(AgentBase):
         account = a.order.account
         if not account:
             return
+        home = source_of(self.spec.name).home
+        if not home:
+            raise AgentFailure(
+                'needs_human',
+                f'소싱처 첫 페이지 주소가 표에 없다: {self.spec.name}',
+                FailReason.UNKNOWN,
+            )
         self.step(f'{self.spec.name}: 로그인 확인({account})')
-        self.tool('new_tab', url=SITE_HOME[self.spec.name])
+        self.tool('new_tab', url=home)
         self.tool('wait', ms=_LOGIN_SETTLE_MS)
         out = self.tool('login', accountLabel=account).strip()
         if out.startswith(ALREADY_SIGNED_IN):
@@ -153,7 +145,7 @@ class BuyerAgent(AgentBase):
         self.step(f'{self.spec.name}: 상품 확인')
         snap = self.json_tool(
             'run_script',
-            name=SNAPSHOT_SCRIPT[self.spec.name],
+            name=source_of(self.spec.name).snapshot_script,
             args=snapshot_args(self.spec.name, a.order),
         )
 
@@ -257,7 +249,7 @@ class BuyerAgent(AgentBase):
 
         applied = self.json_tool(
             'run_script',
-            name=SET_SHIPPING_SCRIPT[self.spec.name],
+            name=source_of(self.spec.name).set_shipping_script,
             args=json.dumps(shipping, ensure_ascii=False),
         )
         # 원문끼리 비교하지 않는다 — 마스킹한 값끼리만 비교해서 판단에도 개인정보를 안 남긴다
@@ -273,3 +265,22 @@ class BuyerAgent(AgentBase):
             f'{shipping.get("address", "")}'
         )
         self.note('배송지', f'반영 완료 — {mask_text(summary)}')
+
+
+class ScriptsPendingBuyer:
+    """저장 스크립트가 아직 없는 소싱처(sources.yaml status: scripts_pending)의 구매 에이전트.
+
+    등록부에는 행이 있어야 한다 — 없으면 감독자가 'unsupported' 로만 말해 준비가 어디까지 됐는지
+    알 수 없다. 그래서 만들어는 두고, 부르면 곧바로 사람에게 넘긴다.
+    """
+
+    def __init__(self, spec: AgentSpec, source: Source) -> None:
+        self.spec = spec
+        self.source = source
+
+    def __call__(self, assignment: Assignment) -> AgentResult:
+        return AgentResult(
+            status='needs_human',
+            reason=f'스크립트 미작성: {self.source.id}',
+            fail_reason=FailReason.UNKNOWN,
+        )
