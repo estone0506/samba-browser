@@ -109,7 +109,7 @@ def matching_options(options: list[str], wanted: str | None) -> list[str]:
     숫자만 같은 것(사이즈 230 ↔ '230(mm)'). '품절' 표시가 붙은 후보는 뺀다.
     아무 단계도 안 맞으면 빈 목록 — 절대 '가까운 값' 으로 대신하지 않는다.
     """
-    live = [o for o in options if '품절' not in o]
+    live = [o for o in options if not _sold_out(o)]
     if not wanted:
         return live
     w = wanted.strip()
@@ -124,12 +124,29 @@ def matching_options(options: list[str], wanted: str | None) -> list[str]:
         contains = [o for o in live if _norm(o) and (nw in _norm(o) or _norm(o) in nw)]
         if contains:
             return contains
+        # 주문 옵션이 "카키 085(L) NP6KP12C" 처럼 여러 단계·품번이 섞인 경우 — 토큰 하나가 후보 안에 있으면 맞는 것으로
+        # 본다(실기: 롯데온 사이즈 "085(L) 35,100 2개 남음 (품절임박)"). 한 글자짜리 토큰(M·L)은 너무 헐거워 뺀다
+        for tok in w.split():
+            nt = _norm(tok)
+            if len(nt) < 2:
+                continue
+            by_tok = [o for o in live if nt in _norm(o)]
+            if by_tok:
+                return by_tok
     digits = re.findall(r'\d+', w)
     if len(digits) == 1:
         by_digit = [o for o in live if re.findall(r'\d+', o) == digits]
         if by_digit:
             return by_digit
     return []
+
+
+# 품절 표시: "[품절]"·끝의 "품절"·"(품절)". "품절임박"(재고 적음)은 품절이 아니다(실기: 롯데온)
+_SOLD_OUT_RE = re.compile(r'\[품절\]|품절(?!임박)')
+
+
+def _sold_out(option: str) -> bool:
+    return _SOLD_OUT_RE.search(option) is not None
 
 
 def snapshot_args(agent_name: str, order: OrderRef, account: str | None = None) -> str:
