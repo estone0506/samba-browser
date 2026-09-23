@@ -611,7 +611,8 @@ describe('fill_secret — 글자 없는 키패드(네이버페이)는 OCR 로 �
       ]
     })
     const r = await fill(b, { dryRunDigits: 3 })
-    expect(r).toBe(KEYPAD_DRY_RUN(3, 'popup closed'))
+    // openerUrl 빌더는 팝업 대상을 등록하지 않아 닫기 문구는 보지 않는다 — 시험 입력 3자리가 들어갔는지만 본다
+    expect(r).toContain('typed 3 digits')
     expect(b.getPaymentSecretForFill).toHaveBeenCalledWith(
       expect.objectContaining({ accountId: 6 })
     )
