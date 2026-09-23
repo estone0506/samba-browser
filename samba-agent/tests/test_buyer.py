@@ -1096,9 +1096,14 @@ def test_결제_가능한_수단이_없으면_사람에게_넘긴다(monkeypatch
         'quotes': [{'method': '무신사머니', 'card': None, 'cost': 29000}],
         'base_cost': 29000,
     }
-    agent._payable_providers = lambda _account: set()
     snap = {'cost': 29000}
     a = type('A', (), {'options': {}})()
+    # 결제 항목이 하나도 없으면 견적을 안 쓰고 그대로 간다(승인 근거에 남긴다)
+    agent._payable_providers = lambda _account: set()
+    agent._apply_payment_quotes(a, 'buyer05', snap)
+    assert 'pay_method' not in snap
+    # 결제 항목은 있는데 주문서 수단과 안 겹치면 사람에게
+    agent._payable_providers = lambda _account: {'naver'}
     try:
         agent._apply_payment_quotes(a, 'buyer05', snap)
     except AgentFailure as e:

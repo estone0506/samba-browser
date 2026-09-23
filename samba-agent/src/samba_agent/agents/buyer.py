@@ -524,9 +524,14 @@ class BuyerAgent(AgentBase):
             # 결제 가능 여부를 모르면 견적으로 수단을 바꾸지 않는다 — 계좌이체처럼 낼 수 없는 수단을 고를 수 있다
             self.note('결제수단 견적', '키마스터 결제 항목을 못 읽어 견적을 쓰지 않는다 — 스냅샷 원가로 진행')
             return
+        if not payable:
+            # 이 계정엔 키마스터 결제 항목이 하나도 없다 — 견적으로 수단을 바꾸지 않고 스냅샷 기본 수단으로 간다.
+            # 실결제 때 결제 에이전트가 항목 없음으로 멈추고, 승인 카드 근거에 이 사실이 남는다
+            self.note('결제수단 견적', f'{account} 에 키마스터 결제 항목 없음 — 견적 미적용, 스냅샷 원가로 진행')
+            return
         quotes = cheapest_quotes(raw_quotes, a.options.get('card'), payable)
         if not quotes:
-            # 키마스터에 이 계정으로 낼 수 있는 결제 항목이 없다 — 모델이 고르게 두면 실결제에서 어차피 막힌다
+            # 결제 항목은 있는데 이 주문서의 수단과 겹치지 않는다 — 모델이 고르게 두면 실결제에서 어차피 막힌다
             offered = sorted({str(q.get('method')) for q in raw_quotes if isinstance(q, dict)})
             raise AgentFailure(
                 'needs_human',
