@@ -856,7 +856,17 @@ ${raw}`
     if (typeof available === 'string') return await keypadHandoff(tab)
     const hosts = keypadAccountHosts(tab)
     const account = keypadAccount(available, hosts, accountLabel, tab.profile)
-    if (!account) return hosts.length > 1 ? KEYPAD_ACCOUNT_UNKNOWN : ACCOUNT_NOT_FOUND
+    if (!account) {
+      // 왜 못 골랐는지 라벨에 남긴다(호스트·탭 프로필·후보 라벨 — 비밀은 없다). 실기 5차: 라벨 없이 부르면 여기서 끝났다
+      const labels = hosts
+        .flatMap((h) => available.listAccounts(h))
+        .map((a) => `${a.label}${a.itemTypes.includes('password') ? '*' : ''}`)
+      ctx.onStep(
+        `키패드 계정 못 고름(호스트 ${hosts.join(',')}; 프로필 ${tab.profile ?? '-'}; 후보 ${labels.slice(0, 12).join(' ') || '없음'})`,
+        false
+      )
+      return hosts.length > 1 ? KEYPAD_ACCOUNT_UNKNOWN : ACCOUNT_NOT_FOUND
+    }
     const gate = await applyPolicy(available, effectiveAccess(account.agentAccess, globalPolicy()))
     // 잠김·미설정은 사람에게 넘기고(직접 누르면 이어간다), 접근 정책 거부(never)는 그대로 알린다
     if (gate === VAULT_LOCKED || gate === VAULT_NOT_SET_UP) return await keypadHandoff(tab)

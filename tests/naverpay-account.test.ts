@@ -54,6 +54,20 @@ describe('비밀번호 입력 화면의 "이름(아이디)님" 표기', () => {
     expect(maskedNaverAccountMatches('buyer01', 'edelvise')).toBe(false)
   })
 
+  it('괄호와 아이디가 떨어져 나와도(본문 innerText 실기 6차) 아이디를 읽는다', () => {
+    expect(
+      maskedNaverAccount(
+        '네이버페이 인증 김사무 ( ) buyer01 님의 비밀번호 입력 비밀번호는 6자리 입니다.'
+      )
+    ).toBe('buyer01')
+    expect(maskedNaverAccount('김사무(buyer01) 님의 비밀번호 입력')).toBe('buyer01')
+    expect(maskedNaverAccount(['김사무', '(', 'buyer01', ')', '님의'].join(' '))).toBe(
+      'buyer01'
+    )
+    // 한글 이름만 있으면 아이디가 아니다
+    expect(maskedNaverAccount('김사무 님의 비밀번호 입력')).toBeNull()
+  })
+
   it('마스킹 표기가 있으면 그쪽이 우선이다', () => {
     expect(maskedNaverAccount('edel****** 김사무(buyer01)님')).toBe('edel******')
   })
