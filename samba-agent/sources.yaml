@@ -92,7 +92,7 @@ sources:
     label: 슈마커
     home: https://www.shoemarker.co.kr/
     login_host: shoemarker.co.kr
-    status: scripts_pending
+    status: active
   - id: GMARKET
     key: gmarket
     label: G마켓
