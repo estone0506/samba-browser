@@ -646,6 +646,17 @@ export function rectOf(id: number): ClickPoint | null {
   return { x: Math.round(point.x), y: Math.round(point.y) }
 }
 
+/**
+ * 입력칸 값의 글자 수. 메인 프로세스가 진짜 키 입력(typeLogin)으로 넣은 값이 들어갔는지 확인할 때 쓴다 —
+ * 값 자체는 돌려주지 않는다(비밀 칸). 요소가 없거나 입력칸이 아니면 -1
+ */
+export function valueLength(id: number): number {
+  const el = get(id)
+  if (!el) return -1
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value.length
+  return -1
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }

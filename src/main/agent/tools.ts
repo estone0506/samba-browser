@@ -1851,7 +1851,7 @@ overlays left: ${after.length}${kept}`
           label = `로그인: ${loginHost} (${account.label})`
           // 2단계 로그인 1단계(아이디 화면): 아이디만 채워 제출한 뒤 비밀번호 화면을 다시 탐지한다
           if (fields.stage === 'username-only' && fields.username !== undefined) {
-            const idFilled = await pageBridge.fillValue(tab, fields.username, account.username)
+            const idFilled = await pageBridge.typeLogin(tab, fields.username, account.username)
             if (idFilled !== 'ok') return idFilled
             if (ctx.vaultAutoSubmit === false) {
               return 'filled: submit is disabled by setting; ask the user to press login'
@@ -1872,13 +1872,13 @@ overlays left: ${after.length}${kept}`
           if (password === null) return 'not found: no login password saved for this account'
           // 사용자명은 비밀값이 아니므로 평문 그대로 채운다. 실패해도 전파한다
           if (fields.username !== undefined) {
-            const userFilled = await pageBridge.fillValue(tab, fields.username, account.username)
+            const userFilled = await pageBridge.typeLogin(tab, fields.username, account.username)
             if (userFilled !== 'ok') return userFilled
           }
           // 비밀번호를 넣기 직전 마지막 재검증 — 이 사이에 페이지가 바뀌었을 수 있다
           const beforeFill = verifyFillTarget(account, tab)
           if (beforeFill) return beforeFill
-          const pwFilled = await pageBridge.fillValue(tab, fields.password, password)
+          const pwFilled = await pageBridge.typeLogin(tab, fields.password, password)
           if (pwFilled !== 'ok') return pwFilled
           // 자동 제출이 꺼져 있으면 채우기만 하고 제출은 사용자에게 맡긴다
           if (ctx.vaultAutoSubmit === false) {

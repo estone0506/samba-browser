@@ -85,9 +85,9 @@ export async function autofillAccount(
   // 빈 아이디로 폼을 제출하면 로그인 실패·계정 잠금으로 이어진다
   let usernameFilled = fields.username === undefined
   if (fields.username !== undefined && account.username) {
-    usernameFilled = (await pageBridge.fillValue(tab, fields.username, account.username)) === 'ok'
+    usernameFilled = (await pageBridge.typeLogin(tab, fields.username, account.username)) === 'ok'
   }
-  const filled = await pageBridge.fillValue(tab, fields.password, password)
+  const filled = await pageBridge.typeLogin(tab, fields.password, password)
   if (filled !== 'ok') return 'fill-failed'
   // 계정을 고르면 로그인 버튼까지 눌러 준다(아이디까지 채운 경우만 — 비밀번호만 채웠으면 사용자가 확인)
   if (usernameFilled && deps.autoSubmit?.()) {

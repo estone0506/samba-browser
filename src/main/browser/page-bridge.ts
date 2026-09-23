@@ -317,6 +317,8 @@ function opToCode(op: AgentOp): string {
       return `__samba.isSecretField(${op.id})`
     case 'rectOf':
       return `__samba.rectOf(${op.id})`
+    case 'valueLength':
+      return `__samba.valueLength(${op.id})`
     case 'keypadSignals':
       return '__samba.keypadSignals()'
     case 'keypadLayout':
@@ -525,6 +527,44 @@ export const pageBridge = {
     } catch {
       return false
     }
+  },
+  /**
+   * 로그인 칸을 **진짜 키 입력**으로 채운다(webContents.sendInputEvent).
+   * 점수형 reCAPTCHA(v3·Enterprise)는 합성 이벤트로 넣은 값을 봇으로 보아 로그인 요청 자체를 거부한다 —
+   * 실기(GS샵): 키마스터 '완성'으로 채우고 로그인을 눌러도 "reCAPTCHA 검증이 유효하지 않습니다" 뒤
+   * 새로고침만 되고, 손으로 치면 들어갔다. 요소 가운데를 실제로 클릭해 포커스한 뒤 전체 선택 → 글자별 char 이벤트.
+   * 프레임 안 요소(좌표 불명)·클릭 실패·글자 수 불일치면 fillValue(합성 이벤트)로 돌아간다.
+   * 값은 코드 문자열에 넣지 않는다(입력 이벤트로만 나간다)
+   */
+  typeLogin: async (tab: Tab, id: number, value: string): Promise<string> => {
+    const wc = tab.view.webContents
+    if (wc.isDestroyed()) return 'page is gone'
+    const point = await pageBridge.rectOf(tab, id).catch(() => null)
+    if (!point || !pageBridge.clickAt(tab, point.x, point.y)) {
+      return pageBridge.fillValue(tab, id, value)
+    }
+    try {
+      // 클릭이 포커스로 이어질 시간을 준다
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      // 이미 든 값(아이디 저장 등)은 전체 선택으로 덮어쓴다
+      wc.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: ['control'] })
+      wc.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: ['control'] })
+      for (const ch of value) {
+        // keyDown/keyUp 은 keyCode 가 가속기 이름이어야 해 영숫자만 보낸다. 글자는 char 이벤트가 넣는다
+        const named = /^[A-Za-z0-9]$/.test(ch)
+        if (named) wc.sendInputEvent({ type: 'keyDown', keyCode: ch })
+        wc.sendInputEvent({ type: 'char', keyCode: ch })
+        if (named) wc.sendInputEvent({ type: 'keyUp', keyCode: ch })
+      }
+    } catch {
+      return pageBridge.fillValue(tab, id, value)
+    }
+    const { id: localId } = decodeFrameId(id)
+    const length = await call(wc, opToCode({ op: 'valueLength', id: localId }), z.number()).catch(
+      () => -1
+    )
+    if (length !== value.length) return pageBridge.fillValue(tab, id, value)
+    return 'ok'
   },
   waitForLoad: (tab: Tab, timeoutMs = 10000): Promise<void> =>
     new Promise<void>((resolve) => {

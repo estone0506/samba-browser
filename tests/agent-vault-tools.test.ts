@@ -31,6 +31,10 @@ const { pageBridge } = vi.hoisted(() => ({
     select: vi.fn(async () => 'ok'),
     scroll: vi.fn(async () => 'ok'),
     fillValue: vi.fn(async () => 'ok'),
+    // 로그인 칸 진짜 키 입력 — 테스트에서는 fillValue 와 같은 목으로 흘려 기존 기대를 그대로 둔다
+    typeLogin: vi.fn(async (tab: unknown, id: number, value: string) =>
+      pageBridge.fillValue(tab, id, value)
+    ),
     findLoginFields: vi.fn(async () => ({ username: 1, password: 2, submit: 3 })),
     submitForm: vi.fn(async () => 'ok'),
     waitForLoad: vi.fn(async () => {}),

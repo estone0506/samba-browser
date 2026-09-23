@@ -289,3 +289,67 @@ describe('pageBridge.rectOf / clickAt — 실제 마우스 클릭 폴백', () =>
     expect(inputEvents).toEqual([])
   })
 })
+
+describe('pageBridge.typeLogin — 로그인 칸 진짜 키 입력', () => {
+  // fakeTab 의 mainResult 는 rectOf 와 valueLength 응답에 같이 쓰인다 — 좌표 객체를 주면 rectOf 가,
+  // 숫자를 주면 valueLength 가 그 값을 받는다. 여기서는 순서대로 다른 응답을 주는 가짜를 따로 만든다
+  function typingTab(replies: unknown[]): {
+    tab: Tab
+    mainCalls: string[]
+    inputEvents: Record<string, unknown>[]
+  } {
+    const mainCalls: string[] = []
+    const inputEvents: Record<string, unknown>[] = []
+    const mainFrame: { url: string; framesInSubtree: unknown[] } = {
+      url: 'https://www.gsshop.com/cust/login/login.gs',
+      framesInSubtree: []
+    }
+    mainFrame.framesInSubtree = [mainFrame]
+    const webContents = {
+      isDestroyed: () => false,
+      mainFrame,
+      executeJavaScriptInIsolatedWorld: async (_world: number, scripts: { code: string }[]) => {
+        mainCalls.push(scripts[0].code)
+        return replies.shift()
+      },
+      sendInputEvent: (ev: Record<string, unknown>) => inputEvents.push(ev)
+    }
+    return { tab: { view: { webContents } } as unknown as Tab, mainCalls, inputEvents }
+  }
+
+  it('요소를 실제 클릭해 포커스한 뒤 전체 선택하고 글자별 char 이벤트로 친다', async () => {
+    const { tab, mainCalls, inputEvents } = typingTab([{ x: 10, y: 20 }, 3])
+    expect(await pageBridge.typeLogin(tab, 5, 'a@1')).toBe('ok')
+    expect(mainCalls).toEqual(['__samba.rectOf(5)', '__samba.valueLength(5)'])
+    const types = inputEvents.map((e) => `${e.type}:${e.keyCode ?? ''}`)
+    expect(types).toEqual([
+      'mouseDown:',
+      'mouseUp:',
+      'keyDown:A',
+      'keyUp:A',
+      'keyDown:a',
+      'char:a',
+      'keyUp:a',
+      // '@' 는 가속기 이름이 아니라 char 만 보낸다
+      'char:@',
+      'keyDown:1',
+      'char:1',
+      'keyUp:1'
+    ])
+    // 값은 어떤 코드 문자열에도 들어가지 않는다
+    expect(mainCalls.some((c) => c.includes('a@1'))).toBe(false)
+  })
+
+  it('좌표를 못 구하면(프레임 안 요소) fillValue 로 돌아간다', async () => {
+    const { tab, mainCalls, inputEvents } = typingTab([null, 'ok'])
+    expect(await pageBridge.typeLogin(tab, 5, 'pw')).toBe('ok')
+    expect(inputEvents).toEqual([])
+    expect(mainCalls[1]).toContain('__samba.fillValue(5,')
+  })
+
+  it('친 뒤 글자 수가 다르면(포커스 실패) fillValue 로 돌아간다', async () => {
+    const { tab, mainCalls } = typingTab([{ x: 10, y: 20 }, 0, 'ok'])
+    expect(await pageBridge.typeLogin(tab, 5, 'pw')).toBe('ok')
+    expect(mainCalls[2]).toContain('__samba.fillValue(5,')
+  })
+})

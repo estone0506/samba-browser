@@ -30,6 +30,10 @@ const { pageBridge } = vi.hoisted(() => ({
     select: vi.fn(async () => 'ok'),
     scroll: vi.fn(async () => 'ok'),
     fillValue: vi.fn(async () => 'ok'),
+    // 로그인 칸 진짜 키 입력 — 테스트에서는 fillValue 와 같은 목으로 흘려 기존 기대를 그대로 둔다
+    typeLogin: vi.fn(async (tab: unknown, id: number, value: string) =>
+      pageBridge.fillValue(tab, id, value)
+    ),
     isSecretField: vi.fn(async () => true),
     waitForLoad: vi.fn(async () => {}),
     // 기본값은 beforeEach 에서 넣는다(hoist 시점에는 아래 상수를 참조할 수 없다)
