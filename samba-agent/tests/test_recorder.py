@@ -328,3 +328,40 @@ def test_소싱_계정_id_는_주문에서_온다(reg):
     out = recorder_with_wave(reg)(a)
     assert out.status == 'ok'
     assert json.loads(put.calls[0].request.content)['sourcing_account_id'] == 'acc-42'
+
+
+@respx.mock
+def test_삼바웨이브_메모는_계정_수단_실결제_원가_한_줄이다(reg):
+    put = respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
+    )
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(200, json=WAVE_ORDER))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = recorder_with_wave(reg)(
+        assignment(reg, dry_run=False, handoff={'card': '현대', 'paid': 91000})
+    )
+    assert out.status == 'ok'
+    notes = json.loads(put.calls[0].request.content)['notes']
+    assert notes == f'계정 {ACCOUNT} · 수단 현대 · 실결제 91,000원 · 원가 89,000원'
+    assert find_leaks(notes) == []
+
+
+@respx.mock
+def test_실결제액을_모르면_메모에_미확인으로_남긴다(reg):
+    put = respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
+    )
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(200, json=WAVE_ORDER))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    recorder_with_wave(reg)(assignment(reg, dry_run=False, handoff={'card': '현대'}))
+    assert '실결제 미확인' in json.loads(put.calls[0].request.content)['notes']
+
+
+@respx.mock
+def test_마진_미달_건은_기록하지_않는다(reg):
+    put = respx.put(f'{WAVE_API}/orders/A1/sourcing')
+    script = respx.post(f'{URL}/tool/run_script')
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = recorder_with_wave(reg)(assignment(reg, dry_run=False, handoff={'margin_pct': -3.5}))
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.MARGIN)
+    assert not put.called and not script.called

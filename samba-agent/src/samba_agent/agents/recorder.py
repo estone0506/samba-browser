@@ -21,6 +21,24 @@ READ_SCRIPT = 'samba_read_order'
 NUMERIC_FIELDS = ('real_price', 'shipping_fee')
 
 
+def _won(value: object) -> str:
+    """금액 → '89,000원'. 모르면 '미확인'."""
+    try:
+        amount = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return '미확인'
+    return f'{amount:,.0f}원' if amount > 0 else '미확인'
+
+
+def wave_notes(a: Assignment, values: dict[str, object]) -> str:
+    """삼바웨이브 간단메모 한 줄(플레이북 §6-3) — 계정·수단·실결제액·원가. 개인정보는 없다."""
+    card = a.handoff.get('card') or a.options.get('card') or '미확인'
+    return (
+        f'계정 {values.get("account") or "미확인"} · 수단 {card} · '
+        f'실결제 {_won(a.handoff.get("paid"))} · 원가 {_won(values.get("real_price"))}'
+    )
+
+
 def _normalize(field: str, value: object) -> object:
     """되읽기 비교용 타입 정규화 — 숫자 필드는 숫자로, 문자열은 strip 해서 비교한다."""
     if value is None:
@@ -53,6 +71,12 @@ class RecorderAgent(AgentBase):
 
     def _record(self, a: Assignment) -> AgentResult:
         self.evidence = []
+        margin = a.handoff.get('margin_pct')
+        if isinstance(margin, int | float) and not isinstance(margin, bool) and margin <= 0:
+            # 마진 미달로 끝난 건은 기록하지 않는다 — 사람이 검토한다(감독자도 결제 전에 막는다)
+            raise AgentFailure(
+                'needs_human', f'마진 미달({margin}%) — 기록하지 않는다', FailReason.MARGIN
+            )
         self.step('recorder: 저장할 값 정리')
         memo = self.decide_once(
             f'{a.rules}\n\n주문 {a.order.order_no}({a.order.source})의 메모 한 문장을 쓰라.',
@@ -160,7 +184,8 @@ class RecorderAgent(AgentBase):
                 # 소싱 계정 id 는 주문이 들고 온 값이 정답이다(인계값은 예전 배선의 잔재)
                 sourcing_account_id=a.order.account_id
                 or (str(a.handoff.get('sourcing_account_id') or '') or None),
-                notes=str(values.get('memo') or '') or None,
+                # 간단메모는 정해진 한 줄(계정·수단·실결제·원가) — LLM 문장을 싣지 않는다
+                notes=wave_notes(a, values),
             )
             self.step('recorder: 기입 확인')
             saved = self._wave.get_order(a.order.order_no)  # type: ignore[union-attr]
