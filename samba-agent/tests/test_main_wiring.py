@@ -45,3 +45,71 @@ def test_슬랙이_없으면_보고는_조용히_로그로만_남는다():
     report, approval_report = make_reporters(lambda: bot)
     report(_Job(), '접수: A1')  # 예외가 나지 않는다
     approval_report(_Job(), 'A1', 'pay', '요약')
+
+
+# ---- 삼바웨이브 클라이언트 배선(Task C) ----
+
+
+def _settings(**env):
+    import os
+
+    from samba_agent.settings import load_settings
+
+    keys = {
+        'SAMBA_BRIDGE_TOKEN': 'b' * 64,
+        'SAMBA_WAVE_URL': 'https://wave.test',
+        **env,
+    }
+    old = {k: os.environ.get(k) for k in keys}
+    os.environ.update({k: v for k, v in keys.items() if v is not None})
+    for k, v in keys.items():
+        if v is None:
+            os.environ.pop(k, None)
+    try:
+        return load_settings(env_file=None)
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_토큰과_테넌트가_다_있어야_삼바웨이브_클라이언트를_만든다():
+    from samba_agent.__main__ import make_wave
+
+    assert make_wave(_settings()) is None
+    assert make_wave(_settings(SAMBA_WAVE_INTERNAL_TOKEN='t')) is None
+    assert make_wave(_settings(SAMBA_WAVE_TENANT_ID='tn')) is None
+    wave = make_wave(_settings(SAMBA_WAVE_INTERNAL_TOKEN='t', SAMBA_WAVE_TENANT_ID='tn'))
+    assert wave is not None
+
+
+def test_기본_설정은_창_7일_주기_300초다():
+    s = _settings()
+    assert (s.intake_days, s.intake_interval_s) == (7, 300)
+    assert s.wave_internal_token is None
+
+
+def test_에이전트_공장이_삼바웨이브를_구매_기록_검증에_꽂는다():
+    from samba_agent.agents.buyer import BuyerAgent
+    from samba_agent.agents.factory import build_agents
+    from samba_agent.agents.recorder import RecorderAgent
+    from samba_agent.agents.registry import Registry
+    from samba_agent.agents.verifier import VerifierAgent
+    from samba_agent.bridge.client import BridgeClient
+    from samba_agent.settings import DEFAULT_ROOT
+    from samba_agent.wave.client import WaveClient
+
+    wave = WaveClient('https://wave.test', 'test-token', 'tenant-1')
+    reg = Registry.load(DEFAULT_ROOT)
+    bridge = BridgeClient('http://127.0.0.1:47811', 'a' * 64, allowed=())
+    agents = build_agents(reg, bridge, lambda p, m: m(choice='x', reason='r'), wave)
+    buyer = agents['buyer.musinsa']
+    assert isinstance(buyer, BuyerAgent) and buyer._shipping_fn is not None
+    assert isinstance(agents['recorder'], RecorderAgent) and agents['recorder']._wave is wave
+    assert isinstance(agents['verifier'], VerifierAgent) and agents['verifier']._wave is wave
+    # 꽂지 않으면 예전 경로(앱 저장 스크립트) 그대로다
+    plain = build_agents(reg, bridge, lambda p, m: m(choice='x', reason='r'))
+    assert plain['recorder']._wave is None
+    assert plain['buyer.musinsa']._shipping_fn is None

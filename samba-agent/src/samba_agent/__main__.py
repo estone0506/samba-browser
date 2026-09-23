@@ -26,11 +26,12 @@ from samba_agent.ops.masking import mask_text
 from samba_agent.ops.releases import ReleaseStore
 from samba_agent.ops.tracing import configure_tracing
 from samba_agent.queue.db import Job, JobQueue
-from samba_agent.queue.orders import LOOKUP_TOOLS, lookup_order
+from samba_agent.queue.orders import LOOKUP_TOOLS, parse_order_fn
 from samba_agent.queue.worker import Worker, WorkerDeps
-from samba_agent.settings import load_settings
+from samba_agent.settings import Settings, load_settings
 from samba_agent.supervisor.graph import build_supervisor
 from samba_agent.version import harness_version
+from samba_agent.wave.client import WaveClient
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +58,17 @@ def make_reporters(get_bot: 'Callable[[], SambaBot]') -> tuple[ReportFn, Approva
     return report, approval_report
 
 
+def make_wave(settings: 'Settings') -> WaveClient | None:
+    """삼바웨이브 내부 API 클라이언트. 토큰·테넌트가 둘 다 있어야 만든다(값은 로그에 남기지 않는다)."""
+    if not (settings.wave_internal_token and settings.wave_tenant_id):
+        return None
+    return WaveClient(
+        settings.wave_url,
+        settings.wave_internal_token.get_secret_value(),
+        settings.wave_tenant_id,
+    )
+
+
 def main() -> None:
     settings = load_settings()
     logging.basicConfig(level=logging.INFO)
@@ -75,10 +87,18 @@ def main() -> None:
     # 주문 조회 = 삼바웨이브 탭 앞에 두기(list_tabs·switch_tab·new_tab·wait) + 저장 스크립트 1회
     lookup_bridge = bridge.scoped(list(LOOKUP_TOOLS))
 
+    # 삼바웨이브 내부 API — 토큰·테넌트가 둘 다 있을 때만 만든다. 없으면 앱 저장 스크립트로 돈다
+    wave = make_wave(settings)
+    if wave is None:
+        log.warning('삼바웨이브 내부 API 설정이 없다 — 조회·기록·검증은 앱 저장 스크립트로 돈다')
+
     # 모델명은 settings 에 없다 — llm.decide 의 상수(claude-sonnet-5) 를 그대로 쓴다
     decide = make_decide()
 
-    agents = build_agents(reg, bridge, decide)
+    # 조회 통로: 삼바웨이브 API 우선, 실패하면 앱 저장 스크립트
+    _parse_order = parse_order_fn(wave, lookup_bridge)
+
+    agents = build_agents(reg, bridge, decide, wave)
 
     version_fn = functools.partial(harness_version, settings.root, {})
     # from_conn_string 은 컨텍스트 매니저라 __enter__ 만 꺼내 쓰면 매니저가 버려지는 순간 연결이 닫힌다
@@ -130,7 +150,7 @@ def main() -> None:
             graph=graph,
             version=version_fn,  # 콜러블 그대로 넘긴다 — tick 마다 다시 불러 규칙 변경을 반영한다
             report=_report,
-            parse_order=lambda job: lookup_order(lookup_bridge, job.order_no, job.options),
+            parse_order=lambda job: _parse_order(job.order_no, job.options),
             # 같은 주문을 취소 뒤 다시 접수하면 job id(=스레드)가 같다 — 끝난 실행의 attempts·results 가
             # 남은 채 새 입력이 들어가면 재시도 횟수가 이어져 버린다(실기). 끝난 스레드는 지우고 시작한다
             reset_thread=checkpointer.delete_thread,
