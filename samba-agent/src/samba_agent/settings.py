@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     wave_url: str = Field(default='https://api.samba-wave.co.kr', alias='SAMBA_WAVE_URL')
     wave_internal_token: SecretStr | None = Field(default=None, alias='SAMBA_WAVE_INTERNAL_TOKEN')
     wave_tenant_id: str | None = Field(default=None, alias='SAMBA_WAVE_TENANT_ID')
+    # 배송지 연락처로 넣을 우리 번호. 고객 전화번호는 어디에도 입력하지 않는다(사용자 지시 2026-09-23).
+    # 비어 있으면 삼바웨이브 상세의 contact_phone 을 쓰고, 그것도 없으면 구매를 사람에게 넘긴다
+    ship_phone: str | None = Field(default=None, alias='SAMBA_SHIP_PHONE')
     # 자동 수집 창(일)과 주기(초) — Task D 의 intake 고리가 쓴다
     intake_days: int = Field(default=7, ge=1, alias='SAMBA_INTAKE_DAYS')
     intake_interval_s: int = Field(default=300, ge=10, alias='SAMBA_INTAKE_INTERVAL_S')

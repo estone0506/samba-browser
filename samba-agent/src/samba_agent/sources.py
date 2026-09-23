@@ -36,6 +36,9 @@ class Source(BaseModel):
     # 이름 규칙을 벗어나는 결제창 진입 스크립트(29CM 는 checkout_enter_29cm 로 이미 저장돼 있다)
     checkout_script: str | None = None
     status: SourceStatus = 'active'
+    # 이 소싱처의 주문은 항상 이 배송 종류로 본다(예: ABC마트는 전부 까대기 = 사무실 배송).
+    # None 이면 주문(삼바웨이브 action_tag)이 정한 종류를 따른다
+    order_type: Literal['direct', 'kkadaegi', 'gift'] | None = None
 
     @property
     def product_id_re(self) -> re.Pattern[str] | None:

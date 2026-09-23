@@ -306,7 +306,10 @@ class PayerAgent(AgentBase):
 
         self.step('payer: 결제창 진입')
         script = checkout_script_for(a.order.source)
-        args = json.dumps({'card': card}, ensure_ascii=False)
+        payload: dict[str, object] = {'card': card}
+        if a.order.account:
+            payload['profile'] = a.order.account  # 구매가 연 계정 프로필의 주문서에서 결제창을 연다
+        args = json.dumps(payload, ensure_ascii=False)
         enter = self.tool('run_script', name=script, args=args)
         self.note('결제창', mask_text(enter[:200]))
 

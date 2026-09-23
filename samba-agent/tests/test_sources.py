@@ -137,3 +137,12 @@ def test_표의_모르는_필드는_거부한다(tmp_path):
     )
     with pytest.raises(ValueError):
         Sources.load(tmp_path)
+
+
+def test_ABC마트와_그랜드스테이지는_항상_까대기다():
+    from samba_agent.sources import default_sources
+
+    src = default_sources()
+    assert src.by_id('ABCmart').order_type == 'kkadaegi'
+    assert src.by_id('GrandStage').order_type == 'kkadaegi'
+    assert src.by_id('MUSINSA').order_type is None

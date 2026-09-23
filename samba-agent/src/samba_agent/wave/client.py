@@ -121,6 +121,7 @@ class WaveOrder(BaseModel):
             # 기록이 되돌려 줄 소싱 계정 id — 로그인용 아이디가 아니라 삼바웨이브 내부 id 다
             account_id=(self.sourcing_account_id or '').strip() or None,
             order_type=self.order_type,
+            sale_price=float(self.sale_price or 0),
         )
 
 
@@ -128,6 +129,8 @@ class WaveOrderDetail(WaveOrder):
     """주문 상세 — 배송지가 더 실린다. 배송지는 받는 즉시 쓰고 버린다."""
 
     shipping: WaveShipping = WaveShipping()
+    # 삼바웨이브가 주는 우리 쪽 연락처(사무실 번호). 없으면 설정 SAMBA_SHIP_PHONE 으로 대신한다
+    contact_phone: str | None = None
 
 
 # 감독자 기대값 키 ← 삼바웨이브 응답 필드. 응답에 그 값이 없으면(None) 빼서 '대조 못 함' 으로 남긴다.
@@ -173,9 +176,14 @@ class WaveClient:
         items = body.get('items') if isinstance(body, dict) else None
         return [WaveOrder.model_validate(i) for i in items or []]
 
-    def get_order(self, order_no: str) -> WaveOrderDetail:
-        """주문 1건 상세. 배송지가 실려 온다 — 호출부는 즉시 쓰고 버린다."""
-        body = self._request('GET', f'/orders/{order_no}')
+    def get_order(self, order_no: str, order_type: OrderType | None = None) -> WaveOrderDetail:
+        """주문 1건 상세. 배송지가 실려 온다 — 호출부는 즉시 쓰고 버린다.
+
+        ``order_type`` 을 주면 그 종류의 배송지(까대기 = 사무실)를 달라고 요청한다. 삼바웨이브가
+        아직 이 인자를 모르면 응답의 order_type 이 다르게 오고, 호출부가 그걸 보고 멈춘다.
+        """
+        params = {'order_type': order_type} if order_type else None
+        body = self._request('GET', f'/orders/{order_no}', params=params)
         return WaveOrderDetail.model_validate(body)
 
     def record_sourcing(

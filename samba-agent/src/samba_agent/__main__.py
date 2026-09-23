@@ -99,7 +99,7 @@ def main() -> None:
     # 조회 통로: 삼바웨이브 API 우선, 실패하면 앱 저장 스크립트
     _parse_order = parse_order_fn(wave, lookup_bridge)
 
-    agents = build_agents(reg, bridge, decide, wave)
+    agents = build_agents(reg, bridge, decide, wave, ship_phone=settings.ship_phone)
 
     version_fn = functools.partial(harness_version, settings.root, {})
     # from_conn_string 은 컨텍스트 매니저라 __enter__ 만 꺼내 쓰면 매니저가 버려지는 순간 연결이 닫힌다

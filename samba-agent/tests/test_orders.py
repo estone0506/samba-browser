@@ -116,6 +116,7 @@ def test_결과에_개인정보가_있어도_OrderRef_에는_없다():
         'account',
         'account_id',
         'order_type',
+        'sale_price',
     }
     assert '홍길동' not in str(ref)
 

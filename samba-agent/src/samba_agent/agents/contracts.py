@@ -31,6 +31,8 @@ class OrderRef(BaseModel):
     # 주문 종류 — 까대기는 사무실로 받고, 선물하기는 배송지 입력 흐름이 다르다.
     # 배송지 자체는 여기 담지 않는다(개인정보) — 실행 순간에만 받아 쓴다
     order_type: Literal['direct', 'kkadaegi', 'gift'] = 'direct'
+    # 판매가(고객 결제액). 스냅샷이 마진을 안 주면 원가와 이 값으로 계산한다. 0 이면 모름
+    sale_price: float = 0
 
 
 class Evidence(BaseModel):

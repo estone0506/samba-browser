@@ -178,3 +178,20 @@ def test_대조용_사전은_응답에_있는_값만_담는다():
         'real_price': 89000,
         'shipping_fee': 0,
     }
+
+
+@respx.mock
+def test_상세는_요청한_배송_종류를_인자로_보낸다():
+    route = respx.get(f'{API}/orders/A1').mock(
+        return_value=httpx.Response(
+            200, json={'order_number': 'A1', 'order_type': 'kkadaegi', 'contact_phone': '02-1'}
+        )
+    )
+    d = client().get_order('A1', order_type='kkadaegi')
+    assert route.calls[0].request.url.params['order_type'] == 'kkadaegi'
+    assert d.contact_phone == '02-1'
+
+
+def test_판매가를_OrderRef_로_옮긴다():
+    o = WaveOrder(order_number='A1', product_name='x', sale_price=12345)
+    assert o.to_order_ref().sale_price == 12345

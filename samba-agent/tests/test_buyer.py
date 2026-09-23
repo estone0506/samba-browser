@@ -260,6 +260,9 @@ def test_소싱_계정이_있으면_스냅샷_전에_로그인한다(reg):
     assert out.status == 'ok'
     assert login.call_count == 2  # 제출 뒤 한 번 더 불러 로그인됐는지 확인한다
     assert json.loads(login.calls[0].request.content)['args'] == {'accountLabel': 'buyer01'}
+    # 계정 이름의 프로필로 탭을 열었다
+    new_tab = next(c for c in respx.calls if c.request.url.path.endswith('/new_tab'))
+    assert json.loads(new_tab.request.content)['args']['profile'] == 'buyer01'
     assert any('로그인 완료' in e.detail for e in out.evidence)
 
 
@@ -342,7 +345,8 @@ def test_스냅샷_인자는_상품_ID와_사이즈를_우선한다():
         'qty': 1,
     }
     with_account = abc.model_copy(update={'account': 'buyer01'})
-    assert json.loads(snapshot_args('buyer.abc', with_account))['account'] == 'buyer01'
+    with_acc = json.loads(snapshot_args('buyer.abc', with_account))
+    assert with_acc['account'] == 'buyer01' and with_acc['profile'] == 'buyer01'
 
 
 def test_스냅샷_인자는_따옴표가_있어도_JSON_이다():
@@ -373,7 +377,7 @@ def buyer_with_wave(reg, decide):
     from samba_agent.agents.factory import _shipping_provider
 
     a = agent(reg, decide)
-    a.set_shipping_provider(_shipping_provider(wave_client()))
+    a.set_shipping_provider(_shipping_provider(wave_client(), '010-0000-0000'))
     return a
 
 
@@ -455,3 +459,127 @@ def test_스냅샷이_다른_아이디를_돌려주면_사람에게_넘긴다(re
     )
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(a)
     assert (out.status, out.fail_reason) == ('needs_human', FailReason.PERMISSION_DENIED)
+
+
+def _abc_agent(reg, ship_phone):
+    from samba_agent.agents.factory import _shipping_provider
+
+    spec = reg['buyer.abc']
+    abc = BuyerAgent(
+        spec,
+        BridgeClient(URL, 'a' * 64, allowed=spec.tools, busy_wait_s=0.0),
+        lambda p, m: m(choice='260', reason='일치'),
+    )
+    abc.set_shipping_provider(_shipping_provider(wave_client(), ship_phone))
+    return abc, spec
+
+
+def _recording_handler(snapshot_name, applied):
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body['args']['name'] == snapshot_name:
+            return page(json.dumps(SNAPSHOT_OK, ensure_ascii=False))
+        applied.update(json.loads(body['args']['args']))
+        return page(json.dumps(applied, ensure_ascii=False))
+
+    return handler
+
+
+@respx.mock
+def test_고객_전화번호는_어디에도_입력하지_않는다(reg):
+    # 사용자 지시(2026-09-23): 배송 연락처는 우리 번호 — 삼바웨이브 contact_phone 없으면 설정값
+    respx.get(f'{WAVE_API}/orders/A1').mock(
+        return_value=httpx.Response(
+            200, json={'order_number': 'A1', 'order_type': 'direct', 'shipping': SHIPPING}
+        )
+    )
+    applied: dict[str, object] = {}
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=_recording_handler('musinsa_product_snapshot', applied)
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = buyer_with_wave(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
+    assert out.status == 'ok'
+    assert applied['phone'] == '010-0000-0000'
+    assert applied['name'] == SHIPPING['name']  # 이름·주소는 고객 것, 번호만 우리 것
+
+
+@respx.mock
+def test_연락처가_아무_데도_없으면_사람에게_넘긴다(reg):
+    from samba_agent.agents.factory import _shipping_provider
+
+    respx.get(f'{WAVE_API}/orders/A1').mock(
+        return_value=httpx.Response(
+            200, json={'order_number': 'A1', 'order_type': 'direct', 'shipping': SHIPPING}
+        )
+    )
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=route_run_script({'musinsa_product_snapshot': SNAPSHOT_OK})
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    a = agent(reg, lambda p, m: m(choice='260', reason='일치'))
+    a.set_shipping_provider(_shipping_provider(wave_client(), None))
+    out = a(assignment(reg))
+    assert out.status == 'needs_human' and '연락처' in out.reason
+
+
+@respx.mock
+def test_ABC마트는_항상_까대기로_사무실_배송지를_요청한다(reg):
+    route = respx.get(f'{WAVE_API}/orders/A1').mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                'order_number': 'A1',
+                'order_type': 'kkadaegi',
+                'shipping': OFFICE,
+                'contact_phone': '02-000-0000',
+            },
+        )
+    )
+    abc, spec = _abc_agent(reg, None)
+    applied: dict[str, object] = {}
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=_recording_handler('abc_product_snapshot', applied)
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    order = ORDER.model_copy(update={'source': 'ABCmart', 'order_type': 'direct'})
+    out = abc(assignment(reg).model_copy(update={'order': order, 'allowed_tools': spec.tools}))
+    assert out.status == 'ok'
+    assert route.calls[0].request.url.params['order_type'] == 'kkadaegi'
+    assert applied['address'] == OFFICE['address'] and applied['phone'] == '02-000-0000'
+
+
+@respx.mock
+def test_까대기를_요청했는데_고객_주소가_오면_멈춘다(reg):
+    respx.get(f'{WAVE_API}/orders/A1').mock(
+        return_value=httpx.Response(
+            200, json={'order_number': 'A1', 'order_type': 'direct', 'shipping': SHIPPING}
+        )
+    )
+    abc, spec = _abc_agent(reg, '010-0000-0000')
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=route_run_script({'abc_product_snapshot': SNAPSHOT_OK})
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    order = ORDER.model_copy(update={'source': 'ABCmart'})
+    out = abc(assignment(reg).model_copy(update={'order': order, 'allowed_tools': spec.tools}))
+    assert out.status == 'needs_human' and '사무실 배송지' in out.reason
+
+
+@respx.mock
+def test_스냅샷에_마진이_없으면_판매가로_계산한다(reg):
+    # 실기: 소싱처 스냅샷은 margin_pct 를 모른다(null) → 감독자가 마진 미달로 거부했다
+    snap = {**SNAPSHOT_OK, 'margin_pct': None, 'cost': 80000}
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=route_run_script(
+            {'musinsa_product_snapshot': snap, 'musinsa_set_shipping': SHIPPING}
+        )
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    order = ORDER.model_copy(update={'sale_price': 100000})
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(
+        assignment(reg).model_copy(update={'order': order})
+    )
+    assert out.status == 'ok'
+    assert out.payload['margin_pct'] == 20.0
+    assert any(e.label == '마진 계산' for e in out.evidence)

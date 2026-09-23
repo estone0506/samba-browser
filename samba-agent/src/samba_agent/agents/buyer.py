@@ -17,7 +17,8 @@ from samba_agent.sources import Source, default_sources
 from samba_agent.wave.client import WaveError
 
 # 주문번호 → 배송지 사전. 개인정보라 반환값은 호출 안에서만 쓰고 버린다
-ShippingFn = Callable[[str], dict[str, object]]
+# (주문번호, 배송 종류) → 배송지 사전. 배송 종류는 소싱처 강제값이 있으면 그것, 없으면 주문의 값
+ShippingFn = Callable[[str, str], dict[str, object]]
 
 # 로그인 아이디로 볼 수 있는 모양(ASCII 영숫자·._-). 한글 별명은 여기 걸리지 않는다
 _LOGIN_ID = re.compile(r'[A-Za-z0-9._\-@]+')
@@ -48,7 +49,9 @@ def snapshot_args(agent_name: str, order: OrderRef) -> str:
     if order.option:
         args['size'] = order.option
     if order.account:
+        # 계정별 탭 프로필 — 세션(쿠키)이 계정마다 따로라 다른 계정으로 로그인된 채 사는 일이 없다
         args['account'] = order.account
+        args['profile'] = order.account
     return json.dumps(args, ensure_ascii=False)
 
 
@@ -121,7 +124,8 @@ class BuyerAgent(AgentBase):
                 FailReason.UNKNOWN,
             )
         self.step(f'{self.spec.name}: 로그인 확인({account})')
-        self.tool('new_tab', url=home)
+        # 계정 이름의 프로필로 탭을 연다 — 저장 스크립트도 같은 profile 인자를 받아 그 세션에서 돈다
+        self.tool('new_tab', url=home, profile=account)
         self.tool('wait', ms=_LOGIN_SETTLE_MS)
         out = self.tool('login', accountLabel=account).strip()
         if out.startswith(ALREADY_SIGNED_IN):
@@ -230,6 +234,12 @@ class BuyerAgent(AgentBase):
 
         cost = float(snap.get('cost') or 0)
         margin = float(snap.get('margin_pct') or 0)
+        if margin <= 0 and cost > 0 and a.order.sale_price > 0:
+            # 스냅샷은 마진을 모른다(소싱처 페이지엔 우리 판매가가 없다) — 판매가 대비 원가로 계산
+            margin = round((a.order.sale_price - cost) / a.order.sale_price * 100, 1)
+            self.note(
+                '마진 계산', f'판매가 {a.order.sale_price:,.0f} - 원가 {cost:,.0f} → {margin}%'
+            )
         self.step(f'{self.spec.name}: 결제 직전까지 준비 완료')
         return AgentResult(
             status='ok',
@@ -255,6 +265,11 @@ class BuyerAgent(AgentBase):
         """
         self._shipping_fn = provider
 
+    def order_type_of(self, order: OrderRef) -> str:
+        """이 주문의 배송 종류 — 소싱처가 강제하면 그것(ABC마트 = 까대기), 아니면 주문의 값."""
+        forced = source_of(self.spec.name).order_type
+        return forced or order.order_type
+
     def _fetch_shipping(self, a: Assignment, snap: dict[str, object]) -> dict[str, object]:
         """배송지 출처 — 삼바웨이브(공급자) > 스냅샷에 실려 온 값 > 전용 스크립트 순.
 
@@ -262,7 +277,7 @@ class BuyerAgent(AgentBase):
         """
         if self._shipping_fn is not None:
             try:
-                fetched = self._shipping_fn(a.order.order_no)
+                fetched = self._shipping_fn(a.order.order_no, self.order_type_of(a.order))
             except WaveError as e:
                 raise AgentFailure('fail', f'배송지 조회 실패: {e}', e.reason) from e
             if fetched:
@@ -288,7 +303,10 @@ class BuyerAgent(AgentBase):
         applied = self.json_tool(
             'run_script',
             name=source_of(self.spec.name).set_shipping_script,
-            args=json.dumps(shipping, ensure_ascii=False),
+            args=json.dumps(
+                {**shipping, **({'profile': a.order.account} if a.order.account else {})},
+                ensure_ascii=False,
+            ),
         )
         # 원문끼리 비교하지 않는다 — 마스킹한 값끼리만 비교해서 판단에도 개인정보를 안 남긴다
         mismatch = any(
