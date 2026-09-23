@@ -363,20 +363,50 @@ export class OcrEngine {
     // 3) 잘라서 인식 — CTC 디코딩
     const lines: OcrLine[] = []
     for (const candidate of boxes) {
-      const { data, width } = buildRecInput(img, candidate.box)
-      const recInput = new ort.Tensor('float32', data, [1, 3, REC_HEIGHT, width])
-      const recOut = await rec.run({ [rec.inputNames[0]]: recInput })
-      const logits = recOut[rec.outputNames[0]] as Tensor
-      const timeSteps = Number(logits.dims[1])
-      const numClasses = Number(logits.dims[2])
-      const { text, score } = decodeCtc(logits.data as Float32Array, timeSteps, numClasses, dict)
-      const trimmed = text.trim()
-      if (!trimmed || score < REC_MIN_SCORE) continue
-      lines.push({ text: trimmed, box: candidate.box, score: Number(score.toFixed(3)) })
+      const line = await this.recognizeBox(rec, dict, img, candidate.box)
+      if (line) lines.push(line)
     }
 
     const ordered = sortLines(lines)
     return { lines: ordered, text: mergeLineText(ordered) }
+  }
+
+  /**
+   * 검출 없이 이미지 **전체**를 한 줄로 인식한다. 키패드 한 칸처럼 작은 숫자 하나는 검출 모델이
+   * 글자 영역을 못 잡아 빈 결과가 나온다 — 호출부가 recognize 로 못 읽었을 때 이 길로 다시 읽는다.
+   * 확신도가 낮거나 글자가 없으면 null
+   */
+  async recognizeWhole(imagePng: Buffer): Promise<OcrLine | null> {
+    if (!this.hasModels()) {
+      throw new Error('OCR 모델이 아직 준비되지 않았습니다. ensureModels 를 먼저 호출하세요.')
+    }
+    await this.load()
+    const rec = this.recSession
+    const dict = this.dict
+    if (!rec || !dict) throw new Error('OCR 세션 적재에 실패했습니다.')
+    const img = decodePng(imagePng)
+    if (img.width === 0 || img.height === 0) return null
+    return this.recognizeBox(rec, dict, img, [0, 0, img.width, img.height])
+  }
+
+  // 사각형 하나를 잘라 인식 모델에 넣고 CTC 로 푼다. 글자가 없거나 확신도가 낮으면 null
+  private async recognizeBox(
+    rec: InferenceSession,
+    dict: string[],
+    img: DecodedImage,
+    box: BoxTuple
+  ): Promise<OcrLine | null> {
+    const ort = await import('onnxruntime-node')
+    const { data, width } = buildRecInput(img, box)
+    const recInput = new ort.Tensor('float32', data, [1, 3, REC_HEIGHT, width])
+    const recOut = await rec.run({ [rec.inputNames[0]]: recInput })
+    const logits = recOut[rec.outputNames[0]] as Tensor
+    const timeSteps = Number(logits.dims[1])
+    const numClasses = Number(logits.dims[2])
+    const { text, score } = decodeCtc(logits.data as Float32Array, timeSteps, numClasses, dict)
+    const trimmed = text.trim()
+    if (!trimmed || score < REC_MIN_SCORE) return null
+    return { text: trimmed, box, score: Number(score.toFixed(3)) }
   }
 }
 

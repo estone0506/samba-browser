@@ -1156,6 +1156,32 @@ const KEYPAD_UNLABELED_MAX = 14
  * 순으로 돌려준다. 보안 키패드 모양(10~14개)이 아니면 null. 어느 칸이 어느 숫자인지는
  * 여기서 알 수 없다 — 앱(메인 프로세스)이 각 칸을 OCR 로 읽는다. 값은 어디에서도 읽지 않는다
  */
+// 숫자 그림 요소 주변 여백(px). 글자 가장자리가 잘리지 않을 만큼만
+const KEYPAD_GLYPH_PAD = 6
+
+/** 버튼 안의 숫자 그림 요소(배경 이미지 span·img·svg)의 사각형(여백 포함). 없으면 버튼 사각형 */
+function glyphRectOf(
+  button: HTMLElement,
+  fallback: DOMRect
+): { left: number; top: number; width: number; height: number } {
+  const inner = Array.from(button.querySelectorAll<HTMLElement>('span, i, img, svg, em, b')).filter(
+    (child) => {
+      const cr = child.getBoundingClientRect()
+      if (cr.width < 4 || cr.height < 4) return false
+      if (cr.width >= fallback.width - 2 && cr.height >= fallback.height - 2) return false
+      if (child instanceof HTMLImageElement || child instanceof SVGElement) return true
+      return getComputedStyle(child).backgroundImage !== 'none'
+    }
+  )
+  if (inner.length !== 1) return fallback
+  const g = inner[0].getBoundingClientRect()
+  const left = Math.max(fallback.left, g.left - KEYPAD_GLYPH_PAD)
+  const top = Math.max(fallback.top, g.top - KEYPAD_GLYPH_PAD)
+  const right = Math.min(fallback.right, g.right + KEYPAD_GLYPH_PAD)
+  const bottom = Math.min(fallback.bottom, g.bottom + KEYPAD_GLYPH_PAD)
+  return { left, top, width: right - left, height: bottom - top }
+}
+
 export function keypadUnlabeled(): KeypadCellDto[] | null {
   const visible: VisibilityCache = new Map()
   const cells: { el: HTMLElement; x: number; y: number; width: number; height: number }[] = []
@@ -1168,7 +1194,10 @@ export function keypadUnlabeled(): KeypadCellDto[] | null {
     const r = el.getBoundingClientRect()
     if (r.width < KEYPAD_CELL_MIN || r.height < KEYPAD_CELL_MIN) continue
     if (r.width > KEYPAD_CELL_MAX || r.height > KEYPAD_CELL_MAX) continue
-    cells.push({ el, x: r.left, y: r.top, width: r.width, height: r.height })
+    // OCR 은 숫자 그림 주변만 읽는 편이 정확하다(130×63 칸 전체를 주면 작은 숫자를 검출 모델이 놓친다 — 실기).
+    // 버튼 안에 그림을 담은 작은 요소(스프라이트 span·img·svg)가 하나 있으면 그 사각형에 여백을 둬 쓴다
+    const glyph = glyphRectOf(el, r)
+    cells.push({ el, x: glyph.left, y: glyph.top, width: glyph.width, height: glyph.height })
   }
   if (cells.length < KEYPAD_UNLABELED_MIN || cells.length > KEYPAD_UNLABELED_MAX) return null
   cells.sort((a, b) => a.y - b.y || a.x - b.x)

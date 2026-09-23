@@ -272,3 +272,16 @@ describe.runIf(modelsReady)('OcrEngine (모델이 있을 때만)', () => {
     await engine.dispose()
   }, 120_000)
 })
+
+describe('normalizeDigit — 키패드 한 자리 숫자 정규화', () => {
+  it('숫자는 그대로, 닮은 글자는 숫자로, 나머지는 null', async () => {
+    const { normalizeDigit } = await import('../src/main/agent/tools-ocr')
+    expect(normalizeDigit('7')).toBe('7')
+    expect(normalizeDigit(' 4 ')).toBe('4')
+    expect(normalizeDigit('I')).toBe('1')
+    expect(normalizeDigit('O')).toBe('0')
+    expect(normalizeDigit('12')).toBeNull()
+    expect(normalizeDigit('')).toBeNull()
+    expect(normalizeDigit('가')).toBeNull()
+  })
+})

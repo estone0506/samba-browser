@@ -1023,17 +1023,33 @@ ${raw}`
    */
   const ocrKeypadLayout = async (tab: Tab): Promise<KeypadLayout | null> => {
     const cells = await pageBridge.keypadUnlabeled(tab).catch(() => null)
-    if (!cells) return null
+    if (!cells) {
+      ctx.onStep('키패드 배치(OCR): 글자 없는 버튼 10~14개를 못 찾음', false)
+      return null
+    }
     const digits: Record<string, number> = {}
     let count = 0
+    let duplicates = 0
+    // 못 읽은 사유만 모은다(어느 칸이 어느 숫자인지는 남기지 않는다)
+    const reasons: string[] = []
     for (const cell of cells) {
-      const digit = await ocrDigitInRegion(tab, cell).catch(() => null)
+      const digit = await ocrDigitInRegion(tab, cell, reasons).catch(() => null)
       if (digit === null) continue
-      if (digits[digit] !== undefined) return null
+      if (digits[digit] !== undefined) {
+        duplicates += 1
+        continue
+      }
       digits[digit] = cell.id
       count += 1
     }
-    if (count !== 10) return null
+    if (count !== 10 || duplicates > 0) {
+      const why = [...new Set(reasons)].slice(0, 4).join(' ')
+      ctx.onStep(
+        `키패드 배치(OCR): 칸 ${cells.length}, 읽은 숫자 ${count}, 중복 ${duplicates}${why ? `, 사유 ${why}` : ''}`,
+        false
+      )
+      return null
+    }
     return { digits, filled: null, frameIndex: 0 }
   }
 

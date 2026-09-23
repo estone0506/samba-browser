@@ -48,6 +48,33 @@ function startModelDownload(ocr: OcrEngine): void {
 // 한 자리 숫자 판독 결과로 인정하는 모양
 const SINGLE_DIGIT_RE = /^[0-9]$/
 
+// 숫자 하나를 글자로 잘못 읽는 흔한 경우(실측: Arial 의 1 을 I 로). 키패드는 0~9 가 한 번씩 나와야 하므로
+// 잘못 바꿔도 중복·누락으로 걸러진다
+const DIGIT_LOOKALIKES: Record<string, string> = {
+  I: '1',
+  l: '1',
+  '|': '1',
+  O: '0',
+  o: '0',
+  D: '0',
+  S: '5',
+  s: '5',
+  B: '8',
+  Z: '2',
+  z: '2',
+  g: '9',
+  q: '9',
+  b: '6'
+}
+
+/** 판독 글자를 한 자리 숫자로 정규화한다. 숫자 하나로 볼 수 없으면 null */
+export function normalizeDigit(text: string): string | null {
+  const t = text.replace(/\s+/g, '')
+  if (SINGLE_DIGIT_RE.test(t)) return t
+  if (t.length === 1 && DIGIT_LOOKALIKES[t] !== undefined) return DIGIT_LOOKALIKES[t]
+  return null
+}
+
 // 키패드 판독 직전 모델 내려받기를 기다리는 상한(rec.onnx 13MB 기준)
 const MODEL_WAIT_MS = 90_000
 
@@ -59,12 +86,18 @@ const MODEL_WAIT_MS = 90_000
  */
 export async function ocrDigitInRegion(
   tab: Tab,
-  rect: { x: number; y: number; width: number; height: number }
+  rect: { x: number; y: number; width: number; height: number },
+  // 못 읽은 사유를 모으는 곳(진행 라벨용). 숫자·좌표는 담지 않는다
+  reasons?: string[]
 ): Promise<string | null> {
-  if (!enabled) return null
+  const fail = (why: string): null => {
+    reasons?.push(why)
+    return null
+  }
+  if (!enabled) return fail('disabled')
   try {
     const bounds = tab.view.getBounds()
-    if (bounds.width === 0 || bounds.height === 0) return null
+    if (bounds.width === 0 || bounds.height === 0) return fail('bounds0')
     const ocr = getEngine()
     if (!ocr.hasModels()) {
       // 모델이 없으면 내려받기를 시작하고 잠시 기다린다 — 첫 호출에서 바로 포기하면 키패드가 사람에게 넘어간다
@@ -74,22 +107,27 @@ export async function ocrDigitInRegion(
         ocr.ensureModels().catch(() => undefined),
         new Promise<void>((resolve) => setTimeout(resolve, MODEL_WAIT_MS))
       ])
-      if (!ocr.hasModels()) return null
+      if (!ocr.hasModels()) return fail('no-models')
     }
     const clamped = clampRect(rect, bounds.width, bounds.height)
-    if (clamped.width < 1 || clamped.height < 1) return null
+    if (clamped.width < 1 || clamped.height < 1) return fail('rect0')
     const image = await tab.view.webContents.capturePage(clamped)
     const size = image.getSize()
-    if (size.width === 0 || size.height === 0) return null
-    const result = await ocr.recognize(image.toPNG())
-    const text = result.lines
-      .map((l) => l.text)
-      .join('')
-      .replace(/\s+/g, '')
-    return SINGLE_DIGIT_RE.test(text) ? text : null
-  } catch {
+    if (size.width === 0 || size.height === 0) return fail('capture0')
+    const png = image.toPNG()
+    const result = await ocr.recognize(png)
+    const text = result.lines.map((l) => l.text).join('')
+    const fromDet = normalizeDigit(text)
+    if (fromDet !== null) return fromDet
+    // 검출 모델이 작은 숫자 하나를 못 잡으면(빈 결과) 칸 전체를 한 줄로 다시 읽는다
+    const whole = await ocr.recognizeWhole(png)
+    const wholeText = whole?.text ?? ''
+    const fromWhole = normalizeDigit(wholeText)
+    if (fromWhole !== null) return fromWhole
+    return fail(`text:${text.length}/${wholeText.length}`)
+  } catch (e: unknown) {
     // 캡처·인식 실패는 "못 읽음"으로 본다 — 호출부가 사람에게 넘긴다
-    return null
+    return fail(`error:${(e instanceof Error ? e.message : String(e)).slice(0, 60)}`)
   }
 }
 
