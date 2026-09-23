@@ -36,6 +36,21 @@ describe('matchSignedInText — 로그인 상태 문구 판정', () => {
   it('판정 근거 문구를 함께 돌려준다', () => {
     expect(matchSignedInText(['홈', '로그아웃']).matched).toBe('로그아웃')
   })
+
+  it('로그아웃 버튼은 확실한 근거(weak=false), 마이페이지 류만이면 약한 근거(weak=true)', () => {
+    expect(matchSignedInText(['로그아웃']).weak).toBe(false)
+    expect(matchSignedInText(['마이 페이지로 이동']).weak).toBe(true)
+  })
+
+  it('마이페이지 류와 로그인·회원가입 링크가 같이 보이면 로그인 전이다(실기: 무신사 홈)', () => {
+    const r = matchSignedInText(['마이 페이지로 이동', '로그인', '회원가입'])
+    expect(r.signedIn).toBe(false)
+    expect(matchSignedInText(['My Page', 'Sign in']).signedIn).toBe(false)
+  })
+
+  it('로그아웃 버튼이 있으면 로그인 링크가 함께 있어도 로그인된 것으로 본다', () => {
+    expect(matchSignedInText(['로그인', '로그아웃']).signedIn).toBe(true)
+  })
 })
 
 describe('detectSignedInHint — DOM 판정', () => {

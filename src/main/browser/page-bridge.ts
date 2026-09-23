@@ -138,7 +138,12 @@ const loginFieldsSchema = z.object({
 export type LoginFieldsResult = z.infer<typeof loginFieldsSchema>
 
 // 로그인 상태 힌트 — matched 는 페이지에서 온 문자열이라 길이를 잘라 쓴다
-const signedInHintSchema = z.object({ signedIn: z.boolean(), matched: z.string() })
+const signedInHintSchema = z.object({
+  signedIn: z.boolean(),
+  matched: z.string(),
+  // 예전 프리로드와의 호환 — 없으면 확실한 근거로 본다
+  weak: z.boolean().default(false)
+})
 
 // 캡차·2FA 징후. 푸는 것은 사용자 몫이고, 여기서는 "사람이 필요하다"만 판정한다
 const captchaHintSchema = z.object({ needsUser: z.boolean(), matched: z.string() })

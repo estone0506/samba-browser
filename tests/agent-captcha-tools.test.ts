@@ -164,6 +164,44 @@ describe('login — 이미 로그인된 상태면 다시 로그인하지 않는�
     expect(pageBridge.submitForm).toHaveBeenCalled()
   })
 
+  it('약한 근거(마이페이지 류)면 알려진 로그인 URL 로 가서 폼이 나오면 로그인 전으로 본다', async () => {
+    // 실기: 무신사 홈은 로그아웃 상태에서도 "마이 페이지로 이동" 링크가 있어 로그인을 건너뛰었다
+    const orig = fakeTab.view.webContents.getURL
+    fakeTab.view.webContents.getURL = () => 'https://www.musinsa.com/main/musinsa/recommend'
+    try {
+      pageBridge.findLoginFields.mockResolvedValueOnce(NO_FIELDS).mockResolvedValue(FULL_FORM)
+      pageBridge.signedInHint.mockResolvedValue({
+        signedIn: true,
+        matched: '마이 페이지로 이동',
+        weak: true
+      })
+      const { tools } = build()
+      const r = await run(tools.login)
+      expect(r).not.toMatch(/already signed in/)
+      // 로그인 페이지로 옮겨 가 폼을 확인했다
+      expect(pageBridge.findLoginFields.mock.calls.length).toBeGreaterThan(1)
+    } finally {
+      fakeTab.view.webContents.getURL = orig
+    }
+  })
+
+  it('약한 근거라도 로그인 페이지에 폼이 없으면 already signed in', async () => {
+    const orig = fakeTab.view.webContents.getURL
+    fakeTab.view.webContents.getURL = () => 'https://www.musinsa.com/main/musinsa/recommend'
+    try {
+      pageBridge.findLoginFields.mockResolvedValue(NO_FIELDS)
+      pageBridge.signedInHint.mockResolvedValue({
+        signedIn: true,
+        matched: '마이 페이지로 이동',
+        weak: true
+      })
+      const { tools } = build()
+      expect(await run(tools.login)).toBe('already signed in (마이 페이지로 이동)')
+    } finally {
+      fakeTab.view.webContents.getURL = orig
+    }
+  })
+
   it('힌트가 아니면 평소대로 로그인한다', async () => {
     pageBridge.findLoginFields.mockResolvedValueOnce(NO_FIELDS).mockResolvedValue(NO_FIELDS)
     pageBridge.signedInHint.mockResolvedValue({ signedIn: false, matched: '' })

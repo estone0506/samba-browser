@@ -26,6 +26,9 @@ export interface SignedInHint {
   signedIn: boolean
   // 판정 근거가 된 문구(모델·로그에 남긴다). 못 찾으면 빈 문자열
   matched: string
+  // 근거가 마이페이지 류(약한 근거)뿐이면 true — 로그아웃 상태에서도 그런 링크를 보이는 사이트가
+  // 있어(실기: 무신사 "마이 페이지로 이동") 호출부가 로그인 페이지 방문으로 한 번 더 확인한다
+  weak: boolean
 }
 
 // 사람이 직접 처리해야 하는 추가 확인(캡차·2FA) 징후.
@@ -84,6 +87,10 @@ const HONEYPOT_RE = /honey|\btrap\b|nospam|no.?bot|bot.?field|fake.?(field|input
 // 로그인된 사용자에게만 보이는 링크·버튼 문구(ko/en)
 export const SIGNED_IN_RE =
   /로그아웃|마이\s?페이지|내\s?정보|내\s?계정|내\s?정보\s?관리|주문\s?내역|sign\s?out|log\s?out|logout|my\s?page|my\s?account|my\s?info|my\s?profile/i
+// 그중 확실한 근거 — 로그아웃 버튼은 로그인 전 화면에 나오지 않는다
+export const SIGNED_OUT_ACTION_RE = /로그아웃|sign\s?out|log\s?out|logout/i
+// 로그인 전 화면에만 보이는 링크 문구. 마이페이지 류와 같이 보이면 로그인 전으로 본다
+export const SIGNED_OUT_LINK_RE = /^(로그인|회원\s?가입|sign\s?in|log\s?in|login|join)$/i
 
 // 사람이 직접 풀어야 하는 확인의 강한 징후 — 이 문구 하나로 넘김을 결정한다
 export const CAPTCHA_STRONG_RE =
@@ -456,12 +463,18 @@ export function detectLoginFields(
  * 반대로 로그인/회원가입 링크만 있으면 로그인 전 화면이다
  */
 export function matchSignedInText(texts: string[]): SignedInHint {
+  let weakHit = ''
+  let signedOutLink = false
   for (const raw of texts) {
     const t = raw.replace(/\s+/g, ' ').trim()
     if (!t || t.length > 40) continue
-    if (SIGNED_IN_RE.test(t)) return { signedIn: true, matched: t }
+    if (SIGNED_OUT_ACTION_RE.test(t)) return { signedIn: true, matched: t, weak: false }
+    if (!weakHit && SIGNED_IN_RE.test(t)) weakHit = t
+    if (SIGNED_OUT_LINK_RE.test(t)) signedOutLink = true
   }
-  return { signedIn: false, matched: '' }
+  // 마이페이지 류만 있고 로그인·회원가입 링크가 함께 보이면 로그인 전 화면이다
+  if (weakHit && !signedOutLink) return { signedIn: true, matched: weakHit, weak: true }
+  return { signedIn: false, matched: '', weak: false }
 }
 
 /**
@@ -469,7 +482,7 @@ export function matchSignedInText(texts: string[]): SignedInHint {
  * 호출부(login 도구)는 findLoginFields 가 폼을 못 찾았을 때만 이 값을 쓴다
  */
 export function detectSignedInHint(): SignedInHint {
-  if (passwordElement()) return { signedIn: false, matched: '' }
+  if (passwordElement()) return { signedIn: false, matched: '', weak: false }
   const nodes = Array.from(
     document.querySelectorAll<HTMLElement>('a, button, [role="button"], [role="link"]')
   ).filter(isVisible)

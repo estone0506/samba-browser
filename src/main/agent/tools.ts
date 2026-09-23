@@ -1949,19 +1949,28 @@ overlays left: ${after.length}${kept}`
           // 이미 로그인돼 있으면 다시 로그인하지 않는다 — 재로그인은 세션을 새로 만들어
           // 캡차·추가 인증을 불러오기 때문이다. 폼이 없을 때만 상태 힌트를 본다
           const first = await pageBridge.findLoginFields(tab)
+          let verified: LoginFieldsResult | undefined
           if (first.stage === 'none') {
             try {
               const hint = await pageBridge.signedInHint(tab)
               if (hint.signedIn) {
-                label = `이미 로그인됨: ${host}`
-                return `${ALREADY_SIGNED_IN} (${hint.matched})`
+                // 마이페이지 류만 근거면(약한 근거) 알려진 로그인 URL 로 가서 확인한다 — 로그아웃 상태에서도
+                // 그 링크를 보이는 사이트가 있다(실기: 무신사 홈 "마이 페이지로 이동" → 로그인 건너뜀 →
+                // 구매하기가 로그인 페이지로 감). 로그인 페이지에 폼이 나오면 로그인 전이다
+                if (hint.weak && knownLoginUrl(host) !== undefined) {
+                  verified = await findLoginFieldsWithFallback(ctx.tabs, tab, host, first)
+                }
+                if (!verified || verified.stage === 'none') {
+                  label = `이미 로그인됨: ${host}`
+                  return `${ALREADY_SIGNED_IN} (${hint.matched})`
+                }
               }
             } catch {
               // 힌트를 못 읽으면 평소대로 로그인 절차를 계속한다
             }
           }
           // 폼이 없으면 알려진 로그인 URL 이동 → 페이지 내 로그인 링크 클릭까지 한 번에 시도한다
-          let fields = await findLoginFieldsWithFallback(ctx.tabs, tab, host, first)
+          let fields = verified ?? (await findLoginFieldsWithFallback(ctx.tabs, tab, host, first))
           if (fields.stage === 'none') {
             return 'fields not found: navigate to the login page first'
           }
