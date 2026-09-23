@@ -151,7 +151,9 @@ describe('PIN 인증 주소 정규식', () => {
     'https://order.musinsa.com/simplepay/password',
     'https://pg.kakaopay.com/v1/pw/confirm',
     'https://pay.toss.im/web/pin',
-    'https://alpha.payco.com/order/pin'
+    'https://alpha.payco.com/order/pin',
+    // 네이버페이 결제 비밀번호 창 — 숫자 버튼에 글자가 없어 주소로만 잡힌다(실기)
+    'https://pay.naver.com/authentication/pw/check?token=abc'
   ])('%s 는 PIN 인증 경로다', (url) => {
     expect(isPinAuthUrl(url)).toBe(true)
     expect(secretKeypadReason(signals({ url }))).toBe('pin-url')
@@ -160,7 +162,8 @@ describe('PIN 인증 주소 정규식', () => {
   it.each([
     'https://www.musinsa.com/app/goods/123',
     'https://shop.example/checkout',
-    'https://pay.example.com/pinned-items'
+    'https://pay.example.com/pinned-items',
+    'https://pay.naver.com/o/orderStatus/123'
   ])('%s 는 PIN 인증 경로가 아니다', (url) => {
     expect(isPinAuthUrl(url)).toBe(false)
   })

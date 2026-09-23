@@ -27,7 +27,10 @@ export const PIN_URL_PATTERNS: readonly RegExp[] = [
   /simplepay.*password/i,
   /kakaopay.*pw/i,
   /toss.*pin/i,
-  /payco.*pin/i
+  /payco.*pin/i,
+  // 네이버페이 결제 비밀번호 창(pay.naver.com/authentication/pw/check). 숫자 버튼에 글자·이름이 없고
+  // 입력칸도 없어(점 6개로만 표시) DOM 신호로는 못 잡는다(실기 2026-09-23)
+  /pay\.naver\.com\/authentication\/pw/i
 ]
 
 /** 주소가 알려진 PIN 인증 경로인가 */
