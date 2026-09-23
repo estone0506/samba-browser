@@ -6,7 +6,7 @@ import pytest
 import respx
 
 from samba_agent.agents.base import AgentFailure
-from samba_agent.agents.buyer import BuyerAgent, snapshot_args
+from samba_agent.agents.buyer import BuyerAgent, shipping_matches, snapshot_args
 from samba_agent.agents.contracts import Assignment, OrderRef
 from samba_agent.agents.registry import Registry
 from samba_agent.bridge.client import BridgeClient
@@ -1016,3 +1016,15 @@ def test_계정_비교_상한_설정은_기본_5이고_1_이상이다(monkeypatc
     monkeypatch.setenv('SAMBA_COMPARE_ACCOUNTS_MAX', '0')
     with pytest.raises(ValidationError):
         load_settings(env_file=None)
+
+
+def test_배송지_비교는_사이트_표기_차이를_허용한다():
+    exp = {'name': '홍길동', 'address': '서울특별시 중구 세종대로 110'}
+    assert shipping_matches(
+        exp, {'name': '홍길동', 'address': '서울 중구 세종대로 110 (서울특별시청)'}
+    )
+    assert shipping_matches(exp, {'name': '홍 길동', 'address': '04524 서울 중구 세종대로 110'})
+    # 이름이 다르거나 번지가 다르면 다른 곳이다
+    assert not shipping_matches(exp, {'name': '김철수', 'address': '서울 중구 세종대로 110'})
+    assert not shipping_matches(exp, {'name': '홍길동', 'address': '서울 중구 세종대로 111'})
+    assert not shipping_matches(exp, {'name': '홍길동', 'address': ''})

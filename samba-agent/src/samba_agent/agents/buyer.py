@@ -69,6 +69,32 @@ def _norm(text: str) -> str:
     return re.sub(r'[\s\-_/·,()\[\]]+', '', text).lower()
 
 
+# 주소 비교용 — 사이트가 우편번호 검색으로 바꿔 놓는 표기 차이("서울특별시"→"서울", 뒤에 "(태평로1가)" 붙음)를 지운다
+_ADDR_DROP = re.compile(r'\([^)]*\)|특별자치도|특별자치시|특별시|광역시|자치|\s+')
+
+
+def _norm_address(text: str) -> str:
+    return _ADDR_DROP.sub('', text).lower()
+
+
+def shipping_matches(expected: dict[str, object], applied: dict[str, object]) -> bool:
+    """넣은 배송지와 사이트가 되읽어 준 배송지가 같은 곳인가.
+
+    이름은 공백을 뺀 정확 일치. 주소는 사이트 표기 차이를 지운 뒤 한쪽이 다른 쪽을 품거나,
+    도로명·건물번호 등 숫자 토큰이 모두 같아야 한다(실기: 무신사가 "서울특별시 중구 세종대로 110" 을
+    "서울 중구 세종대로 110 (서울특별시청)" 으로 되읽어 정확 비교가 어긋났다).
+    """
+    if _norm(str(expected.get('name', ''))) != _norm(str(applied.get('name', ''))):
+        return False
+    a = _norm_address(str(expected.get('address', '')))
+    b = _norm_address(str(applied.get('address', '')))
+    if not a or not b:
+        return False
+    if a in b or b in a:
+        return True
+    return re.findall(r'\d+', a) == re.findall(r'\d+', b) and a[-6:] in b
+
+
 def matching_options(options: list[str], wanted: str | None) -> list[str]:
     """주문 옵션과 맞는 후보들. 주문 옵션이 없으면 전부 후보다.
 
@@ -584,11 +610,7 @@ class BuyerAgent(AgentBase):
             args=json.dumps(args, ensure_ascii=False),
         )
         # 원문끼리 비교하지 않는다 — 마스킹한 값끼리만 비교해서 판단에도 개인정보를 안 남긴다
-        mismatch = any(
-            mask_text(str(shipping.get(f, ''))) != mask_text(str(applied.get(f, '')))
-            for f in SHIPPING_FIELDS
-        )
-        if mismatch:
+        if not shipping_matches(shipping, applied):
             raise AgentFailure('needs_human', '배송지 입력 검증에 실패했다', FailReason.UNKNOWN)
         self._fill_phone(applied)
         self._confirm_shipping(shipping, args)
@@ -612,10 +634,7 @@ class BuyerAgent(AgentBase):
                 ensure_ascii=False,
             ),
         )
-        if not confirmed.get('ok') or any(
-            mask_text(str(shipping.get(f, ''))) != mask_text(str(confirmed.get(f, '')))
-            for f in SHIPPING_FIELDS
-        ):
+        if not confirmed.get('ok') or not shipping_matches(shipping, confirmed):
             raise AgentFailure(
                 'needs_human',
                 f'배송지 확정 검증에 실패했다: {mask_text(str(confirmed.get("note", ""))[:80])}',
