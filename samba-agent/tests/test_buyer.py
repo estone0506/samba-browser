@@ -79,6 +79,9 @@ def route_run_script(responses: dict[str, object]) -> object:
             # 확정 스크립트는 표본에 없어도 받은 인자를 되읽기로 메아리친다
             args = json.loads(body['args'].get('args') or '{}')
             return page(json.dumps({'ok': True, **args}, ensure_ascii=False))
+        if name not in responses and str(name).endswith('_payment_quotes'):
+            # 결제수단 견적은 표본에 없으면 "견적 없음" — 스냅샷 원가로 진행한다
+            return page('{"quotes": []}')
         if name not in responses:
             raise AssertionError(f'예상치 못한 run_script 호출: {name}')
         return page(json.dumps(responses[name], ensure_ascii=False))
@@ -798,6 +801,9 @@ def _per_account_snapshots(by_account: dict[str, object], calls: list[str]):
         if name.endswith('_confirm_shipping'):
             # 확정은 calls 에 남기지 않는다(배송지 순서 단언은 set_shipping 기준)
             return page(json.dumps({'ok': True, **args}, ensure_ascii=False))
+        if name.endswith('_payment_quotes'):
+            # 결제수단 견적도 calls 에 남기지 않는다 — "견적 없음"이면 스냅샷 원가로 간다
+            return page('{"quotes": []}')
         calls.append(f'{name}:{args.get("profile")}')
         return page(json.dumps(SHIPPING_ECHO, ensure_ascii=False))
 
@@ -1074,3 +1080,33 @@ def test_cheapest_quotes_결제_가능한_수단만_싼_순으로():
     assert parse_account_payments(raw, 'buyer05') == {'site', 'toss', 'card'}
     assert parse_account_payments(raw, 'other') is None
     assert parse_account_payments('vault locked', 'buyer05') is None
+
+
+def test_결제_가능한_수단이_없으면_사람에게_넘긴다(monkeypatch):
+    """키마스터 결제 항목이 비어 있으면 견적이 있어도 모델에게 고르게 하지 않는다."""
+    from samba_agent.agents import buyer as buyer_mod
+    from samba_agent.agents.base import AgentFailure
+
+    agent = buyer_mod.BuyerAgent.__new__(buyer_mod.BuyerAgent)
+    agent.evidence = []
+    agent.spec = type('S', (), {'name': 'buyer.musinsa'})()
+    agent.step = lambda *_: None
+    agent.note = lambda *_: None
+    agent.json_tool = lambda *_, **__: {
+        'quotes': [{'method': '무신사머니', 'card': None, 'cost': 29000}],
+        'base_cost': 29000,
+    }
+    agent._payable_providers = lambda _account: set()
+    snap = {'cost': 29000}
+    a = type('A', (), {'options': {}})()
+    try:
+        agent._apply_payment_quotes(a, 'buyer05', snap)
+    except AgentFailure as e:
+        assert e.status == 'needs_human'
+        assert '결제 가능한 수단이 없다' in e.reason
+    else:
+        raise AssertionError('needs_human 이어야 한다')
+    # 결제 항목이 있으면 그 수단으로 원가를 바꾼다
+    agent._payable_providers = lambda _account: {'site'}
+    agent._apply_payment_quotes(a, 'buyer05', snap)
+    assert snap['pay_method'] == '무신사머니' and snap['cost'] == 29000.0

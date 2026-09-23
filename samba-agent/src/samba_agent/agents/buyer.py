@@ -515,13 +515,25 @@ class BuyerAgent(AgentBase):
         except AgentFailure as e:
             self.note('결제수단 견적', mask_text(f'못 읽음({e.reason[:80]}) — 스냅샷 원가로 진행'))
             return
+        raw_quotes = out.get('quotes')
+        if not isinstance(raw_quotes, list) or not raw_quotes:
+            self.note('결제수단 견적', '견적 없음 — 스냅샷 원가로 진행')
+            return
         payable = self._payable_providers(account)
         if payable is None:
-            self.note('결제수단 견적', '키마스터 결제 항목을 못 읽어 결제 가능 여부를 거르지 않는다')
-        quotes = cheapest_quotes(out.get('quotes'), a.options.get('card'), payable)
-        if not quotes:
-            self.note('결제수단 견적', '결제 가능한 후보 없음 — 스냅샷 원가로 진행')
+            # 결제 가능 여부를 모르면 견적으로 수단을 바꾸지 않는다 — 계좌이체처럼 낼 수 없는 수단을 고를 수 있다
+            self.note('결제수단 견적', '키마스터 결제 항목을 못 읽어 견적을 쓰지 않는다 — 스냅샷 원가로 진행')
             return
+        quotes = cheapest_quotes(raw_quotes, a.options.get('card'), payable)
+        if not quotes:
+            # 키마스터에 이 계정으로 낼 수 있는 결제 항목이 없다 — 모델이 고르게 두면 실결제에서 어차피 막힌다
+            offered = sorted({str(q.get('method')) for q in raw_quotes if isinstance(q, dict)})
+            raise AgentFailure(
+                'needs_human',
+                f'결제 가능한 수단이 없다({account}): 키마스터 결제 항목 {sorted(payable) or "없음"}, '
+                f'주문서 결제수단 {offered}',
+                FailReason.CARD_MISSING,
+            )
         best = quotes[0]
         snap['cost'] = best['cost']
         snap['pay_method'] = best['method']
