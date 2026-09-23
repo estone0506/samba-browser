@@ -24,6 +24,7 @@ def build_agents(
     bridge: BridgeClient,
     decide: DecideFn,
     wave: WaveClient | None = None,
+    compare_accounts_max: int = 5,
 ) -> dict[str, AgentFn]:
     """이름 → 호출 가능한 에이전트. 새 소싱처는 sources.yaml 1행이면 여기 자동으로 생긴다.
 
@@ -31,7 +32,7 @@ def build_agents(
     needs_human('스크립트 미작성: <id>') 이다.
 
     ``wave`` 를 주면 구매는 배송지를, 결제는 결제 직전 재조회를, 기록·검증은 삼바웨이브 행을
-    앱 화면 대신 내부 API 로 본다.
+    앱 화면 대신 내부 API 로 본다. ``compare_accounts_max`` 는 구매가 원가를 비교할 계정 수 상한이다.
     """
     shipping_fn = _shipping_provider(wave)
     agents: dict[str, AgentFn] = {}
@@ -43,6 +44,7 @@ def build_agents(
         agent = _CLASSES[spec.kind](spec, bridge, decide)
         if isinstance(agent, BuyerAgent):
             agent.set_shipping_provider(shipping_fn)
+            agent.compare_accounts_max = compare_accounts_max
         elif isinstance(agent, PayerAgent | RecorderAgent | VerifierAgent):
             agent.set_wave(wave)
         agents[spec.name] = agent

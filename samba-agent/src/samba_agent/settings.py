@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     intake_enabled: bool = Field(default=True, alias='SAMBA_INTAKE_ENABLED')
     # 한 바퀴에 새로 접수하는 상한(슬랙 폭주 방지)
     intake_max_new: int = Field(default=5, ge=1, alias='SAMBA_INTAKE_MAX_NEW')
+    # 주문 계정이 지정되지 않은 구매에서 원가를 비교할 소싱 계정 수 상한(계정마다 로그인·주문서를 만든다)
+    compare_accounts_max: int = Field(default=5, ge=1, alias='SAMBA_COMPARE_ACCOUNTS_MAX')
     root: Path = Field(default=DEFAULT_ROOT, alias='SAMBA_AGENT_ROOT')
     db_path: Path = Field(default=DEFAULT_ROOT / 'jobs.sqlite', alias='SAMBA_DB_PATH')
     # 판정·진단 산출물 위치. gate·eval·API 가 같은 곳을 본다(리뷰 지적 — I4)
