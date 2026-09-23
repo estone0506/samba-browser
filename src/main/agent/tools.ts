@@ -132,6 +132,13 @@ const INSECURE_PAGE = 'refused: insecure page (https required)'
 const FILL_HOST_MISMATCH = 'refused: HOST_MISMATCH — page moved to another domain'
 // 이미 로그인돼 있을 때 돌려주는 문자열(다시 로그인하면 세션이 끊겨 캡차가 늘어난다)
 const ALREADY_SIGNED_IN = 'already signed in'
+// 사이트가 "아이디 또는 비밀번호가 일치하지 않습니다" 같은 대화상자로 로그인 실패를 알린 경우.
+// 같은 실행에서 다시 시도하면 실패가 쌓여 계정이 잠긴다(실기: SSG 에서 모델이 3회 재시도) — 앱이 막고 사람에게 넘긴다
+const WRONG_PASSWORD_RE =
+  /일치하지\s*않|비밀번호가\s*(틀|올바르지|잘못)|아이디\s*또는\s*비밀번호|비밀번호를?\s*(다시|확인)|incorrect\s*(password|login)|invalid\s*(password|credentials)|wrong\s*password/i
+export const LOGIN_WRONG_PASSWORD = (host: string): string =>
+  `failed: WRONG_PASSWORD — ${host} says the id or password does not match. Do NOT retry (repeated failures lock the account); ` +
+  "tell the user to update this account's password in KeyMaster and stop"
 // 캡차·2FA 를 사용자에게 넘길 수 없을 때(넘김 콜백 미주입) 돌려주는 문자열
 const NEEDS_USER_CAPTCHA = 'needs_user: captcha'
 // 웹 결제 비밀번호 키패드에서 조작 도구(click/type/select/scroll)를 거부할 때 돌려주는 문자열.
@@ -289,6 +296,8 @@ export function resolveAccount(
 
 // 도구 하나의 상한 시간. run_js 는 자체 30초 상한이 있으므로 그보다 넉넉히 둔다
 const TOOL_TIMEOUT_MS = 90_000
+// 로그인 제출 뒤 사이트의 실패 대화상자(비밀번호 불일치)가 뜰 때까지 기다리는 시간
+const LOGIN_DIALOG_WAIT_MS = 800
 
 // 도구가 실패를 알릴 때 쓰는 말. 결과 어디에 있든 실패로 보던 예전 판정은, 페이지 본문·플레이북 절차처럼
 // 남의 글을 그대로 돌려주는 도구에서 오탐을 냈다(실기: 플레이북 본문의 "error"·"locked" 때문에 읽기 성공이 ✗)
@@ -749,6 +758,8 @@ ${raw}`
    */
   // 이번 실행에서 키패드 자동 입력을 이미 한 결제창 호스트들
   const keypadAttempts = new Set<string>()
+  // 이번 실행에서 "비밀번호 불일치"로 로그인이 거부된 호스트들 — 다시 시도하지 않는다
+  const wrongPasswordHosts = new Set<string>()
 
   const keypadAccountHosts = (tab: Tab): string[] => {
     const hosts = [currentHost(tab)]
@@ -1926,6 +1937,7 @@ overlays left: ${after.length}${kept}`
           const movedBlocked = gateRefusal(currentUrl(tab))
           if (movedBlocked) return movedBlocked
           label = `로그인: ${loginHost}`
+          if (wrongPasswordHosts.has(loginHost)) return LOGIN_WRONG_PASSWORD(loginHost)
           // 라벨을 안 주면 탭 프로필과 같은 라벨의 계정을 자동으로 고른다(계정 순회 지원)
           const account = resolveAccount(
             available.listAccounts(loginHost),
@@ -1988,10 +2000,21 @@ overlays left: ${after.length}${kept}`
           )
           if (submitted !== 'ok') return submitted
           await pageBridge.waitForLoad(tab)
+          // 사이트가 로그인 실패를 대화상자로 알렸으면(비밀번호 불일치) 재시도를 막고 사람에게 넘긴다
+          await new Promise((resolve) => setTimeout(resolve, LOGIN_DIALOG_WAIT_MS))
+          const dialog = ctx.tabs.takeDialogMessage?.() ?? null
+          if (dialog && WRONG_PASSWORD_RE.test(dialog)) {
+            wrongPasswordHosts.add(loginHost)
+            return `${LOGIN_WRONG_PASSWORD(loginHost)} (${formatDialogNote(dialog)})`
+          }
           // 사이트가 캡차·2FA 를 요구하면 사용자에게 넘기고 처리될 때까지 기다린다
           const handed = await captchaHandoff(tab)
           if (handed) return handed
-          return 'submitted: check the page for success or captcha/2FA'
+          const submittedNote = 'submitted: check the page for success or captcha/2FA'
+          return dialog
+            ? `${formatDialogNote(dialog)}
+${submittedNote}`
+            : submittedNote
         }
       )
     }
