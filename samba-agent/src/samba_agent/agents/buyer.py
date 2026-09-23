@@ -253,13 +253,9 @@ class BuyerAgent(AgentBase):
             self.note('수단 선택', f'{card} — 요청자가 지정')
 
         cost = float(snap.get('cost') or 0)
-        margin = float(snap.get('margin_pct') or 0)
-        if margin <= 0 and cost > 0 and a.order.sale_price > 0:
-            # 스냅샷은 마진을 모른다(소싱처 페이지엔 우리 판매가가 없다) — 판매가 대비 원가로 계산
-            margin = round((a.order.sale_price - cost) / a.order.sale_price * 100, 1)
-            self.note(
-                '마진 계산', f'판매가 {a.order.sale_price:,.0f} - 원가 {cost:,.0f} → {margin}%'
-            )
+        # 실제 결제액(적립·배송비 보정 전) — 스냅샷이 주면 기록 메모에 싣는다. 0 이면 모름
+        paid = float(snap.get('pay_amount') or 0)
+        margin = self._margin(a.order, cost, float(snap.get('margin_pct') or 0))
         self.step(f'{self.spec.name}: 결제 직전까지 준비 완료')
         return AgentResult(
             status='ok',
@@ -274,9 +270,35 @@ class BuyerAgent(AgentBase):
                 'card': card,
                 'cost': cost,
                 'margin_pct': margin,
+                **({'paid': paid} if paid > 0 else {}),
             },
             evidence=tuple(self.evidence),
         )
+
+    def _margin(self, order: OrderRef, cost: float, snap_margin: float) -> float:
+        """마진율(플레이북 §3) = (SAMBA 정산금 − 원가) ÷ SAMBA 매출 × 100.
+
+        스냅샷은 우리 판매가를 모른다 — 정산금이 있으면 늘 그것으로 계산한다. 정산금을 모르면
+        스냅샷 값이 없을 때만 판매가 기준 근사치 (판매가 − 원가) ÷ 판매가 를 쓰고 근거에 남긴다.
+        """
+        sale = order.sale_price
+        if cost <= 0 or sale <= 0:
+            return snap_margin
+        if order.revenue > 0:
+            margin = round((order.revenue - cost) / sale * 100, 1)
+            self.note(
+                '마진 계산',
+                f'(정산금 {order.revenue:,.0f} - 원가 {cost:,.0f}) ÷ 매출 {sale:,.0f} → {margin}%',
+            )
+            return margin
+        if snap_margin > 0:
+            return snap_margin
+        margin = round((sale - cost) / sale * 100, 1)
+        self.note(
+            '마진 계산',
+            f'판매가 {sale:,.0f} - 원가 {cost:,.0f} → {margin}% (정산금 미확인 근사)',
+        )
+        return margin
 
     def set_shipping_provider(self, provider: ShippingFn | None) -> None:
         """배송지 공급자(삼바웨이브 상세)를 꽂는다. 배선은 factory 가 한다.

@@ -665,3 +665,25 @@ def test_스냅샷에_마진이_없으면_판매가로_계산한다(reg):
     assert out.status == 'ok'
     assert out.payload['margin_pct'] == 20.0
     assert any(e.label == '마진 계산' for e in out.evidence)
+    assert any('정산금 미확인 근사' in e.detail for e in out.evidence)
+
+
+@respx.mock
+def test_정산금이_있으면_정산금_기준으로_마진을_계산한다(reg):
+    # 플레이북 §3: 마진율 = (정산금 − 원가) ÷ 매출 × 100 — 스냅샷 값보다 우선한다
+    snap = {**SNAPSHOT_OK, 'margin_pct': 30, 'cost': 80000, 'pay_amount': 81000}
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=route_run_script(
+            {'musinsa_product_snapshot': snap, 'musinsa_set_shipping': SHIPPING_ECHO}
+        )
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_fill_secret()
+    order = ORDER.model_copy(update={'sale_price': 100000, 'revenue': 90000})
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(
+        assignment(reg).model_copy(update={'order': order})
+    )
+    assert out.status == 'ok'
+    assert out.payload['margin_pct'] == 10.0
+    assert out.payload['paid'] == 81000
+    assert not any('근사' in e.detail for e in out.evidence)
