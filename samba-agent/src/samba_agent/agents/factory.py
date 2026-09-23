@@ -30,7 +30,7 @@ def build_agents(
     저장 스크립트가 없는 소싱처(status: scripts_pending)도 만들어 둔다 — 부르면 곧바로
     needs_human('스크립트 미작성: <id>') 이다.
 
-    ``wave`` 를 주면 구매는 배송지를, 기록·검증은 삼바웨이브 행을
+    ``wave`` 를 주면 구매는 배송지를, 결제는 결제 직전 재조회를, 기록·검증은 삼바웨이브 행을
     앱 화면 대신 내부 API 로 본다.
     """
     shipping_fn = _shipping_provider(wave)
@@ -43,7 +43,7 @@ def build_agents(
         agent = _CLASSES[spec.kind](spec, bridge, decide)
         if isinstance(agent, BuyerAgent):
             agent.set_shipping_provider(shipping_fn)
-        elif isinstance(agent, RecorderAgent | VerifierAgent):
+        elif isinstance(agent, PayerAgent | RecorderAgent | VerifierAgent):
             agent.set_wave(wave)
         agents[spec.name] = agent
     return agents

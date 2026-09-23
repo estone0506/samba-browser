@@ -768,3 +768,83 @@ def test_자리수가_0이면_예전처럼_결제창까지만_간다(reg):
     assert out.payload == {'dry_run': True, 'paid': False}
     assert not pay.called
     assert not fill.called
+
+
+# ---- 결제 직전 SAMBA 재조회(플레이북 §5-1) ----
+
+WAVE_BASE = 'https://wave.test'
+WAVE_API = f'{WAVE_BASE}/api/v1/internal/harness'
+
+
+def agent_with_wave(reg) -> PayerAgent:
+    from samba_agent.wave.client import WaveClient
+
+    a = agent(reg)
+    a.set_wave(WaveClient(WAVE_BASE, 'test-token', 'tenant-1'))
+    return a
+
+
+def _wave_order(**fields):
+    return respx.get(f'{WAVE_API}/orders/A1').mock(
+        return_value=httpx.Response(200, json={'order_number': 'A1', **fields})
+    )
+
+
+@respx.mock
+def test_결제_직전_재조회에서_소싱주문번호가_있으면_중복으로_끝낸다(reg):
+    _wave_order(status='pending', sourcing_order_number='M-777')
+    enter = respx.post(f'{URL}/tool/run_script')
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent_with_wave(reg)(assignment(reg, dry_run=False))
+    assert (out.status, out.fail_reason) == ('fail', FailReason.DUPLICATE)
+    assert not enter.called  # 결제창에 들어가지도 않았다
+
+
+@respx.mock
+def test_결제_직전_재조회에서_상태가_바뀌었으면_사람에게_넘긴다(reg):
+    _wave_order(status='cancelled')
+    enter = respx.post(f'{URL}/tool/run_script')
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent_with_wave(reg)(assignment(reg, dry_run=True))
+    assert out.status == 'needs_human'
+    assert out.reason == '상태 변경: cancelled'
+    assert not enter.called
+
+
+@respx.mock
+def test_결제_직전_재조회가_실패하면_결제하지_않는다(reg):
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(503))
+    enter = respx.post(f'{URL}/tool/run_script')
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent_with_wave(reg)(assignment(reg, dry_run=False))
+    assert out.status == 'needs_human'
+    assert not enter.called
+
+
+@respx.mock
+def test_재조회가_미처리면_결제를_이어가고_누가_결제했는지_남긴다(reg):
+    _wave_order(status='pending')
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
+    respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
+    respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('approved'))
+    respx.post(f'{URL}/tool/get_page').mock(
+        side_effect=[page('결제 진행 중'), page('결제 완료되었습니다')]
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent_with_wave(reg)(assignment(reg, dry_run=False))
+    assert out.status == 'ok'
+    assert out.payload['paid_by'] == 'agent'
+    assert any(e.label == '결제 직전 재조회' for e in out.evidence)
+
+
+def test_공장이_결제_에이전트에도_삼바웨이브를_꽂는다(reg):
+    from samba_agent.agents.factory import build_agents
+    from samba_agent.wave.client import WaveClient
+
+    wave = WaveClient(WAVE_BASE, 'test-token', 'tenant-1')
+    bridge = BridgeClient(URL, 'a' * 64, allowed=())
+    agents = build_agents(reg, bridge, lambda p, m: m(choice='x', reason='r'), wave)
+    assert agents['payer']._wave is wave
+    assert build_agents(reg, bridge, lambda p, m: m(choice='x', reason='r'))['payer']._wave is None

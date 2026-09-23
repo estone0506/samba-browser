@@ -14,6 +14,7 @@ from samba_agent.agents.contracts import AgentResult, Assignment
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_text
 from samba_agent.sources import default_sources
+from samba_agent.wave.client import WaveClient, WaveError
 
 # 결제 성공을 확인하는 문구. 이걸 보기 전에는 ok 를 내지 않는다(브리프 §완료조건)
 PAY_SUCCESS_MARKERS = ('결제 완료', '결제완료', '주문완료', '주문 완료', 'approved')
@@ -80,6 +81,9 @@ def checkout_script_for(source: str) -> str:
 # 코드 흐름상 dry_run 은 결제창 진입 뒤 곧바로 끝나 이 도구들을 호출하지 않지만, buyer.py 처럼
 # tool() 에서도 한 번 더 막아 이중으로 지킨다(불변조건)
 DRY_RUN_BLOCKED_TOOLS = frozenset({'fill_secret', 'phone_approve_payment'})
+
+# 결제 직전 재조회에서 '아직 미처리' 로 보는 삼바웨이브 상태(플레이북 §5-1)
+WAVE_PENDING_STATUS = 'pending'
 
 # 결제 성공 화면에서 소싱처 주문번호를 뽑는 표현 — 기록·검증이 이 값으로 대조한다(리뷰 지적 — I2)
 SOURCE_ORDER_NO_RE = re.compile(r'주문\s?번호[^0-9A-Za-z]{0,4}([A-Za-z0-9][A-Za-z0-9-]{4,31})')
@@ -165,10 +169,44 @@ class PayerAgent(AgentBase):
     """모든 소싱처의 결제를 맡는다. 등록부에서 retry: 0 이다 — 여기서도 다시 부르지 않는다."""
 
     _dry_run: bool = True
+    # 삼바웨이브 내부 API 클라이언트. factory 가 꽂는다(없으면 결제 직전 재조회를 건너뛴다)
+    _wave: 'WaveClient | None' = None
+
+    def set_wave(self, wave: 'WaveClient | None') -> None:
+        """삼바웨이브 클라이언트를 꽂는다. 배선은 factory 가 한다."""
+        self._wave = wave
 
     def __call__(self, assignment: Assignment) -> AgentResult:
         self._dry_run = assignment.dry_run
         return run_agent(lambda: self._pay(assignment), lambda: self.evidence)
+
+    def _recheck_wave(self, a: Assignment) -> None:
+        """결제창 진입 전 SAMBA 재조회(플레이북 §5-1) — 그사이 누가 샀거나 상태가 바뀌었는지 본다.
+
+        소싱주문번호가 이미 있으면 중복 구매라 끝내고, 상태가 미처리(pending)가 아니면
+        (취소·반품·다른 작업자 처리 등) 사람에게 넘긴다. 조회 자체가 실패해도 확인 못 한 채
+        결제하지 않는다. 삼바웨이브가 없으면 건너뛴다(앱 저장 스크립트 경로).
+        """
+        if self._wave is None:
+            return
+        self.step('payer: 결제 직전 SAMBA 재조회')
+        try:
+            current = self._wave.get_order(a.order.order_no)
+        except WaveError as e:
+            raise AgentFailure(
+                'needs_human', f'결제 직전 SAMBA 재조회 실패(결제하지 않음): {e}', e.reason
+            ) from e
+        sourcing_no = (current.sourcing_order_number or '').strip()
+        if sourcing_no:
+            raise AgentFailure(
+                'fail', f'이미 소싱주문번호가 있다: {sourcing_no}', FailReason.DUPLICATE
+            )
+        status = (current.status or '').strip()
+        if status.lower() != WAVE_PENDING_STATUS:
+            raise AgentFailure(
+                'needs_human', f'상태 변경: {status or "(비어 있음)"}', FailReason.UNKNOWN
+            )
+        self.note('결제 직전 재조회', f'상태 {status} · 소싱주문번호 없음')
 
     def tool(self, name: str, /, **args: object) -> str:
         """dry_run 이면 부수효과 도구는 허용 목록에 있어도 아예 부르지 않는다(불변조건).
@@ -304,6 +342,8 @@ class PayerAgent(AgentBase):
             # 감독자가 이미 검사하지만, 결제 직전에 한 번 더 막는다
             raise AgentFailure('fail', '결제할 카드가 없다', FailReason.CARD_MISSING)
 
+        self._recheck_wave(a)
+
         self.step('payer: 결제창 진입')
         script = checkout_script_for(a.order.source)
         payload: dict[str, object] = {'card': card}
@@ -404,7 +444,13 @@ class PayerAgent(AgentBase):
                 FailReason.VERIFY_MISMATCH,
             )
         self.note('결제 성공', mask_text(page[:200]))
-        payload: dict[str, object] = {'dry_run': False, 'paid': True, 'card': card}
+        # 누가 결제했는지(플레이북 §5-4) — 이 경로는 에이전트가 결제를 끝낸 것이다
+        payload: dict[str, object] = {
+            'dry_run': False,
+            'paid': True,
+            'paid_by': 'agent',
+            'card': card,
+        }
         source_order_no = _source_order_no(page)
         if source_order_no is not None:
             payload['source_order_no'] = source_order_no
