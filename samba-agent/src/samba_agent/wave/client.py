@@ -1,0 +1,253 @@
+"""삼바웨이브 하네스 내부 API 클라이언트.
+
+규약은 삼바웨이브의 `api/v1/routers/samba/harness_internal.py` —
+`${SAMBA_WAVE_URL}/api/v1/internal/harness/*`, 헤더 `X-Internal-Token` · `X-Tenant-Id`.
+
+이 클라이언트가 지키는 것:
+1. 오류를 `FailReason` 으로 바꾼다(브릿지 클라이언트와 같은 방식) — 진단 표가 이 enum 으로만 집계된다.
+2. 개인정보(배송지)는 `get_order` 응답에만 실린다. 호출부는 즉시 쓰고 버린다 —
+   state·payload·로그 어디에도 담지 않는다(계획 문서 Global Constraints).
+3. 토큰은 헤더로만 쓰고 예외 메시지·로그에 옮기지 않는다.
+"""
+
+import re
+from datetime import datetime
+from typing import Literal, Self
+
+import httpx
+from pydantic import BaseModel, ConfigDict
+
+from samba_agent.agents.contracts import OrderRef
+from samba_agent.failures import FailReason
+
+DEFAULT_TIMEOUT_S = 10.0
+API_PREFIX = '/api/v1/internal/harness'
+
+# HTTP 상태 → 실패 사유. 503 은 서버에 내부 토큰이 설정되지 않은 경우다(권한 문제로 센다)
+_STATUS_REASON = {
+    401: FailReason.PERMISSION_DENIED,
+    403: FailReason.PERMISSION_DENIED,
+    404: FailReason.UNKNOWN,
+    409: FailReason.DUPLICATE,
+    503: FailReason.PERMISSION_DENIED,
+}
+
+# 삼바웨이브 옵션 문자열은 '옵션:230' 처럼 머리말이 붙어 오기도 한다 — 값만 남긴다
+_OPTION_PREFIX = re.compile(r'^\s*옵션\s*[:：]\s*')
+
+OrderType = Literal['direct', 'kkadaegi', 'gift']
+
+
+class WaveError(Exception):
+    """삼바웨이브 호출 실패. 사유는 FailReason 으로 고정한다."""
+
+    def __init__(self, reason: FailReason, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.status = status
+
+
+class WaveShipping(BaseModel):
+    """배송지. 개인정보라 받는 즉시 쓰고 버린다 — 절대 state·payload·로그에 담지 않는다."""
+
+    model_config = ConfigDict(extra='ignore')
+
+    name: str = ''
+    phone: str = ''
+    address: str = ''
+    address_detail: str = ''
+    postal_code: str = ''
+
+    def to_script_args(self) -> dict[str, str]:
+        """앱 저장 스크립트(<key>_set_shipping)가 받는 모양. 빈 값은 빼지 않는다(덮어쓰기 목적)."""
+        return {
+            'name': self.name,
+            'phone': self.phone,
+            'address': self.address,
+            'address_detail': self.address_detail,
+            'postal_code': self.postal_code,
+        }
+
+
+class WaveOrder(BaseModel):
+    """미이행 주문 1건(개인정보 없음). 모르는 필드가 늘어도 그냥 무시한다."""
+
+    model_config = ConfigDict(extra='ignore')
+
+    id: str = ''
+    order_number: str
+    source_site: str | None = None
+    source_url: str | None = None
+    product_name: str | None = None
+    product_option: str | None = None
+    quantity: int = 1
+    sale_price: float = 0
+    seller: str | None = None
+    sourcing_account_id: str | None = None
+    sourcing_account_username: str | None = None
+    sourcing_account_label: str | None = None
+    sourcing_account_default: bool = False
+    action_tag: str | None = None
+    paid_at: datetime | None = None
+    status: str = ''
+    # 아래 셋은 현재 목록 응답에 없다 — 삼바웨이브가 나중에 실어 주면 기록·검증이 바로 대조한다
+    sourcing_order_number: str | None = None
+    cost: float | None = None
+    shipping_fee: float | None = None
+    # 주문 종류 — 목록 응답에는 없어 기본 direct 다. 상세 응답이 실제 값을 준다
+    order_type: OrderType = 'direct'
+
+    @property
+    def option(self) -> str | None:
+        """'옵션:230' · 'BLACK / 270' 어느 쪽으로 와도 머리말을 뗀 값만 준다."""
+        raw = _OPTION_PREFIX.sub('', self.product_option or '').strip()
+        return raw or None
+
+    def to_order_ref(self) -> OrderRef:
+        """감독자 배정에 쓰는 OrderRef. 개인정보는 애초에 이 모델에 없다."""
+        option = self.option
+        name = (self.product_name or '').strip()
+        sku = f'{name} [{option}]' if (name and option) else (name or self.order_number)
+        return OrderRef(
+            order_no=self.order_number,
+            source=self.source_site or '',
+            seller=(self.seller or '').strip(),
+            sku=sku,
+            qty=max(int(self.quantity or 1), 1),
+            option=option,
+            product_url=(self.source_url or '').strip() or None,
+            # 로그인에 쓰는 것은 아이디다 — 없으면 비워 둔다(표시 이름으로 로그인할 수 없다)
+            account=(self.sourcing_account_username or '').strip() or None,
+            order_type=self.order_type,
+        )
+
+
+class WaveOrderDetail(WaveOrder):
+    """주문 상세 — 배송지가 더 실린다. 배송지는 받는 즉시 쓰고 버린다."""
+
+    shipping: WaveShipping = WaveShipping()
+
+
+# 감독자 기대값 키 ← 삼바웨이브 응답 필드. 응답에 그 값이 없으면(None) 빼서 '대조 못 함' 으로 남긴다.
+# 계정·플래그는 뜻이 1:1 로 맞지 않아(판매 계정 vs 소싱 계정, 태그 묶음) 대조 대상에서 뺀다
+EXPECTED_FIELD_MAP = {
+    'source_order_no': 'sourcing_order_number',
+    'real_price': 'cost',
+    'shipping_fee': 'shipping_fee',
+}
+
+
+def wave_fields(order: WaveOrder) -> dict[str, object]:
+    """삼바웨이브 주문 → 기대값 키로 맞춘 사전. 응답에 없는 값은 아예 담지 않는다."""
+    out: dict[str, object] = {}
+    for expected_key, wave_key in EXPECTED_FIELD_MAP.items():
+        value = getattr(order, wave_key, None)
+        if value is not None:
+            out[expected_key] = value
+    return out
+
+
+class WaveClient:
+    """내부 API 3개(목록·상세·소싱 기입)만 부르는 얇은 클라이언트."""
+
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        tenant_id: str,
+        *,
+        timeout_s: float = DEFAULT_TIMEOUT_S,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self._base = f'{base_url.rstrip("/")}{API_PREFIX}'
+        self._token = token
+        self._tenant_id = tenant_id
+        self._timeout_s = timeout_s
+        self._client = client or httpx.Client(timeout=timeout_s)
+
+    def pending_orders(self, days: int = 7, limit: int = 100) -> list[WaveOrder]:
+        """최근 `days` 일 안에 결제됐지만 아직 소싱 발주가 안 된 주문들."""
+        body = self._request('GET', '/pending-orders', params={'days': days, 'limit': limit})
+        items = body.get('items') if isinstance(body, dict) else None
+        return [WaveOrder.model_validate(i) for i in items or []]
+
+    def get_order(self, order_no: str) -> WaveOrderDetail:
+        """주문 1건 상세. 배송지가 실려 온다 — 호출부는 즉시 쓰고 버린다."""
+        body = self._request('GET', f'/orders/{order_no}')
+        return WaveOrderDetail.model_validate(body)
+
+    def record_sourcing(
+        self,
+        order_no: str,
+        *,
+        sourcing_order_number: str,
+        cost: float,
+        shipping_fee: float = 0,
+        sourcing_account_id: str | None = None,
+        notes: str | None = None,
+    ) -> WaveOrder:
+        """소싱주문번호·매입금액을 삼바웨이브 행에 기입한다. 다른 번호가 이미 있으면 409(DUPLICATE)."""
+        payload: dict[str, object] = {
+            'sourcing_order_number': sourcing_order_number,
+            'cost': cost,
+            'shipping_fee': shipping_fee,
+        }
+        if sourcing_account_id:
+            payload['sourcing_account_id'] = sourcing_account_id
+        if notes:
+            payload['notes'] = notes
+        body = self._request('PUT', f'/orders/{order_no}/sourcing', json=payload)
+        order = body.get('order') if isinstance(body, dict) else None
+        if not isinstance(order, dict):
+            raise WaveError(FailReason.UNKNOWN, f'소싱 기입 응답에 order 가 없다: {order_no}')
+        return WaveOrder.model_validate(order)
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            'X-Internal-Token': self._token,
+            'X-Tenant-Id': self._tenant_id,
+            'content-type': 'application/json',
+        }
+
+    def _request(self, method: str, path: str, **kwargs: object) -> object:
+        """호출 1건. 연결 실패는 BRIDGE_DOWN, 상태 코드는 표대로 FailReason 으로 바꾼다."""
+        try:
+            r = self._client.request(
+                method,
+                f'{self._base}{path}',
+                headers=self._headers(),
+                timeout=self._timeout_s,
+                **kwargs,  # type: ignore[arg-type]
+            )
+        except httpx.TimeoutException as e:
+            raise WaveError(FailReason.BRIDGE_DOWN, f'삼바웨이브 시간 초과: {path}') from e
+        except httpx.HTTPError as e:
+            raise WaveError(
+                FailReason.BRIDGE_DOWN, f'삼바웨이브 연결 실패: {type(e).__name__}'
+            ) from e
+        if r.status_code >= 400:
+            raise WaveError(*self._fail(r))
+        try:
+            return r.json()
+        except ValueError as e:
+            raise WaveError(FailReason.UNKNOWN, f'삼바웨이브 응답이 JSON 이 아니다: {path}') from e
+
+    @staticmethod
+    def _fail(r: httpx.Response) -> tuple[FailReason, str, int]:
+        """응답 → (사유, 메시지, 상태). 메시지에 토큰은 들어가지 않는다(응답 본문만 쓴다)."""
+        reason = _STATUS_REASON.get(r.status_code, FailReason.UNKNOWN)
+        try:
+            body = r.json()
+            detail = str(body.get('detail', '')) if isinstance(body, dict) else ''
+        except ValueError:
+            detail = ''
+        return reason, f'삼바웨이브 {r.status_code}: {detail}'.strip(), r.status_code

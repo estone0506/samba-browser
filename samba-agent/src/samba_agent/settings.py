@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     slack_allowed_users: Annotated[tuple[str, ...], NoDecode] = Field(
         default=(), alias='SLACK_ALLOWED_USERS'
     )
+    # 삼바웨이브 내부 API — 토큰·테넌트가 둘 다 있어야 클라이언트를 만든다(없으면 앱 스크립트 경로)
+    wave_url: str = Field(default='https://api.samba-wave.co.kr', alias='SAMBA_WAVE_URL')
+    wave_internal_token: SecretStr | None = Field(default=None, alias='SAMBA_WAVE_INTERNAL_TOKEN')
+    wave_tenant_id: str | None = Field(default=None, alias='SAMBA_WAVE_TENANT_ID')
+    # 자동 수집 창(일)과 주기(초) — Task D 의 intake 고리가 쓴다
+    intake_days: int = Field(default=7, ge=1, alias='SAMBA_INTAKE_DAYS')
+    intake_interval_s: int = Field(default=300, ge=10, alias='SAMBA_INTAKE_INTERVAL_S')
     root: Path = Field(default=DEFAULT_ROOT, alias='SAMBA_AGENT_ROOT')
     db_path: Path = Field(default=DEFAULT_ROOT / 'jobs.sqlite', alias='SAMBA_DB_PATH')
     # 판정·진단 산출물 위치. gate·eval·API 가 같은 곳을 본다(리뷰 지적 — I4)
