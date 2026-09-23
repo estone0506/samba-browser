@@ -210,6 +210,22 @@ describe('login — 이미 로그인된 상태면 다시 로그인하지 않는�
   })
 })
 
+describe('login — 첫 제출이 먹지 않으면 한 번 더 누른다(실기: 패션플러스)', () => {
+  it('제출 뒤 같은 폼이 그대로면 제출을 한 번 더 누른다', async () => {
+    pageBridge.findLoginFields.mockResolvedValue(FULL_FORM)
+    const { tools } = build()
+    await run(tools.login)
+    expect(pageBridge.submitForm).toHaveBeenCalledTimes(2)
+  })
+
+  it('제출 뒤 폼이 사라졌으면 다시 누르지 않는다', async () => {
+    pageBridge.findLoginFields.mockResolvedValueOnce(FULL_FORM).mockResolvedValue(NO_FIELDS)
+    const { tools } = build()
+    await run(tools.login)
+    expect(pageBridge.submitForm).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('login — 로그인 상태 유지 자동 체크', () => {
   it('제출 직전에 체크박스를 켠다', async () => {
     pageBridge.findLoginFields.mockResolvedValue(FULL_FORM)
