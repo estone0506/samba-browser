@@ -78,8 +78,8 @@ def test_보류_소싱처는_등록하지_않는다(reg, sources):
 
 def test_규칙_파일이_없으면_공통_규칙으로_떨어진다(reg):
     assert reg['buyer.musinsa'].rules == 'rules/buyer_musinsa.md'
-    assert reg['buyer.nike'].rules == DEFAULT_BUYER_RULES
-    assert reg.rules_text(reg['buyer.nike']).strip() != ''
+    assert reg['buyer.wconcept'].rules == DEFAULT_BUYER_RULES
+    assert reg.rules_text(reg['buyer.wconcept']).strip() != ''
 
 
 def test_흐름을_공유하는_소싱처는_같은_에이전트가_맡는다(reg, sources):
@@ -103,11 +103,11 @@ def test_에이전트_이름으로_소싱처를_찾는다():
 
 
 def test_스크립트_미작성_소싱처는_만들어두되_사람에게_넘긴다(reg):
-    bridge = BridgeClient(URL, 'a' * 64, allowed=reg['buyer.gsshop'].tools, busy_wait_s=0.0)
+    bridge = BridgeClient(URL, 'a' * 64, allowed=reg['buyer.wconcept'].tools, busy_wait_s=0.0)
     agents = build_agents(reg, bridge, lambda prompt, model: model(choice='x', reason='r'))
-    agent = agents['buyer.gsshop']
+    agent = agents['buyer.wconcept']
     assert isinstance(agent, ScriptsPendingBuyer)
-    spec = reg['buyer.gsshop']
+    spec = reg['buyer.wconcept']
     result = agent(
         Assignment(
             order=_order('GSShop'),
@@ -117,7 +117,7 @@ def test_스크립트_미작성_소싱처는_만들어두되_사람에게_넘긴
         )
     )
     assert result.status == 'needs_human'
-    assert result.reason == '스크립트 미작성: GSShop'
+    assert result.reason == '스크립트 미작성: WCONCEPT'
     # 스크립트가 다 있는 소싱처는 진짜 구매 에이전트다
     assert not isinstance(agents['buyer.musinsa'], ScriptsPendingBuyer)
 

@@ -115,6 +115,19 @@ def snapshot_args(agent_name: str, order: OrderRef, account: str | None = None) 
     return json.dumps(args, ensure_ascii=False)
 
 
+def _int_ids(values: list[object]) -> list[int]:
+    """요소 번호 목록 — 정수 또는 숫자 문자열만 남긴다."""
+    out: list[int] = []
+    for v in values:
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, int):
+            out.append(v)
+        elif isinstance(v, str) and v.strip().isdigit():
+            out.append(int(v.strip()))
+    return out
+
+
 def _as_float(value: object) -> float:
     """스냅샷 금액 → float. 비었거나 숫자가 아니면 0(모름)."""
     try:
@@ -578,9 +591,37 @@ class BuyerAgent(AgentBase):
         if mismatch:
             raise AgentFailure('needs_human', '배송지 입력 검증에 실패했다', FailReason.UNKNOWN)
         self._fill_phone(applied)
+        self._confirm_shipping(shipping, args)
         # 마스킹 규칙이 이름을 가리려면 라벨이 앞에 있어야 한다(ops.masking) — 라벨을 붙여서 가린다
         summary = f'수취인 {shipping.get("name", "")} · {shipping.get("address", "")}'
         self.note('배송지', f'반영 완료 — {mask_text(summary)}')
+
+    def _confirm_shipping(self, shipping: dict[str, object], args: dict[str, object]) -> None:
+        """팝업 폼 사이트는 전화까지 채운 폼을 저장/적용해야 주문서에 반영된다(sources.yaml shipping_confirm).
+
+        확정 스크립트가 주문서에서 되읽은 수취인·주소가 넣은 값과(마스킹 기준) 같아야 통과한다.
+        """
+        spec = source_of(self.spec.name)
+        if not spec.shipping_confirm:
+            return
+        confirmed = self.json_tool(
+            'run_script',
+            name=spec.confirm_shipping_script,
+            args=json.dumps(
+                {k: v for k, v in args.items() if k in ('name', 'address', 'profile')},
+                ensure_ascii=False,
+            ),
+        )
+        if not confirmed.get('ok') or any(
+            mask_text(str(shipping.get(f, ''))) != mask_text(str(confirmed.get(f, '')))
+            for f in SHIPPING_FIELDS
+        ):
+            raise AgentFailure(
+                'needs_human',
+                f'배송지 확정 검증에 실패했다: {mask_text(str(confirmed.get("note", ""))[:80])}',
+                FailReason.UNKNOWN,
+            )
+        self.note('배송지 확정', '폼 저장 후 주문서 되읽기 일치')
 
     def _keep_default_shipping(self, snap: dict[str, object]) -> None:
         """까대기 — 계정 기본 배송지(사무실)를 유지하고 수정하지 않는다(플레이북 §4-2).
@@ -609,35 +650,44 @@ class BuyerAgent(AgentBase):
 
         번호는 하네스를 지나가지 않는다. 앱 결과는 성공이면 'ok…', 아니면 'refused: …'·'not found: …'.
         """
-        field_id = applied.get('phone_field_id')
-        if isinstance(field_id, str) and field_id.strip().isdigit():
-            field_id = int(field_id.strip())
-        if not isinstance(field_id, int) or isinstance(field_id, bool):
-            if applied.get('phone_field_ids'):
+        # 스크립트는 phone_field_id(칸 하나) 또는 phone_field_ids(1~3칸, 앞→뒤 순서)로 알린다.
+        # 칸이 둘이면 010 은 사이트가 고정한 것이라 가운데·끝, 셋이면 앞·가운데·끝을 앱이 나눠 넣는다
+        raw_ids = applied.get('phone_field_ids')
+        ids = (
+            _int_ids(raw_ids)
+            if isinstance(raw_ids, list)
+            else _int_ids([applied.get('phone_field_id')])
+        )
+        if not ids or len(ids) > 3:
+            raise AgentFailure('needs_human', '전화 칸을 찾지 못함', FailReason.UNKNOWN)
+        # 칸 하나면 앱이 저장된 번호 그대로 넣는다(format 없음). 둘·셋이면 부분 형식을 준다
+        formats: list[str | None] = {
+            1: [None],
+            2: ['phone-mid', 'phone-last'],
+            3: ['phone-first', 'phone-mid', 'phone-last'],
+        }[len(ids)]
+        for field_id, fmt in zip(ids, formats, strict=True):
+            try:
+                out = self.tool(
+                    'fill_secret',
+                    elementId=field_id,
+                    itemType=PHONE_SECRET_ITEM,
+                    field=PHONE_SECRET_FIELD,
+                    **({'format': fmt} if fmt else {}),
+                )
+            except AgentFailure as e:
+                raise AgentFailure(
+                    'needs_human', f'배송 연락처 입력 실패: {e.reason}', e.fail_reason
+                ) from e
+            if not out.strip().lower().startswith('ok'):
                 raise AgentFailure(
                     'needs_human',
-                    '전화 3칸 사이트 — 앱 부분 입력 미지원',
+                    f'배송 연락처 입력 실패: {mask_text(out.strip()[:100])}',
                     FailReason.UNKNOWN,
                 )
-            raise AgentFailure('needs_human', '전화 칸을 찾지 못함', FailReason.UNKNOWN)
-        try:
-            out = self.tool(
-                'fill_secret',
-                elementId=field_id,
-                itemType=PHONE_SECRET_ITEM,
-                field=PHONE_SECRET_FIELD,
-            )
-        except AgentFailure as e:
-            raise AgentFailure(
-                'needs_human', f'배송 연락처 입력 실패: {e.reason}', e.fail_reason
-            ) from e
-        if not out.strip().lower().startswith('ok'):
-            raise AgentFailure(
-                'needs_human',
-                f'배송 연락처 입력 실패: {mask_text(out.strip()[:100])}',
-                FailReason.UNKNOWN,
-            )
-        self.note('배송 연락처', '키마스터 신원정보로 입력(번호는 하네스가 보지 않는다)')
+        self.note(
+            '배송 연락처', f'키마스터 신원정보로 입력({len(ids)}칸, 번호는 하네스가 보지 않는다)'
+        )
 
 
 class ScriptsPendingBuyer:

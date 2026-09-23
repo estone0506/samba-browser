@@ -98,7 +98,15 @@ const CONFIRM_ITEM_TYPES: VaultItemType[] = ['password', 'card']
 // PG 결제창(토스·ePAY 팝업)에서 채우는 항목 — 그 창의 호스트가 아니라 창을 연 사이트의 계정을 쓴다
 const PAYMENT_POPUP_ITEM_TYPES: VaultItemType[] = ['identity', 'card', 'password']
 // fill_secret 의 format 인자 — 저장된 값을 입력칸이 원하는 모양으로 바꾼다
-export const FILL_FORMATS = ['yymmdd', 'yyyymmdd', 'digits'] as const
+export const FILL_FORMATS = [
+  'yymmdd',
+  'yyyymmdd',
+  'digits',
+  // 전화번호를 칸 셋(010 / 1234 / 5678)에 나눠 넣는 폼 — 앞·가운데·끝
+  'phone-first',
+  'phone-mid',
+  'phone-last'
+] as const
 export type FillFormat = (typeof FILL_FORMATS)[number]
 
 /**
@@ -111,6 +119,15 @@ export function formatFillValue(value: string, format?: FillFormat): string | nu
   if (!format) return value
   const digits = value.replace(/\D/g, '')
   if (format === 'digits') return digits === '' ? null : digits
+  if (format.startsWith('phone-')) {
+    // 010-1234-5678(11자리) / 02-123-4567 같은 번호를 앞·가운데·끝으로 나눈다. 끝은 항상 4자리
+    if (digits.length < 9 || digits.length > 11) return null
+    const last = digits.slice(-4)
+    const first = digits.startsWith('02') ? '02' : digits.slice(0, 3)
+    const mid = digits.slice(first.length, -4)
+    if (mid.length < 3) return null
+    return format === 'phone-first' ? first : format === 'phone-mid' ? mid : last
+  }
   if (digits.length === 8) return format === 'yymmdd' ? digits.slice(2) : digits
   if (digits.length === 6) return format === 'yymmdd' ? digits : null
   return null

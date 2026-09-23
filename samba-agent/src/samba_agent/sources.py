@@ -36,6 +36,9 @@ class Source(BaseModel):
     # 이름 규칙을 벗어나는 결제창 진입 스크립트(29CM 는 checkout_enter_29cm 로 이미 저장돼 있다)
     checkout_script: str | None = None
     status: SourceStatus = 'active'
+    # 배송지를 팝업 폼에 넣는 사이트(무신사·SSG 등)는 전화까지 채운 뒤 폼을 저장/적용해야 주문서에 반영된다 —
+    # True 면 배송 연락처 입력 뒤 `<key>_confirm_shipping` 을 부른다
+    shipping_confirm: bool = False
     # 이 소싱처의 주문은 항상 이 배송 종류로 본다(예: ABC마트는 전부 까대기 = 사무실 배송).
     # None 이면 주문(삼바웨이브 action_tag)이 정한 종류를 따른다
     order_type: Literal['direct', 'kkadaegi', 'gift'] | None = None
@@ -47,6 +50,10 @@ class Source(BaseModel):
     @property
     def snapshot_script(self) -> str:
         return f'{self.key}_product_snapshot'
+
+    @property
+    def confirm_shipping_script(self) -> str:
+        return f'{self.key}_confirm_shipping'
 
     @property
     def set_shipping_script(self) -> str:

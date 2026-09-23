@@ -9,6 +9,7 @@ sources:
     label: 무신사
     home: https://www.musinsa.com/
     login_host: musinsa.com
+    shipping_confirm: true
     status: active
   - id: 29CM
     key: cm29
@@ -54,6 +55,7 @@ sources:
     label: SSG닷컴
     home: https://www.ssg.com/
     login_host: ssg.com
+    shipping_confirm: true
     status: active
   - id: FashionPlus
     key: fashionplus
@@ -92,6 +94,7 @@ sources:
     label: 슈마커
     home: https://www.shoemarker.co.kr/
     login_host: shoemarker.co.kr
+    shipping_confirm: true
     status: active
   - id: GMARKET
     key: gmarket
@@ -124,6 +127,7 @@ sources:
   - id: SMARKET
     key: smarket
     label: 에스마켓
+    shipping_confirm: true
     status: active
   - id: KASINA
     key: kasina

@@ -75,6 +75,10 @@ def route_run_script(responses: dict[str, object]) -> object:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         name = body.get('args', {}).get('name')
+        if name not in responses and str(name).endswith('_confirm_shipping'):
+            # 확정 스크립트는 표본에 없어도 받은 인자를 되읽기로 메아리친다
+            args = json.loads(body['args'].get('args') or '{}')
+            return page(json.dumps({'ok': True, **args}, ensure_ascii=False))
         if name not in responses:
             raise AssertionError(f'예상치 못한 run_script 호출: {name}')
         return page(json.dumps(responses[name], ensure_ascii=False))
@@ -447,7 +451,11 @@ def _recording_handler(snapshot_name, applied, echo_extra=None):
         body = json.loads(request.content)
         if body['args']['name'] == snapshot_name:
             return page(json.dumps(SNAPSHOT_OK, ensure_ascii=False))
-        applied.update(json.loads(body['args']['args']))
+        args = json.loads(body['args']['args'])
+        if body['args']['name'].endswith('_confirm_shipping'):
+            # 확정 스크립트 — 폼을 저장한 뒤 주문서에서 되읽은 값을 그대로 메아리친다
+            return page(json.dumps({'ok': True, **args}, ensure_ascii=False))
+        applied.update(args)
         return page(json.dumps({**applied, **extra}, ensure_ascii=False))
 
     return handler
@@ -579,7 +587,6 @@ def test_스냅샷에_실린_전화번호도_배송지_스크립트에_넘기지
     ('echo_extra', 'fill_result', 'want'),
     [
         ({}, None, '전화 칸을 찾지 못함'),
-        ({'phone_field_ids': [3, 4, 5]}, None, '전화 3칸 사이트'),
         ({'phone_field_id': 42}, 'not found: identity.phone', '배송 연락처 입력 실패'),
         ({'phone_field_id': 42}, 'refused: vault-locked', '배송 연락처 입력 실패'),
     ],
@@ -788,6 +795,9 @@ def _per_account_snapshots(by_account: dict[str, object], calls: list[str]):
             calls.append(f'snapshot:{args.get("account")}')
             got = by_account[args['account']]
             return page(got if isinstance(got, str) else json.dumps(got, ensure_ascii=False))
+        if name.endswith('_confirm_shipping'):
+            # 확정은 calls 에 남기지 않는다(배송지 순서 단언은 set_shipping 기준)
+            return page(json.dumps({'ok': True, **args}, ensure_ascii=False))
         calls.append(f'{name}:{args.get("profile")}')
         return page(json.dumps(SHIPPING_ECHO, ensure_ascii=False))
 
