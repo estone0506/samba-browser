@@ -766,19 +766,11 @@ ${raw}`
   }
 
   /**
-   * 네이버페이 결제창(pay.naver.com)이면 창 우측 위의 마스킹된 아이디(mjki******)를 읽어 키마스터에서 고른
-   * 네이버 계정과 맞춘다. 다른 계정이거나 못 읽으면 거부 문구, 네이버페이 창이 아니거나 계정 연결이 없으면 null
+   * 네이버페이 창에 표시된 로그인 아이디(마스킹 mjki****** 또는 비밀번호 화면의 "buyer01 님")를 읽는다.
+   * 비밀번호 화면은 "동의하고 결제하기" 직후 다시 그려지는 중일 수 있다 — 표기가 없으면 잠깐 두고 다시 읽는다.
+   * 못 읽으면 실패 라벨에 주소(쿼리 제외)·본문 길이·읽기 오류를 남기고 null(비밀은 없다)
    */
-  const verifyNaverPayAccount = async (
-    v: VaultService,
-    accountId: number,
-    tab: Tab
-  ): Promise<string | null> => {
-    if (!isNaverPayHost(currentHost(tab))) return null
-    const expected = v.paymentAccountUsername(accountId, 'naver')
-    if (!expected) return null
-    // 비밀번호 화면은 "동의하고 결제하기" 직후 다시 그려지는 중일 수 있다 — 표기가 없으면 잠깐 두고 다시 읽는다.
-    // 실패 라벨에는 어느 주소(쿼리 제외)·본문 몇 자를 읽었는지 남겨 원인을 가를 수 있게 한다(비밀은 없다)
+  const readNaverPayAccount = async (tab: Tab): Promise<string | null> => {
     let shown: string | null = null
     let textLength = 0
     let readError = ''
@@ -798,8 +790,55 @@ ${raw}`
         `네이버페이 창 계정 확인 실패(표시 없음: ${where}, 본문 ${textLength}자${readError ? `, 읽기 오류: ${readError}` : ''})`,
         false
       )
-      return NAVERPAY_ACCOUNT_UNKNOWN
     }
+    return shown
+  }
+
+  /**
+   * 네이버페이 창이면 창에 표시된 로그인 아이디로 계정을 고른다 — 라벨도 프로필 단서도 없고 쇼핑몰 계정 여럿이
+   * 결제 비밀번호를 가진 경우(실기 8차: ABC 계정 4개가 각각 네이버 계정에 연결). 후보 중 연결된 네이버 아이디가
+   * 표시 아이디와 맞는 것을 고르되, 결제창을 연 쇼핑몰 쪽 계정을 먼저 본다. 하나로 좁혀지지 않으면 null
+   */
+  const keypadAccountByNaverWindow = async (
+    available: VaultService,
+    hosts: string[],
+    tab: Tab
+  ): Promise<AccountDto | null> => {
+    if (!isNaverPayHost(currentHost(tab))) return null
+    const shown = await readNaverPayAccount(tab)
+    if (!shown) return null
+    const seen = new Set<number>()
+    const matching: AccountDto[] = []
+    for (const host of hosts) {
+      for (const a of available.listAccounts(host)) {
+        if (seen.has(a.id) || !a.itemTypes.includes('password')) continue
+        seen.add(a.id)
+        const username = available.paymentAccountUsername(a.id, 'naver')
+        if (username && maskedNaverAccountMatches(shown, username)) matching.push(a)
+      }
+    }
+    const shopHosts = hosts.slice(1)
+    const fromShop = matching.filter((a) => shopHosts.some((h) => sameRegistrableDomain(h, a.host)))
+    const pool = fromShop.length > 0 ? fromShop : matching
+    if (pool.length !== 1) return null
+    ctx.onStep(`키패드 계정: 네이버페이 창 표시(${shown})로 ${pool[0].label} 선택`, true)
+    return pool[0]
+  }
+
+  /**
+   * 네이버페이 결제창(pay.naver.com)이면 창 우측 위의 마스킹된 아이디(mjki******)를 읽어 키마스터에서 고른
+   * 네이버 계정과 맞춘다. 다른 계정이거나 못 읽으면 거부 문구, 네이버페이 창이 아니거나 계정 연결이 없으면 null
+   */
+  const verifyNaverPayAccount = async (
+    v: VaultService,
+    accountId: number,
+    tab: Tab
+  ): Promise<string | null> => {
+    if (!isNaverPayHost(currentHost(tab))) return null
+    const expected = v.paymentAccountUsername(accountId, 'naver')
+    if (!expected) return null
+    const shown = await readNaverPayAccount(tab)
+    if (!shown) return NAVERPAY_ACCOUNT_UNKNOWN
     if (!maskedNaverAccountMatches(shown, expected)) {
       ctx.onStep(`네이버페이 창 계정 불일치: ${shown} ≠ ${expected}`, false)
       return NAVERPAY_ACCOUNT_MISMATCH(shown, expected)
@@ -861,7 +900,9 @@ ${raw}`
     const available = vaultAvailable()
     if (typeof available === 'string') return await keypadHandoff(tab)
     const hosts = keypadAccountHosts(tab)
-    const account = keypadAccount(available, hosts, accountLabel, tab.profile)
+    const account =
+      keypadAccount(available, hosts, accountLabel, tab.profile) ??
+      (accountLabel ? null : await keypadAccountByNaverWindow(available, hosts, tab))
     if (!account) {
       // 왜 못 골랐는지 라벨에 남긴다(호스트·탭 프로필·후보 라벨 — 비밀은 없다). 실기 5차: 라벨 없이 부르면 여기서 끝났다
       const labels = hosts

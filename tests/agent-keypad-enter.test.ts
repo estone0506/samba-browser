@@ -124,6 +124,8 @@ function build(
     vaultExcludedHosts?: string[]
     /** 키패드 창의 프로필(파티션) — 계정 라벨 자동 선택에 쓰인다 */
     tabProfile?: string
+    /** 계정별로 결제될 네이버 아이디(네이버페이 창 계정 검사·창 표시로 계정 고르기) */
+    paymentAccountUsername?: (accountId: number) => string | null
     /** 키패드 창을 연 대상 id(openerUrl 대신 targets 로 사슬을 준다) */
     openerId?: string
     /** 탭+팝업 전체 목록(opener 사슬 검사용) */
@@ -146,7 +148,9 @@ function build(
     getPaymentSecretForFill,
     ensureUnlockedByDevice: vi.fn(async () => false),
     // 네이버페이 창 계정 확인 — 기대 아이디가 없으면 확인을 건너뛴다
-    paymentAccountUsername: vi.fn(() => null)
+    paymentAccountUsername: vi.fn(
+      (accountId: number) => opts.paymentAccountUsername?.(accountId) ?? null
+    )
   } as unknown as VaultService
   const tabUrl = opts.tabUrl ?? SHOP
   const tab = {
@@ -575,6 +579,43 @@ describe('fill_secret — 글자 없는 키패드(네이버페이)는 OCR 로 �
       SECRET.slice(0, 3).split('').map(idOfDigit)
     )
     expect(b.closeTarget).toHaveBeenCalledWith('pay-1')
+  })
+
+  it('라벨·프로필 없이 쇼핑몰 계정 여럿이 결제 비밀번호를 가지면 창에 표시된 아이디로 고른다(실기 8차)', async () => {
+    ocrDigitInRegion.mockImplementation(async (_tab, rect) => digitOfCell(rect))
+    pageBridge.snapshot.mockResolvedValue({
+      url: NAVER,
+      title: '네이버페이',
+      text: '네이버페이 인증 김사무 ( ) buyer01 님의 비밀번호 입력 비밀번호는 6자리 입니다.',
+      elements: [],
+      total: 0
+    })
+    const shop = 'https://abcmart.a-rt.com/order'
+    const linked: Record<number, string> = { 5: 'buyer02', 6: 'buyer01', 8: 'buyer03' }
+    const b = build({
+      tabUrl: NAVER,
+      openerUrl: shop,
+      tabProfile: 'default',
+      paymentAccountUsername: (id) => linked[id] ?? null,
+      accounts: [
+        account({ id: 5, host: 'a-rt.com', label: 'buyer02', isDefault: false }),
+        account({ id: 6, host: 'a-rt.com', label: 'buyer01', isDefault: false }),
+        account({ id: 8, host: 'a-rt.com', label: 'buyer03', isDefault: false }),
+        account({
+          id: 10,
+          host: 'a-rt.com',
+          label: 'buyer04',
+          isDefault: false,
+          itemTypes: ['login']
+        })
+      ]
+    })
+    const r = await fill(b, { dryRunDigits: 3 })
+    expect(r).toBe(KEYPAD_DRY_RUN(3, 'popup closed'))
+    expect(b.getPaymentSecretForFill).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 6 })
+    )
+    expect(b.steps).toContainEqual({ label: '네이버페이 창 계정 확인: buyer01', ok: true })
   })
 
   it('0~9 중 하나라도 못 읽으면(9개만 읽힘) 누르지 않고 사람에게 넘긴다', async () => {
