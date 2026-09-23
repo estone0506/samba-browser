@@ -262,6 +262,16 @@ export function maskUsername(username: string): string {
  * 탭 프로필을 같이 넘기면 계정 순회(계정별 새 탭)에서 라벨 없이도 그 탭의 계정을 고른다.
  * 특정하지 못하면 null 을 돌려준다(도구는 ACCOUNT_NOT_FOUND 를 반환).
  */
+/** 주소에서 호스트·경로만(쿼리·해시 제외) — 진행 라벨용. 파싱 실패면 원문 앞 80자 */
+export function pathOnly(url: string): string {
+  try {
+    const u = new URL(url)
+    return `${u.host}${u.pathname}`
+  } catch {
+    return url.slice(0, 80)
+  }
+}
+
 export function resolveAccount(
   accounts: AccountDto[],
   label?: string,
@@ -767,10 +777,27 @@ ${raw}`
     if (!isNaverPayHost(currentHost(tab))) return null
     const expected = v.paymentAccountUsername(accountId, 'naver')
     if (!expected) return null
-    const snapshot = await pageBridge.snapshot(tab).catch(() => null)
-    const shown = snapshot ? maskedNaverAccount(`${snapshot.title}\n${snapshot.text}`) : null
+    // 비밀번호 화면은 "동의하고 결제하기" 직후 다시 그려지는 중일 수 있다 — 표기가 없으면 잠깐 두고 다시 읽는다.
+    // 실패 라벨에는 어느 주소(쿼리 제외)·본문 몇 자를 읽었는지 남겨 원인을 가를 수 있게 한다(비밀은 없다)
+    let shown: string | null = null
+    let textLength = 0
+    let readError = ''
+    for (let attempt = 0; attempt < 3 && shown === null; attempt += 1) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 500))
+      try {
+        const snapshot = await pageBridge.snapshot(tab)
+        textLength = snapshot.text.length
+        shown = maskedNaverAccount(`${snapshot.title}\n${snapshot.text}`)
+      } catch (e: unknown) {
+        readError = e instanceof Error ? e.message : String(e)
+      }
+    }
     if (!shown) {
-      ctx.onStep('네이버페이 창 계정 확인 실패(표시 없음)', false)
+      const where = pathOnly(currentUrl(tab))
+      ctx.onStep(
+        `네이버페이 창 계정 확인 실패(표시 없음: ${where}, 본문 ${textLength}자${readError ? `, 읽기 오류: ${readError}` : ''})`,
+        false
+      )
       return NAVERPAY_ACCOUNT_UNKNOWN
     }
     if (!maskedNaverAccountMatches(shown, expected)) {

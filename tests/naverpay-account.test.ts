@@ -58,3 +58,13 @@ describe('비밀번호 입력 화면의 "이름(아이디)님" 표기', () => {
     expect(maskedNaverAccount('edel****** 김사무(buyer01)님')).toBe('edel******')
   })
 })
+
+describe('pathOnly — 진행 라벨용 주소', () => {
+  it('쿼리·해시를 떼고 호스트와 경로만 남긴다', async () => {
+    const { pathOnly } = await import('../src/main/agent/tools')
+    expect(pathOnly('https://pay.naver.com/authentication/pw/check?sessionKey=abc#x')).toBe(
+      'pay.naver.com/authentication/pw/check'
+    )
+    expect(pathOnly('not a url')).toBe('not a url')
+  })
+})
