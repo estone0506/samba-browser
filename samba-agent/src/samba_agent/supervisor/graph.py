@@ -93,7 +93,7 @@ def _run_stage(
         except BridgeError as e:
             result = AgentResult(status='fail', reason=f'브릿지 오류: {e}', fail_reason=e.reason)
         if stage == 'buy':
-            result = check_buyer(result)
+            result = check_buyer(result, state['order'].seller)
         if on_agent_result is not None:
             elapsed_ms = int((time.monotonic() - started) * 1000)
             try:
