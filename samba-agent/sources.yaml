@@ -68,19 +68,19 @@ sources:
     label: 나이키
     home: https://www.nike.com/kr/
     login_host: nike.com
-    status: scripts_pending
+    status: hold
   - id: Adidas
     key: adidas
     label: 아디다스
     home: https://www.adidas.co.kr/
     login_host: adidas.co.kr
-    status: scripts_pending
+    status: hold
   - id: OliveYoung
     key: oliveyoung
     label: 올리브영
     home: https://www.oliveyoung.co.kr/
     login_host: oliveyoung.co.kr
-    status: scripts_pending
+    status: hold
   - id: WCONCEPT
     key: wconcept
     label: 더블유컨셉
@@ -98,7 +98,7 @@ sources:
     label: G마켓
     home: https://www.gmarket.co.kr/
     login_host: gmarket.co.kr
-    status: scripts_pending
+    status: hold
   - id: 11ST
     key: st11
     label: 11번가
@@ -110,13 +110,13 @@ sources:
     label: 네이버스토어
     home: https://shopping.naver.com/
     login_host: shopping.naver.com
-    status: scripts_pending
+    status: hold
   - id: TheHyundai
     key: thehyundai
     label: 더현대닷컴
     home: https://www.thehyundai.com/
     login_host: thehyundai.com
-    status: scripts_pending
+    status: hold
   - id: REXMONDE
     key: rexmonde
     label: 렉스몽드
@@ -130,7 +130,7 @@ sources:
     label: 카시나
     home: https://www.kasina.co.kr/
     login_host: kasina.co.kr
-    status: scripts_pending
+    status: hold
   # 보류 — 등록하지 않는다. 주문이 들어오면 감독자가 unsupported 로 사람에게 넘긴다
   - id: KREAM
     key: kream
