@@ -13,9 +13,14 @@ export interface BridgeDeps {
   openSession: (onStep: (label: string, ok: boolean) => void) => ToolSession
   token: () => string
   toolTimeoutMs?: number
+  /** 제한 시간 뒤에도 도구 호출이 안 끝나면 이만큼 더 기다렸다가 강제로 busy 를 푼다 */
+  hangGraceMs?: number
 }
 
 const DEFAULT_TOOL_TIMEOUT_MS = 90_000
+// 실기: 하네스가 죽어 응답을 못 받은 도구 호출이 영영 안 끝나 busy 가 풀리지 않았다(이후 모든 요청 409).
+// 늦게 끝나는 호출은 지켜보되, 이 시간이 지나면 세션을 닫고 문을 연다
+const DEFAULT_HANG_GRACE_MS = 60_000
 const MAX_BODY_BYTES = 1024 * 1024
 
 export class BridgeServer {
@@ -155,14 +160,26 @@ export class BridgeServer {
     } finally {
       if (timer) clearTimeout(timer)
       if (settledByTimer) {
+        // 세션 정리와 busy 해제는 한 번만 — 늦게 끝나거나(finally) 유예가 지나거나(grace) 먼저 오는 쪽이 한다
+        let released = false
+        const release = (why: string): void => {
+          if (released) return
+          released = true
+          if (why !== 'finished')
+            console.warn(`브릿지: 도구 호출이 안 끝나 강제로 세션을 닫는다 (${why})`)
+          session.dispose()
+          this.busy = false
+        }
+        const graceMs = this.deps.hangGraceMs ?? DEFAULT_HANG_GRACE_MS
+        const grace = setTimeout(() => release('hang'), graceMs)
         callPromise
           .catch((e: unknown) => {
             const message = e instanceof Error ? e.message : String(e)
             console.warn('브릿지: 제한 시간 뒤 늦게 끝난 도구 호출 실패', message)
           })
           .finally(() => {
-            session.dispose()
-            this.busy = false
+            clearTimeout(grace)
+            release('finished')
           })
       } else {
         session.dispose()
