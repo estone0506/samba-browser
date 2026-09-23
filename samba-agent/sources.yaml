@@ -104,7 +104,7 @@ sources:
     label: 11번가
     home: https://www.11st.co.kr/
     login_host: 11st.co.kr
-    status: scripts_pending
+    status: hold
   - id: NAVERSTORE
     key: naverstore
     label: 네이버스토어
