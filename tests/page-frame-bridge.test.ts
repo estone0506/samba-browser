@@ -321,7 +321,10 @@ describe('pageBridge.typeLogin — 로그인 칸 진짜 키 입력', () => {
     const { tab, mainCalls, inputEvents } = typingTab([{ x: 10, y: 20 }, 3])
     expect(await pageBridge.typeLogin(tab, 5, 'a@1')).toBe('ok')
     expect(mainCalls).toEqual(['__samba.rectOf(5)', '__samba.valueLength(5)'])
-    const types = inputEvents.map((e) => `${e.type}:${e.keyCode ?? ''}`)
+    // 사람처럼 보이려 넣는 마우스 이동은 순서 검증에서 뺀다
+    const types = inputEvents
+      .filter((e) => e.type !== 'mouseMove')
+      .map((e) => `${e.type}:${e.keyCode ?? ''}`)
     expect(types).toEqual([
       'mouseDown:',
       'mouseUp:',

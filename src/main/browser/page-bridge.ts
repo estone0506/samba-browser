@@ -37,6 +37,19 @@ const elementSchema = z.object({
   isSecret: z.boolean()
 })
 
+// 사람처럼 보이는 입력 간격(ms). 점수형 reCAPTCHA(Enterprise)는 0ms 간격 타자·순간 이동 클릭을 봇으로 본다
+const HUMAN_KEY_MIN_MS = 35
+const HUMAN_KEY_JITTER_MS = 60
+const HUMAN_FOCUS_MS = 120
+const HUMAN_MOVE_MS = 45
+const HUMAN_PRESS_MS = 55
+const HUMAN_BEFORE_SUBMIT_MS = 350
+const HUMAN_LOAD_WAIT_MS = 8000
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 const snapshotSchema = z.object({
   url: z.string(),
   title: z.string(),
@@ -540,21 +553,24 @@ export const pageBridge = {
     const wc = tab.view.webContents
     if (wc.isDestroyed()) return 'page is gone'
     const point = await pageBridge.rectOf(tab, id).catch(() => null)
-    if (!point || !pageBridge.clickAt(tab, point.x, point.y)) {
+    if (!point || !(await pageBridge.clickHuman(tab, point.x, point.y))) {
       return pageBridge.fillValue(tab, id, value)
     }
     try {
       // 클릭이 포커스로 이어질 시간을 준다
-      await new Promise((resolve) => setTimeout(resolve, 60))
+      await pause(HUMAN_FOCUS_MS)
       // 이미 든 값(아이디 저장 등)은 전체 선택으로 덮어쓴다
       wc.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: ['control'] })
       wc.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: ['control'] })
+      await pause(HUMAN_FOCUS_MS)
       for (const ch of value) {
         // keyDown/keyUp 은 keyCode 가 가속기 이름이어야 해 영숫자만 보낸다. 글자는 char 이벤트가 넣는다
         const named = /^[A-Za-z0-9]$/.test(ch)
         if (named) wc.sendInputEvent({ type: 'keyDown', keyCode: ch })
         wc.sendInputEvent({ type: 'char', keyCode: ch })
         if (named) wc.sendInputEvent({ type: 'keyUp', keyCode: ch })
+        // 사람 타자 속도(글자 간 35~95ms) — 점수형 reCAPTCHA 는 0ms 간격 입력을 봇으로 본다(실기: 4~5회에 1회 성공)
+        await pause(HUMAN_KEY_MIN_MS + Math.random() * HUMAN_KEY_JITTER_MS)
       }
     } catch {
       return pageBridge.fillValue(tab, id, value)
@@ -572,11 +588,37 @@ export const pageBridge = {
    * 버튼이 아니라 비밀번호 칸 id 를 받으면 그 폼의 제출 버튼을 preload 가 찾아 누른다(submitForm)
    */
   submitLogin: async (tab: Tab, id: number, isButton: boolean): Promise<string> => {
+    // 페이지 스크립트(reCAPTCHA 적재)가 끝나기 전에 누르면 "서비스가 원활하지 않습니다"로 실패한다 — 적재를 기다린다
+    await pageBridge.waitForLoad(tab, HUMAN_LOAD_WAIT_MS)
+    await pause(HUMAN_BEFORE_SUBMIT_MS)
     if (isButton) {
       const point = await pageBridge.rectOf(tab, id).catch(() => null)
-      if (point && pageBridge.clickAt(tab, point.x, point.y)) return 'ok'
+      if (point && (await pageBridge.clickHuman(tab, point.x, point.y))) return 'ok'
     }
     return pageBridge.submitForm(tab, id)
+  },
+  /**
+   * 사람처럼 누른다 — 마우스를 근처에서 목표로 두 번 옮긴 뒤 mouseDown·(잠깐)·mouseUp. clickAt 과 달리
+   * 이동·간격이 있어 점수형 봇 판정(reCAPTCHA Enterprise)에 사용자 신호를 남긴다. 좌표가 이상하면 false
+   */
+  clickHuman: async (tab: Tab, x: number, y: number): Promise<boolean> => {
+    const wc = tab.view.webContents
+    if (wc.isDestroyed()) return false
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) return false
+    const tx = Math.round(x)
+    const ty = Math.round(y)
+    try {
+      wc.sendInputEvent({ type: 'mouseMove', x: Math.max(0, tx - 40), y: Math.max(0, ty + 25) })
+      await pause(HUMAN_MOVE_MS)
+      wc.sendInputEvent({ type: 'mouseMove', x: tx, y: ty })
+      await pause(HUMAN_MOVE_MS)
+      wc.sendInputEvent({ type: 'mouseDown', x: tx, y: ty, button: 'left', clickCount: 1 })
+      await pause(HUMAN_PRESS_MS)
+      wc.sendInputEvent({ type: 'mouseUp', x: tx, y: ty, button: 'left', clickCount: 1 })
+      return true
+    } catch {
+      return false
+    }
   },
   waitForLoad: (tab: Tab, timeoutMs = 10000): Promise<void> =>
     new Promise<void>((resolve) => {

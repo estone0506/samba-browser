@@ -87,6 +87,8 @@ export async function autofillAccount(
   if (fields.username !== undefined && account.username) {
     usernameFilled = (await pageBridge.typeLogin(tab, fields.username, account.username)) === 'ok'
   }
+  // 아이디 → 비밀번호 칸으로 옮기는 사람의 틈
+  await new Promise((resolve) => setTimeout(resolve, 180))
   const filled = await pageBridge.typeLogin(tab, fields.password, password)
   if (filled !== 'ok') return 'fill-failed'
   // 계정을 고르면 로그인 버튼까지 눌러 준다(아이디까지 채운 경우만 — 비밀번호만 채웠으면 사용자가 확인)
