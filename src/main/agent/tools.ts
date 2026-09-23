@@ -820,7 +820,20 @@ ${raw}`
     const shopHosts = hosts.slice(1)
     const fromShop = matching.filter((a) => shopHosts.some((h) => sameRegistrableDomain(h, a.host)))
     const pool = fromShop.length > 0 ? fromShop : matching
-    if (pool.length !== 1) return null
+    if (pool.length === 0) {
+      ctx.onStep(`키패드 계정: 네이버페이 창 표시(${shown})에 연결된 계정 없음`, false)
+      return null
+    }
+    // 여럿이어도 모두 같은 네이버 계정(같은 결제 비밀번호)에 연결돼 있으면 어느 것이든 같다(실기 9차: ABC 계정 4개
+    // 가 전부 buyer01 연결). 다른 네이버 계정이 섞여 있으면 고르지 않는다
+    const linked = new Set(pool.map((a) => available.paymentAccountUsername(a.id, 'naver')))
+    if (linked.size !== 1) {
+      ctx.onStep(
+        `키패드 계정: 네이버페이 창 표시(${shown})에 맞는 계정이 ${pool.length}개(연결 계정 다름)`,
+        false
+      )
+      return null
+    }
     ctx.onStep(`키패드 계정: 네이버페이 창 표시(${shown})로 ${pool[0].label} 선택`, true)
     return pool[0]
   }
@@ -1914,7 +1927,11 @@ overlays left: ${after.length}${kept}`
               return 'filled: submit is disabled by setting; ask the user to press login'
             }
             await keepSignedIn(tab, fields.submit ?? fields.username)
-            const idSubmitted = await pageBridge.submitForm(tab, fields.submit ?? fields.username)
+            const idSubmitted = await pageBridge.submitLogin(
+              tab,
+              fields.submit ?? fields.username,
+              fields.submit !== undefined
+            )
             if (idSubmitted !== 'ok') return idSubmitted
             await pageBridge.waitForLoad(tab)
             // 아이디 제출로 페이지가 옮겨 갔을 수 있어 https·등록 도메인을 다시 확인한다
@@ -1943,7 +1960,11 @@ overlays left: ${after.length}${kept}`
           }
           // 제출 직전 "로그인 상태 유지"를 켠다 — 세션이 오래가면 재로그인·캡차가 줄어든다
           await keepSignedIn(tab, fields.submit ?? fields.password)
-          const submitted = await pageBridge.submitForm(tab, fields.submit ?? fields.password)
+          const submitted = await pageBridge.submitLogin(
+            tab,
+            fields.submit ?? fields.password,
+            fields.submit !== undefined
+          )
           if (submitted !== 'ok') return submitted
           await pageBridge.waitForLoad(tab)
           // 사이트가 캡차·2FA 를 요구하면 사용자에게 넘기고 처리될 때까지 기다린다

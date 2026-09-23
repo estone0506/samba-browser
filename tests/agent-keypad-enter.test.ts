@@ -592,6 +592,8 @@ describe('fill_secret — 글자 없는 키패드(네이버페이)는 OCR 로 �
     })
     const shop = 'https://abcmart.a-rt.com/order'
     const linked: Record<number, string> = { 5: 'buyer02', 6: 'buyer01', 8: 'buyer03' }
+    // 실기 9차: 쇼핑몰 계정 여럿이 같은 네이버 계정에 연결돼 있으면 어느 것이든 같은 비밀번호다 — 하나를 고른다
+    linked[9] = 'buyer01'
     const b = build({
       tabUrl: NAVER,
       openerUrl: shop,
@@ -601,6 +603,7 @@ describe('fill_secret — 글자 없는 키패드(네이버페이)는 OCR 로 �
         account({ id: 5, host: 'a-rt.com', label: 'buyer02', isDefault: false }),
         account({ id: 6, host: 'a-rt.com', label: 'buyer01', isDefault: false }),
         account({ id: 8, host: 'a-rt.com', label: 'buyer03', isDefault: false }),
+        account({ id: 9, host: 'a-rt.com', label: 'buyer06', isDefault: false }),
         account({
           id: 10,
           host: 'a-rt.com',

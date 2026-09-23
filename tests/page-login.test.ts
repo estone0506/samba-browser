@@ -119,7 +119,7 @@ describe('fillValue', () => {
 })
 
 describe('submitForm', () => {
-  it('form 이 있으면 requestSubmit 을 호출한다', () => {
+  it('제출 버튼이 있는 폼은 버튼을 클릭한다(사이트 핸들러가 캡차 토큰을 붙인다 — GS샵 실기)', () => {
     document.body.innerHTML = `
       <form>
         <input type="password" name="pw">
@@ -130,8 +130,35 @@ describe('submitForm', () => {
     const form = document.querySelector('form') as HTMLFormElement
     const requestSubmit = vi.fn()
     form.requestSubmit = requestSubmit
-    const btnId = buildSnapshot().elements.find((e) => e.tag === 'button')!.id
+    const clicked = vi.fn()
+    document.querySelector('button')!.addEventListener('click', (e) => {
+      e.preventDefault()
+      clicked()
+    })
+    const snap = buildSnapshot()
+    const pwId = snap.elements.find((e) => e.tag === 'input')!.id
+    expect(submitForm(pwId)).toBe('ok')
+    expect(clicked).toHaveBeenCalledTimes(1)
+    expect(requestSubmit).not.toHaveBeenCalled()
+    // 버튼 id 로 불러도 버튼을 누른다
+    const btnId = snap.elements.find((e) => e.tag === 'button')!.id
     expect(submitForm(btnId)).toBe('ok')
+    expect(clicked).toHaveBeenCalledTimes(2)
+  })
+
+  it('제출 버튼이 없는 폼만 requestSubmit 을 호출한다', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="password" name="pw">
+        <a href="#">로그인</a>
+      </form>
+    `
+    buildSnapshot()
+    const form = document.querySelector('form') as HTMLFormElement
+    const requestSubmit = vi.fn()
+    form.requestSubmit = requestSubmit
+    const pwId = buildSnapshot().elements.find((e) => e.tag === 'input')!.id
+    expect(submitForm(pwId)).toBe('ok')
     expect(requestSubmit).toHaveBeenCalledTimes(1)
   })
 

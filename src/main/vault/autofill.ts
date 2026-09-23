@@ -92,7 +92,12 @@ export async function autofillAccount(
   // 계정을 고르면 로그인 버튼까지 눌러 준다(아이디까지 채운 경우만 — 비밀번호만 채웠으면 사용자가 확인)
   if (usernameFilled && deps.autoSubmit?.()) {
     try {
-      await pageBridge.submitForm(tab, fields.password)
+      // 제출 버튼이 있으면 그 버튼을 진짜 클릭한다(사이트 핸들러가 캡차 토큰을 붙이고 제출한다)
+      await pageBridge.submitLogin(
+        tab,
+        fields.submit ?? fields.password,
+        fields.submit !== undefined
+      )
     } catch {
       // 제출 실패는 채우기 성공을 뒤집지 않는다 — 사용자가 버튼을 누르면 된다
     }

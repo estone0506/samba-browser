@@ -566,6 +566,18 @@ export const pageBridge = {
     if (length !== value.length) return pageBridge.fillValue(tab, id, value)
     return 'ok'
   },
+  /**
+   * 로그인 폼 제출 — 제출 버튼을 **진짜 마우스 클릭**(sendInputEvent)으로 누른다. 점수형 reCAPTCHA 는 버튼 핸들러가
+   * 도는 시점의 사용자 신호(신뢰된 클릭)를 보므로 합성 클릭보다 낫다. 좌표를 못 구하면(프레임 안·숨김) submitForm 폴백.
+   * 버튼이 아니라 비밀번호 칸 id 를 받으면 그 폼의 제출 버튼을 preload 가 찾아 누른다(submitForm)
+   */
+  submitLogin: async (tab: Tab, id: number, isButton: boolean): Promise<string> => {
+    if (isButton) {
+      const point = await pageBridge.rectOf(tab, id).catch(() => null)
+      if (point && pageBridge.clickAt(tab, point.x, point.y)) return 'ok'
+    }
+    return pageBridge.submitForm(tab, id)
+  },
   waitForLoad: (tab: Tab, timeoutMs = 10000): Promise<void> =>
     new Promise<void>((resolve) => {
       const wc = tab.view.webContents

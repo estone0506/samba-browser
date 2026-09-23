@@ -1220,12 +1220,35 @@ export function checkKeepSignedIn(anchorId?: number): string {
   return 'none'
 }
 
-// 요소의 form 이 있으면 requestSubmit, 없으면 click 으로 제출(둘 다 실제 제출 동작을 유발)
+/** 폼의 제출 버튼(button[type=submit]·type 없는 button·input[type=submit|image]). 없으면 null */
+function submitButtonOf(form: HTMLFormElement): HTMLElement | null {
+  return form.querySelector<HTMLElement>(
+    'button[type="submit"], button:not([type]), input[type="submit"], input[type="image"]'
+  )
+}
+
+function isSubmitControl(el: HTMLElement): boolean {
+  if (el instanceof HTMLButtonElement) return el.type === 'submit'
+  if (el instanceof HTMLInputElement) return el.type === 'submit' || el.type === 'image'
+  return false
+}
+
+/**
+ * 로그인 폼 제출. **버튼 클릭이 먼저다** — 사이트의 로그인 버튼 핸들러가 reCAPTCHA 토큰을 받아 폼에 붙인 뒤
+ * 제출하는데(실기: GS샵), form.requestSubmit() 은 그 핸들러를 건너뛰어 토큰 없는 요청이 나가 조용히 거부됐다.
+ * 제출 버튼이 없는 폼만 requestSubmit, 폼이 없으면 요소 자체를 click
+ */
 export function submitForm(id: number): string {
   const el = get(id)
   if (!el) return missingMessage(id)
+  if (isSubmitControl(el)) {
+    el.click()
+    return 'ok'
+  }
   const form = formOf(el)
-  if (form && typeof form.requestSubmit === 'function') form.requestSubmit()
+  const button = form ? submitButtonOf(form) : null
+  if (button) button.click()
+  else if (form && typeof form.requestSubmit === 'function') form.requestSubmit()
   else el.click()
   return 'ok'
 }

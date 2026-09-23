@@ -36,7 +36,9 @@ const { pageBridge } = vi.hoisted(() => ({
       pageBridge.fillValue(tab, id, value)
     ),
     findLoginFields: vi.fn(async () => ({ username: 1, password: 2, submit: 3 })),
-    submitForm: vi.fn(async () => 'ok'),
+    submitForm: vi.fn(async (): Promise<string> => 'ok'),
+    // 로그인 제출(진짜 클릭) — 테스트에서는 submitForm 목으로 흘려 기존 기대를 그대로 둔다
+    submitLogin: vi.fn(async (tab: unknown, id: number) => pageBridge.submitForm(tab, id)),
     waitForLoad: vi.fn(async () => {}),
     isSecretField: vi.fn(async () => true)
   }
