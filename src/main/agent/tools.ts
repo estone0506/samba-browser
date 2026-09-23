@@ -834,8 +834,13 @@ ${raw}`
       )
       return null
     }
-    ctx.onStep(`키패드 계정: 네이버페이 창 표시(${shown})로 ${pool[0].label} 선택`, true)
-    return pool[0]
+    // 같은 연결이면 어느 것이든 되지만, 표시 아이디와 이름이 같은 계정(buyer01)이 있으면 그것을 앞세운다(로그 가독성)
+    const picked =
+      pool.find((a) => maskedNaverAccountMatches(shown, a.label)) ??
+      pool.find((a) => maskedNaverAccountMatches(shown, a.username)) ??
+      pool[0]
+    ctx.onStep(`키패드 계정: 네이버페이 창 표시(${shown})로 ${picked.label} 선택`, true)
+    return picked
   }
 
   /**

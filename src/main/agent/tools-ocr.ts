@@ -48,6 +48,9 @@ function startModelDownload(ocr: OcrEngine): void {
 // 한 자리 숫자 판독 결과로 인정하는 모양
 const SINGLE_DIGIT_RE = /^[0-9]$/
 
+// 키패드 판독 직전 모델 내려받기를 기다리는 상한(rec.onnx 13MB 기준)
+const MODEL_WAIT_MS = 90_000
+
 /**
  * 탭의 한 영역(뷰 좌표)을 캡처해 한 자리 숫자로 읽는다. 앱 내부 전용이다 —
  * 글자 없는 보안 키패드(네이버페이)의 숫자 배치를 앱이 스스로 알아낼 때만 쓰고,
@@ -64,8 +67,14 @@ export async function ocrDigitInRegion(
     if (bounds.width === 0 || bounds.height === 0) return null
     const ocr = getEngine()
     if (!ocr.hasModels()) {
+      // 모델이 없으면 내려받기를 시작하고 잠시 기다린다 — 첫 호출에서 바로 포기하면 키패드가 사람에게 넘어간다
+      // (실기 10차: rec.onnx 하나가 빠져 있어 배치 실패). 상한 안에 못 받으면 못 읽음으로 본다
       startModelDownload(ocr)
-      return null
+      await Promise.race([
+        ocr.ensureModels().catch(() => undefined),
+        new Promise<void>((resolve) => setTimeout(resolve, MODEL_WAIT_MS))
+      ])
+      if (!ocr.hasModels()) return null
     }
     const clamped = clampRect(rect, bounds.width, bounds.height)
     if (clamped.width < 1 || clamped.height < 1) return null
