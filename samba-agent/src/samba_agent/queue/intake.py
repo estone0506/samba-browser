@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from samba_agent.agents.contracts import OrderRef
-from samba_agent.queue.db import LIVE_STATES, JobQueue
+from samba_agent.queue.db import JobQueue
 from samba_agent.wave.client import WaveClient, WaveError, WaveOrder
 
 if TYPE_CHECKING:
@@ -73,6 +73,7 @@ class Intake:
         *,
         days: int,
         requester: str = 'intake',
+        max_new: int = 5,
     ) -> None:
         self._wave = wave
         self._queue = queue
@@ -81,6 +82,8 @@ class Intake:
         self._post_line = post_line
         self._days = days
         self._requester = requester
+        # 한 바퀴에 새로 접수하는 상한 — 첫 기동 때 수십 건이 슬랙에 한꺼번에 쏟아지지 않게
+        self._max_new = max_new
         # 슬랙 `수집 중지` 가 세우는 깃발. 세워져 있으면 run_once 는 아무것도 하지 않는다
         self.paused = False
 
@@ -105,9 +108,11 @@ class Intake:
         for wave_order in sorted(orders, key=_paid_key):
             seen += 1
             order = wave_order.to_order_ref()
-            if order.order_no in handled or self._is_live(order.order_no):
+            if order.order_no in handled or self._already_queued(order.order_no):
                 skipped_live += 1
                 continue
+            if enqueued + unsupported >= self._max_new:
+                break
             handled.add(order.order_no)
             ts = self._post_new(intake_line(order))
             job, _created = self._queue.enqueue(order.order_no, self._requester, {}, thread_ts=ts)
@@ -135,10 +140,14 @@ class Intake:
                 time.sleep(nap)
                 waited += nap
 
-    def _is_live(self, order_no: str) -> bool:
-        """이미 큐에 살아 있는 주문인가 — 같은 주문을 두 번 접수하지 않는다."""
-        job = self._queue.get(order_no)
-        return job is not None and job.state in LIVE_STATES
+    def _already_queued(self, order_no: str) -> bool:
+        """큐에 어떤 상태로든 이미 있는 주문인가.
+
+        살아 있는 건은 물론이고 needs_human·failed·cancelled 로 끝난 건도 건너뛴다 — 삼바웨이브에서는
+        여전히 미이행이라 매 주기 되살아나 사람이 정리하기 전까지 무한 반복된다. 다시 돌리는 건
+        슬랙 `이어서`(retry) 나 사람의 결정이다. done 은 기입이 끝나 미이행 목록에서 빠진다.
+        """
+        return self._queue.get(order_no) is not None
 
     def _supported(self, order: OrderRef) -> bool:
         """이 소싱처를 맡을 구매 에이전트가 있는가.

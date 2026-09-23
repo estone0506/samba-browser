@@ -179,7 +179,15 @@ def main() -> None:
     # 자동 수집 — 삼바웨이브 클라이언트가 있고 켜져 있을 때만 돈다. 슬랙이 없으면 스레드 없이 큐에만 쌓인다
     intake: Intake | None = None
     if wave is not None and settings.intake_enabled:
-        intake = Intake(wave, queue, reg, bot.post_new, bot.post, days=settings.intake_days)
+        intake = Intake(
+            wave,
+            queue,
+            reg,
+            bot.post_new,
+            bot.post,
+            days=settings.intake_days,
+            max_new=settings.intake_max_new,
+        )
         bot.intake = intake
 
     app = build_app(

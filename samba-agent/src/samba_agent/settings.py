@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     intake_interval_s: int = Field(default=300, ge=10, alias='SAMBA_INTAKE_INTERVAL_S')
     # 자동 수집 고리를 띄울지. 꺼 두면 슬랙 `주문처리 전체` 로 수동 수집만 한다
     intake_enabled: bool = Field(default=True, alias='SAMBA_INTAKE_ENABLED')
+    # 한 바퀴에 새로 접수하는 상한(슬랙 폭주 방지)
+    intake_max_new: int = Field(default=5, ge=1, alias='SAMBA_INTAKE_MAX_NEW')
     root: Path = Field(default=DEFAULT_ROOT, alias='SAMBA_AGENT_ROOT')
     db_path: Path = Field(default=DEFAULT_ROOT / 'jobs.sqlite', alias='SAMBA_DB_PATH')
     # 판정·진단 산출물 위치. gate·eval·API 가 같은 곳을 본다(리뷰 지적 — I4)

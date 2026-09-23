@@ -107,13 +107,29 @@ def test_같은_주문이_두_번_실려_와도_한_번만_접수한다(setup):
     assert len(slack.tops) == 1
 
 
-def test_끝난_주문은_다시_접수한다(setup):
-    q, _slack, make = setup
+@pytest.mark.parametrize('state', ['needs_human', 'failed', 'cancelled', 'done'])
+def test_큐에_한_번_들어온_주문은_어떤_상태든_다시_접수하지_않는다(setup, state):
+    # 사람 확인 대기 건이 매 주기 되살아나 무한 반복되면 안 된다 — 다시 돌리는 건 슬랙 `이어서`
+    q, slack, make = setup
     job, _ = q.enqueue('A1', 'U1', {}, 'ts0')
-    q.finish(job.id, 'done')
+    if state == 'cancelled':
+        q.cancel('A1')
+    else:
+        q.finish(job.id, state)
     intake, _w = make([wave_order('A1')])
-    assert intake.run_once().enqueued == 1
-    assert q.get('A1').state == 'queued'
+    report = intake.run_once()
+    assert (report.enqueued, report.skipped_live) == (0, 1)
+    assert q.get('A1').state == state
+    assert slack.tops == []
+
+
+def test_한_바퀴에_새로_접수하는_건수는_상한이_있다(setup):
+    _q, slack, make = setup
+    intake, _w = make([wave_order(f'A{i}') for i in range(8)])
+    report = intake.run_once()
+    assert report.enqueued == 5 and len(slack.tops) == 5
+    # 다음 바퀴에 나머지를 받는다
+    assert intake.run_once().enqueued == 3
 
 
 def test_미지원_소싱처는_접수_뒤_바로_사람에게_넘긴다(setup):
