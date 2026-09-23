@@ -124,7 +124,7 @@ sources:
   - id: SMARKET
     key: smarket
     label: 에스마켓
-    status: scripts_pending
+    status: active
   - id: KASINA
     key: kasina
     label: 카시나
