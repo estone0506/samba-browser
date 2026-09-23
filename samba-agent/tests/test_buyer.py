@@ -348,3 +348,110 @@ def test_스냅샷_인자는_상품_ID와_사이즈를_우선한다():
 def test_스냅샷_인자는_따옴표가_있어도_JSON_이다():
     order = OrderRef(order_no='A1', source='무신사', seller='포이즌', sku='SKU "A"', qty=2)
     assert json.loads(snapshot_args('buyer.musinsa', order)) == {'sku': 'SKU "A"', 'qty': 2}
+
+
+# ---- 삼바웨이브 배송지 공급자 · 표시 이름 계정(Task C) ----
+
+WAVE_BASE = 'https://wave.test'
+WAVE_API = f'{WAVE_BASE}/api/v1/internal/harness'
+OFFICE = {
+    'name': '삼바 사무실',
+    'phone': '010-0000-0000',
+    'address': '서울특별시 송파구 어딘가 10',
+    'address_detail': '3층',
+    'postal_code': '05510',
+}
+
+
+def wave_client():
+    from samba_agent.wave.client import WaveClient
+
+    return WaveClient(WAVE_BASE, 'test-token', 'tenant-1')
+
+
+def buyer_with_wave(reg, decide):
+    from samba_agent.agents.factory import _shipping_provider
+
+    a = agent(reg, decide)
+    a.set_shipping_provider(_shipping_provider(wave_client()))
+    return a
+
+
+@respx.mock
+def test_삼바웨이브가_있으면_배송지는_거기서_받는다(reg):
+    """까대기면 사무실 주소를 삼바웨이브가 준다 — 스냅샷에 실린 고객 주소보다 우선한다."""
+    respx.get(f'{WAVE_API}/orders/A1').mock(
+        return_value=httpx.Response(
+            200,
+            json={'order_number': 'A1', 'order_type': 'kkadaegi', 'shipping': OFFICE},
+        )
+    )
+    applied: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        name = body['args']['name']
+        if name == 'musinsa_product_snapshot':
+            return page(json.dumps(SNAPSHOT_OK, ensure_ascii=False))
+        applied.update(json.loads(body['args']['args']))
+        return page(json.dumps(applied, ensure_ascii=False))
+
+    respx.post(f'{URL}/tool/run_script').mock(side_effect=handler)
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = buyer_with_wave(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
+    assert out.status == 'ok'
+    # 스냅샷의 고객 주소가 아니라 삼바웨이브가 준 사무실 주소를 입력했다
+    assert applied['address'] == OFFICE['address']
+    assert applied['postal_code'] == '05510'
+    dumped = json.dumps(out.model_dump(mode='json'), ensure_ascii=False)
+    assert find_leaks(dumped) == []
+    assert OFFICE['address'] not in dumped
+
+
+@respx.mock
+def test_삼바웨이브_배송지_조회가_실패하면_그_사유로_실패한다(reg):
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(403, json={'detail': 'x'}))
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=route_run_script({'musinsa_product_snapshot': SNAPSHOT_OK})
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = buyer_with_wave(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
+    assert (out.status, out.fail_reason) == ('fail', FailReason.PERMISSION_DENIED)
+
+
+@respx.mock
+def test_스냅샷이_표시_이름을_돌려주면_대조를_건너뛴다(reg):
+    """실기: 사이트가 로그인 아이디 대신 한글 별명(김사무1)을 돌려준다 — 불일치로 보지 않는다."""
+    snap = {**SNAPSHOT_OK, 'account': '김사무1'}
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=route_run_script(
+            {'musinsa_product_snapshot': snap, 'musinsa_set_shipping': SHIPPING}
+        )
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/new_tab').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/login').mock(return_value=page('already signed in'))
+    a = assignment(reg).model_copy(
+        update={'order': ORDER.model_copy(update={'account': 'buyer01'})}
+    )
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(a)
+    assert out.status == 'ok'
+    assert any('표시 이름이라 대조 불가' in e.detail for e in out.evidence)
+
+
+@respx.mock
+def test_스냅샷이_다른_아이디를_돌려주면_사람에게_넘긴다(reg):
+    snap = {**SNAPSHOT_OK, 'account': 'someone_else'}
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=route_run_script({'musinsa_product_snapshot': snap})
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/new_tab').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/login').mock(return_value=page('already signed in'))
+    a = assignment(reg).model_copy(
+        update={'order': ORDER.model_copy(update={'account': 'buyer01'})}
+    )
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(a)
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.PERMISSION_DENIED)

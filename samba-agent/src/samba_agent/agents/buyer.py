@@ -5,6 +5,8 @@
 """
 
 import json
+import re
+from collections.abc import Callable
 
 from samba_agent.agents.base import AgentBase, AgentFailure, Decision, run_agent
 from samba_agent.agents.contracts import AgentResult, Assignment, OrderRef
@@ -12,6 +14,13 @@ from samba_agent.agents.registry import AgentSpec
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_text
 from samba_agent.sources import Source, default_sources
+from samba_agent.wave.client import WaveError
+
+# 주문번호 → 배송지 사전. 개인정보라 반환값은 호출 안에서만 쓰고 버린다
+ShippingFn = Callable[[str], dict[str, object]]
+
+# 로그인 아이디로 볼 수 있는 모양(ASCII 영숫자·._-). 한글 별명은 여기 걸리지 않는다
+_LOGIN_ID = re.compile(r'[A-Za-z0-9._\-@]+')
 
 
 def source_of(agent_name: str) -> Source:
@@ -78,6 +87,8 @@ class BuyerAgent(AgentBase):
     """등록부의 buyer.* 한 행에 대응한다."""
 
     _dry_run: bool = True
+    # 배송지 공급자(삼바웨이브 상세). 없으면 스냅샷·전용 스크립트로 받는다
+    _shipping_fn: 'ShippingFn | None' = None
 
     def __call__(self, assignment: Assignment) -> AgentResult:
         self._dry_run = assignment.dry_run
@@ -129,15 +140,25 @@ class BuyerAgent(AgentBase):
         )
 
     def _check_account(self, a: Assignment, snap: dict[str, object]) -> None:
-        """스냅샷이 로그인 계정을 알려 주면 주문의 소싱 계정과 대조한다. 다르면 사람에게 넘긴다."""
+        """스냅샷이 로그인 계정을 알려 주면 주문의 소싱 계정과 대조한다. 다르면 사람에게 넘긴다.
+
+        실기: 사이트가 아이디 대신 표시 이름(한글 별명 '김사무1')을 돌려주는 곳이 있다 —
+        아이디끼리 비교할 때만 불일치로 본다. 표시 이름이면 대조를 못 했다고 남기고 지나간다.
+        """
         seen = str(snap.get('account') or '').strip()
         want = a.order.account
-        if want and seen and want.lower() not in seen.lower():
-            raise AgentFailure(
-                'needs_human',
-                f'다른 계정으로 로그인돼 있다: {seen} (주문 계정 {want})',
-                FailReason.PERMISSION_DENIED,
-            )
+        if not (want and seen):
+            return
+        if want.lower() in seen.lower():
+            return
+        if not _LOGIN_ID.fullmatch(seen):
+            self.note('로그인 계정', f'표시 이름이라 대조 불가: {seen} (주문 계정 {want})')
+            return
+        raise AgentFailure(
+            'needs_human',
+            f'다른 계정으로 로그인돼 있다: {seen} (주문 계정 {want})',
+            FailReason.PERMISSION_DENIED,
+        )
 
     def _buy(self, a: Assignment) -> AgentResult:
         self.evidence = []
@@ -227,8 +248,25 @@ class BuyerAgent(AgentBase):
             evidence=tuple(self.evidence),
         )
 
+    def set_shipping_provider(self, provider: ShippingFn | None) -> None:
+        """배송지 공급자(삼바웨이브 상세)를 꽂는다. 배선은 factory 가 한다.
+
+        공급자를 쓰면 까대기 주문의 사무실 주소까지 삼바웨이브가 정해 준다 — 앱 화면을 거치지 않는다.
+        """
+        self._shipping_fn = provider
+
     def _fetch_shipping(self, a: Assignment, snap: dict[str, object]) -> dict[str, object]:
-        """스냅샷 응답에 배송지가 실려 있으면 그걸 쓰고, 없으면 전용 스크립트로 받는다."""
+        """배송지 출처 — 삼바웨이브(공급자) > 스냅샷에 실려 온 값 > 전용 스크립트 순.
+
+        어느 경로든 받은 값은 이 호출 안에서만 살아 있다(호출부가 바로 입력하고 버린다).
+        """
+        if self._shipping_fn is not None:
+            try:
+                fetched = self._shipping_fn(a.order.order_no)
+            except WaveError as e:
+                raise AgentFailure('fail', f'배송지 조회 실패: {e}', e.reason) from e
+            if fetched:
+                return fetched
         embedded = snap.get('shipping')
         if isinstance(embedded, dict) and embedded:
             return embedded
