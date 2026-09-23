@@ -72,6 +72,9 @@ BUYER_TOOLS: tuple[str, ...] = (
     'close_tab',
     'list_accounts',
     'login',
+    # 직배 배송지의 전화 칸 — 앱이 키마스터 신원정보(identity.phone)로 채운다. 결제 비밀이 아니라
+    # 배송 연락처라 dry-run 에서도 허용한다
+    'fill_secret',
     'progress',
 )
 # 소싱처별 규칙 파일이 없으면 쓰는 공통 규칙

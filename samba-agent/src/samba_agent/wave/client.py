@@ -48,21 +48,26 @@ class WaveError(Exception):
 
 
 class WaveShipping(BaseModel):
-    """배송지. 개인정보라 받는 즉시 쓰고 버린다 — 절대 state·payload·로그에 담지 않는다."""
+    """배송지. 개인정보라 받는 즉시 쓰고 버린다 — 절대 state·payload·로그에 담지 않는다.
+
+    전화번호 필드는 두지 않는다 — 응답에 실려 와도 버린다(extra='ignore'). 고객 전화번호는
+    어디에도 입력하지 않고, 배송 연락처는 앱이 키마스터 신원정보로 채운다(사용자 결정 2026-09-23).
+    """
 
     model_config = ConfigDict(extra='ignore')
 
     name: str = ''
-    phone: str = ''
     address: str = ''
     address_detail: str = ''
     postal_code: str = ''
 
     def to_script_args(self) -> dict[str, str]:
-        """앱 저장 스크립트(<key>_set_shipping)가 받는 모양. 빈 값은 빼지 않는다(덮어쓰기 목적)."""
+        """앱 저장 스크립트(<key>_set_shipping)가 받는 모양. 빈 값은 빼지 않는다(덮어쓰기 목적).
+
+        phone 키는 없다 — 스크립트는 전화 칸을 비워 두고 그 칸의 요소 번호를 돌려준다.
+        """
         return {
             'name': self.name,
-            'phone': self.phone,
             'address': self.address,
             'address_detail': self.address_detail,
             'postal_code': self.postal_code,
@@ -139,8 +144,6 @@ class WaveOrderDetail(WaveOrder):
     """주문 상세 — 배송지가 더 실린다. 배송지는 받는 즉시 쓰고 버린다."""
 
     shipping: WaveShipping = WaveShipping()
-    # 삼바웨이브가 주는 우리 쪽 연락처(사무실 번호). 없으면 설정 SAMBA_SHIP_PHONE 으로 대신한다
-    contact_phone: str | None = None
 
 
 # 감독자 기대값 키 ← 삼바웨이브 응답 필드. 응답에 그 값이 없으면(None) 빼서 '대조 못 함' 으로 남긴다.

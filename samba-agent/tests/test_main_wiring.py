@@ -115,6 +115,13 @@ def test_에이전트_공장이_삼바웨이브를_구매_기록_검증에_꽂�
     assert plain['buyer.musinsa']._shipping_fn is None
 
 
+def test_배송_연락처_설정은_없다():
+    # 사용자 결정(2026-09-23): 배송 연락처는 앱 키마스터 신원정보 — .env 에 번호를 두지 않는다
+    s = _settings(SAMBA_SHIP_PHONE='010-0000-0000')
+    assert not hasattr(s, 'ship_phone')
+    assert '0000-0000' not in s.model_dump_json()
+
+
 # ---- 자동 수집 배선(Task D) ----
 
 

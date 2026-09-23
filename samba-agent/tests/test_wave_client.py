@@ -94,6 +94,9 @@ def test_상세는_주문_종류와_배송지를_준다():
     assert detail.order_type == 'kkadaegi'
     assert detail.to_order_ref().order_type == 'kkadaegi'
     assert detail.shipping.to_script_args()['postal_code'] == '06234'
+    # 고객 전화번호는 모델에도, 스크립트 인자에도 없다
+    assert 'phone' not in detail.shipping.to_script_args()
+    assert '5678' not in detail.model_dump_json()
 
 
 @respx.mock
@@ -189,7 +192,8 @@ def test_상세는_요청한_배송_종류를_인자로_보낸다():
     )
     d = client().get_order('A1', order_type='kkadaegi')
     assert route.calls[0].request.url.params['order_type'] == 'kkadaegi'
-    assert d.contact_phone == '02-1'
+    # 연락처는 하네스가 받지 않는다 — 응답에 실려 와도 버린다(배송 연락처는 앱 신원정보)
+    assert 'contact_phone' not in d.model_dump()
 
 
 def test_판매가를_OrderRef_로_옮긴다():

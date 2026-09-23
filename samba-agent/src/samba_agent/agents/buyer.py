@@ -16,8 +16,8 @@ from samba_agent.ops.masking import mask_text
 from samba_agent.sources import Source, default_sources
 from samba_agent.wave.client import WaveError
 
-# 주문번호 → 배송지 사전. 개인정보라 반환값은 호출 안에서만 쓰고 버린다
-# (주문번호, 배송 종류) → 배송지 사전. 배송 종류는 소싱처 강제값이 있으면 그것, 없으면 주문의 값
+# (주문번호, 배송 종류) → 배송지 사전. 배송 종류는 소싱처 강제값이 있으면 그것, 없으면 주문의 값.
+# 개인정보라 반환값은 호출 안에서만 쓰고 버린다
 ShippingFn = Callable[[str, str], dict[str, object]]
 
 # 로그인 아이디로 볼 수 있는 모양(ASCII 영숫자·._-). 한글 별명은 여기 걸리지 않는다
@@ -68,8 +68,28 @@ _LOGIN_SETTLE_MS = 2500
 # 주문의 배송지를 앱에서 실행 시점에 읽어오는 전역 스크립트(소싱처 무관 — 주문 관리 쪽 데이터)
 SHIPPING_SCRIPT = 'samba_order_shipping'
 
-# 배송지로 다루는 필드 — 전부 개인정보라 어디에도 원문을 남기지 않는다
-SHIPPING_FIELDS = ('name', 'phone', 'address')
+# 되읽어 대조하는 배송지 필드 — 전부 개인정보라 어디에도 원문을 남기지 않는다.
+# 전화는 하네스가 아예 다루지 않는다(앱이 키마스터 신원정보로 채운다)
+SHIPPING_FIELDS = ('name', 'address')
+
+# 배송지 스크립트에 넘기는 키. phone 키는 어떤 출처에서 와도 넣지 않는다 — 고객 전화번호는
+# 어디에도 입력하지 않는다(사용자 결정 2026-09-23)
+SHIPPING_ARG_FIELDS = ('name', 'address', 'address_detail', 'postal_code')
+
+# 배송 연락처 — 앱 fill_secret 이 키마스터 신원정보의 이 필드로 전화 칸을 채운다
+PHONE_SECRET_ITEM = 'identity'
+PHONE_SECRET_FIELD = 'identity.phone'
+
+# 까대기 주문서에서 기본 배송지가 채워졌는지 get_page 로 볼 때 쓰는 표시.
+# 수령인 라벨이 있고 '배송지 없음' 류 문구가 없으면 채워진 것으로 본다
+RECIPIENT_MARKERS = ('받는 분', '받는분', '받으시는 분', '수령인', '수취인')
+EMPTY_SHIPPING_MARKERS = (
+    '배송지를 입력',
+    '배송지를 등록',
+    '배송지를 추가',
+    '등록된 배송지가 없',
+    '배송지가 없습니다',
+)
 
 # dry_run 이면 구매 에이전트가 절대 부르지 않는 부수효과 도구(허용 목록에 있어도 막는다)
 DRY_RUN_BLOCKED_TOOLS = frozenset(
@@ -207,7 +227,7 @@ class BuyerAgent(AgentBase):
         account = max(coupons, key=lambda k: coupons[k])
         self.note('계정 선택', f'{account} — 쿠폰 {coupons[account]:,.0f}원으로 가장 유리')
 
-        # 배송지 — 개인정보(이름·전화·주소)라 Assignment/state/payload 에는 절대 담지 않는다.
+        # 배송지 — 개인정보(이름·주소)라 Assignment/state/payload 에는 절대 담지 않는다.
         # 실행 시점에만 받아 입력 도구 호출에 바로 쓰고 로컬 변수 밖으로 내보내지 않는다.
         self._set_shipping(a, snap)
 
@@ -261,12 +281,13 @@ class BuyerAgent(AgentBase):
     def set_shipping_provider(self, provider: ShippingFn | None) -> None:
         """배송지 공급자(삼바웨이브 상세)를 꽂는다. 배선은 factory 가 한다.
 
-        공급자를 쓰면 까대기 주문의 사무실 주소까지 삼바웨이브가 정해 준다 — 앱 화면을 거치지 않는다.
+        직배·선물 주문의 고객 이름·주소를 앱 화면을 거치지 않고 받는다. 까대기는 계정 기본
+        배송지(사무실)를 유지하므로 공급자를 부르지 않는다(플레이북 §4).
         """
         self._shipping_fn = provider
 
     def order_type_of(self, order: OrderRef) -> str:
-        """이 주문의 배송 종류 — 소싱처가 강제하면 그것(ABC마트 = 까대기), 아니면 주문의 값."""
+        """이 주문의 배송 종류 — 소싱처가 강제하면 그것(ABC마트·그랜드스테이지 = 까대기), 아니면 주문의 값."""
         forced = source_of(self.spec.name).order_type
         return forced or order.order_type
 
@@ -292,21 +313,28 @@ class BuyerAgent(AgentBase):
         return shipping if isinstance(shipping, dict) else fetched
 
     def _set_shipping(self, a: Assignment, snap: dict[str, object]) -> None:
-        """배송지를 받아 바로 입력하고, 다시 읽어 마스킹 비교로 검증한다.
+        """배송지 — 까대기면 기본 배송지를 유지하고, 직배·선물이면 고객 이름·주소를 새로 넣는다.
 
         원문은 이 함수 밖으로 나가지 않는다 — self.note 에는 마스킹된 요약만 남긴다.
         """
+        if self.order_type_of(a.order) == 'kkadaegi':
+            self._keep_default_shipping(snap)
+            return
+
         shipping = self._fetch_shipping(a, snap)
-        if not shipping:
+        # 이름·주소만 넘긴다 — phone 키는 출처가 어디든 버린다
+        args: dict[str, object] = {
+            f: shipping[f] for f in SHIPPING_ARG_FIELDS if shipping.get(f) is not None
+        }
+        if not (args.get('name') and args.get('address')):
             raise AgentFailure('needs_human', '배송지를 받지 못했다', FailReason.UNKNOWN)
+        if a.order.account:
+            args['profile'] = a.order.account
 
         applied = self.json_tool(
             'run_script',
             name=source_of(self.spec.name).set_shipping_script,
-            args=json.dumps(
-                {**shipping, **({'profile': a.order.account} if a.order.account else {})},
-                ensure_ascii=False,
-            ),
+            args=json.dumps(args, ensure_ascii=False),
         )
         # 원문끼리 비교하지 않는다 — 마스킹한 값끼리만 비교해서 판단에도 개인정보를 안 남긴다
         mismatch = any(
@@ -315,12 +343,67 @@ class BuyerAgent(AgentBase):
         )
         if mismatch:
             raise AgentFailure('needs_human', '배송지 입력 검증에 실패했다', FailReason.UNKNOWN)
+        self._fill_phone(applied)
         # 마스킹 규칙이 이름을 가리려면 라벨이 앞에 있어야 한다(ops.masking) — 라벨을 붙여서 가린다
-        summary = (
-            f'수취인 {shipping.get("name", "")} · {shipping.get("phone", "")} · '
-            f'{shipping.get("address", "")}'
-        )
+        summary = f'수취인 {shipping.get("name", "")} · {shipping.get("address", "")}'
         self.note('배송지', f'반영 완료 — {mask_text(summary)}')
+
+    def _keep_default_shipping(self, snap: dict[str, object]) -> None:
+        """까대기 — 계정 기본 배송지(사무실)를 유지하고 수정하지 않는다(플레이북 §4-2).
+
+        배송지 스크립트를 부르지 않고 주문서에 수령인·주소가 비어 있지 않은지만 본다.
+        스냅샷이 주문서 배송지를 실어 주면 그것으로, 아니면 화면(get_page)으로 확인한다.
+        """
+        embedded = snap.get('shipping')
+        if isinstance(embedded, dict) and embedded:
+            filled = all(str(embedded.get(f) or '').strip() for f in SHIPPING_FIELDS)
+        else:
+            page = self.tool('get_page')
+            filled = any(m in page for m in RECIPIENT_MARKERS) and not any(
+                m in page for m in EMPTY_SHIPPING_MARKERS
+            )
+        if not filled:
+            raise AgentFailure(
+                'needs_human',
+                '기본 배송지 없음 — 계정의 기본 배송지(사무실)를 사람이 등록해야 한다',
+                FailReason.UNKNOWN,
+            )
+        self.note('배송지', '사무실 수령(기본 배송지 유지)')
+
+    def _fill_phone(self, applied: dict[str, object]) -> None:
+        """배송 연락처 — 스크립트가 비워 둔 전화 칸을 앱이 키마스터 신원정보로 채운다.
+
+        번호는 하네스를 지나가지 않는다. 앱 결과는 성공이면 'ok…', 아니면 'refused: …'·'not found: …'.
+        """
+        field_id = applied.get('phone_field_id')
+        if isinstance(field_id, str) and field_id.strip().isdigit():
+            field_id = int(field_id.strip())
+        if not isinstance(field_id, int) or isinstance(field_id, bool):
+            if applied.get('phone_field_ids'):
+                raise AgentFailure(
+                    'needs_human',
+                    '전화 3칸 사이트 — 앱 부분 입력 미지원',
+                    FailReason.UNKNOWN,
+                )
+            raise AgentFailure('needs_human', '전화 칸을 찾지 못함', FailReason.UNKNOWN)
+        try:
+            out = self.tool(
+                'fill_secret',
+                elementId=field_id,
+                itemType=PHONE_SECRET_ITEM,
+                field=PHONE_SECRET_FIELD,
+            )
+        except AgentFailure as e:
+            raise AgentFailure(
+                'needs_human', f'배송 연락처 입력 실패: {e.reason}', e.fail_reason
+            ) from e
+        if not out.strip().lower().startswith('ok'):
+            raise AgentFailure(
+                'needs_human',
+                f'배송 연락처 입력 실패: {mask_text(out.strip()[:100])}',
+                FailReason.UNKNOWN,
+            )
+        self.note('배송 연락처', '키마스터 신원정보로 입력(번호는 하네스가 보지 않는다)')
 
 
 class ScriptsPendingBuyer:

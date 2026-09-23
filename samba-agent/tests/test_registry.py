@@ -44,6 +44,9 @@ def test_허용_도구는_브릿지_도구_이름이다(reg):
     assert 'phone_approve_payment' in reg['payer'].tools
     assert 'phone_approve_payment' not in reg['recorder'].tools
     assert 'run_script' in reg['recorder'].tools
+    # 직배 배송 연락처(신원정보)는 구매가 앱에 채워 달라고 한다 — 결제 도구는 여전히 없다
+    assert 'fill_secret' in reg['buyer.musinsa'].tools
+    assert 'phone_approve_payment' not in reg['buyer.musinsa'].tools
 
 
 def test_규칙_파일이_실제로_있다(reg):

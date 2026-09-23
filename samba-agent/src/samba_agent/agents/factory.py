@@ -24,16 +24,16 @@ def build_agents(
     bridge: BridgeClient,
     decide: DecideFn,
     wave: WaveClient | None = None,
-    ship_phone: str | None = None,
 ) -> dict[str, AgentFn]:
     """이름 → 호출 가능한 에이전트. 새 소싱처는 sources.yaml 1행이면 여기 자동으로 생긴다.
 
     저장 스크립트가 없는 소싱처(status: scripts_pending)도 만들어 둔다 — 부르면 곧바로
     needs_human('스크립트 미작성: <id>') 이다.
 
-    ``wave`` 를 주면 구매는 배송지를, 기록·검증은 삼바웨이브 행을 앱 화면 대신 내부 API 로 본다.
+    ``wave`` 를 주면 구매는 배송지를, 기록·검증은 삼바웨이브 행을
+    앱 화면 대신 내부 API 로 본다.
     """
-    shipping_fn = _shipping_provider(wave, ship_phone)
+    shipping_fn = _shipping_provider(wave)
     agents: dict[str, AgentFn] = {}
     for spec in [s for kind in _CLASSES for s in reg.of_kind(kind)]:
         source = reg.source_of(spec.name)
@@ -49,13 +49,14 @@ def build_agents(
     return agents
 
 
-def _shipping_provider(wave: WaveClient | None, ship_phone: str | None = None) -> ShippingFn | None:
+def _shipping_provider(wave: WaveClient | None) -> ShippingFn | None:
     """(주문번호, 배송 종류) → 배송지 사전. 개인정보라 여기서 만들어 바로 넘기고 아무 데도 담지 않는다.
 
-    - 고객 전화번호는 어디에도 입력하지 않는다(사용자 지시) — 연락처는 삼바웨이브 contact_phone,
-      없으면 설정 SAMBA_SHIP_PHONE. 둘 다 없으면 사람에게 넘긴다.
+    - 전화번호는 사전에 없다 — 고객 번호는 어디에도 입력하지 않고, 배송 연락처는 앱이 키마스터
+      신원정보(identity.phone)로 채운다. 하네스는 번호를 보지 않는다(사용자 결정 2026-09-23).
     - 까대기를 요청했는데 삼바웨이브가 다른 종류(고객 주소)를 주면 그대로 쓰지 않고 멈춘다 —
-      고객 집으로 보내는 사고보다 낫다.
+      고객 집으로 보내는 사고보다 낫다. (구매 에이전트는 까대기면 기본 배송지를 유지해 이 공급자를
+      부르지 않지만, 다른 호출부가 까대기로 부르면 이 검사가 막는다.)
     """
     if wave is None:
         return None
@@ -68,15 +69,6 @@ def _shipping_provider(wave: WaveClient | None, ship_phone: str | None = None) -
                 '사무실 배송지를 받지 못했다 — 삼바웨이브 상세 API 가 order_type 요청을 지원해야 한다',
                 FailReason.UNKNOWN,
             )
-        phone = (detail.contact_phone or '').strip() or (ship_phone or '').strip()
-        if not phone:
-            raise AgentFailure(
-                'needs_human',
-                '배송 연락처가 없다 — SAMBA_SHIP_PHONE 설정 또는 삼바웨이브 contact_phone 필요',
-                FailReason.UNKNOWN,
-            )
-        args = dict(detail.shipping.to_script_args())
-        args['phone'] = phone  # 고객 번호를 덮어쓴다 — 어떤 경우에도 고객 전화번호는 넣지 않는다
-        return args
+        return dict(detail.shipping.to_script_args())
 
     return fetch
