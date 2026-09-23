@@ -28,6 +28,7 @@ from samba_agent.ops.tracing import configure_tracing
 from samba_agent.queue.db import Job, JobQueue
 from samba_agent.queue.intake import Intake
 from samba_agent.queue.orders import LOOKUP_TOOLS, parse_order_fn
+from samba_agent.queue.tabs import TAB_TOOLS, TabJanitor
 from samba_agent.queue.worker import Worker, WorkerDeps
 from samba_agent.settings import Settings, load_settings
 from samba_agent.supervisor.graph import build_supervisor
@@ -163,6 +164,8 @@ def main() -> None:
             env=settings.harness_env,
             prompt_commit=settings.prompt_commit,
             prune=events.prune,
+            # 작업이 연 탭은 끝날 때 닫는다 — 옛 주문서 탭을 다음 작업이 읽던 문제(실기)
+            tabs=TabJanitor(bridge.scoped(list(TAB_TOOLS))),
         )
     )
 

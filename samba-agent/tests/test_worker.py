@@ -421,3 +421,57 @@ def test_승인_대기로_멈춘_스레드는_지우지_않는다(setup):
     wiped.clear()
     w._reset_finished_thread(1)  # 다음 노드(승인 뒤 결제)가 남아 있다
     assert wiped == []
+
+
+class _FakeTabs:
+    """열린 탭 집합을 흉내 낸다. 작업 중 새 탭이 생겼다고 치고, 닫힌 것을 기록한다."""
+
+    def __init__(self) -> None:
+        self.open = {'t-samba'}
+        self.closed: list[str] = []
+
+    def snapshot(self):
+        return frozenset(self.open)
+
+    def close_new(self, before):
+        new = [t for t in self.open if t not in before]
+        self.closed.extend(new)
+        self.open -= set(new)
+        return len(new)
+
+
+def test_작업이_끝나면_그_작업이_연_탭을_닫는다(setup):
+    q, _log, _sent, make = setup
+    w = make(gate=False)
+    tabs = _FakeTabs()
+    w.d.tabs = tabs
+    orig = w.d.graph.invoke
+
+    def invoke_and_open_tab(*a, **k):
+        tabs.open.add('t-order')  # 구매 에이전트가 주문서 탭을 열었다
+        return orig(*a, **k)
+
+    w.d.graph.invoke = invoke_and_open_tab  # type: ignore[method-assign]
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    assert w.tick().state == 'done'
+    assert tabs.closed == ['t-order'] and 't-samba' in tabs.open
+
+
+def test_승인_대기_중에는_탭을_닫지_않고_재개_뒤에_닫는다(setup):
+    q, _log, _sent, make = setup
+    w = make(gate=True)
+    tabs = _FakeTabs()
+    w.d.tabs = tabs
+    orig = w.d.graph.invoke
+
+    def invoke_and_open_tab(*a, **k):
+        tabs.open.add('t-order')
+        return orig(*a, **k)
+
+    w.d.graph.invoke = invoke_and_open_tab  # type: ignore[method-assign]
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    job = w.tick()
+    assert '승인 대기' in (job.step or '') and tabs.closed == []
+    done = w.resume('A1', True, 'U1', stage='pay')
+    assert done is not None and done.state == 'done'
+    assert tabs.closed == ['t-order']

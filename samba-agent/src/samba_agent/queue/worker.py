@@ -15,6 +15,7 @@ from samba_agent.ops.events import EventLog
 from samba_agent.ops.masking import mask_text
 from samba_agent.ops.tracing import run_metadata, traced
 from samba_agent.queue.db import PAY_STARTED_STEP, Job, JobQueue
+from samba_agent.queue.tabs import TabJanitor
 from samba_agent.supervisor.approval import resume_command
 
 THREAD_PREFIX = 'job:'
@@ -55,6 +56,9 @@ class WorkerDeps:
     # 끝난 실행의 체크포인트 스레드를 지운다(체크포인터의 delete_thread). 같은 job id 로 다시 접수될 때
     # 지난 실행의 attempts·results 가 새 실행에 섞이지 않게 한다. 없으면 지우지 않는다(테스트)
     reset_thread: Callable[[str], None] | None = None
+    # 작업이 연 브라우저 탭을 끝날 때 닫는다(실기: 옛 주문서 탭을 다음 작업이 읽어 원가 오독).
+    # 없으면 닫지 않는다(테스트)
+    tabs: TabJanitor | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.version, str):
@@ -68,6 +72,8 @@ class Worker:
     def __init__(self, deps: WorkerDeps) -> None:
         self.d = deps
         self._last_prune: float | None = None
+        # 작업 id → 시작 시점 탭 목록. 승인 대기로 멈춘 작업은 재개 뒤 닫으려고 남겨 둔다
+        self._tab_marks: dict[int, frozenset[str]] = {}
 
     def tick(self) -> Job | None:
         """queued 1건을 집어 끝까지(또는 승인 대기까지) 돌린다. 없으면 None."""
@@ -86,6 +92,8 @@ class Worker:
             self.d.report(job, f'주문 조회 실패 — 사람 확인 필요: {msg}')
             return self.d.queue.get(job.order_no)
         self._reset_finished_thread(job.id)
+        if self.d.tabs is not None:
+            self._tab_marks[job.id] = self.d.tabs.snapshot()
         state = {
             'order': order,
             'options': {str(k): str(v) for k, v in job.options.items()},
@@ -93,7 +101,25 @@ class Worker:
             'dry_run': self.d.dry_run,
             'dry_run_digits': self.d.dry_run_digits,
         }
-        return self._invoke(job, state)
+        return self._cleanup_tabs(self._invoke(job, state))
+
+    def _cleanup_tabs(self, job: Job | None) -> Job | None:
+        """작업이 끝났으면(승인 대기가 아니면) 그 작업이 연 탭을 닫는다."""
+        if job is None or self.d.tabs is None:
+            return job
+        if (job.step or '').startswith('승인 대기'):
+            return job  # 결제 직전 주문서가 살아 있어야 한다
+        before = self._tab_marks.pop(job.id, None)
+        if before is None:
+            return job
+        try:
+            closed = self.d.tabs.close_new(before)
+        except Exception:  # noqa: BLE001 — 정리 실패가 결과를 바꾸면 안 된다
+            _log.exception('탭 정리 실패 — 그대로 둔다: %s', job.order_no)
+            return job
+        if closed:
+            _log.info('%s 작업이 연 탭 %d개 닫음', job.order_no, closed)
+        return job
 
     def resume(
         self, order_no: str, approved: bool, by: str, stage: str | None = None
@@ -108,7 +134,7 @@ class Worker:
         job = self.d.queue.try_start_resume(order_no, stage=stage)
         if job is None:
             return None
-        return self._invoke(job, resume_command(approved, by))
+        return self._cleanup_tabs(self._invoke(job, resume_command(approved, by)))
 
     def run_forever(self, stop: Callable[[], bool], interval_s: float = 2.0) -> None:
         """봇과 함께 도는 고리. stop() 이 참이 될 때까지 큐를 본다."""

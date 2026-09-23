@@ -1,0 +1,49 @@
+"""작업이 남긴 브라우저 탭 정리.
+
+실기: 앞 주문의 주문서 탭이 남아 있으면 다음 주문의 스냅샷 스크립트가 `tabs.list().find(url 에 /order/)`
+로 **옛 주문서**를 집어 원가(66,400원)를 잘못 읽었다. 작업이 끝날 때마다 그 작업이 연 탭을 닫는다.
+승인 대기(결제 직전)에 멈춘 작업은 주문서가 살아 있어야 하므로 닫지 않는다.
+"""
+
+import json
+import logging
+
+from samba_agent.bridge.client import BridgeClient, BridgeError
+
+log = logging.getLogger(__name__)
+
+# 브릿지에 요구하는 도구 — 진입점이 이 목록으로 scoped() 한다
+TAB_TOOLS = ('list_tabs', 'close_tab')
+
+
+class TabJanitor:
+    """작업 시작 시 탭 목록을 찍어 두고, 끝나면 그 뒤에 생긴 탭만 닫는다."""
+
+    def __init__(self, bridge: BridgeClient) -> None:
+        self._bridge = bridge
+
+    def _tabs(self) -> list[dict[str, object]]:
+        try:
+            raw = json.loads(self._bridge.call('list_tabs').result)
+        except (BridgeError, ValueError) as e:
+            log.warning('탭 목록을 읽지 못했다 — 정리를 건너뛴다: %s', e)
+            return []
+        return [t for t in raw if isinstance(t, dict)] if isinstance(raw, list) else []
+
+    def snapshot(self) -> frozenset[str]:
+        """지금 열린 탭·팝업 id."""
+        return frozenset(str(t.get('id')) for t in self._tabs() if t.get('id'))
+
+    def close_new(self, before: frozenset[str]) -> int:
+        """``before`` 에 없던 탭을 닫는다. 닫은 개수를 돌려준다. 실패는 로그만."""
+        closed = 0
+        for t in self._tabs():
+            tab_id = str(t.get('id') or '')
+            if not tab_id or tab_id in before:
+                continue
+            try:
+                self._bridge.call('close_tab', id=tab_id)
+                closed += 1
+            except BridgeError as e:
+                log.warning('탭을 닫지 못했다(%s): %s', tab_id, e)
+        return closed
