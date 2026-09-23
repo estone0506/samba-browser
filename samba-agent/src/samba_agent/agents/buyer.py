@@ -43,6 +43,41 @@ def product_ref(agent_name: str, order: OrderRef) -> str:
     return order.sku
 
 
+def _norm(text: str) -> str:
+    """옵션 비교용 정규화 — 공백·구두점 제거, 소문자."""
+    return re.sub(r'[\s\-_/·,()\[\]]+', '', text).lower()
+
+
+def matching_options(options: list[str], wanted: str | None) -> list[str]:
+    """주문 옵션과 맞는 후보들. 주문 옵션이 없으면 전부 후보다.
+
+    순서: 정확 일치 → 정규화 일치 → 후보가 주문 옵션(정규화)을 포함하거나 그 반대 →
+    숫자만 같은 것(사이즈 230 ↔ '230(mm)'). '품절' 표시가 붙은 후보는 뺀다.
+    아무 단계도 안 맞으면 빈 목록 — 절대 '가까운 값' 으로 대신하지 않는다.
+    """
+    live = [o for o in options if '품절' not in o]
+    if not wanted:
+        return live
+    w = wanted.strip()
+    exact = [o for o in live if o.strip() == w]
+    if exact:
+        return exact
+    nw = _norm(w)
+    if nw:
+        normed = [o for o in live if _norm(o) == nw]
+        if normed:
+            return normed
+        contains = [o for o in live if _norm(o) and (nw in _norm(o) or _norm(o) in nw)]
+        if contains:
+            return contains
+    digits = re.findall(r'\d+', w)
+    if len(digits) == 1:
+        by_digit = [o for o in live if re.findall(r'\d+', o) == digits]
+        if by_digit:
+            return by_digit
+    return []
+
+
 def snapshot_args(agent_name: str, order: OrderRef) -> str:
     """run_script 에 넘길 JSON 문자열. 옵션이 있으면 size 로, 계정이 있으면 account 로 같이 준다."""
     args: dict[str, object] = {'sku': product_ref(agent_name, order), 'qty': order.qty}
@@ -206,14 +241,28 @@ class BuyerAgent(AgentBase):
             raise AgentFailure('fail', f'옵션이 없다(품절): {a.order.sku}', FailReason.OUT_OF_STOCK)
         self.note('옵션 목록', ', '.join(options))
 
-        picked = self.decide_once(
-            f'{a.rules}\n\n주문 {a.order.order_no} 의 SKU {a.order.sku} 에 맞는 옵션을 고르라.\n'
-            f'후보: {options}',
-            Decision,
-        )
-        if picked.choice not in options:
+        # 주문 옵션과 맞는 후보만 남긴다 — 모델이 "가장 가까운 220" 을 골라 230 주문에 220 을 넣을 뻔했다(실기).
+        # 맞는 후보가 없으면 품절, 하나면 그대로, 여럿이면 그 안에서만 모델이 고른다
+        candidates = matching_options(options, a.order.option)
+        if not candidates:
             raise AgentFailure(
-                'fail', f'고른 옵션이 목록에 없다: {picked.choice}', FailReason.OUT_OF_STOCK
+                'fail',
+                f'주문 옵션 [{a.order.option}] 에 맞는 후보가 없다(품절): {options}',
+                FailReason.OUT_OF_STOCK,
+            )
+        if len(candidates) == 1:
+            picked = Decision(
+                choice=candidates[0], reason=f'주문 옵션 [{a.order.option}] 과 일치하는 후보가 하나'
+            )
+        else:
+            picked = self.decide_once(
+                f'{a.rules}\n\n주문 {a.order.order_no} 의 SKU {a.order.sku} 에 맞는 옵션을 고르라.\n'
+                f'후보(주문 옵션과 맞는 것만): {candidates}',
+                Decision,
+            )
+        if picked.choice not in candidates:
+            raise AgentFailure(
+                'fail', f'고른 옵션이 후보에 없다: {picked.choice}', FailReason.OUT_OF_STOCK
             )
         self.note('옵션 선택', f'{picked.choice} — {picked.reason}')
 

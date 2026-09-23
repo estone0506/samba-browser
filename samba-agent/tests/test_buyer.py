@@ -687,3 +687,35 @@ def test_정산금이_있으면_정산금_기준으로_마진을_계산한다(re
     assert out.payload['margin_pct'] == 10.0
     assert out.payload['paid'] == 81000
     assert not any('근사' in e.detail for e in out.evidence)
+
+
+def test_주문_옵션과_맞는_후보만_남긴다():
+    from samba_agent.agents.buyer import matching_options
+
+    # 실기: 230 주문에 후보가 220~270(230 없음)인데 모델이 '가장 가까운 220' 을 골랐다
+    assert matching_options(['220', '225', '240', '250'], '230') == []
+    assert matching_options(['220', '230', '240'], '230') == ['230']
+    assert matching_options(['230(mm)', '240'], '옵션:230'.replace('옵션:', '')) == ['230(mm)']
+    assert matching_options(['BLACK / 270', 'WHITE / 270'], 'BLACK / 270') == ['BLACK / 270']
+    assert matching_options(['70(S)', '75(M)'], 'S') == ['70(S)']
+    assert matching_options(['75(M) (품절)', '80(L)'], '75(M)') == []
+    assert matching_options(['260', '265'], None) == ['260', '265']
+
+
+@respx.mock
+def test_주문_옵션에_맞는_후보가_없으면_모델에게_묻지_않고_품절이다(reg):
+    snap = {**SNAPSHOT_OK, 'options': ['220', '240']}
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=route_run_script({'musinsa_product_snapshot': snap})
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    asked = []
+
+    def decide(p, m):
+        asked.append(p)
+        return m(choice='220', reason='가장 가까움')
+
+    order = ORDER.model_copy(update={'option': '230'})
+    out = agent(reg, decide)(assignment(reg).model_copy(update={'order': order}))
+    assert (out.status, out.fail_reason) == ('fail', FailReason.OUT_OF_STOCK)
+    assert asked == []
