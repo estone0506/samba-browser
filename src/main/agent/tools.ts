@@ -1556,6 +1556,16 @@ overlays left: ${after.length}${kept}`
         }
         case 'page.idOf':
           return idOfText(asText(args[0]), asId(args[1]))
+        case 'page.clickNative': {
+          // 요소 가운데 좌표에 진짜 마우스 클릭(sendInputEvent). 프레임 안 요소는 좌표를 몰라 거절한다
+          const tab = activeOr(ctx)
+          if (!tab) return 'no active tab'
+          const point = await pageBridge.rectOf(tab, asId(args[0])).catch(() => null)
+          if (!point) return 'not found: element has no screen position (inside a frame or hidden)'
+          return (await pageBridge.clickHuman(tab, point.x, point.y))
+            ? 'ok'
+            : 'failed: click not sent'
+        }
         case 'page.clickText': {
           const id = await idOfText(asText(args[0]), asId(args[1]))
           if (id < 0) return `not found: no element with text "${asText(args[0])}"`
