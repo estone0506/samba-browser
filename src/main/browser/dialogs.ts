@@ -82,7 +82,11 @@ export interface DialogHandlerDeps {
  * 한 번 걸면 에뮬레이션 해제가 디버거를 떼어내지 않도록 표시해 둔다.
  */
 export function installDialogHandler(wc: WebContents, deps: DialogHandlerDeps): void {
-  if (!ensureDebuggerAttached(wc)) return
+  if (!ensureDebuggerAttached(wc)) {
+    // 붙지 못하면 그 창의 alert 는 네이티브 창으로 떠서 작업을 멈춘다 — 원인을 남긴다(실기: 팝업 alert 미처리 조사)
+    console.error('대화상자 감시 설치 실패(디버거 미부착)', wc.getURL().slice(0, 80))
+    return
+  }
   keepDebuggerAttached(wc)
   wc.debugger.sendCommand('Page.enable').catch((e: unknown) => {
     console.error('Page.enable 실패', e instanceof Error ? e.message : String(e))
@@ -91,6 +95,10 @@ export function installDialogHandler(wc: WebContents, deps: DialogHandlerDeps): 
     if (method !== 'Page.javascriptDialogOpening') return
     const p = params as { type?: string; message?: string }
     const decision = decideDialog(p.type ?? 'alert', deps.isAutomationActive(), deps.mode())
+    // 어떤 대화상자를 어떻게 처리했는지 기록한다(문구 앞 60자만 — 비밀값이 섞일 일은 없다)
+    console.info(
+      `페이지 대화상자 ${p.type ?? 'alert'} ${decision.handle ? (decision.ask ? '질문' : decision.accept ? '확인' : '취소') : '미처리(자동화 아님)'}: ${String(p.message ?? '').slice(0, 60)}`
+    )
     if (!decision.handle) return
     const message = String(p.message ?? '')
     deps.onMessage(message)
