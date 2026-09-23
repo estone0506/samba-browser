@@ -188,6 +188,22 @@ describe('detectCaptchaHint — DOM 판정', () => {
     expect(detectCaptchaHint().needsUser).toBe(true)
   })
 
+  it('점수형 reCAPTCHA 의 배지·숨은 챌린지 프레임은 캡차로 보지 않는다(GS샵 로그인 실기)', () => {
+    document.body.innerHTML = `
+      <form><input name="id"><input type="password" name="passwd"></form>
+      <div class="grecaptcha-badge"><iframe src="https://www.google.com/recaptcha/enterprise/anchor?k=abc"></iframe></div>
+      <div style="visibility: hidden"><iframe src="https://www.google.com/recaptcha/enterprise/bframe?k=abc"></iframe></div>
+    `
+    expect(detectCaptchaHint().needsUser).toBe(false)
+  })
+
+  it('챌린지 상자가 보이게 되면(visibility 해제) 그때는 캡차다', () => {
+    document.body.innerHTML = `
+      <div style="visibility: visible"><iframe src="https://www.google.com/recaptcha/enterprise/bframe?k=abc"></iframe></div>
+    `
+    expect(detectCaptchaHint().needsUser).toBe(true)
+  })
+
   it('인증번호 입력칸 + 문구면 사용자 확인이 필요하다', () => {
     document.body.innerHTML = `
       <p>인증번호를 입력해 주세요</p>

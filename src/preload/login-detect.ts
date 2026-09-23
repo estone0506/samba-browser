@@ -520,8 +520,19 @@ export function detectCaptchaHint(): CaptchaHint {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 5000)
-  const frameSources = Array.from(document.querySelectorAll('iframe')).map(
-    (f) => f.getAttribute('src') || f.getAttribute('title') || ''
-  )
+  const frameSources = Array.from(document.querySelectorAll('iframe'))
+    .filter(isCaptchaWidgetFrame)
+    .map((f) => f.getAttribute('src') || f.getAttribute('title') || '')
   return matchCaptchaSigns({ text, frameSources, hasCodeInput: hasCodeInput() })
+}
+
+/**
+ * 사람이 풀어야 하는 캡차 위젯 프레임만 고른다.
+ * 점수형 reCAPTCHA(v3·Enterprise)는 챌린지가 없어도 iframe 을 늘 심어 둔다 — 우측 아래 배지(.grecaptcha-badge)의
+ * anchor 프레임과 `visibility: hidden` 상자 안의 챌린지(bframe) 프레임. 이걸 캡차로 보면 로그인 폼이 멀쩡한데도
+ * "캡차를 풀어 달라"며 사용자에게 넘기고 영영 기다린다(실기: GS샵 로그인). 보이는 프레임만 위젯으로 본다
+ */
+export function isCaptchaWidgetFrame(frame: HTMLIFrameElement): boolean {
+  if (frame.closest('.grecaptcha-badge')) return false
+  return isVisible(frame)
 }
