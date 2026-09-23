@@ -429,6 +429,36 @@ export class VaultRepo {
   }
 
   /**
+   * 계정별로 결제 비밀번호 항목이 가리키는 결제 제공자 목록(중복 없이, 저장 순서).
+   * 하네스가 "결제 가능한 수단"만 견적 후보로 남기는 데 쓴다(list_accounts 의 payments).
+   * 비밀값은 읽지 않는다 — 제공자는 평문 필드다
+   */
+  paymentProvidersByAccount(): Map<number, PaymentProvider[]> {
+    const rows = this.d
+      .select()
+      .from(vaultItems)
+      .where(
+        and(
+          eq(vaultItems.type, 'password'),
+          isNull(vaultItems.deletedAt),
+          this.scopeWhere(vaultItems.workspaceId)
+        )
+      )
+      .orderBy(vaultItems.id)
+      .all()
+      .map(toItemRow)
+    const map = new Map<number, PaymentProvider[]>()
+    for (const row of rows) {
+      if (row.accountId === null) continue
+      const list = map.get(row.accountId) ?? []
+      const provider = paymentProviderOfSections(row.sections)
+      if (!list.includes(provider)) list.push(provider)
+      map.set(row.accountId, list)
+    }
+    return map
+  }
+
+  /**
    * 결제 비밀번호 한 개를 고른다.
    * - provider 를 주면 그 결제 수단의 항목만 본다(제공자 필드가 없는 옛 항목은 'site')
    * - provider 가 없으면 계정에 항목이 정확히 1개일 때만 돌려준다.

@@ -573,7 +573,7 @@ describe('금고 AI 도구', () => {
     const raw = await callTool(b, 'list_accounts', {})
     expect(b.listAccounts).toHaveBeenCalledWith('shop.example')
     expect(JSON.parse(raw)).toEqual([
-      { label: '메인', username: 'ho***', types: ['login'], tags: [] }
+      { label: '메인', username: 'ho***', types: ['login'], payments: [], tags: [] }
     ])
     expect(raw).not.toContain('hongildong')
   })
@@ -584,7 +584,7 @@ describe('금고 AI 도구', () => {
     expect(b.listAccounts).toHaveBeenCalledWith('shop.example')
     expect(JSON.parse(raw)).toEqual({
       vaultLocked: true,
-      accounts: [{ label: '메인', username: 'ho***', types: ['login'], tags: [] }]
+      accounts: [{ label: '메인', username: 'ho***', types: ['login'], payments: [], tags: [] }]
     })
   })
 
@@ -883,8 +883,14 @@ describe('list_accounts 응답', () => {
     const b = build({ accounts: [account({ tags: ['쇼핑', '해외'] })] })
     const raw = await callTool(b, 'list_accounts', {})
     expect(JSON.parse(raw)).toEqual([
-      { label: '메인', username: 'ho***', types: ['login'], tags: ['쇼핑', '해외'] }
+      { label: '메인', username: 'ho***', types: ['login'], payments: [], tags: ['쇼핑', '해외'] }
     ])
+  })
+
+  it('결제 비밀번호 항목의 결제 제공자를 payments 로 함께 돌려준다(하네스의 결제 가능 수단 판단)', async () => {
+    const b = build({ accounts: [account({ paymentProviders: ['site', 'toss'] })] })
+    const raw = await callTool(b, 'list_accounts', {})
+    expect(JSON.parse(raw)[0].payments).toEqual(['site', 'toss'])
   })
 })
 

@@ -1788,6 +1788,9 @@ overlays left: ${after.length}${kept}`
           label: a.label,
           username: maskUsername(a.username),
           types: a.itemTypes,
+          // 결제 비밀번호가 있는 결제 제공자(site·musinsapay·toss·kakao·naver·payco …) — 하네스가
+          // "결제 가능한 수단"만 견적 후보로 남기는 데 쓴다
+          payments: a.paymentProviders ?? [],
           tags: a.tags
         }))
         if (state !== 'unlocked') return JSON.stringify({ vaultLocked: true, accounts })

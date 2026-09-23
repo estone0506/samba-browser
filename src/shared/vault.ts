@@ -167,6 +167,8 @@ export interface AccountDto {
   username: string
   isDefault: boolean
   itemTypes: VaultItemType[]
+  // 결제 비밀번호 항목이 가리키는 결제 제공자들(무신사머니=site·토스·카카오 …). 목록 조회에서만 채운다
+  paymentProviders?: PaymentProvider[]
   // 계정당 여러 URL(옛 sites.loginUrl 이월분 포함)
   urls: string[]
   agentAccess: AgentAccess

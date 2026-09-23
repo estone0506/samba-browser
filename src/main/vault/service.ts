@@ -909,6 +909,7 @@ export class VaultService {
   listAccounts(host?: string): AccountDto[] {
     const normalizedHost = host === undefined ? undefined : normalizeHost(host) || host
     const types = this.repo.itemTypesByAccount()
+    const providers = this.repo.paymentProvidersByAccount()
     return this.matchAccountRows(normalizedHost).map((a) => ({
       id: a.id,
       siteId: a.siteId,
@@ -917,6 +918,7 @@ export class VaultService {
       username: a.username,
       isDefault: a.isDefault,
       itemTypes: types.get(a.id) ?? [],
+      paymentProviders: providers.get(a.id) ?? [],
       urls: a.urls,
       agentAccess: a.agentAccess,
       tags: a.tags
