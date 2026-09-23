@@ -87,6 +87,12 @@ def shipping_matches(expected: dict[str, object], applied: dict[str, object]) ->
     """
     if _norm(str(expected.get('name', ''))) != _norm(str(applied.get('name', ''))):
         return False
+    # 우편번호가 양쪽에 있고 같으면 같은 곳이다 — 지번(41-11)을 도로명(14번길 11)으로 되읽는 사이트(실기: 롯데온)는
+    # 숫자 토큰이 달라진다
+    zip_exp = re.sub(r'\D', '', str(expected.get('postal_code') or ''))
+    zip_app = re.sub(r'\D', '', str(applied.get('zip') or applied.get('postal_code') or ''))
+    if zip_exp and zip_app and zip_exp == zip_app and str(applied.get('address') or '').strip():
+        return True
     a = _norm_address(str(expected.get('address', '')))
     b = _norm_address(str(applied.get('address', '')))
     if not a or not b:

@@ -1028,3 +1028,8 @@ def test_배송지_비교는_사이트_표기_차이를_허용한다():
     assert not shipping_matches(exp, {'name': '김철수', 'address': '서울 중구 세종대로 110'})
     assert not shipping_matches(exp, {'name': '홍길동', 'address': '서울 중구 세종대로 111'})
     assert not shipping_matches(exp, {'name': '홍길동', 'address': ''})
+    # 우편번호가 같으면 표기가 달라도(지번 ↔ 도로명) 같은 곳 — 실기: 롯데온
+    zip_exp = {'name': '홍길동', 'address': '경기 수원시 영통구 이의동 41-11', 'postal_code': '16514'}
+    assert shipping_matches(zip_exp, {'name': '홍길동', 'address': '경기 수원시 영통구 법조로14번길 11', 'zip': '16514'})
+    assert not shipping_matches(zip_exp, {'name': '홍길동', 'address': '경기 수원시 영통구 법조로14번길 11', 'zip': '16515'})
+    assert not shipping_matches(zip_exp, {'name': '홍길동', 'address': '', 'zip': '16514'})
