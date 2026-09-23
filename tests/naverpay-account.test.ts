@@ -44,3 +44,17 @@ describe('accountGroupKey', () => {
     expect(accountGroupKey('abcmart.a-rt.com')).toBe('a-rt.com')
   })
 })
+
+describe('비밀번호 입력 화면의 "이름(아이디)님" 표기', () => {
+  it('마스킹이 없고 아이디가 통째로 보이면 그 아이디를 읽고 정확히 대조한다', () => {
+    const text = '네이버페이 인증\n김사무(buyer01)님의 비밀번호 입력\n비밀번호는 6자리 입니다.'
+    expect(maskedNaverAccount(text)).toBe('buyer01')
+    expect(maskedNaverAccountMatches('buyer01', 'buyer01')).toBe(true)
+    expect(maskedNaverAccountMatches('buyer01', 'edelvise07')).toBe(false)
+    expect(maskedNaverAccountMatches('buyer01', 'edelvise')).toBe(false)
+  })
+
+  it('마스킹 표기가 있으면 그쪽이 우선이다', () => {
+    expect(maskedNaverAccount('edel****** 김사무(buyer01)님')).toBe('edel******')
+  })
+})

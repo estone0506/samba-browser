@@ -15,8 +15,11 @@ export function isNaverPayHost(host: string): boolean {
  */
 export function maskedNaverAccount(text: string): string | null {
   const m = /(?:^|[^\w@.-])([A-Za-z0-9][A-Za-z0-9._-]{0,30})(\*{3,})(?![\w*])/.exec(text)
-  if (!m) return null
-  return `${m[1]}${m[2]}`
+  if (m) return `${m[1]}${m[2]}`
+  // 비밀번호 입력 화면은 마스킹 대신 "이름(아이디)님의 비밀번호 입력" 으로 아이디를 통째로 보여 준다(실기) —
+  // 그 아이디를 그대로 돌려준다(별표 없음 = 전체 아이디이므로 대조는 정확 일치가 된다)
+  const full = /\(([A-Za-z0-9][A-Za-z0-9._-]{2,30})\)\s*님/.exec(text)
+  return full ? full[1] : null
 }
 
 /**
