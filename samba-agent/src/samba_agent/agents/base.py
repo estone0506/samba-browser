@@ -96,7 +96,12 @@ class AgentBase:
         try:
             parsed = json.loads(body)
         except ValueError as e:
-            raise AgentFailure('fail', f'{name} 결과가 JSON 이 아니다', FailReason.UNKNOWN) from e
+            # 원문 앞부분을 남겨 원인(도구 오류·시간 초과·안내 문구)을 가를 수 있게 한다(마스킹)
+            raise AgentFailure(
+                'fail',
+                f'{name} 결과가 JSON 이 아니다: {mask_text(body.strip()[:160])}',
+                FailReason.UNKNOWN,
+            ) from e
         if not isinstance(parsed, dict):
             raise AgentFailure('fail', f'{name} 결과가 객체가 아니다', FailReason.UNKNOWN)
         return parsed
