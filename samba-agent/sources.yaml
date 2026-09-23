@@ -48,7 +48,7 @@ sources:
     label: GS샵
     home: https://www.gsshop.com/
     login_host: gsshop.com
-    status: scripts_pending
+    status: active
   - id: SSG
     key: ssg
     label: SSG닷컴
