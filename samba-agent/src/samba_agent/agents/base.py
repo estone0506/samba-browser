@@ -5,6 +5,7 @@ run_agent 가 그것을 결과로 바꾼다 — 감독자는 예외를 보지 �
 """
 
 import json
+import re
 from collections.abc import Callable
 from typing import Literal
 
@@ -83,10 +84,17 @@ class AgentBase:
         return out.result
 
     def json_tool(self, name: str, /, **args: object) -> dict[str, object]:
-        """결과가 JSON 인 저장 스크립트용. 형식이 깨지면 unknown 실패다."""
+        """결과가 JSON 인 저장 스크립트용. 형식이 깨지면 unknown 실패다.
+
+        앱은 실행 중 자동으로 닫은 페이지 대화상자(alert)를 결과 앞에 `page dialog: "…"` 줄로
+        붙여 준다(실기: 무신사 "옵션을 선택해 주세요") — 근거로 남기고 JSON 만 읽는다.
+        """
         raw = self.tool(name, **args)
+        body, dialogs = split_page_dialogs(raw)
+        for d in dialogs:
+            self.note('페이지 알림', mask_text(d)[:120])
         try:
-            parsed = json.loads(raw)
+            parsed = json.loads(body)
         except ValueError as e:
             raise AgentFailure('fail', f'{name} 결과가 JSON 이 아니다', FailReason.UNKNOWN) from e
         if not isinstance(parsed, dict):
@@ -116,6 +124,23 @@ class AgentBase:
         if 'progress' in self.spec.tools:
             self._steps += 1
             self.tool('progress', label=label, done=self._steps - 1, total=self._steps)
+
+
+# 앱이 도구 결과 앞에 붙이는 대화상자 안내 줄(src/main/browser/dialogs.ts)
+_PAGE_DIALOG_RE = re.compile(r'^page dialog: "(.*)"\s*$')
+
+
+def split_page_dialogs(raw: str) -> tuple[str, list[str]]:
+    """결과 문자열 머리의 `page dialog: "…"` 줄들을 떼어 (본문, 대화상자 문구들) 로 나눈다."""
+    dialogs: list[str] = []
+    lines = raw.split('\n')
+    while lines:
+        m = _PAGE_DIALOG_RE.match(lines[0])
+        if not m:
+            break
+        dialogs.append(m.group(1))
+        lines.pop(0)
+    return '\n'.join(lines).strip(), dialogs
 
 
 def run_agent(
