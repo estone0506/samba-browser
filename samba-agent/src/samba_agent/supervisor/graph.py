@@ -24,8 +24,10 @@ _log = logging.getLogger(__name__)
 
 AgentFn = Callable[..., AgentResult]
 
-# 외부 시스템을 실제로 바꾸는 단계 — 사람 승인 없이는 들어가지 않는다(스펙 §10-1)
-EXTERNAL_STAGES = ('pay', 'record')
+# 사람 승인 없이는 들어가지 않는 단계 — 돈이 나가는 결제 하나뿐이다(계획 Task D).
+# 기록은 삼바웨이브 우리 DB 에 소싱주문번호를 적는 것이라 되돌릴 수 있고, 매 건 승인을 받으면
+# 자동 수집이 사람 손에 다시 묶인다. 잘못 적힌 값은 검증 단계가 잡는다
+EXTERNAL_STAGES = ('pay',)
 # 단계 진입을 밖(큐)에 알리는 콜백. 결제 진입 표시를 큐에 남겨 재시작 재결제를 막는다
 StageHook = Callable[[RunState, str], None]
 

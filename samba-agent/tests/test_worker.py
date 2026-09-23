@@ -88,8 +88,7 @@ def test_승인하면_이어서_끝난다(setup):
     q.enqueue('A1', 'U1', {}, 'ts1')
     w = make(gate=True)
     w.tick()
-    w.resume('A1', approved=True, by='U9')  # 결제 승인
-    job = w.resume('A1', approved=True, by='U9')  # 기록 승인
+    job = w.resume('A1', approved=True, by='U9')  # 결제 승인 하나로 끝까지 간다
     assert job.state == 'done'
     assert log == ['buy', 'pay', 'record', 'verify']
 
