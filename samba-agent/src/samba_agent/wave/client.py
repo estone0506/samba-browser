@@ -118,6 +118,8 @@ class WaveOrder(BaseModel):
             product_url=(self.source_url or '').strip() or None,
             # 로그인에 쓰는 것은 아이디다 — 없으면 비워 둔다(표시 이름으로 로그인할 수 없다)
             account=(self.sourcing_account_username or '').strip() or None,
+            # 기록이 되돌려 줄 소싱 계정 id — 로그인용 아이디가 아니라 삼바웨이브 내부 id 다
+            account_id=(self.sourcing_account_id or '').strip() or None,
             order_type=self.order_type,
         )
 

@@ -157,7 +157,9 @@ class RecorderAgent(AgentBase):
                 sourcing_order_number=sourcing_no,
                 cost=float(values.get('real_price') or 0),
                 shipping_fee=float(values.get('shipping_fee') or 0),
-                sourcing_account_id=str(a.handoff.get('sourcing_account_id') or '') or None,
+                # 소싱 계정 id 는 주문이 들고 온 값이 정답이다(인계값은 예전 배선의 잔재)
+                sourcing_account_id=a.order.account_id
+                or (str(a.handoff.get('sourcing_account_id') or '') or None),
                 notes=str(values.get('memo') or '') or None,
             )
             self.step('recorder: 기입 확인')

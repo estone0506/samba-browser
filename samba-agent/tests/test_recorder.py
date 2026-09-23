@@ -313,3 +313,18 @@ def test_되읽은_값이_다르면_재결제_없이_실패한다(reg):
     out = recorder_with_wave(reg)(assignment(reg, dry_run=False))
     assert (out.status, out.fail_reason) == ('fail', FailReason.VERIFY_MISMATCH)
     assert 'source_order_no' in out.reason
+
+
+@respx.mock
+def test_소싱_계정_id_는_주문에서_온다(reg):
+    # Task D: 기록이 되돌려 주는 sourcing_account_id 는 주문이 들고 온 값이다
+    put = respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
+    )
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(200, json=WAVE_ORDER))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    a = assignment(reg, dry_run=False)
+    a = a.model_copy(update={'order': ORDER.model_copy(update={'account_id': 'acc-42'})})
+    out = recorder_with_wave(reg)(a)
+    assert out.status == 'ok'
+    assert json.loads(put.calls[0].request.content)['sourcing_account_id'] == 'acc-42'
