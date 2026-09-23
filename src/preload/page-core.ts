@@ -2,6 +2,7 @@
 // src/shared/* 에서 **값(value)** 을 import 하지 말 것 — Rollup 청크 분리로 require() 가 생겨
 // preload 로드가 실패한다. 타입은 `import type` 만 사용(번들에 남지 않음), 값은 ./page-constants 에서.
 import type {
+  KeypadCellDto,
   KeypadLayoutDto,
   KeypadSignals,
   PageElement,
@@ -1129,6 +1130,46 @@ export function keypadLayout(): KeypadLayoutDto | null {
   return { digits, filled: pin ? pin.value.length : null }
 }
 
+// 글자 없는 키패드 버튼 후보
+const KEYPAD_UNLABELED_SELECTOR = 'button, [role="button"], a'
+// 보안 키패드 한 칸으로 볼 크기(px). 아이콘·전체 화면 레이어는 빼낸다
+const KEYPAD_CELL_MIN = 16
+const KEYPAD_CELL_MAX = 200
+// 숫자 10개 + 재배열·빈칸 같은 여분 버튼까지
+const KEYPAD_UNLABELED_MIN = 10
+const KEYPAD_UNLABELED_MAX = 14
+
+/**
+ * 글자도 접근성 이름도 없는 키패드 버튼들(네이버페이 결제 비밀번호 창 — 숫자가 이미지로 그려진다).
+ * 보이는 button·[role=button]·a 중 글자가 비어 있고 크기가 키 한 칸 정도인 것을 위→아래, 왼→오른
+ * 순으로 돌려준다. 보안 키패드 모양(10~14개)이 아니면 null. 어느 칸이 어느 숫자인지는
+ * 여기서 알 수 없다 — 앱(메인 프로세스)이 각 칸을 OCR 로 읽는다. 값은 어디에서도 읽지 않는다
+ */
+export function keypadUnlabeled(): KeypadCellDto[] | null {
+  const visible: VisibilityCache = new Map()
+  const cells: { el: HTMLElement; x: number; y: number; width: number; height: number }[] = []
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>(KEYPAD_UNLABELED_SELECTOR))) {
+    if (singleDigitOf(el) !== null) continue
+    if ((el.textContent ?? '').trim() !== '') continue
+    // <a><button></button></a> 처럼 겹친 경우 안쪽 하나만 센다
+    if (el.querySelector(KEYPAD_UNLABELED_SELECTOR) !== null) continue
+    if (!isVisible(el, visible)) continue
+    const r = el.getBoundingClientRect()
+    if (r.width < KEYPAD_CELL_MIN || r.height < KEYPAD_CELL_MIN) continue
+    if (r.width > KEYPAD_CELL_MAX || r.height > KEYPAD_CELL_MAX) continue
+    cells.push({ el, x: r.left, y: r.top, width: r.width, height: r.height })
+  }
+  if (cells.length < KEYPAD_UNLABELED_MIN || cells.length > KEYPAD_UNLABELED_MAX) return null
+  cells.sort((a, b) => a.y - b.y || a.x - b.x)
+  return cells.map((c) => ({
+    id: ensureId(c.el),
+    x: c.x,
+    y: c.y,
+    width: c.width,
+    height: c.height
+  }))
+}
+
 // --- 로그인 상태 유지 체크박스 ---------------------------------------------
 
 // "로그인 상태 유지" 류 체크박스 라벨(ko/en). 같은 세션을 오래 유지해 캡차 발생을 줄인다
@@ -1452,6 +1493,8 @@ export function runAgentOp(raw: unknown): unknown {
       return keypadSignals()
     case 'keypadLayout':
       return keypadLayout()
+    case 'keypadUnlabeled':
+      return keypadUnlabeled()
     case 'pressOnce':
       return pressOnce(id)
     case 'overlays':

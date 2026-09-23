@@ -23,6 +23,8 @@ export type AgentOp =
   | { op: 'keypadSignals' }
   // 결제 비밀번호 키패드의 숫자 버튼 배치(앱이 키마스터 값을 넣을 때 쓴다). 값은 오가지 않는다
   | { op: 'keypadLayout' }
+  // 글자 없는 키패드 버튼들의 뷰포트 사각형(앱이 OCR 로 숫자를 읽을 자리). 메인 프레임에서만 쓴다
+  | { op: 'keypadUnlabeled' }
   // 키패드 버튼을 정확히 한 번만 누른다(폴백 없음). 일반 click 은 변화가 안 보이면 Enter·좌표로
   // 다시 눌러 같은 숫자가 두세 번 들어갈 수 있다(실기: 무신사페이 오답)
   | { op: 'pressOnce'; id: number }

@@ -1,6 +1,7 @@
 import type { WebContents, WebFrameMain } from 'electron'
 import { z } from 'zod'
 import type {
+  KeypadCellDto,
   KeypadLayoutDto,
   KeypadSignals,
   PageElement,
@@ -59,6 +60,19 @@ const keypadLayoutSchema = z
     digits: z.array(z.object({ digit: z.string().regex(/^[0-9]$/), id: z.number().int() })),
     filled: z.number().int().nullable()
   })
+  .nullable()
+
+// 글자 없는 키패드 버튼들의 뷰포트 사각형. 값은 담기지 않는다(요소 id·좌표만)
+const keypadUnlabeledSchema = z
+  .array(
+    z.object({
+      id: z.number().int(),
+      x: z.number(),
+      y: z.number(),
+      width: z.number(),
+      height: z.number()
+    })
+  )
   .nullable()
 
 /** 키패드 배치(프레임 번호가 얹힌 id). 어느 프레임에 있었는지도 함께 준다 */
@@ -307,6 +321,8 @@ function opToCode(op: AgentOp): string {
       return '__samba.keypadSignals()'
     case 'keypadLayout':
       return '__samba.keypadLayout()'
+    case 'keypadUnlabeled':
+      return '__samba.keypadUnlabeled()'
     case 'pressOnce':
       return `__samba.pressOnce(${op.id})`
     case 'overlays':
@@ -418,6 +434,13 @@ export const pageBridge = {
     }
     return null
   },
+  /**
+   * 글자 없는 키패드 버튼들(네이버페이 결제 비밀번호 창)의 뷰포트 사각형. 메인 프레임만 본다 —
+   * 앱이 이 자리를 캡처해 OCR 로 숫자를 읽으므로 화면 좌표를 알 수 있는 메인 프레임이어야 한다.
+   * 보안 키패드 모양이 아니면 null
+   */
+  keypadUnlabeled: (tab: Tab): Promise<KeypadCellDto[] | null> =>
+    call(tab.view.webContents, opToCode({ op: 'keypadUnlabeled' }), keypadUnlabeledSchema),
   /** 키패드 버튼을 정확히 한 번 누른다(일반 click 의 재시도 폴백이 없다) */
   pressOnce: (tab: Tab, id: number): Promise<string> =>
     callById(tab, id, (n) => ({ op: 'pressOnce', id: n }), resultSchema),

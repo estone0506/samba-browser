@@ -2,7 +2,12 @@
 // preload 의 결제 키패드 배치 읽기 — 0~9 가 정확히 한 번씩 보일 때만 배치를 돌려준다
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import { keypadLayout, performClick, resetElementIds } from '../src/preload/page-core'
+import {
+  keypadLayout,
+  keypadUnlabeled,
+  performClick,
+  resetElementIds
+} from '../src/preload/page-core'
 
 const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
 
@@ -131,5 +136,92 @@ describe('pressOnce — 키패드 단발 누름', () => {
   it('없는 id 는 누르지 않고 알린다', async () => {
     const { pressOnce } = await import('../src/preload/page-core')
     expect(pressOnce(9999)).toMatch(/not found|gone/)
+  })
+})
+
+describe('keypadUnlabeled — 글자 없는 보안 키패드(네이버페이)', () => {
+  // 3열 격자로 그린다. 칸 크기 60x40, 간격 없음
+  function unlabeledHtml(count: number, extra = ''): string {
+    const keys = Array.from(
+      { length: count },
+      (_, i) => `<button class="k" data-i="${i}"></button>`
+    )
+    return `<div class="kpd">${keys.join('')}${extra}</div>`
+  }
+
+  function placeGrid(size = { w: 60, h: 40 }): void {
+    document.querySelectorAll<HTMLElement>('button.k').forEach((b) => {
+      const i = Number(b.dataset.i)
+      const left = (i % 3) * size.w
+      const top = Math.floor(i / 3) * size.h
+      b.getBoundingClientRect = () =>
+        ({
+          left,
+          top,
+          x: left,
+          y: top,
+          width: size.w,
+          height: size.h,
+          right: left + size.w,
+          bottom: top + size.h,
+          toJSON: () => ({})
+        }) as DOMRect
+    })
+  }
+
+  it('버튼 10~14개면 위→아래, 왼→오른 순으로 뷰포트 사각형과 id 를 준다', () => {
+    document.body.innerHTML = unlabeledHtml(12)
+    placeGrid()
+    // DOM 순서를 섞어도 화면 순서로 정렬된다
+    const kpd = document.querySelector('.kpd')!
+    kpd.prepend(kpd.lastElementChild!)
+    const cells = keypadUnlabeled()
+    expect(cells).not.toBeNull()
+    expect(cells!.length).toBe(12)
+    expect(cells![0]).toMatchObject({ x: 0, y: 0, width: 60, height: 40 })
+    expect(cells![1]).toMatchObject({ x: 60, y: 0 })
+    expect(cells![3]).toMatchObject({ x: 0, y: 40 })
+    expect(cells![11]).toMatchObject({ x: 120, y: 120 })
+    // 받은 id 로 바로 누를 수 있다
+    let clicked = ''
+    document.querySelectorAll<HTMLElement>('button.k').forEach((b) => {
+      b.addEventListener('click', () => (clicked = b.dataset.i ?? ''))
+    })
+    performClick(cells![4].id)
+    expect(clicked).toBe('4')
+  })
+
+  it('글자·숫자 이름이 있는 버튼(전체삭제·지우기·aria-label 숫자)은 세지 않는다', () => {
+    document.body.innerHTML = unlabeledHtml(
+      10,
+      '<button>전체삭제</button><button>지우기</button><button aria-label="3"></button>'
+    )
+    placeGrid()
+    expect(keypadUnlabeled()?.length).toBe(10)
+  })
+
+  it('9개 이하·15개 이상이면 키패드로 보지 않는다', () => {
+    document.body.innerHTML = unlabeledHtml(9)
+    placeGrid()
+    expect(keypadUnlabeled()).toBeNull()
+    document.body.innerHTML = unlabeledHtml(15)
+    placeGrid()
+    expect(keypadUnlabeled()).toBeNull()
+  })
+
+  it('너무 작거나(아이콘) 너무 큰(레이어) 버튼·숨은 버튼은 빼낸다', () => {
+    document.body.innerHTML = unlabeledHtml(10)
+    placeGrid({ w: 12, h: 12 })
+    expect(keypadUnlabeled()).toBeNull()
+    placeGrid({ w: 300, h: 40 })
+    expect(keypadUnlabeled()).toBeNull()
+    placeGrid()
+    ;(document.querySelector('.kpd') as HTMLElement).style.display = 'none'
+    expect(keypadUnlabeled()).toBeNull()
+  })
+
+  it('jsdom 기본(크기 0) 버튼은 후보가 아니다', () => {
+    document.body.innerHTML = unlabeledHtml(10)
+    expect(keypadUnlabeled()).toBeNull()
   })
 })

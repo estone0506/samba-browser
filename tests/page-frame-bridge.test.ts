@@ -185,6 +185,28 @@ describe('pageBridge.keypadSignalsAll', () => {
   })
 })
 
+describe('pageBridge.keypadUnlabeled — 글자 없는 키패드 칸', () => {
+  const cell = (id: number): Record<string, number> => ({ id, x: 0, y: 0, width: 60, height: 40 })
+
+  it('메인 프레임에만 묻고 칸 목록을 그대로 준다', async () => {
+    const { tab, mainCalls } = fakeTab(
+      [cell(1), cell(2)],
+      [{ url: 'https://kpad.payco.com/', result: null }]
+    )
+    frameCalls.length = 0
+    expect(await pageBridge.keypadUnlabeled(tab)).toEqual([cell(1), cell(2)])
+    expect(mainCalls).toEqual(['__samba.keypadUnlabeled()'])
+    expect(frameCalls).toEqual([])
+  })
+
+  it('null 은 null, 모양이 틀린 결과는 믿지 않고 던진다', async () => {
+    expect(await pageBridge.keypadUnlabeled(fakeTab(null, []).tab)).toBeNull()
+    await expect(pageBridge.keypadUnlabeled(fakeTab([{ id: 'x' }], []).tab)).rejects.toThrow(
+      /unexpected page result/
+    )
+  })
+})
+
 describe('pageBridge.keypadLayout / keypadFilled — 결제 키패드 배치', () => {
   const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
   const layout = (
