@@ -138,3 +138,13 @@ describe('refresh() — 모바일 모드를 껐을 때 웹스토어 UA 를 되�
     expect(uaHistory).toHaveLength(0)
   })
 })
+
+describe('앱 기본 UA(userAgentFallback) — 모든 사이트에 순수 크롬 UA', () => {
+  it('실기 Electron UA 에서 SAMBABrowser·Electron 토큰을 지우고 Chrome 버전은 남긴다', () => {
+    const real =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) SAMBABrowser/1.0.0 Chrome/142.0.7444.265 Electron/39.8.10 Safari/537.36'
+    expect(chromeUserAgent(real)).toBe(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.7444.265 Safari/537.36'
+    )
+  })
+})

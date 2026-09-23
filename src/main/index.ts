@@ -11,6 +11,7 @@ import { openDatabase, type Db } from './db/client'
 import type { VaultService } from './vault/service'
 import type { SyncEngineHolder } from './sync/engine'
 import { runLoginHarness, writeVaultLocked } from './e2e/login-harness'
+import { chromeUserAgent } from './browser/webstore-ua'
 
 // 브라우저 프로세스 크래시 덤프를 로컬에 남긴다(서버 업로드 없음). 원인 추적용
 crashReporter.start({ uploadToServer: false, compress: false })
@@ -30,6 +31,11 @@ if (userDataOverride) app.setPath('userData', userDataOverride)
 
 // 개발 모드(electron.exe 직접 실행)에서도 앱 이름이 'Electron' 대신 제품명으로 보이게 한다
 app.setName('SAMBA Browser')
+
+// 모든 사이트에 순수 크롬 UA 를 보낸다 — Electron 기본 UA 의 `SAMBABrowser/1.0.0 … Electron/39` 토큰은
+// reCAPTCHA Enterprise 같은 점수형 봇 판정에서 점수를 깎아 로그인이 조용히 거부된다(GS샵 실기).
+// userAgentFallback 은 이후 만들어지는 모든 세션·webContents 의 기본값이라 whenReady 이전에 바꿔야 한다
+app.userAgentFallback = chromeUserAgent(app.userAgentFallback)
 
 // 같은 userData 로 두 번째 인스턴스가 뜨면 data.db 저장이 서로 충돌한다(rename EPERM).
 // 락은 userData 경로별이라 SAMBA_USER_DATA 를 나눈 E2E·검증 인스턴스는 나란히 뜰 수 있다
