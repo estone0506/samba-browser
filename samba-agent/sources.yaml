@@ -1,0 +1,137 @@
+# 소싱처 표 — 한 행 = 소싱처 1개. 새 소싱처는 여기 1행 + rules/buyer_<key>.md + 저장 스크립트.
+#   id     : 삼바웨이브 source_site 값(주문 조회가 주는 값과 정확히 같다)
+#   key    : 앱 저장 스크립트 접두어 — <key>_product_snapshot · <key>_set_shipping · checkout_enter_<key>
+#   label  : 표시·별칭. 조회 결과가 한글 이름으로 와도 이 표를 거쳐 id 로 맞춘다
+#   status : active(스크립트 완비) · scripts_pending(등록만, 구매 시작 시 사람에게) · hold(등록 안 함)
+sources:
+  - id: MUSINSA
+    key: musinsa
+    label: 무신사
+    home: https://www.musinsa.com/
+    login_host: musinsa.com
+    status: active
+  - id: 29CM
+    key: cm29
+    label: 29CM
+    home: https://www.29cm.co.kr/
+    login_host: 29cm.co.kr
+    # 앱에 이미 checkout_enter_29cm 로 저장돼 있다(이름 규칙 checkout_enter_cm29 가 아니다)
+    checkout_script: checkout_enter_29cm
+    status: active
+  - id: ABCmart
+    key: abc
+    label: ABC마트
+    home: https://abcmart.a-rt.com/
+    login_host: a-rt.com
+    product_id: '[?&]prdtNo=(\d+)'
+    status: active
+  - id: LOTTEON
+    key: lotteon
+    label: 롯데온
+    home: https://www.lotteon.com/
+    login_host: lotteon.com
+    status: active
+  # 그랜드스테이지는 ABC마트와 같은 a-rt.com 흐름이다 — 스크립트(key)를 그대로 공유한다
+  - id: GrandStage
+    key: abc
+    label: 그랜드스테이지
+    home: https://grandstage.a-rt.com/
+    login_host: a-rt.com
+    product_id: '[?&]prdtNo=(\d+)'
+    status: active
+  # Task E 에서 저장 스크립트를 만든다(확장앱 content-purchase-*.js 의 셀렉터를 옮겨 쓴다)
+  - id: GSShop
+    key: gsshop
+    label: GS샵
+    home: https://www.gsshop.com/
+    login_host: gsshop.com
+    status: scripts_pending
+  - id: SSG
+    key: ssg
+    label: SSG닷컴
+    home: https://www.ssg.com/
+    login_host: ssg.com
+    status: scripts_pending
+  - id: FashionPlus
+    key: fashionplus
+    label: 패션플러스
+    home: https://www.fashionplus.co.kr/
+    login_host: fashionplus.co.kr
+    status: scripts_pending
+  # 아래는 아직 스크립트가 없다 — 등록은 하되 구매를 시작하면 '스크립트 미작성' 으로 사람에게 넘긴다.
+  # home 을 확인하지 못한 곳은 비워 둔다(스크립트를 쓸 때 실제 주소로 채운다)
+  - id: Nike
+    key: nike
+    label: 나이키
+    home: https://www.nike.com/kr/
+    login_host: nike.com
+    status: scripts_pending
+  - id: Adidas
+    key: adidas
+    label: 아디다스
+    home: https://www.adidas.co.kr/
+    login_host: adidas.co.kr
+    status: scripts_pending
+  - id: OliveYoung
+    key: oliveyoung
+    label: 올리브영
+    home: https://www.oliveyoung.co.kr/
+    login_host: oliveyoung.co.kr
+    status: scripts_pending
+  - id: WCONCEPT
+    key: wconcept
+    label: 더블유컨셉
+    home: https://www.wconcept.co.kr/
+    login_host: wconcept.co.kr
+    status: scripts_pending
+  - id: SHOEMAKER
+    key: shoemaker
+    label: 슈마커
+    home: https://www.shoemarker.co.kr/
+    login_host: shoemarker.co.kr
+    status: scripts_pending
+  - id: GMARKET
+    key: gmarket
+    label: G마켓
+    home: https://www.gmarket.co.kr/
+    login_host: gmarket.co.kr
+    status: scripts_pending
+  - id: 11ST
+    key: st11
+    label: 11번가
+    home: https://www.11st.co.kr/
+    login_host: 11st.co.kr
+    status: scripts_pending
+  - id: NAVERSTORE
+    key: naverstore
+    label: 네이버스토어
+    home: https://shopping.naver.com/
+    login_host: shopping.naver.com
+    status: scripts_pending
+  - id: TheHyundai
+    key: thehyundai
+    label: 더현대닷컴
+    home: https://www.thehyundai.com/
+    login_host: thehyundai.com
+    status: scripts_pending
+  - id: REXMONDE
+    key: rexmonde
+    label: 렉스몽드
+    status: scripts_pending
+  - id: SMARKET
+    key: smarket
+    label: 에스마켓
+    status: scripts_pending
+  - id: KASINA
+    key: kasina
+    label: 카시나
+    home: https://www.kasina.co.kr/
+    login_host: kasina.co.kr
+    status: scripts_pending
+  # 보류 — 등록하지 않는다. 주문이 들어오면 감독자가 unsupported 로 사람에게 넘긴다
+  - id: KREAM
+    key: kream
+    label: 크림
+    home: https://kream.co.kr/
+    login_host: kream.co.kr
+    status: hold
