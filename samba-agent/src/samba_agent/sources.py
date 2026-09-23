@@ -39,6 +39,8 @@ class Source(BaseModel):
     # 배송지를 팝업 폼에 넣는 사이트(무신사·SSG 등)는 전화까지 채운 뒤 폼을 저장/적용해야 주문서에 반영된다 —
     # True 면 배송 연락처 입력 뒤 `<key>_confirm_shipping` 을 부른다
     shipping_confirm: bool = False
+    # False 면 계정 비교(여러 계정으로 견적)를 하지 않는다 — 계정을 연달아 바꿔 로그인하면 차단하는 사이트(실기: SSG)
+    compare_accounts: bool = True
     # 이 소싱처의 주문은 항상 이 배송 종류로 본다(예: ABC마트는 전부 까대기 = 사무실 배송).
     # None 이면 주문(삼바웨이브 action_tag)이 정한 종류를 따른다
     order_type: Literal['direct', 'kkadaegi', 'gift'] | None = None

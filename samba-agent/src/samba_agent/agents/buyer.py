@@ -6,6 +6,7 @@
 
 import json
 import re
+import time
 from collections.abc import Callable
 from urllib.parse import urlparse
 
@@ -196,6 +197,8 @@ ALREADY_SIGNED_IN = 'already signed in'
 LOGIN_SUBMITTED = 'submitted'
 # 페이지 이동·로그인 제출 뒤 화면이 안정되길 기다리는 시간
 _LOGIN_SETTLE_MS = 2500
+# 같은 소싱처에서 다른 계정으로 로그인을 이어 갈 때의 최소 간격(초). 연달아 바꾸면 사이트가 차단한다(실기: SSG)
+_ACCOUNT_SWITCH_GAP_S = 60.0
 
 
 # 주문의 배송지를 앱에서 실행 시점에 읽어오는 전역 스크립트(소싱처 무관 — 주문 관리 쪽 데이터)
@@ -246,7 +249,9 @@ class BuyerAgent(AgentBase):
     # 배송지 공급자(삼바웨이브 상세). 없으면 스냅샷·전용 스크립트로 받는다
     _shipping_fn: 'ShippingFn | None' = None
     # 계정 비교 상한(SAMBA_COMPARE_ACCOUNTS_MAX). 배선은 factory 가 한다
-    compare_accounts_max: int = 5
+    compare_accounts_max: int = 2
+    # (계정, 시각) — 같은 사이트에서 마지막으로 로그인한 계정
+    _last_login: tuple[str, float] | None = None
 
     def __call__(self, assignment: Assignment) -> AgentResult:
         self._dry_run = assignment.dry_run
@@ -283,6 +288,14 @@ class BuyerAgent(AgentBase):
         """
         home = self._home()
         self.step(f'{self.spec.name}: 로그인 확인({account})')
+        # 같은 사이트에서 직전에 다른 계정으로 로그인했으면 간격을 둔다(연달아 바꾸면 차단)
+        last = self._last_login
+        if last is not None and last[0] != account:
+            gap = _ACCOUNT_SWITCH_GAP_S - (time.monotonic() - last[1])
+            if gap > 0:
+                self.note('계정 전환', f'차단 방지 대기 {int(gap)}초')
+                self.tool('wait', ms=int(gap * 1000))
+        self._last_login = (account, time.monotonic())
         # 계정 이름의 프로필로 탭을 연다 — 저장 스크립트도 같은 profile 인자를 받아 그 세션에서 돈다
         self.tool('new_tab', url=home, profile=account)
         self.tool('wait', ms=_LOGIN_SETTLE_MS)
@@ -312,6 +325,11 @@ class BuyerAgent(AgentBase):
         if a.order.account:
             return [a.order.account]
         source = source_of(self.spec.name)
+        if not source.compare_accounts:
+            # 계정 전환이 차단을 부르는 사이트 — 첫 계정 하나로만 산다
+            labels, locked = self._first_account(source)
+            self.note('계정 후보', f'{source.id}: 계정 비교 없음(전환 차단 방지) — {labels[0]}')
+            return labels[:1]
         home = self._home()
         host = source.login_host or urlparse(home).hostname or ''
         self.step(f'{self.spec.name}: 계정 목록 확인')
@@ -331,6 +349,20 @@ class BuyerAgent(AgentBase):
             )
             labels = labels[:cap]
         return labels
+
+    def _first_account(self, source: Source) -> tuple[list[str], bool]:
+        home = self._home()
+        host = source.login_host or urlparse(home).hostname or ''
+        self.tool('new_tab', url=home)
+        self.tool('wait', ms=_LOGIN_SETTLE_MS)
+        labels, locked = parse_account_labels(self.tool('list_accounts', host=host))
+        if locked or not labels:
+            raise AgentFailure(
+                'needs_human',
+                f'소싱처 계정 없음/금고 잠김: {source.id}',
+                FailReason.PERMISSION_DENIED,
+            )
+        return labels, locked
 
     def _snapshot(self, a: Assignment, account: str) -> dict[str, object]:
         """그 계정의 탭 프로필에서 상품 스냅샷(주문서까지)을 만든다."""

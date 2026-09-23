@@ -55,6 +55,7 @@ sources:
     label: SSG닷컴
     home: https://www.ssg.com/
     login_host: ssg.com
+    compare_accounts: false
     shipping_confirm: true
     status: active
   - id: FashionPlus
