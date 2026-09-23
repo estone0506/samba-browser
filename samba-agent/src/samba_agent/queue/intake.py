@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from samba_agent.agents.contracts import OrderRef
 from samba_agent.queue.db import JobQueue
-from samba_agent.wave.client import WaveClient, WaveError, WaveOrder
+from samba_agent.wave.client import WaveClient, WaveError, WaveOrder, flag_text
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -56,8 +56,15 @@ def _paid_key(order: WaveOrder) -> tuple[int, float]:
 
 
 def intake_line(order: OrderRef) -> str:
-    """슬랙 최상위 메시지 한 줄. 개인정보는 애초에 OrderRef 에 없다."""
-    return f'접수: {order.order_no} · {order.source} · {order.sku[:SKU_LIMIT]} · {order.qty}개'
+    """슬랙 최상위 메시지 한 줄. 개인정보는 애초에 OrderRef 에 없다.
+
+    플래그(가격X·재고X·직원A 등)는 오류일 수 있어 제외하지 않는다 — 접수하고 줄 끝에 덧붙여
+    사람이 결제 승인 때 보게 한다.
+    """
+    line = f'접수: {order.order_no} · {order.source} · {order.sku[:SKU_LIMIT]} · {order.qty}개'
+    if order.flags:
+        line += f' · ⚠ {flag_text(order.flags)}'
+    return line
 
 
 class Intake:

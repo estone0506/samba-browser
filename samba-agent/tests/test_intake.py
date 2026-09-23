@@ -202,3 +202,19 @@ def test_접수_문구에는_개인정보가_없다():
     assert '접수: A1' in line
     for personal in ('010', '서울', '님'):
         assert personal not in line
+
+
+def test_플래그가_있으면_접수_문구에_덧붙인다():
+    line = intake_line(wave_order('A1', action_tag='no_price,staff_b').to_order_ref())
+    assert line.endswith(' · ⚠ 가격X, 직원B')
+    assert '⚠' not in intake_line(wave_order('A2').to_order_ref())
+
+
+def test_플래그가_있어도_제외하지_않고_접수한다(setup):
+    # 가격X·재고X·구매보류·다른 작업자는 오류일 수 있다 — 접수·구매는 진행하고 결제 승인에서 본다
+    q, slack, make = setup
+    intake, _w = make([wave_order('A1', action_tag='no_stock,staff_a')])
+    report = intake.run_once()
+    assert report.enqueued == 1
+    assert q.get('A1').state == 'queued'
+    assert '재고X, 직원A' in slack.tops[0]
