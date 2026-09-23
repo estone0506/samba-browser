@@ -7,8 +7,15 @@
 import json
 import re
 from collections.abc import Callable
+from urllib.parse import urlparse
 
-from samba_agent.agents.base import AgentBase, AgentFailure, Decision, run_agent
+from samba_agent.agents.base import (
+    AgentBase,
+    AgentFailure,
+    Decision,
+    run_agent,
+    split_page_dialogs,
+)
 from samba_agent.agents.contracts import AgentResult, Assignment, OrderRef
 from samba_agent.agents.registry import AgentSpec
 from samba_agent.failures import FailReason
@@ -78,16 +85,54 @@ def matching_options(options: list[str], wanted: str | None) -> list[str]:
     return []
 
 
-def snapshot_args(agent_name: str, order: OrderRef) -> str:
-    """run_script 에 넘길 JSON 문자열. 옵션이 있으면 size 로, 계정이 있으면 account 로 같이 준다."""
+def snapshot_args(agent_name: str, order: OrderRef, account: str | None = None) -> str:
+    """run_script 에 넘길 JSON 문자열. 옵션이 있으면 size 로, 계정이 있으면 account 로 같이 준다.
+
+    account 를 주면 주문의 계정 대신 그 계정으로 돈다(계정 비교 중 각 계정의 견적).
+    """
     args: dict[str, object] = {'sku': product_ref(agent_name, order), 'qty': order.qty}
     if order.option:
         args['size'] = order.option
-    if order.account:
+    account = account or order.account
+    if account:
         # 계정별 탭 프로필 — 세션(쿠키)이 계정마다 따로라 다른 계정으로 로그인된 채 사는 일이 없다
-        args['account'] = order.account
-        args['profile'] = order.account
+        args['account'] = account
+        args['profile'] = account
     return json.dumps(args, ensure_ascii=False)
+
+
+def _as_float(value: object) -> float:
+    """스냅샷 금액 → float. 비었거나 숫자가 아니면 0(모름)."""
+    try:
+        return float(value or 0)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def parse_account_labels(raw: str) -> tuple[list[str], bool]:
+    """앱 list_accounts 결과 → (계정 라벨 목록, 금고 잠김 여부).
+
+    앱은 풀린 금고면 계정 배열을, 잠겼으면 {"vaultLocked": true, "accounts": [...]} 를,
+    그 밖(호스트 모름·금고 미설정)은 {"accounts": [], "note": ...} 나 안내 문자열을 준다
+    (src/main/agent/tools.ts list_accounts). 라벨은 우리 사이트에서 로그인 아이디와 같다.
+    """
+    body, _ = split_page_dialogs(raw)
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return [], False
+    locked = False
+    items: object = parsed
+    if isinstance(parsed, dict):
+        locked = bool(parsed.get('vaultLocked'))
+        items = parsed.get('accounts') or []
+    labels: list[str] = []
+    if isinstance(items, list):
+        for item in items:
+            label = str(item.get('label') or '').strip() if isinstance(item, dict) else ''
+            if label and label not in labels:
+                labels.append(label)
+    return labels, locked
 
 
 # 로그인 확인은 소싱처 첫 페이지(sources.yaml 의 home)에서 시작한다. 앱의 login 도구는 폼이 없으면
@@ -147,9 +192,13 @@ class BuyerAgent(AgentBase):
     _dry_run: bool = True
     # 배송지 공급자(삼바웨이브 상세). 없으면 스냅샷·전용 스크립트로 받는다
     _shipping_fn: 'ShippingFn | None' = None
+    # 계정 비교 상한(SAMBA_COMPARE_ACCOUNTS_MAX). 배선은 factory 가 한다
+    compare_accounts_max: int = 5
 
     def __call__(self, assignment: Assignment) -> AgentResult:
         self._dry_run = assignment.dry_run
+        # 계정 비교 중 견적이 실패한 사유들(모든 계정 실패 때 결과 판정에 쓴다)
+        self._quote_errors: list[AgentFailure] = []
         return run_agent(lambda: self._buy(assignment), lambda: self.evidence)
 
     def tool(self, name: str, /, **args: object) -> str:
@@ -162,15 +211,8 @@ class BuyerAgent(AgentBase):
             )
         return super().tool(name, **args)
 
-    def _ensure_login(self, a: Assignment) -> None:
-        """주문의 소싱 계정으로 로그인돼 있게 한다(실기: 로그인 안 된 채 스냅샷 → 주문서 대신 로그인 페이지).
-
-        앱 login 도구는 이미 로그인돼 있으면 누구인지까지는 말해 주지 않는다 — 계정 일치는
-        스냅샷의 account 로 한 번 더 본다(_check_account).
-        """
-        account = a.order.account
-        if not account:
-            return
+    def _home(self) -> str:
+        """소싱처 첫 페이지 — 로그인 확인·계정 목록 조회를 여기서 시작한다."""
         home = source_of(self.spec.name).home
         if not home:
             raise AgentFailure(
@@ -178,6 +220,15 @@ class BuyerAgent(AgentBase):
                 f'소싱처 첫 페이지 주소가 표에 없다: {self.spec.name}',
                 FailReason.UNKNOWN,
             )
+        return home
+
+    def _login_as(self, account: str) -> None:
+        """그 소싱 계정으로 로그인돼 있게 한다(실기: 로그인 안 된 채 스냅샷 → 주문서 대신 로그인 페이지).
+
+        앱 login 도구는 이미 로그인돼 있으면 누구인지까지는 말해 주지 않는다 — 계정 일치는
+        스냅샷의 account 로 한 번 더 본다(_check_account).
+        """
+        home = self._home()
         self.step(f'{self.spec.name}: 로그인 확인({account})')
         # 계정 이름의 프로필로 탭을 연다 — 저장 스크립트도 같은 profile 인자를 받아 그 세션에서 돈다
         self.tool('new_tab', url=home, profile=account)
@@ -198,14 +249,117 @@ class BuyerAgent(AgentBase):
             FailReason.PERMISSION_DENIED,
         )
 
-    def _check_account(self, a: Assignment, snap: dict[str, object]) -> None:
-        """스냅샷이 로그인 계정을 알려 주면 주문의 소싱 계정과 대조한다. 다르면 사람에게 넘긴다.
+    def _candidate_accounts(self, a: Assignment) -> list[str]:
+        """구매 후보 계정. 주문이 계정을 지정하면 그 계정 하나(비교하지 않는다).
+
+        지정이 없으면 기본 프로필로 소싱처 첫 페이지를 열고 키마스터의 그 사이트 계정 목록을 받는다
+        (앱 list_accounts 는 현재 탭 호스트의 계정만 답한다). 비교 비용 때문에 앞에서부터
+        최대 compare_accounts_max 개만 쓴다.
+        """
+        if a.order.account:
+            return [a.order.account]
+        source = source_of(self.spec.name)
+        home = self._home()
+        host = source.login_host or urlparse(home).hostname or ''
+        self.step(f'{self.spec.name}: 계정 목록 확인')
+        self.tool('new_tab', url=home)
+        self.tool('wait', ms=_LOGIN_SETTLE_MS)
+        labels, locked = parse_account_labels(self.tool('list_accounts', host=host))
+        if locked or not labels:
+            raise AgentFailure(
+                'needs_human',
+                f'소싱처 계정 없음/금고 잠김: {source.id}',
+                FailReason.PERMISSION_DENIED,
+            )
+        cap = self.compare_accounts_max
+        if len(labels) > cap:
+            self.note(
+                '계정 후보', f'{len(labels)}개 중 앞 {cap}개만 비교(SAMBA_COMPARE_ACCOUNTS_MAX)'
+            )
+            labels = labels[:cap]
+        return labels
+
+    def _snapshot(self, a: Assignment, account: str) -> dict[str, object]:
+        """그 계정의 탭 프로필에서 상품 스냅샷(주문서까지)을 만든다."""
+        self.step(f'{self.spec.name}: 상품 확인({account})')
+        return self.json_tool(
+            'run_script',
+            name=source_of(self.spec.name).snapshot_script,
+            args=snapshot_args(self.spec.name, a.order, account=account),
+        )
+
+    def _quote(self, a: Assignment, account: str) -> dict[str, object] | None:
+        """한 계정의 견적 — 로그인·주문서까지 만들어 원가를 읽는다. 살 수 없으면 None.
+
+        같은 상품을 이미 산 흔적은 계정과 무관한 중단 사유라 그대로 던진다. 그 밖의 실패
+        (로그인 실패·품절·원가 없음)는 이 계정만 빼고 근거에 남긴다 — 원문 개인정보는 남기지 않는다.
+        """
+        try:
+            self._login_as(account)
+            snap = self._snapshot(a, account)
+            self._check_account(account, snap)
+        except AgentFailure as e:
+            if e.fail_reason is FailReason.DUPLICATE:
+                raise
+            self._quote_errors.append(e)
+            self.note('계정 견적', mask_text(f'{account}: 불가({e.reason[:80]})'))
+            return None
+        if snap.get('already_ordered') or snap.get('existing_order_no'):
+            raise AgentFailure(
+                'fail', f'이미 구매한 흔적이 있다: {a.order.sku}', FailReason.DUPLICATE
+            )
+        options = [str(o) for o in (snap.get('options') or [])]
+        if not matching_options(options, a.order.option):
+            self.note('계정 견적', mask_text(f'{account}: 불가(주문 옵션 품절)'))
+            return None
+        cost = _as_float(snap.get('cost'))
+        if cost <= 0:
+            self.note('계정 견적', mask_text(f'{account}: 불가(원가를 읽지 못함)'))
+            return None
+        self.note('계정 견적', mask_text(f'{account}: 원가 {cost:,.0f}원'))
+        return {**snap, 'cost': cost}
+
+    def _pick_cheapest(self, a: Assignment, accounts: list[str]) -> tuple[str, dict[str, object]]:
+        """계정마다 견적을 내고 원가가 가장 낮은 계정(같으면 앞 계정)과 그 스냅샷을 고른다.
+
+        스크립트는 가장 최근 주문서 탭을 읽으므로, 이긴 계정이 마지막으로 연 계정이 아니면
+        다시 로그인·스냅샷해서 그 주문서를 최신 탭으로 만든다.
+        """
+        self._quote_errors = []
+        quotes: list[tuple[str, dict[str, object]]] = []
+        for account in accounts:
+            q = self._quote(a, account)
+            if q is not None:
+                quotes.append((account, q))
+        if not quotes:
+            # 어느 계정도 스냅샷까지 못 갔고 전부 사람 확인(로그인 실패·캡차)이면 그 사유가 맞다 — 품절이 아니다
+            errors = self._quote_errors
+            if len(errors) == len(accounts) and all(e.status == 'needs_human' for e in errors):
+                first = errors[0]
+                raise AgentFailure(
+                    'needs_human', f'모든 계정 불가 — {first.reason}', first.fail_reason
+                )
+            raise AgentFailure(
+                'fail',
+                mask_text(f'모든 계정에서 살 수 없다(품절·실패): {", ".join(accounts)}'),
+                FailReason.OUT_OF_STOCK,
+            )
+        # min 은 같은 값이면 앞 것을 준다 — 동률이면 먼저 비교한 계정
+        winner, snap = min(quotes, key=lambda q: _as_float(q[1].get('cost')))
+        cost = _as_float(snap.get('cost'))
+        self.note('계정 선택', f'{winner} — 원가 최저 {cost:,.0f}원 (비교 {len(accounts)}계정)')
+        if winner != accounts[-1]:
+            self._login_as(winner)
+            snap = self._snapshot(a, winner)
+        return winner, snap
+
+    def _check_account(self, want: str, snap: dict[str, object]) -> None:
+        """스냅샷이 로그인 계정을 알려 주면 고른 소싱 계정과 대조한다. 다르면 사람에게 넘긴다.
 
         실기: 사이트가 아이디 대신 표시 이름(한글 별명 '김사무1')을 돌려주는 곳이 있다 —
         아이디끼리 비교할 때만 불일치로 본다. 표시 이름이면 대조를 못 했다고 남기고 지나간다.
         """
         seen = str(snap.get('account') or '').strip()
-        want = a.order.account
         if not (want and seen):
             return
         if want.lower() in seen.lower():
@@ -221,15 +375,19 @@ class BuyerAgent(AgentBase):
 
     def _buy(self, a: Assignment) -> AgentResult:
         self.evidence = []
-        self._ensure_login(a)
-        self.step(f'{self.spec.name}: 상품 확인')
-        snap = self.json_tool(
-            'run_script',
-            name=source_of(self.spec.name).snapshot_script,
-            args=snapshot_args(self.spec.name, a.order),
-        )
+        # 계정 비교(사용자 지시 2026-09-23) — 주문 지정 계정이 없으면 키마스터 계정마다 주문서까지
+        # 만들어 원가를 비교하고 가장 싼 계정으로 산다
+        accounts = self._candidate_accounts(a)
+        if len(accounts) == 1:
+            account = accounts[0]
+            self._login_as(account)
+            snap = self._snapshot(a, account)
+            why = '주문 지정 계정' if a.order.account else '키마스터의 유일한 계정'
+            self.note('계정 선택', f'{account} — {why}')
+        else:
+            account, snap = self._pick_cheapest(a, accounts)
 
-        self._check_account(a, snap)
+        self._check_account(account, snap)
         # 같은 상품을 이미 산 흔적 — 옵션 선택 전에 끝낸다(규칙 파일 §3)
         if snap.get('already_ordered') or snap.get('existing_order_no'):
             raise AgentFailure(
@@ -266,19 +424,9 @@ class BuyerAgent(AgentBase):
             )
         self.note('옵션 선택', f'{picked.choice} — {picked.reason}')
 
-        # 계정별 쿠폰 비교 — 스냅샷이 계정→할인액으로 준다. 가장 싼 계정을 고른다
-        coupons: dict[str, float] = {
-            str(k): float(v) for k, v in (snap.get('coupons') or {}).items()
-        }
-        if not coupons:
-            # 허용 목록 밖 도구·토큰 오류·키마스터 잠김이 아니라 그냥 골라 쓸 계정이 없는 것이다
-            raise AgentFailure('fail', '쓸 수 있는 계정 없음', FailReason.UNKNOWN)
-        account = max(coupons, key=lambda k: coupons[k])
-        self.note('계정 선택', f'{account} — 쿠폰 {coupons[account]:,.0f}원으로 가장 유리')
-
         # 배송지 — 개인정보(이름·주소)라 Assignment/state/payload 에는 절대 담지 않는다.
         # 실행 시점에만 받아 입력 도구 호출에 바로 쓰고 로컬 변수 밖으로 내보내지 않는다.
-        self._set_shipping(a, snap)
+        self._set_shipping(a, snap, account)
 
         # 결제수단·카드 — 지시받은 카드가 목록에 없으면 여기서 거절한다
         methods = [str(m) for m in (snap.get('methods') or [])]
@@ -301,7 +449,7 @@ class BuyerAgent(AgentBase):
         else:
             self.note('수단 선택', f'{card} — 요청자가 지정')
 
-        cost = float(snap.get('cost') or 0)
+        cost = _as_float(snap.get('cost'))
         # 실제 결제액(적립·배송비 보정 전) — 스냅샷이 주면 기록 메모에 싣는다. 0 이면 모름
         paid = float(snap.get('pay_amount') or 0)
         margin = self._margin(a.order, cost, float(snap.get('margin_pct') or 0))
@@ -315,6 +463,7 @@ class BuyerAgent(AgentBase):
             payload={
                 'option': picked.choice,
                 'account': account,
+                'accounts_compared': len(accounts),
                 'shipping_set': True,
                 'card': card,
                 'cost': cost,
@@ -383,7 +532,7 @@ class BuyerAgent(AgentBase):
         shipping = fetched.get('shipping')
         return shipping if isinstance(shipping, dict) else fetched
 
-    def _set_shipping(self, a: Assignment, snap: dict[str, object]) -> None:
+    def _set_shipping(self, a: Assignment, snap: dict[str, object], account: str) -> None:
         """배송지 — 까대기면 기본 배송지를 유지하고, 직배·선물이면 고객 이름·주소를 새로 넣는다.
 
         원문은 이 함수 밖으로 나가지 않는다 — self.note 에는 마스킹된 요약만 남긴다.
@@ -399,8 +548,8 @@ class BuyerAgent(AgentBase):
         }
         if not (args.get('name') and args.get('address')):
             raise AgentFailure('needs_human', '배송지를 받지 못했다', FailReason.UNKNOWN)
-        if a.order.account:
-            args['profile'] = a.order.account
+        if account:
+            args['profile'] = account
 
         applied = self.json_tool(
             'run_script',

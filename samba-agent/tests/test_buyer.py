@@ -82,6 +82,24 @@ def route_run_script(responses: dict[str, object]) -> object:
     return handler
 
 
+def mock_accounts(*labels: str, locked: bool = False, login: str = 'already signed in (logout)'):
+    """주문 계정이 없는 주문의 계정 경로 — 기본 탭 열기·계정 목록·계정별 로그인을 mock 한다.
+
+    list_accounts 는 앱처럼 풀린 금고면 배열을, 잠겼으면 {vaultLocked, accounts} 를 돌려준다.
+    """
+    accounts = [
+        {'label': x, 'username': 'a***', 'types': ['login'], 'tags': []}
+        for x in labels or ('acc1',)
+    ]
+    body = {'vaultLocked': True, 'accounts': accounts} if locked else accounts
+    respx.post(f'{URL}/tool/new_tab').mock(return_value=page('ok: tab t9'))
+    respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/login').mock(return_value=page(login))
+    return respx.post(f'{URL}/tool/list_accounts').mock(
+        return_value=page(json.dumps(body, ensure_ascii=False))
+    )
+
+
 @respx.mock
 def test_정상이면_계정_카드_원가_배송지를_돌려준다(reg):
     respx.post(f'{URL}/tool/run_script').mock(
@@ -94,6 +112,7 @@ def test_정상이면_계정_카드_원가_배송지를_돌려준다(reg):
     )
     respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제수단 선택'))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     mock_fill_secret()
     out = agent(reg, lambda p, m: m(choice='260', reason='주문 사이즈와 일치'))(assignment(reg))
     assert out.status == 'ok'
@@ -113,6 +132,7 @@ def test_배송지_원문은_결과_어디에도_남지_않는다(reg):
     )
     respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제수단 선택'))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     mock_fill_secret()
     out = agent(reg, lambda p, m: m(choice='260', reason='주문 사이즈와 일치'))(assignment(reg))
     dumped = json.dumps(out.model_dump(mode='json'), ensure_ascii=False)
@@ -127,6 +147,7 @@ def test_옵션이_없으면_품절로_거절한다(reg):
         return_value=page('{"options":[],"coupons":{},"methods":["현대"],"cost":0,"margin_pct":0}')
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
     assert (out.status, out.fail_reason) == ('fail', FailReason.OUT_OF_STOCK)
 
@@ -138,20 +159,25 @@ def test_이미_구매한_흔적이_있으면_중복으로_거절한다(reg):
         return_value=page(json.dumps(dup, ensure_ascii=False))
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
     assert (out.status, out.fail_reason) == ('fail', FailReason.DUPLICATE)
 
 
+@pytest.mark.parametrize('locked', [True, False])
 @respx.mock
-def test_쓸_수_있는_계정이_없으면_unknown으로_거절한다(reg):
-    no_account = {**SNAPSHOT_OK, 'coupons': {}}
-    respx.post(f'{URL}/tool/run_script').mock(
-        return_value=page(json.dumps(no_account, ensure_ascii=False))
-    )
+def test_금고가_잠겼거나_계정이_없으면_사람에게_넘긴다(reg, locked):
+    snap = respx.post(f'{URL}/tool/run_script')
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    if locked:
+        mock_accounts('A', 'B', locked=True)
+    else:
+        mock_accounts()
+        respx.post(f'{URL}/tool/list_accounts').mock(return_value=page('[]'))
     out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
-    assert (out.status, out.fail_reason) == ('fail', FailReason.UNKNOWN)
-    assert out.reason == '쓸 수 있는 계정 없음'
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.PERMISSION_DENIED)
+    assert '소싱처 계정 없음/금고 잠김: MUSINSA' in out.reason
+    assert not snap.called
 
 
 @respx.mock
@@ -163,6 +189,7 @@ def test_배송지를_못_받으면_사람에게_넘긴다(reg):
         )
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
     assert (out.status, out.fail_reason) == ('needs_human', FailReason.UNKNOWN)
     assert '홍길동' not in out.reason
@@ -179,6 +206,7 @@ def test_배송지_입력_검증이_어긋나면_사람에게_넘긴다(reg):
         )
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
     assert (out.status, out.fail_reason) == ('needs_human', FailReason.UNKNOWN)
 
@@ -192,6 +220,7 @@ def test_지시받은_카드가_없으면_거절한다(reg):
         )
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     mock_fill_secret()
     out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
     assert (out.status, out.fail_reason) == ('fail', FailReason.CARD_MISSING)
@@ -201,6 +230,7 @@ def test_지시받은_카드가_없으면_거절한다(reg):
 def test_캡차가_뜨면_사람에게_넘긴다(reg):
     respx.post(f'{URL}/tool/run_script').mock(return_value=page('needs_user: 캡차 확인 필요'))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
     assert (out.status, out.fail_reason) == ('needs_human', FailReason.CAPTCHA)
 
@@ -214,6 +244,7 @@ def test_결제_도구는_부르지도_못한다(reg):
         )
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     mock_fill_secret()
     agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
     assert not route.called
@@ -323,12 +354,20 @@ def test_스냅샷의_계정이_주문_계정과_다르면_사람에게_넘긴�
 def test_실패해도_그때까지의_근거는_결과에_남는다(reg):
     # 실기: 실패 사유만 남고 옵션 목록 등 근거가 비어 진단이 막혔다
     respx.post(f'{URL}/tool/run_script').mock(
-        side_effect=route_run_script({'musinsa_product_snapshot': {**SNAPSHOT_OK, 'coupons': {}}})
+        side_effect=route_run_script(
+            {
+                'musinsa_product_snapshot': {**SNAPSHOT_OK, 'methods': ['신한']},
+                'musinsa_set_shipping': SHIPPING_ECHO,
+            }
+        )
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
+    mock_fill_secret()
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
     assert out.status == 'fail'
-    assert [e.label for e in out.evidence] == ['옵션 목록', '옵션 선택']
+    labels = [e.label for e in out.evidence]
+    assert {'계정 선택', '옵션 목록', '옵션 선택', '배송지'} <= set(labels)
 
 
 def test_스냅샷_인자는_상품_ID와_사이즈를_우선한다():
@@ -431,6 +470,7 @@ def test_삼바웨이브가_있으면_배송지는_거기서_받는다(reg):
         side_effect=_recording_handler('musinsa_product_snapshot', applied)
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     mock_fill_secret()
     out = buyer_with_wave(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
     assert out.status == 'ok'
@@ -448,6 +488,7 @@ def test_삼바웨이브_배송지_조회가_실패하면_그_사유로_실패�
         side_effect=route_run_script({'musinsa_product_snapshot': SNAPSHOT_OK})
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     out = buyer_with_wave(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
     assert (out.status, out.fail_reason) == ('fail', FailReason.PERMISSION_DENIED)
 
@@ -502,6 +543,7 @@ def test_고객_전화번호는_어디에도_입력하지_않는다(reg):
         )
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     fill = mock_fill_secret()
     out = buyer_with_wave(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
     assert out.status == 'ok'
@@ -526,6 +568,7 @@ def test_스냅샷에_실린_전화번호도_배송지_스크립트에_넘기지
         side_effect=_recording_handler('musinsa_product_snapshot', applied)
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     mock_fill_secret()
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
     assert out.status == 'ok'
@@ -548,6 +591,7 @@ def test_전화_칸을_채우지_못하면_사람에게_넘긴다(reg, echo_extr
         side_effect=_recording_handler('musinsa_product_snapshot', applied, echo_extra=echo_extra)
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     fill = mock_fill_secret(fill_result or 'ok')
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
     assert out.status == 'needs_human'
@@ -590,6 +634,7 @@ def test_ABC마트는_항상_까대기로_기본_배송지를_유지한다(reg):
         side_effect=_recording_handler('abc_product_snapshot', applied)
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     fill = respx.post(f'{URL}/tool/fill_secret')
     out = abc(_abc_assignment(reg, spec))
     assert out.status == 'ok'
@@ -606,6 +651,7 @@ def test_까대기_주문서에_기본_배송지가_없으면_사람에게_넘�
         side_effect=route_run_script({'abc_product_snapshot': snap})
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     out = abc(_abc_assignment(reg, spec))
     assert out.status == 'needs_human' and '기본 배송지 없음' in out.reason
 
@@ -627,6 +673,7 @@ def test_스냅샷에_배송지가_없으면_주문서_화면으로_확인한다
     )
     respx.post(f'{URL}/tool/get_page').mock(return_value=page(page_text))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     out = abc(_abc_assignment(reg, spec))
     assert (out.status == 'ok') is ok
 
@@ -657,6 +704,7 @@ def test_스냅샷에_마진이_없으면_판매가로_계산한다(reg):
         )
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     mock_fill_secret()
     order = ORDER.model_copy(update={'sale_price': 100000})
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(
@@ -678,6 +726,7 @@ def test_정산금이_있으면_정산금_기준으로_마진을_계산한다(re
         )
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     mock_fill_secret()
     order = ORDER.model_copy(update={'sale_price': 100000, 'revenue': 90000})
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(
@@ -709,6 +758,7 @@ def test_주문_옵션에_맞는_후보가_없으면_모델에게_묻지_않고_
         side_effect=route_run_script({'musinsa_product_snapshot': snap})
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
     asked = []
 
     def decide(p, m):
@@ -719,3 +769,240 @@ def test_주문_옵션에_맞는_후보가_없으면_모델에게_묻지_않고_
     out = agent(reg, decide)(assignment(reg).model_copy(update={'order': order}))
     assert (out.status, out.fail_reason) == ('fail', FailReason.OUT_OF_STOCK)
     assert asked == []
+
+
+# ---- 계정 비교(사용자 지시 2026-09-23: 계정별로 싸게 살 수 있는 걸 비교하고 구매 계정을 고른다) ----
+
+
+def _per_account_snapshots(by_account: dict[str, object], calls: list[str]):
+    """스냅샷 스크립트는 args.account 별로 다른 견적을, 배송지 스크립트는 메아리를 준다.
+
+    값이 문자열이면 그대로(예: 캡차 표시) 돌려준다. 스냅샷을 부른 계정 순서를 calls 에 남긴다.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        name = body['args']['name']
+        args = json.loads(body['args']['args'])
+        if name == 'musinsa_product_snapshot':
+            calls.append(f'snapshot:{args.get("account")}')
+            got = by_account[args['account']]
+            return page(got if isinstance(got, str) else json.dumps(got, ensure_ascii=False))
+        calls.append(f'{name}:{args.get("profile")}')
+        return page(json.dumps(SHIPPING_ECHO, ensure_ascii=False))
+
+    return handler
+
+
+def _login_accounts(login_route) -> list[str]:
+    return [json.loads(c.request.content)['args']['accountLabel'] for c in login_route.calls]
+
+
+@respx.mock
+def test_주문_계정이_지정되면_비교하지_않고_그_계정으로_산다(reg):
+    listed = respx.post(f'{URL}/tool/list_accounts')
+    _login_mocks('already signed in (logout)')
+    calls: list[str] = []
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=_per_account_snapshots({'buyer01': SNAPSHOT_OK}, calls)
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_fill_secret()
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment_with_account(reg))
+    assert out.status == 'ok'
+    assert not listed.called
+    assert calls == ['snapshot:buyer01', 'musinsa_set_shipping:buyer01']
+    assert out.payload['account'] == 'buyer01'
+    assert out.payload['accounts_compared'] == 1
+
+
+@respx.mock
+def test_두_계정이면_원가가_낮은_계정으로_산다(reg):
+    listed = mock_accounts('A', 'B')
+    login = respx.post(f'{URL}/tool/login').mock(return_value=page('already signed in'))
+    calls: list[str] = []
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=_per_account_snapshots(
+            {'A': {**SNAPSHOT_OK, 'cost': 90000}, 'B': {**SNAPSHOT_OK, 'cost': 80000}}, calls
+        )
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_fill_secret()
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
+    assert out.status == 'ok'
+    # 계정 목록은 소싱처 호스트로 묻는다(앱은 현재 탭 호스트만 답한다)
+    assert json.loads(listed.calls[0].request.content)['args'] == {'host': 'musinsa.com'}
+    # B 가 마지막 견적이라 다시 만들 필요 없이 그 주문서로 이어 간다
+    assert _login_accounts(login) == ['A', 'B']
+    assert calls == ['snapshot:A', 'snapshot:B', 'musinsa_set_shipping:B']
+    assert out.payload['account'] == 'B'
+    assert out.payload['accounts_compared'] == 2
+    assert out.payload['cost'] == 80000
+    details = [e.detail for e in out.evidence if e.label == '계정 견적']
+    assert details == ['A: 원가 90,000원', 'B: 원가 80,000원']
+    assert any(
+        e.label == '계정 선택' and '원가 최저 80,000원 (비교 2계정)' in e.detail
+        for e in out.evidence
+    )
+
+
+@respx.mock
+def test_싼_계정이_먼저면_그_계정으로_다시_로그인해_주문서를_최신으로_만든다(reg):
+    mock_accounts('A', 'B')
+    login = respx.post(f'{URL}/tool/login').mock(return_value=page('already signed in'))
+    calls: list[str] = []
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=_per_account_snapshots(
+            {'A': {**SNAPSHOT_OK, 'cost': 80000}, 'B': {**SNAPSHOT_OK, 'cost': 90000}}, calls
+        )
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_fill_secret()
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
+    assert out.status == 'ok'
+    assert _login_accounts(login) == ['A', 'B', 'A']
+    assert calls == ['snapshot:A', 'snapshot:B', 'snapshot:A', 'musinsa_set_shipping:A']
+    assert out.payload['account'] == 'A'
+
+
+@respx.mock
+def test_한_계정이_품절이면_다른_계정으로_산다(reg):
+    mock_accounts('A', 'B')
+    calls: list[str] = []
+    order = ORDER.model_copy(update={'option': '260'})
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=_per_account_snapshots(
+            {
+                'A': {**SNAPSHOT_OK, 'options': ['260 (품절)', '265'], 'cost': 70000},
+                'B': {**SNAPSHOT_OK, 'cost': 85000},
+            },
+            calls,
+        )
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_fill_secret()
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(
+        assignment(reg).model_copy(update={'order': order})
+    )
+    assert out.status == 'ok'
+    assert out.payload['account'] == 'B'
+    assert any(e.detail == 'A: 불가(주문 옵션 품절)' for e in out.evidence)
+
+
+@respx.mock
+def test_로그인에_실패한_계정은_빼고_비교한다(reg):
+    mock_accounts('A', 'B')
+    respx.post(f'{URL}/tool/login').mock(
+        side_effect=lambda req: page(
+            'account not found: use list_accounts'
+            if json.loads(req.content)['args']['accountLabel'] == 'A'
+            else 'already signed in'
+        )
+    )
+    calls: list[str] = []
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=_per_account_snapshots({'B': SNAPSHOT_OK}, calls)
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_fill_secret()
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
+    assert out.status == 'ok'
+    assert out.payload['account'] == 'B'
+    assert calls == ['snapshot:B', 'musinsa_set_shipping:B']
+
+
+@respx.mock
+def test_모든_계정이_품절이면_품절로_거절한다(reg):
+    mock_accounts('A', 'B')
+    calls: list[str] = []
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=_per_account_snapshots(
+            {'A': {**SNAPSHOT_OK, 'options': []}, 'B': {**SNAPSHOT_OK, 'cost': 0}}, calls
+        )
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
+    assert (out.status, out.fail_reason) == ('fail', FailReason.OUT_OF_STOCK)
+    assert 'A' in out.reason and 'B' in out.reason
+    assert calls == ['snapshot:A', 'snapshot:B']  # 배송지까지 가지 않았다
+
+
+@respx.mock
+def test_모든_계정이_로그인에_실패하면_품절이_아니라_사람에게_넘긴다(reg):
+    mock_accounts('A', 'B', login='account not found: use list_accounts')
+    snap = respx.post(f'{URL}/tool/run_script')
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.PERMISSION_DENIED)
+    assert not snap.called
+
+
+@respx.mock
+def test_한_계정에서_이미_산_흔적이_보이면_비교를_멈추고_중복이다(reg):
+    mock_accounts('A', 'B')
+    calls: list[str] = []
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=_per_account_snapshots(
+            {'A': {**SNAPSHOT_OK, 'already_ordered': True}, 'B': SNAPSHOT_OK}, calls
+        )
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
+    assert (out.status, out.fail_reason) == ('fail', FailReason.DUPLICATE)
+    assert calls == ['snapshot:A']
+
+
+@respx.mock
+def test_비교_계정_수는_상한까지만(reg):
+    mock_accounts('A', 'B', 'C', 'D')
+    login = respx.post(f'{URL}/tool/login').mock(return_value=page('already signed in'))
+    calls: list[str] = []
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=_per_account_snapshots(
+            {
+                'A': {**SNAPSHOT_OK, 'cost': 90000},
+                'B': {**SNAPSHOT_OK, 'cost': 80000},
+                'C': {**SNAPSHOT_OK, 'cost': 50000},
+                'D': {**SNAPSHOT_OK, 'cost': 10000},
+            },
+            calls,
+        )
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_fill_secret()
+    b = agent(reg, lambda p, m: m(choice='260', reason='일치'))
+    b.compare_accounts_max = 2
+    out = b(assignment(reg))
+    assert out.status == 'ok'
+    assert _login_accounts(login) == ['A', 'B']  # 원래 순서의 앞 2개만
+    assert out.payload['account'] == 'B'
+    assert out.payload['accounts_compared'] == 2
+    assert any(e.label == '계정 후보' and '4개 중 앞 2개' in e.detail for e in out.evidence)
+
+
+def test_계정_목록_결과를_읽는다():
+    from samba_agent.agents.buyer import parse_account_labels
+
+    unlocked = json.dumps([{'label': 'A'}, {'label': 'B'}, {'label': 'A'}, {'label': ''}])
+    assert parse_account_labels(unlocked) == (['A', 'B'], False)
+    assert parse_account_labels('{"vaultLocked": true, "accounts": [{"label": "A"}]}') == (
+        ['A'],
+        True,
+    )
+    assert parse_account_labels('{"accounts": [], "note": "host unknown"}') == ([], False)
+    assert parse_account_labels('not set up: ask the user') == ([], False)
+
+
+def test_계정_비교_상한_설정은_기본_5이고_1_이상이다(monkeypatch):
+    from pydantic import ValidationError
+
+    from samba_agent.settings import load_settings
+
+    monkeypatch.setenv('SAMBA_BRIDGE_TOKEN', 'x' * 64)
+    monkeypatch.delenv('SAMBA_COMPARE_ACCOUNTS_MAX', raising=False)
+    assert load_settings(env_file=None).compare_accounts_max == 5
+    monkeypatch.setenv('SAMBA_COMPARE_ACCOUNTS_MAX', '3')
+    assert load_settings(env_file=None).compare_accounts_max == 3
+    monkeypatch.setenv('SAMBA_COMPARE_ACCOUNTS_MAX', '0')
+    with pytest.raises(ValidationError):
+        load_settings(env_file=None)
