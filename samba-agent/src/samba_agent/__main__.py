@@ -95,6 +95,9 @@ def main() -> None:
         settings.bridge_url,
         settings.bridge_token.get_secret_value(),
         allowed=(),  # 최상위 클라이언트는 도구를 직접 부르지 않는다 — 에이전트마다 scoped() 로 좁힌다
+        # 앱 채팅이 도는 동안(409 busy) 작업 중간에 실패하지 않도록 최대 10분 기다린다(실기: 3초 만에 bridge_down)
+        busy_retries=120,
+        busy_wait_s=5.0,
     )
     # 주문 조회 = 삼바웨이브 탭 앞에 두기(list_tabs·switch_tab·new_tab·wait) + 저장 스크립트 1회
     lookup_bridge = bridge.scoped(list(LOOKUP_TOOLS))
