@@ -123,8 +123,13 @@ interface PendingConfirm {
 }
 
 // 작업 1건 실행: SDK 스트림을 읽어 UI 이벤트로 변환
+// 실행·세션 종료 뒤 페이지 대화상자를 계속 자동 처리하는 유예 시간
+export const AUTOMATION_GRACE_MS = 5_000
+
 export class AgentRunner {
   private abort: AbortController | null = null
+  // 마지막으로 실행·브릿지 세션이 끝난 시각(대화상자 자동 처리 유예 창의 기준)
+  private automationIdleSince = 0
   private pending = new Map<string, PendingConfirm>()
   // 실행 세대 번호. 중단된 이전 스트림이 뒤늦게 보내는 이벤트를 걸러낸다
   private generation = 0
@@ -281,9 +286,20 @@ export class AgentRunner {
     }
   }
 
-  /** 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다). 브릿지 세션이 열려 있는 동안도 포함한다 */
+  /**
+   * 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다). 브릿지 세션이 열려 있는 동안도 포함한다.
+   * 실행·세션이 끝난 직후 잠깐(AUTOMATION_GRACE_MS)도 실행 중으로 본다 — 스크립트가 버튼을 누르고
+   * 바로 돌아간 뒤 페이지가 띄우는 alert 가 "자동화 중 아님" 으로 판정돼 창이 쌓였다(실기: 하네스는
+   * 도구 호출마다 세션을 열고 닫아 그 틈이 잦다)
+   */
   isRunning(): boolean {
-    return this.abort !== null || this.session !== null
+    if (this.abort !== null || this.session !== null) return true
+    return Date.now() - this.automationIdleSince < AUTOMATION_GRACE_MS
+  }
+
+  /** 실행·세션이 끝난 시각을 적는다(유예 창의 기준점) */
+  private markAutomationIdle(): void {
+    this.automationIdleSince = Date.now()
   }
 
   /**
@@ -744,6 +760,7 @@ ${CODEX_NO_IMAGE_NOTE}`
       // 이미 stop() 이나 다음 run() 이 상태를 가져갔으면 건드리지 않는다
       if (gen === this.generation) {
         this.abort = null
+        this.markAutomationIdle()
         this.clearPending()
       }
       // 중단으로 끝났어도 그때까지의 대화는 남긴다. 저장 실패가 실행을 깨뜨리지는 않는다
@@ -912,7 +929,10 @@ ${CODEX_NO_IMAGE_NOTE}`
         return r.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n')
       },
       dispose: () => {
-        if (this.session === session) this.session = null
+        if (this.session === session) {
+          this.session = null
+          this.markAutomationIdle()
+        }
         releaseVaultHold?.()
         releaseVaultHold = null
       }
