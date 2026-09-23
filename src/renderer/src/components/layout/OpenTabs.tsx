@@ -2,6 +2,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Globe, X } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
+import { profileColor, profileTint } from '@renderer/lib/profile-color'
 import { useBrowserStore } from '@renderer/stores/browserStore'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { SiteFavicon } from '@renderer/components/vault/SiteFavicon'
@@ -26,6 +27,7 @@ export function OpenTabs(): React.JSX.Element {
       {tabs.map((tab) => {
         const label = tabRowLabel(tab, t('tab.untitled'))
         const host = tabFaviconHost(tab.url)
+        const color = profileColor(tab.profile)
         return (
           <li key={tab.id} className="group relative flex items-center">
             <button
@@ -46,6 +48,16 @@ export function OpenTabs(): React.JSX.Element {
                 <Globe className="h-3.5 w-3.5 shrink-0 text-[var(--text3)]" />
               )}
               <span className="min-w-0 flex-1 truncate">{label}</span>
+              {/* 계정별 세션(프로필) 탭 — 탭 바와 같은 색 배지 */}
+              {color && (
+                <span
+                  title={t('tab.profileOf', { profile: tab.profile })}
+                  className="shrink-0 rounded-[5px] px-1 py-px text-[10px]"
+                  style={{ color, backgroundColor: profileTint(tab.profile) ?? undefined }}
+                >
+                  {tab.profile}
+                </span>
+              )}
               {/* 팝업 창(결제창·주소 검색창)은 탭이 아니라는 것을 배지로 구분해 준다 */}
               {tab.kind === 'popup' && (
                 <span className="shrink-0 rounded-[5px] bg-black/5 px-1 py-px text-[10px] text-[var(--text3)]">

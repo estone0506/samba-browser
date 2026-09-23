@@ -272,7 +272,8 @@
     "openTabs": "Open tabs",
     "empty": "No open tabs",
     "untitled": "Untitled",
-    "popup": "Popup"
+    "popup": "Popup",
+    "profileOf": "Account profile: {{profile}} (this tab has its own login session)"
   },
   "newtab": {
     "title": "New Tab",

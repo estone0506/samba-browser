@@ -272,7 +272,8 @@
     "openTabs": "열린 탭",
     "empty": "열린 탭이 없습니다",
     "untitled": "제목 없음",
-    "popup": "팝업"
+    "popup": "팝업",
+    "profileOf": "계정 프로필: {{profile}} (이 탭의 로그인 세션은 이 계정 전용)"
   },
   "newtab": {
     "title": "새 탭",
