@@ -1,6 +1,6 @@
 # 구매 에이전트 — 패션플러스
 
-공통 규칙은 [rules/buyer_default.md](buyer_default.md) 를 그대로 따른다. 여기에는 이 소싱처만의
+공통 규칙([buyer_default.md](buyer_default.md))을 잇는다. 여기에는 이 소싱처만의
 차이만 적는다.
 
 ## 이 소싱처만의 차이

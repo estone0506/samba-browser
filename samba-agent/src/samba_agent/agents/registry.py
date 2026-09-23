@@ -182,7 +182,17 @@ class Registry:
         return fields.get(key) == want
 
     def rules_text(self, spec: AgentSpec) -> str:
-        return (self._root / spec.rules).read_text(encoding='utf-8')
+        """에이전트에 쥐여 줄 규칙 본문.
+
+        소싱처별 구매 규칙은 공통 규칙을 '잇는다' — 사이트 특이점만 적어 두므로 공통 규칙을
+        앞에 붙여서 준다(파일만 넘기면 LLM 은 공통 규칙을 보지 못한다).
+        """
+        text = (self._root / spec.rules).read_text(encoding='utf-8')
+        default = self._root / DEFAULT_BUYER_RULES
+        if spec.kind == 'buyer' and spec.rules != DEFAULT_BUYER_RULES and default.exists():
+            sep = '\n\n---\n\n'
+            return default.read_text(encoding='utf-8').rstrip() + sep + text
+        return text
 
     def names(self) -> list[str]:
         return [s.name for s in self._specs]
