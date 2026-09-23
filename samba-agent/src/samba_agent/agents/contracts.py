@@ -26,6 +26,9 @@ class OrderRef(BaseModel):
     product_url: str | None = None
     # 소싱처 로그인 계정(아이디). 삼바웨이브 '주문계정'(예: "ABCmart · 사무(buyer01)")의 괄호 안 값
     account: str | None = None
+    # 주문 종류 — 까대기는 사무실로 받고, 선물하기는 배송지 입력 흐름이 다르다.
+    # 배송지 자체는 여기 담지 않는다(개인정보) — 실행 순간에만 받아 쓴다
+    order_type: Literal['direct', 'kkadaegi', 'gift'] = 'direct'
 
 
 class Evidence(BaseModel):

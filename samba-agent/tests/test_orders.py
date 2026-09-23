@@ -114,6 +114,7 @@ def test_결과에_개인정보가_있어도_OrderRef_에는_없다():
         'option',
         'product_url',
         'account',
+        'order_type',
     }
     assert '홍길동' not in str(ref)
 
@@ -244,3 +245,92 @@ def test_괄호가_없는_주문계정은_그대로_쓴다():
         )
     )
     assert lookup_order(client(), '1001', {}).account == 'buyer06'
+
+
+# ---- 삼바웨이브 내부 API 경로(Task C) ----
+
+WAVE_BASE = 'https://wave.test'
+WAVE_API = f'{WAVE_BASE}/api/v1/internal/harness'
+WAVE_ORDER = {
+    'id': 'uuid-1',
+    'order_number': '1001',
+    'source_site': 'ABCmart',
+    'source_url': 'https://abcmart.a-rt.com/product?prdtNo=123',
+    'product_name': '나이키 에어포스',
+    'product_option': '옵션:250',
+    'quantity': 1,
+    'sale_price': 129000,
+    'seller': '포이즌',
+    'sourcing_account_username': 'buyer01',
+    'status': 'pending',
+}
+
+
+def wave_client():
+    from samba_agent.wave.client import WaveClient
+
+    return WaveClient(WAVE_BASE, 'test-token', 'tenant-1')
+
+
+@respx.mock
+def test_api_조회는_주문을_OrderRef_로_바꾼다():
+    from samba_agent.queue.orders import lookup_order_api
+
+    respx.get(f'{WAVE_API}/orders/1001').mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                **WAVE_ORDER,
+                'order_type': 'kkadaegi',
+                'shipping': {'name': '홍길동', 'phone': '010-1234-5678', 'address': '서울시'},
+            },
+        )
+    )
+    ref = lookup_order_api(wave_client(), '1001')
+    assert (ref.source, ref.option, ref.order_type) == ('ABCmart', '250', 'kkadaegi')
+    # 상세 응답의 배송지(개인정보)는 OrderRef 로 옮기지 않는다
+    assert '홍길동' not in str(ref)
+
+
+@respx.mock
+def test_api_조회는_한글_소싱처도_삼바웨이브_id_로_맞춘다():
+    from samba_agent.queue.orders import lookup_order_api
+
+    respx.get(f'{WAVE_API}/orders/1001').mock(
+        return_value=httpx.Response(200, json={**WAVE_ORDER, 'source_site': '무신사'})
+    )
+    assert lookup_order_api(wave_client(), '1001').source == 'MUSINSA'
+
+
+@respx.mock
+def test_api_가_있으면_그쪽을_먼저_본다():
+    from samba_agent.queue.orders import parse_order_fn
+
+    respx.get(f'{WAVE_API}/orders/1001').mock(return_value=httpx.Response(200, json=WAVE_ORDER))
+    parse = parse_order_fn(wave_client(), client())
+    assert parse('1001', {}).source == 'ABCmart'
+
+
+@respx.mock
+def test_api_가_주문을_모르면_앱_스크립트로_넘어간다():
+    from samba_agent.queue.orders import parse_order_fn
+
+    respx.get(f'{WAVE_API}/orders/1001').mock(
+        return_value=httpx.Response(404, json={'detail': '없음'})
+    )
+    respx.post(f'{URL}/tool/run_script').mock(
+        return_value=found({'source': '무신사', 'seller': '포이즌', 'sku': 'SKU1', 'qty': 1})
+    )
+    parse = parse_order_fn(wave_client(), client())
+    assert parse('1001', {}).source == 'MUSINSA'
+
+
+def test_api_가_없으면_앱_스크립트만_쓴다():
+    from samba_agent.queue.orders import parse_order_fn
+
+    with respx.mock:
+        respx.post(f'{URL}/tool/run_script').mock(
+            return_value=found({'source': 'ABCmart', 'seller': '포이즌', 'sku': 'S1', 'qty': 1})
+        )
+        parse = parse_order_fn(None, client())
+        assert parse('1001', {}).source == 'ABCmart'
