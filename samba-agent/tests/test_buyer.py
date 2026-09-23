@@ -1044,3 +1044,33 @@ def test_matching_options_품절임박은_품절이_아니고_토큰_하나로�
     assert matching_options(opts, '카키 080(M) NP6KP12C') == []
     # 한 글자 토큰(M·L)만으로는 고르지 않는다
     assert matching_options(['S 재고있음', 'M 재고있음'], '레드 M') == []
+
+
+def test_cheapest_quotes_결제_가능한_수단만_싼_순으로():
+    from samba_agent.agents.buyer import cheapest_quotes, parse_account_payments, quote_provider
+
+    quotes = [
+        {'method': '무신사머니', 'card': None, 'cost': 29000},
+        {'method': '신용카드', 'card': '현대카드', 'cost': 27500},
+        {'method': '토스페이', 'card': None, 'cost': 28000},
+        {'method': '휴대폰결제', 'card': None, 'cost': 26000},
+        {'method': '카카오페이', 'card': None, 'cost': 0},
+    ]
+    # 거르지 않으면 금액순(0 원은 뺀다)
+    assert [q['cost'] for q in cheapest_quotes(quotes, None)] == [26000, 27500, 28000, 29000]
+    # 키마스터에 무신사머니(site)·토스만 있으면 그 둘만, 휴대폰결제는 제공자를 몰라 뺀다
+    got = cheapest_quotes(quotes, None, {'site', 'toss'})
+    assert [(q['method'], q['cost']) for q in got] == [('토스페이', 28000), ('무신사머니', 29000)]
+    # 카드 항목이 있으면 신용카드도 후보
+    assert cheapest_quotes(quotes, None, {'card'})[0]['card'] == '현대카드'
+    # 요청자가 카드사를 지정하면 그 줄만
+    assert cheapest_quotes(quotes, '현대', {'card', 'site'}) == [
+        {'method': '신용카드', 'card': '현대카드', 'cost': 27500.0}
+    ]
+    assert quote_provider('무신사페이') == 'musinsapay'
+    assert quote_provider('신용/체크카드', '롯데카드') == 'card'
+    assert quote_provider('휴대폰결제') is None
+    raw = '[{"label":"buyer05","types":["login","password","card"],"payments":["site","toss"]}]'
+    assert parse_account_payments(raw, 'buyer05') == {'site', 'toss', 'card'}
+    assert parse_account_payments(raw, 'other') is None
+    assert parse_account_payments('vault locked', 'buyer05') is None

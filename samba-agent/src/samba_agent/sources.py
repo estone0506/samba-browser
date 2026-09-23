@@ -41,6 +41,9 @@ class Source(BaseModel):
     shipping_confirm: bool = False
     # False 면 계정 비교(여러 계정으로 견적)를 하지 않는다 — 계정을 연달아 바꿔 로그인하면 차단하는 사이트(실기: SSG)
     compare_accounts: bool = True
+    # True 면 주문서에서 결제수단(카드사 포함)마다 결제예정금액을 읽는 `<key>_payment_quotes` 로 견적을 내고
+    # 계정×결제수단 가운데 가장 싼 조합으로 산다(사용자 지시 2026-09-23)
+    payment_quotes: bool = False
     # 이 소싱처의 주문은 항상 이 배송 종류로 본다(예: ABC마트는 전부 까대기 = 사무실 배송).
     # None 이면 주문(삼바웨이브 action_tag)이 정한 종류를 따른다
     order_type: Literal['direct', 'kkadaegi', 'gift'] | None = None
@@ -56,6 +59,10 @@ class Source(BaseModel):
     @property
     def confirm_shipping_script(self) -> str:
         return f'{self.key}_confirm_shipping'
+
+    @property
+    def payment_quotes_script(self) -> str:
+        return f'{self.key}_payment_quotes'
 
     @property
     def set_shipping_script(self) -> str:

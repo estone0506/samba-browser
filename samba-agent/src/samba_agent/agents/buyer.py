@@ -102,6 +102,88 @@ def shipping_matches(expected: dict[str, object], applied: dict[str, object]) ->
     return re.findall(r'\d+', a) == re.findall(r'\d+', b) and a[-6:] in b
 
 
+# 결제수단 이름 → 키마스터 결제 제공자(src/shared/vault.ts PaymentProvider). 앞에서부터 먼저 맞는 것
+QUOTE_PROVIDER_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ('musinsapay', ('무신사페이',)),
+    ('toss', ('토스', 'toss')),
+    ('kakao', ('카카오', 'kakao')),
+    ('naver', ('네이버', 'naver')),
+    ('payco', ('페이코', 'payco')),
+    ('samsung', ('삼성페이', 'samsung')),
+    ('apple', ('애플', 'apple')),
+    # 사이트 자체 결제(웹에서 끝나는 결제) — 무신사머니·SSG PAY·L.pay·스마일페이 등
+    ('site', ('머니', 'ssg pay', 'ssgpay', 'l.pay', 'lpay', '엘페이', '스마일', 'smile', '포인트')),
+    # 카드 직접 결제 — 키마스터에 카드(card) 항목이 있어야 한다
+    ('card', ('카드', 'card')),
+)
+
+
+def quote_provider(method: str, card: str | None = None) -> str | None:
+    """견적 한 줄의 결제수단(카드사 포함)이 어느 결제 제공자인지. 모르면 None(결제 불가로 본다)."""
+    text = f'{method} {card or ""}'.lower()
+    for provider, keywords in QUOTE_PROVIDER_KEYWORDS:
+        if any(k in text for k in keywords):
+            return provider
+    return None
+
+
+def parse_account_payments(raw: str, label: str) -> set[str] | None:
+    """앱 list_accounts 결과에서 그 계정의 결제 가능 제공자 집합. 계정을 못 찾거나 형식이 아니면 None.
+
+    payments(결제 비밀번호 항목의 제공자)에 더해 types 에 'card' 가 있으면 카드 직접 결제('card')도 된다.
+    """
+    body, _ = split_page_dialogs(raw)
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return None
+    items: object = parsed.get('accounts') if isinstance(parsed, dict) else parsed
+    if not isinstance(items, list):
+        return None
+    for item in items:
+        if not isinstance(item, dict) or str(item.get('label') or '').strip() != label:
+            continue
+        payments = item.get('payments')
+        out = {str(x) for x in payments} if isinstance(payments, list) else set()
+        types = item.get('types')
+        if isinstance(types, list) and 'card' in types:
+            out.add('card')
+        return out
+    return None
+
+
+def cheapest_quotes(
+    raw: object, wanted_card: str | None, payable: set[str] | None = None
+) -> list[dict[str, object]]:
+    """결제수단 견적 목록을 싼 순으로 정리한다. 금액이 없거나 0 이하인 줄은 뺀다.
+
+    payable 이 주어지면 그 제공자로 낼 수 있는 줄만 남긴다(키마스터에 결제 비밀번호·카드가 있는 수단).
+    요청자가 카드(수단 이름 또는 카드사 이름 일부)를 지정했으면 그것이 들어간 줄만 남긴다.
+    같은 금액이면 목록 앞(사이트가 기본으로 보여 준 순서)이 먼저다.
+    """
+    if not isinstance(raw, list):
+        return []
+    rows: list[dict[str, object]] = []
+    for q in raw:
+        if not isinstance(q, dict):
+            continue
+        cost = _as_float(q.get('cost'))
+        method = str(q.get('method') or '').strip()
+        if cost <= 0 or not method:
+            continue
+        card = str(q.get('card') or '').strip() or None
+        if payable is not None:
+            provider = quote_provider(method, card)
+            if provider is None or provider not in payable:
+                continue
+        if wanted_card:
+            w = wanted_card.strip()
+            if w not in method and (card is None or w not in card):
+                continue
+        rows.append({'method': method, 'card': card, 'cost': cost})
+    return sorted(rows, key=lambda r: float(r['cost']))
+
+
 def matching_options(options: list[str], wanted: str | None) -> list[str]:
     """주문 옵션과 맞는 후보들. 주문 옵션이 없으면 전부 후보다.
 
@@ -388,12 +470,68 @@ class BuyerAgent(AgentBase):
         return labels, locked
 
     def _snapshot(self, a: Assignment, account: str) -> dict[str, object]:
-        """그 계정의 탭 프로필에서 상품 스냅샷(주문서까지)을 만든다."""
+        """그 계정의 탭 프로필에서 상품 스냅샷(주문서까지)을 만든다.
+
+        소싱처가 payment_quotes 면 주문서에서 결제수단별 금액까지 읽어 가장 싼 수단을 스냅샷에 싣는다
+        (cost 를 그 금액으로 바꾸고 pay_method·pay_card 를 붙인다) — 계정 비교도 이 금액으로 한다.
+        """
         self.step(f'{self.spec.name}: 상품 확인({account})')
-        return self.json_tool(
+        snap = self.json_tool(
             'run_script',
             name=source_of(self.spec.name).snapshot_script,
             args=snapshot_args(self.spec.name, a.order, account=account),
+        )
+        if source_of(self.spec.name).payment_quotes and _as_float(snap.get('cost')) > 0:
+            self._apply_payment_quotes(a, account, snap)
+        return snap
+
+    def _payable_providers(self, account: str) -> set[str] | None:
+        """이 계정으로 실제 낼 수 있는 결제 제공자(키마스터에 결제 비밀번호·카드가 있는 것).
+
+        앱 list_accounts 의 payments(결제 제공자)·types('card') 로 판단한다. 목록을 못 읽으면 None —
+        그때는 걸러내지 않고 스냅샷 원가로 간다(견적을 잘못 거르는 것보다 안 거르는 게 안전).
+        """
+        home = self._home()
+        host = source_of(self.spec.name).login_host or urlparse(home).hostname or ''
+        try:
+            raw = self.tool('list_accounts', host=host)
+        except AgentFailure:
+            return None
+        return parse_account_payments(raw, account)
+
+    def _apply_payment_quotes(self, a: Assignment, account: str, snap: dict[str, object]) -> None:
+        """주문서의 결제수단별 견적(`<key>_payment_quotes`)에서 결제 가능한 가장 싼 조합을 스냅샷에 반영한다.
+
+        요청자가 카드를 지정했으면 그 수단·카드사만 후보다. 견적을 못 읽으면(스크립트 실패·빈 목록)
+        스냅샷 원가 그대로 간다 — 견적은 더 싸게 사기 위한 것이지 구매 조건이 아니다.
+        """
+        self.step(f'{self.spec.name}: 결제수단 견적({account})')
+        try:
+            out = self.json_tool(
+                'run_script',
+                name=source_of(self.spec.name).payment_quotes_script,
+                args=json.dumps({'profile': account}, ensure_ascii=False),
+            )
+        except AgentFailure as e:
+            self.note('결제수단 견적', mask_text(f'못 읽음({e.reason[:80]}) — 스냅샷 원가로 진행'))
+            return
+        payable = self._payable_providers(account)
+        if payable is None:
+            self.note('결제수단 견적', '키마스터 결제 항목을 못 읽어 결제 가능 여부를 거르지 않는다')
+        quotes = cheapest_quotes(out.get('quotes'), a.options.get('card'), payable)
+        if not quotes:
+            self.note('결제수단 견적', '결제 가능한 후보 없음 — 스냅샷 원가로 진행')
+            return
+        best = quotes[0]
+        snap['cost'] = best['cost']
+        snap['pay_method'] = best['method']
+        snap['pay_card'] = best['card']
+        label = f"{best['method']}/{best['card']}" if best['card'] else best['method']
+        payable_note = '' if payable is None else f', 결제 가능 {sorted(payable)}'
+        self.note(
+            '결제수단 견적',
+            f"{label} {best['cost']:,.0f}원 — 최저 (후보 {len(quotes)}건, 기본 "
+            f"{_as_float(out.get('base_cost')):,.0f}원{payable_note})",
         )
 
     def _quote(self, a: Assignment, account: str) -> dict[str, object] | None:
@@ -539,11 +677,18 @@ class BuyerAgent(AgentBase):
         # 결제수단·카드 — 지시받은 카드가 목록에 없으면 여기서 거절한다
         methods = [str(m) for m in (snap.get('methods') or [])]
         card = a.options.get('card')
-        if card and card not in methods:
+        quoted = snap.get('pay_method')
+        if quoted:
+            # 결제수단 견적이 고른 조합 — 카드사가 있으면 카드사 이름을 결제 에이전트의 card 로 넘긴다
+            card = str(snap.get('pay_card') or quoted)
+            self.note('수단 선택', f'{card} — 결제수단 견적 최저')
+        elif card and card not in methods:
             raise AgentFailure(
                 'fail', f'지시받은 카드가 결제수단에 없다: {card}', FailReason.CARD_MISSING
             )
-        if not card:
+        if quoted:
+            pass
+        elif not card:
             chosen = self.decide_once(
                 f'{a.rules}\n\n결제수단 후보 {methods} 중 원가 규칙에 가장 맞는 것을 고르라.',
                 Decision,
