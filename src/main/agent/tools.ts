@@ -2,7 +2,7 @@ import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import type { TabManager, Tab } from '../browser/tab-manager'
 import { pageBridge } from '../browser/page-bridge'
-import type { LoginFieldsResult } from '../browser/page-bridge'
+import type { KeypadLayout, LoginFieldsResult } from '../browser/page-bridge'
 import { serializeSnapshot } from '../../shared/snapshot'
 import type { PageOverlay, PageSnapshot } from '../../shared/snapshot'
 import { diffLines } from '../../shared/snapshot-diff'
@@ -34,7 +34,7 @@ import {
 } from '../vault/access-gate'
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
 import { formatDialogNote } from '../browser/dialogs'
-import { createOcrTool } from './tools-ocr'
+import { createOcrTool, ocrDigitInRegion } from './tools-ocr'
 import {
   createPayTool,
   createPhoneTools,
@@ -858,7 +858,12 @@ ${raw}`
     // 5회 오답으로 결제 수단이 잠긴다(실기: 3/5 까지 감). 두 번째부터는 앱이 거절하고 사람에게 맡긴다
     const attemptKey = currentHost(tab)
     if (keypadAttempts.has(attemptKey)) return KEYPAD_ALREADY_TRIED
-    const layout = await pageBridge.keypadLayout(tab).catch(() => null)
+    // 글자·이름으로 읽히는 키패드가 먼저다. 못 읽으면(네이버페이처럼 숫자를 이미지로 그린 키패드)
+    // 빈 버튼들을 OCR 로 읽어 배치를 만든다 — 둘 다 안 되면 사람에게 넘긴다
+    const labelled = await pageBridge.keypadLayout(tab).catch(() => null)
+    const fromOcr = labelled === null
+    const layout = labelled ?? (await ocrKeypadLayout(tab).catch(() => null))
+    if (fromOcr) ctx.onStep('키패드 배치(OCR)', layout !== null)
     if (!layout) return await keypadHandoff(tab)
     // 시험 입력은 끝까지 누르지 않으므로 1회 제한을 쓰지 않는다 — 진짜 입력 기회를 남겨 둔다
     if (dryRunDigits === undefined) keypadAttempts.add(attemptKey)
@@ -871,7 +876,9 @@ ${raw}`
       ...(ctx.jobId === undefined ? {} : { jobId: ctx.jobId }),
       layout,
       // 누를 때마다 숫자가 재배열되는 키패드가 있다 — 매 자리 직전에 배치를 다시 읽는다
-      relayout: () => pageBridge.keypadLayout(tab).catch(() => null),
+      relayout: fromOcr
+        ? () => ocrKeypadLayout(tab).catch(() => null)
+        : () => pageBridge.keypadLayout(tab).catch(() => null),
       // 일반 click 은 변화가 안 보이면 Enter·좌표로 다시 눌러 같은 숫자가 두세 번 들어간다 —
       // 키패드는 폴백 없는 단발 누름만 쓴다
       click: (id) => pageBridge.pressOnce(tab, id),
@@ -881,7 +888,8 @@ ${raw}`
         const point = await pageBridge.rectOf(tab, id).catch(() => null)
         return point ? pageBridge.clickAt(tab, point.x, point.y) : false
       },
-      filled: () => pageBridge.keypadFilled(tab, frameIndex),
+      // OCR 배치는 입력칸이 없는 화면(점 6개)이라 자리수를 셀 수 없다 — 검증 없이 한 번씩만 누른다
+      filled: fromOcr ? async () => null : () => pageBridge.keypadFilled(tab, frameIndex),
       onStep: ctx.onStep,
       ...(dryRunDigits === undefined
         ? {}
@@ -903,6 +911,28 @@ ${raw}`
     }
     // 금고가 잠겼거나, 배치를 못 읽었거나, 눌러도 자리수가 늘지 않았다 — 사람에게 넘긴다
     return await keypadHandoff(tab)
+  }
+
+  /**
+   * 글자 없는 보안 키패드(네이버페이 결제 비밀번호 창)의 배치를 OCR 로 만든다.
+   * 빈 버튼 칸마다 화면을 잘라 한 자리 숫자로 읽고, 0~9 가 각각 정확히 한 번씩 읽혔을 때만
+   * 배치를 돌려준다 — 하나라도 빠지거나 겹치면 null(잘못 누르면 결제 수단이 잠긴다).
+   * 배치(숫자 위치)는 로그·결과·모델 어디에도 내보내지 않는다. 자리수 검증 수단이 없어 filled 는 null
+   */
+  const ocrKeypadLayout = async (tab: Tab): Promise<KeypadLayout | null> => {
+    const cells = await pageBridge.keypadUnlabeled(tab).catch(() => null)
+    if (!cells) return null
+    const digits: Record<string, number> = {}
+    let count = 0
+    for (const cell of cells) {
+      const digit = await ocrDigitInRegion(tab, cell).catch(() => null)
+      if (digit === null) continue
+      if (digits[digit] !== undefined) return null
+      digits[digit] = cell.id
+      count += 1
+    }
+    if (count !== 10) return null
+    return { digits, filled: null, frameIndex: 0 }
   }
 
   /**

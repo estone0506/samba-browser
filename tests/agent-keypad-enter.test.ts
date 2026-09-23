@@ -23,6 +23,7 @@ const { pageBridge } = vi.hoisted(() => ({
     keypadSignals: vi.fn(),
     keypadSignalsAll: undefined as unknown,
     keypadLayout: vi.fn(),
+    keypadUnlabeled: vi.fn(),
     keypadFilled: vi.fn(),
     snapshot: vi.fn(async () => ({ url: '', title: '', text: '', elements: [], total: 0 })),
     textOf: vi.fn(async () => ''),
@@ -37,6 +38,15 @@ const { pageBridge } = vi.hoisted(() => ({
   }
 }))
 vi.mock('../src/main/browser/page-bridge', () => ({ pageBridge }))
+
+// 글자 없는 키패드(네이버페이)의 칸별 OCR. 실제 캡처·모델 대신 칸 좌표로 숫자를 정한다
+const { ocrDigitInRegion } = vi.hoisted(() => ({
+  ocrDigitInRegion: vi.fn<(tab: unknown, rect: { x: number }) => Promise<string | null>>()
+}))
+vi.mock('../src/main/agent/tools-ocr', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/main/agent/tools-ocr')>()),
+  ocrDigitInRegion
+}))
 
 const { createSambaTools, KEYPAD_DRY_RUN, KEYPAD_ENTERED_NEXT, KEYPAD_HANDOFF_MESSAGE } =
   await import('../src/main/agent/tools')
@@ -130,7 +140,9 @@ function build(
     listAccounts,
     getSecretForFill: vi.fn(),
     getPaymentSecretForFill,
-    ensureUnlockedByDevice: vi.fn(async () => false)
+    ensureUnlockedByDevice: vi.fn(async () => false),
+    // 네이버페이 창 계정 확인 — 기대 아이디가 없으면 확인을 건너뛴다
+    paymentAccountUsername: vi.fn(() => null)
   } as unknown as VaultService
   const tabUrl = opts.tabUrl ?? SHOP
   const tab = {
@@ -211,6 +223,10 @@ beforeEach(() => {
   pageBridge.keypadSignals.mockResolvedValue(keypadSignals(SHOP))
   pageBridge.keypadLayout.mockReset()
   pageBridge.keypadLayout.mockResolvedValue(layoutOf())
+  pageBridge.keypadUnlabeled.mockReset()
+  pageBridge.keypadUnlabeled.mockResolvedValue(null)
+  ocrDigitInRegion.mockReset()
+  ocrDigitInRegion.mockResolvedValue(null)
   pageBridge.keypadFilled.mockReset()
   // 누를 때마다 자리수가 하나씩 늘어난다
   let n = 0
@@ -416,5 +432,119 @@ describe('fill_secret — 시험 입력(dry-run)', () => {
     const b = build()
     expect(await fill(b, { dryRunDigits: 1 })).toContain('DRY_RUN')
     expect(await fill(b)).toBe(KEYPAD_ENTERED_NEXT)
+  })
+})
+
+describe('fill_secret — 글자 없는 키패드(네이버페이)는 OCR 로 배치를 만든다', () => {
+  const NAVER = 'https://pay.naver.com/authentication/pw/check?token=abc'
+  const SHOP_NAVER = 'https://smartstore.naver.com/shop/order'
+  const naverAccount = account({ host: 'naver.com' })
+  const popupTargets = [
+    { id: 'shop-1', kind: 'tab' as const, url: SHOP_NAVER, title: '주문서', active: true },
+    {
+      id: 'pay-1',
+      kind: 'popup' as const,
+      url: NAVER,
+      title: '네이버페이',
+      openerId: 'shop-1',
+      active: false
+    }
+  ]
+  // 칸 i 의 id 는 200+i, x 는 i*50. 화면 숫자는 (i+3)%10 으로 섞여 있다
+  const cells = Array.from({ length: 10 }, (_, i) => ({
+    id: 200 + i,
+    x: i * 50,
+    y: 0,
+    width: 50,
+    height: 50
+  }))
+  const digitOfCell = (rect: { x: number }): string => String((rect.x / 50 + 3) % 10)
+  const idOfDigit = (d: string): number => 200 + ((Number(d) + 7) % 10)
+
+  beforeEach(() => {
+    pageBridge.keypadSignals.mockResolvedValue({
+      url: NAVER,
+      text: '비밀번호는 6자리 입니다',
+      digitButtons: 0,
+      pinField: false
+    })
+    pageBridge.keypadLayout.mockResolvedValue(null)
+    pageBridge.keypadUnlabeled.mockResolvedValue(cells)
+    // 입력칸이 없는 화면이라 자리수를 셀 수 없다
+    pageBridge.keypadFilled.mockResolvedValue(null)
+  })
+
+  it('칸마다 읽은 숫자로 배치를 만들어 순서대로 한 번씩 누른다(검증 없음)', async () => {
+    ocrDigitInRegion.mockImplementation(async (_tab, rect) => digitOfCell(rect))
+    const b = build({ tabUrl: NAVER, accounts: [naverAccount], openerUrl: SHOP_NAVER })
+    const r = await fill(b)
+
+    expect(r).toBe(KEYPAD_ENTERED_NEXT)
+    expect(pageBridge.pressOnce.mock.calls.map((c) => c[1])).toEqual(
+      SECRET.split('').map(idOfDigit)
+    )
+    expect(pageBridge.keypadFilled).not.toHaveBeenCalled()
+    expect(b.handoff).not.toHaveBeenCalled()
+    expect(b.steps).toContainEqual({ label: '키패드 배치(OCR)', ok: true })
+    // 값도 배치도 결과·라벨에 없다
+    expect(SECRET_RE.test(r)).toBe(false)
+    expect(b.steps.some((x) => SECRET_RE.test(x.label) || /\b2\d\d\b/.test(x.label))).toBe(false)
+  })
+
+  it('시험 입력은 지정한 자리수만 누르고 결제창(팝업)을 닫는다', async () => {
+    ocrDigitInRegion.mockImplementation(async (_tab, rect) => digitOfCell(rect))
+    const b = build({ tabUrl: NAVER, accounts: [naverAccount], targets: popupTargets })
+    const r = await fill(b, { dryRunDigits: 3 })
+
+    expect(r).toBe(KEYPAD_DRY_RUN(3, 'popup closed'))
+    expect(pageBridge.pressOnce.mock.calls.map((c) => c[1])).toEqual(
+      SECRET.slice(0, 3).split('').map(idOfDigit)
+    )
+    expect(b.closeTarget).toHaveBeenCalledWith('pay-1')
+  })
+
+  it('0~9 중 하나라도 못 읽으면(9개만 읽힘) 누르지 않고 사람에게 넘긴다', async () => {
+    ocrDigitInRegion.mockImplementation(async (_tab, rect) =>
+      rect.x === 0 ? null : digitOfCell(rect)
+    )
+    const b = build({ tabUrl: NAVER, accounts: [naverAccount], openerUrl: SHOP_NAVER })
+    expect(await fill(b)).toContain(KEYPAD_HANDOFF_MESSAGE)
+    expect(pageBridge.pressOnce).not.toHaveBeenCalled()
+    expect(b.handoff).toHaveBeenCalledTimes(1)
+    expect(b.steps).toContainEqual({ label: '키패드 배치(OCR)', ok: false })
+  })
+
+  it('같은 숫자가 두 칸에서 읽히면 배치를 버리고 넘긴다', async () => {
+    ocrDigitInRegion.mockImplementation(async (_tab, rect) =>
+      rect.x === 0 ? '4' : digitOfCell(rect)
+    )
+    const b = build({ tabUrl: NAVER, accounts: [naverAccount], openerUrl: SHOP_NAVER })
+    expect(await fill(b)).toContain(KEYPAD_HANDOFF_MESSAGE)
+    expect(pageBridge.pressOnce).not.toHaveBeenCalled()
+  })
+
+  it('OCR 이 꺼져 있거나 모델이 없으면(null) 넘긴다', async () => {
+    const b = build({ tabUrl: NAVER, accounts: [naverAccount], openerUrl: SHOP_NAVER })
+    expect(await fill(b)).toContain(KEYPAD_HANDOFF_MESSAGE)
+    expect(ocrDigitInRegion).toHaveBeenCalled()
+    expect(pageBridge.pressOnce).not.toHaveBeenCalled()
+    expect(b.handoff).toHaveBeenCalledTimes(1)
+  })
+
+  it('글자 있는 키패드는 예전처럼 OCR 을 쓰지 않는다', async () => {
+    pageBridge.keypadLayout.mockResolvedValue(layoutOf())
+    pageBridge.keypadSignals.mockResolvedValue(keypadSignals(SHOP))
+    pageBridge.keypadFilled.mockReset()
+    let n = 0
+    pageBridge.keypadFilled.mockImplementation(async () => n)
+    pageBridge.pressOnce.mockImplementation(async () => {
+      n += 1
+      return 'ok'
+    })
+    const b = build()
+    expect(await fill(b)).toBe(KEYPAD_ENTERED_NEXT)
+    expect(pageBridge.keypadUnlabeled).not.toHaveBeenCalled()
+    expect(ocrDigitInRegion).not.toHaveBeenCalled()
+    expect(b.steps.some((x) => x.label === '키패드 배치(OCR)')).toBe(false)
   })
 })
