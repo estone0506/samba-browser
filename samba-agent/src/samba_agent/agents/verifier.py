@@ -2,10 +2,11 @@
 
 import json
 
-from samba_agent.agents.base import AgentBase, Decision, run_agent
+from samba_agent.agents.base import AgentBase, AgentFailure, Decision, run_agent
 from samba_agent.agents.contracts import AgentResult, Assignment
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_value
+from samba_agent.wave.client import WaveClient, WaveError, wave_fields
 
 SOURCE_DETAIL_SCRIPT = 'source_order_detail'
 SAMBA_READ_SCRIPT = 'samba_read_order'
@@ -13,6 +14,39 @@ SAMBA_READ_SCRIPT = 'samba_read_order'
 
 class VerifierAgent(AgentBase):
     """대조만 한다. 아무것도 바꾸지 않는다(등록부 tools 에 쓰기 도구가 없다)."""
+
+    # 삼바웨이브 내부 API 클라이언트. factory 가 꽂는다(없으면 앱 저장 스크립트로 읽는다)
+    _wave: 'WaveClient | None' = None
+
+    def set_wave(self, wave: 'WaveClient | None') -> None:
+        """삼바웨이브 클라이언트를 꽂는다. 배선은 factory 가 한다."""
+        self._wave = wave
+
+    def _read_samba(self, a: Assignment) -> tuple[dict[str, object], tuple[str, ...]]:
+        """SAMBA 쪽 값과 '대조할 수 없는 기대값 키'. API 가 있으면 API, 없으면 앱 스크립트.
+
+        내부 API 응답에는 아직 없는 필드(소싱주문번호·매입금액)가 있다 — 없는 값을 '같다' 로
+        치지 않고 확인 불가로 따로 모아 결과에 남긴다.
+        """
+        if self._wave is None:
+            self.step('verifier: SAMBA 행 읽기')
+            return (
+                self.json_tool(
+                    'run_script',
+                    name=SAMBA_READ_SCRIPT,
+                    args=json.dumps({'orderNo': a.order.order_no}, ensure_ascii=False),
+                ),
+                (),
+            )
+        self.step('verifier: 삼바웨이브 주문 읽기')
+        try:
+            order = self._wave.get_order(a.order.order_no)
+        except WaveError as e:
+            raise AgentFailure('fail', f'삼바웨이브 조회 실패: {e}', e.reason) from e
+        # 배송지(개인정보)는 쳐다보지 않는다 — 대조 대상 필드만 꺼내 쓴다
+        samba = wave_fields(order)
+        unverified = tuple(f for f in a.expected if f not in samba)
+        return samba, unverified
 
     def __call__(self, assignment: Assignment) -> AgentResult:
         return run_agent(lambda: self._verify(assignment), lambda: self.evidence)
@@ -35,17 +69,15 @@ class VerifierAgent(AgentBase):
                 {'orderNo': a.order.order_no, 'site': a.order.source}, ensure_ascii=False
             ),
         )
-        self.step('verifier: SAMBA 행 읽기')
-        samba = self.json_tool(
-            'run_script',
-            name=SAMBA_READ_SCRIPT,
-            args=json.dumps({'orderNo': a.order.order_no}, ensure_ascii=False),
-        )
-        # 대조 자체는 브릿지가 돌려준 날것 값으로 한다 — 마스킹은 밖으로 내보낼 때만 씌운다
+        samba, unverified = self._read_samba(a)
+        if unverified:
+            self.note('대조 불가', f'삼바웨이브에 없는 필드: {", ".join(unverified)}')
+        # 대조 자체는 날것 값으로 한다 — 마스킹은 밖으로 내보낼 때만 씌운다.
+        # 확인할 수 없는 필드는 '같다' 가 아니라 대조에서 빼고 따로 남긴다
         mismatches = [
             {'field': f, 'expected': v, 'source': source.get(f), 'samba': samba.get(f)}
             for f, v in a.expected.items()
-            if source.get(f) != v or samba.get(f) != v
+            if source.get(f) != v or (f not in unverified and samba.get(f) != v)
         ]
         # 여기서부터는 마스킹한 사본만 쓴다 — payload·reason·LLM 프롬프트 어디에도
         # 브릿지의 날것 값(고객 개인정보일 수 있다)이 그대로 나가지 않게 한다
@@ -62,9 +94,21 @@ class VerifierAgent(AgentBase):
                 payload={'mismatches': masked_mismatches},
                 evidence=tuple(self.evidence),
             )
+        if len(unverified) == len(a.expected):
+            # 소싱처 쪽만 맞고 SAMBA 쪽은 하나도 못 봤다 — '다 맞았다' 가 아니다
+            return AgentResult(
+                status='needs_human',
+                reason='삼바웨이브에서 대조할 수 있는 값이 없다 — 사람이 확인해야 한다',
+                fail_reason=FailReason.VERIFY_MISMATCH,
+                payload={'mismatches': [], 'unverified': list(unverified)},
+                evidence=tuple(self.evidence),
+            )
         return AgentResult(
             status='ok',
-            reason=f'{len(a.expected)}개 값이 소싱처·SAMBA·기대값에서 모두 같다',
-            payload={'mismatches': []},
+            reason=(
+                f'{len(a.expected) - len(unverified)}개 값이 소싱처·SAMBA·기대값에서 모두 같다'
+                + (f'(대조 불가 {len(unverified)}개)' if unverified else '')
+            ),
+            payload={'mismatches': [], 'unverified': list(unverified)},
             evidence=tuple(self.evidence),
         )

@@ -231,3 +231,85 @@ def test_계정은_인계값에서_받아_저장한다(reg):
     )
     assert out.status == 'ok'
     assert saved[0]['account'] == 'samba01@wave.co.kr'
+
+
+# ---- 삼바웨이브 내부 API 기입(Task C) ----
+
+WAVE_BASE = 'https://wave.test'
+WAVE_API = f'{WAVE_BASE}/api/v1/internal/harness'
+WAVE_ORDER = {'order_number': 'A1', 'source_site': 'MUSINSA', 'status': 'pending'}
+
+
+def wave_client():
+    from samba_agent.wave.client import WaveClient
+
+    return WaveClient(WAVE_BASE, 'test-token', 'tenant-1')
+
+
+def recorder_with_wave(reg) -> RecorderAgent:
+    a = agent(reg)
+    a.set_wave(wave_client())
+    return a
+
+
+@respx.mock
+def test_삼바웨이브가_있으면_앱_저장_대신_API_로_기입한다(reg):
+    put = respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
+    )
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(200, json=WAVE_ORDER))
+    script = respx.post(f'{URL}/tool/run_script')
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = recorder_with_wave(reg)(assignment(reg, dry_run=False))
+    assert out.status == 'ok'
+    assert out.payload['via'] == 'wave'
+    body = json.loads(put.calls[0].request.content)
+    assert body['sourcing_order_number'] == 'M-777'
+    assert body['cost'] == 89000
+    assert not script.called  # 앱 저장 스크립트는 부르지 않는다
+
+
+@respx.mock
+def test_dry_run_이면_삼바웨이브에도_기입하지_않는다(reg):
+    put = respx.put(f'{WAVE_API}/orders/A1/sourcing')
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = recorder_with_wave(reg)(assignment(reg, dry_run=True))
+    assert out.status == 'ok'
+    assert not put.called
+
+
+@respx.mock
+def test_이미_다른_소싱주문번호가_있으면_덮어쓰지_않고_사람에게_넘긴다(reg):
+    respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(409, json={'detail': '이미 다른 번호가 있습니다'})
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = recorder_with_wave(reg)(assignment(reg, dry_run=False))
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.DUPLICATE)
+
+
+@respx.mock
+def test_기입할_소싱주문번호가_없으면_사람에게_넘긴다(reg):
+    put = respx.put(f'{WAVE_API}/orders/A1/sourcing')
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = recorder_with_wave(reg)(
+        assignment(reg, dry_run=False, expected={'real_price': 89000, 'shipping_fee': 0})
+    )
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.UNKNOWN)
+    assert not put.called
+
+
+@respx.mock
+def test_되읽은_값이_다르면_재결제_없이_실패한다(reg):
+    respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
+    )
+    respx.get(f'{WAVE_API}/orders/A1').mock(
+        return_value=httpx.Response(
+            200, json={**WAVE_ORDER, 'sourcing_order_number': 'M-999', 'cost': 89000}
+        )
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = recorder_with_wave(reg)(assignment(reg, dry_run=False))
+    assert (out.status, out.fail_reason) == ('fail', FailReason.VERIFY_MISMATCH)
+    assert 'source_order_no' in out.reason
