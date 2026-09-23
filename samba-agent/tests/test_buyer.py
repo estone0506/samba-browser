@@ -1036,6 +1036,8 @@ def test_배송지_비교는_사이트_표기_차이를_허용한다():
 
 
 def test_matching_options_품절임박은_품절이_아니고_토큰_하나로도_맞춘다():
+    from samba_agent.agents.buyer import matching_options
+
     # 실기: 롯데온 — 주문 옵션 "카키 085(L) NP6KP12C", 사이즈 단계 후보에 재고 표기가 붙는다
     opts = ['[품절] 080(M) 35,100 품절', '085(L) 35,100 2개 남음 (품절임박)', '[품절] 090(XL) 35,100 품절']
     assert matching_options(opts, '카키 085(L) NP6KP12C') == ['085(L) 35,100 2개 남음 (품절임박)']
