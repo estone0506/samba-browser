@@ -11,7 +11,11 @@ Stage = Literal['buy', 'pay', 'record', 'verify', 'done']
 Outcome = Literal['done', 'failed', 'needs_human', 'cancelled']
 
 # 애초에 state/체크포인트/승인 요약에 담기면 안 되는 키 — 있으면 저장을 거부한다
-_SECRET_KEY_PATTERN = re.compile(r'password|secret|token|card_number|cvc|pin', re.IGNORECASE)
+# 단어 경계로 본다 — 'pin' 을 부분 문자열로 찾으면 'shipping_set' 이 걸려 정상 구매 결과가 거부됐다(실기)
+_SECRET_KEY_PATTERN = re.compile(
+    r'(^|[_\-.])(password|passwd|secret|token|card_number|cardno|cvc|cvv|pin)([_\-.]|$)',
+    re.IGNORECASE,
+)
 
 # 마스킹을 거치지 않는 키 — 우리 내부 판매 계정 식별자다. ops.masking 이 가리는 것은
 # 고객의 이름·전화·주소·이메일이고, 이 값은 그 대상이 아니다. 여기서 가려 버리면

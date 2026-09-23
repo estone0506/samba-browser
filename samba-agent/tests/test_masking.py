@@ -71,3 +71,14 @@ def test_내부_판매_계정은_state에서_가리지_않는다():
     assert out['account'] == 'samba01@wave.co.kr'
     assert '홍길동' not in str(out['memo'])
     assert '010-1234-5678' not in str(out['memo'])
+
+
+def test_비밀_키_검사는_단어_경계로_본다():
+    # 실기: 'pin' 부분 문자열이 'shipping_set' 에 걸려 정상 구매 결과가 통째로 거부됐다
+    import pytest
+
+    out = sanitize_payload({'shipping_set': True, 'pinned': 1, 'card': '현대'})
+    assert out['shipping_set'] is True
+    for key in ('pin', 'card_number', 'PASSWORD', 'api_token', 'toss.pin', 'cvc'):
+        with pytest.raises(ValueError):
+            sanitize_payload({key: 'x'})
