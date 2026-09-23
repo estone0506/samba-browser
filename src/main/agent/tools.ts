@@ -503,6 +503,10 @@ async function clickLoginLink(tab: Tab): Promise<boolean> {
  *   2) 현재 페이지의 로그인 링크를 눌러 이동 → 재탐지
  * 끝내 못 찾으면 마지막 탐지 결과(stage: 'none')를 그대로 돌려준다.
  */
+// 알려진 로그인 URL 로 옮긴 뒤 폼이 나타날 때까지 다시 보는 횟수·간격
+const LOGIN_FIELDS_POLL_MAX = 6
+const LOGIN_FIELDS_POLL_MS = 700
+
 export async function findLoginFieldsWithFallback(
   tabs: TabManager,
   tab: Tab,
@@ -519,8 +523,12 @@ export async function findLoginFieldsWithFallback(
     try {
       await tabs.navigate(tab.id, known)
       await pageBridge.waitForLoad(tab)
-      fields = await pageBridge.findLoginFields(tab)
-      if (fields.stage !== 'none') return fields
+      // 로그인 폼을 스크립트로 늦게 그리는 사이트(실기: SSG member.ssg.com)는 적재 직후엔 칸이 없다 — 잠깐씩 다시 본다
+      for (let attempt = 0; attempt < LOGIN_FIELDS_POLL_MAX; attempt += 1) {
+        fields = await pageBridge.findLoginFields(tab)
+        if (fields.stage !== 'none') return fields
+        await new Promise((resolve) => setTimeout(resolve, LOGIN_FIELDS_POLL_MS))
+      }
     } catch {
       // 이동 실패는 다음 단계(로그인 링크 클릭)로 넘어간다
     }
