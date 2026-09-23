@@ -704,8 +704,10 @@ export class TabManager {
         action: 'allow',
         overrideBrowserWindowOptions: {
           autoHideMenuBar: true,
-          // 팝업 창의 iframe 에도 preload 가 돌게 — 나머지 webPreferences 는 여는 창에서 물려받는다
-          webPreferences: { nodeIntegrationInSubFrames: true }
+          // 팝업 창의 iframe 에도 preload 가 돌게. webPreferences 를 덮어쓰면 세션(partition)이 여는 탭에서
+          // 물려지지 않아 팝업이 기본 프로필로 열렸다(실기: buyer01 탭의 SSG 배송지·로그인 팝업이 로그아웃 상태) —
+          // 여는 탭의 파티션을 그대로 지정한다
+          webPreferences: { nodeIntegrationInSubFrames: true, partition }
         }
       }
     })
@@ -781,8 +783,11 @@ export class TabManager {
         action: 'allow',
         overrideBrowserWindowOptions: {
           autoHideMenuBar: true,
-          // 팝업 창의 iframe 에도 preload 가 돌게 — 나머지 webPreferences 는 여는 창에서 물려받는다
-          webPreferences: { nodeIntegrationInSubFrames: true }
+          // 여는 창과 같은 세션(partition)을 명시한다 — 덮어쓴 webPreferences 는 세션을 물려받지 않는다
+          webPreferences: {
+            nodeIntegrationInSubFrames: true,
+            partition: `${this.partitionPrefix}${profile}`
+          }
         }
       }
     })
