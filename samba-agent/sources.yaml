@@ -60,7 +60,7 @@ sources:
     label: 패션플러스
     home: https://www.fashionplus.co.kr/
     login_host: fashionplus.co.kr
-    status: scripts_pending
+    status: active
   # 아래는 아직 스크립트가 없다 — 등록은 하되 구매를 시작하면 '스크립트 미작성' 으로 사람에게 넘긴다.
   # home 을 확인하지 못한 곳은 비워 둔다(스크립트를 쓸 때 실제 주소로 채운다)
   - id: Nike
