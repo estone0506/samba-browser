@@ -59,6 +59,9 @@ class WorkerDeps:
     # 작업이 연 브라우저 탭을 끝날 때 닫는다(실기: 옛 주문서 탭을 다음 작업이 읽어 원가 오독).
     # 없으면 닫지 않는다(테스트)
     tabs: TabJanitor | None = None
+    # 브릿지가 지금 일을 받을 수 있는가(앱 채팅이 도는 동안은 409 busy). 거짓이면 큐를 집지 않고
+    # 다음 주기를 기다린다 — 실기: 사용자가 앱에서 채팅을 돌리는 동안 5건이 전부 bridge_down 으로 사람에게 넘어갔다
+    ready: Callable[[], bool] | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.version, str):
@@ -77,6 +80,8 @@ class Worker:
 
     def tick(self) -> Job | None:
         """queued 1건을 집어 끝까지(또는 승인 대기까지) 돌린다. 없으면 None."""
+        if self.d.ready is not None and not self.d.ready():
+            return None
         job = self.d.queue.claim()
         if job is None:
             return None

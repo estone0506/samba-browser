@@ -475,3 +475,14 @@ def test_승인_대기_중에는_탭을_닫지_않고_재개_뒤에_닫는다(se
     done = w.resume('A1', True, 'U1', stage='pay')
     assert done is not None and done.state == 'done'
     assert tabs.closed == ['t-order']
+
+
+def test_브릿지가_바쁘면_큐를_집지_않는다(setup):
+    q, log, _sent, make = setup
+    w = make(gate=False)
+    ready = {'v': False}
+    w.d.ready = lambda: ready['v']
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    assert w.tick() is None and q.get('A1').state == 'queued' and log == []
+    ready['v'] = True
+    assert w.tick().state == 'done'

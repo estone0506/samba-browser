@@ -17,7 +17,7 @@ from slack_bolt import App
 from samba_agent.agents.factory import build_agents
 from samba_agent.agents.registry import Registry
 from samba_agent.api.server import build_app, serve
-from samba_agent.bridge.client import BridgeClient
+from samba_agent.bridge.client import BridgeClient, BridgeError
 from samba_agent.gateway.slack_bot import SambaBot
 from samba_agent.llm.decide import make_decide
 from samba_agent.ops.diagnose import diagnose
@@ -69,6 +69,16 @@ def make_wave(settings: 'Settings') -> WaveClient | None:
         settings.wave_internal_token.get_secret_value(),
         settings.wave_tenant_id,
     )
+
+
+def _bridge_ready(bridge: BridgeClient) -> bool:
+    """브릿지 /health 가 200 이면 참. busy(409)·연결 실패는 거짓 — 작업을 실패시키지 말고 기다린다."""
+    try:
+        bridge.health()
+    except BridgeError as e:
+        log.info('브릿지 대기: %s', e)
+        return False
+    return True
 
 
 def main() -> None:
@@ -166,6 +176,8 @@ def main() -> None:
             prune=events.prune,
             # 작업이 연 탭은 끝날 때 닫는다 — 옛 주문서 탭을 다음 작업이 읽던 문제(실기)
             tabs=TabJanitor(bridge.scoped(list(TAB_TOOLS))),
+            # 앱 채팅이 도는 동안(409 busy)·앱이 꺼진 동안은 큐를 집지 않는다
+            ready=lambda: _bridge_ready(bridge),
         )
     )
 
