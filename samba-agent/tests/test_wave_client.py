@@ -210,3 +210,14 @@ def test_플래그는_action_tag_토큰을_소문자로_옮긴다():
 def test_정산금이_있으면_OrderRef_로_옮기고_없으면_0이다():
     assert WaveOrder(order_number='A1', revenue=110000).to_order_ref().revenue == 110000
     assert WaveOrder(order_number='A1').to_order_ref().revenue == 0
+
+
+def test_플래그_토큰은_한글_이름으로_보여_준다():
+    from samba_agent.wave.client import flag_text
+
+    assert (
+        flag_text(('no_price', 'no_stock', 'staff_a', 'staff_b', 'kkadaegi', 'direct', 'gift'))
+        == '가격X, 재고X, 직원A, 직원B, 까대기, 직배, 선물'
+    )
+    assert flag_text(('hold',)) == 'hold'  # 모르는 토큰은 그대로
+    assert flag_text(()) == ''

@@ -37,6 +37,22 @@ _OPTION_PREFIX = re.compile(r'^\s*옵션\s*[:：]\s*')
 
 OrderType = Literal['direct', 'kkadaegi', 'gift']
 
+# 삼바웨이브 플래그 토큰(action_tag, DB 실측) → 사람이 읽는 이름. 모르는 토큰은 그대로 보인다
+FLAG_LABELS = {
+    'no_price': '가격X',
+    'no_stock': '재고X',
+    'staff_a': '직원A',
+    'staff_b': '직원B',
+    'kkadaegi': '까대기',
+    'direct': '직배',
+    'gift': '선물',
+}
+
+
+def flag_text(flags: tuple[str, ...] | list[str]) -> str:
+    """('no_price', 'staff_a') → '가격X, 직원A'. 플래그가 없으면 빈 문자열."""
+    return ', '.join(FLAG_LABELS.get(f, f) for f in flags)
+
 
 class WaveError(Exception):
     """삼바웨이브 호출 실패. 사유는 FailReason 으로 고정한다."""

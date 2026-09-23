@@ -165,3 +165,22 @@ def test_전화번호는_가리고_카드_브랜드명은_남긴다():
     out = sanitize_payload({'phone': '010-1234-5678', 'card': '현대'})
     assert out['phone'] == '***'
     assert out['card'] == '현대'
+
+
+def test_플래그가_있으면_승인_요약_첫_줄에_표시한다(reg):
+    # 가격X·재고X 등은 오류일 수 있어 제외하지 않고 결제 승인에서 사람이 본다(계획 P2-4)
+    log: list[str] = []
+    flagged = ORDER.model_copy(update={'flags': ('no_price', 'no_stock', 'staff_a', 'weird')})
+    out = graph_of(reg, log).invoke(
+        {'order': flagged, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG
+    )
+    summary = out['__interrupt__'][0].value['summary']
+    assert summary.splitlines()[0] == '⚠ 플래그: 가격X, 재고X, 직원A, weird'
+
+
+def test_플래그가_없으면_경고_줄도_없다(reg):
+    log: list[str] = []
+    out = graph_of(reg, log).invoke(
+        {'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG
+    )
+    assert '⚠' not in out['__interrupt__'][0].value['summary']

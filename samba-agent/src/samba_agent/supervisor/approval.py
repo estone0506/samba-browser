@@ -11,6 +11,7 @@ from langgraph.types import Command
 
 from samba_agent.agents.contracts import Evidence
 from samba_agent.supervisor.state import RunState, sanitize_payload
+from samba_agent.wave.client import flag_text
 
 APPROVAL_INTERRUPT_KEY = 'samba.approval'
 
@@ -45,7 +46,11 @@ def approval_request(stage: str, state: RunState) -> ApprovalRequest:
     payload = sanitize_payload(buyer.payload) if buyer else {}
     cost = payload.get('cost')
     cost_text = f'{int(cost):,}원' if isinstance(cost, (int, float)) else '미정'
-    lines = [
+    lines: list[str] = []
+    if order.flags:
+        # 수집 제외 플래그는 오류일 수 있어 제외하지 않았다 — 결제 단계에서 사람이 보고 고른다
+        lines.append(f'⚠ 플래그: {flag_text(order.flags)}')
+    lines += [
         f'*{_STAGE_TITLE[stage]} 승인 요청* — 주문 {order.order_no} ({order.source})',
         f'계정: {payload.get("account", "미정")} · 카드: {payload.get("card", "없음")}',
         f'원가: {cost_text} · 마진: {payload.get("margin_pct", "미정")}%',
