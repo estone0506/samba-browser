@@ -44,10 +44,24 @@ def source_of(agent_name: str) -> Source:
 def product_ref(agent_name: str, order: OrderRef) -> str:
     """스냅샷 스크립트의 sku 인자 — 상품 ID > 상품 URL > 판매 상품명 순으로 확실한 것을 쓴다."""
     if order.product_url:
-        pattern = source_of(agent_name).product_id_re
+        spec = source_of(agent_name)
+        # 같은 구매자가 여러 호스트를 맡는 경우(ABC 구매자가 그랜드스테이지 주문도 산다) 상품 ID 만 넘기면
+        # 스크립트가 제 호스트(abcmart) 주소를 만들어 엉뚱한 상품(품절 오판)을 연다 — 호스트가 다르면 URL 을 그대로 준다
+        if not _same_host(order.product_url, spec.home):
+            return order.product_url
+        pattern = spec.product_id_re
         m = pattern.search(order.product_url) if pattern else None
         return m.group(1) if m else order.product_url
     return order.sku
+
+
+def _same_host(url: str, home: str | None) -> bool:
+    """두 주소의 호스트(www. 제외)가 같은가. home 이 없으면 같다고 본다."""
+    if not home:
+        return True
+    a = (urlparse(url).hostname or '').removeprefix('www.')
+    b = (urlparse(home).hostname or '').removeprefix('www.')
+    return a == b
 
 
 def _norm(text: str) -> str:
