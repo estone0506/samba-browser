@@ -4,6 +4,7 @@ import { OcrEngine } from '../ocr/engine'
 import { clipText } from '../ocr/postprocess'
 // 순환 import 를 피하려고 타입만 가져온다(런타임 코드는 남지 않는다)
 import type { ToolContext } from './tools'
+import type { Tab } from '../browser/tab-manager'
 import { secretKeypadGate } from './secret-page'
 import { agentTargetOf } from './target'
 
@@ -33,6 +34,54 @@ export function setOcrEnabled(value: boolean): void {
 function getEngine(): OcrEngine {
   if (!engine) engine = new OcrEngine()
   return engine
+}
+
+/** 모델이 없으면 뒤에서 내려받기를 시작한다(이미 받는 중이면 그대로 둔다) */
+function startModelDownload(ocr: OcrEngine): void {
+  if (ocr.isDownloading()) return
+  lastDownloadError = ''
+  void ocr.ensureModels().catch((e: unknown) => {
+    lastDownloadError = e instanceof Error ? e.message : String(e)
+  })
+}
+
+// 한 자리 숫자 판독 결과로 인정하는 모양
+const SINGLE_DIGIT_RE = /^[0-9]$/
+
+/**
+ * 탭의 한 영역(뷰 좌표)을 캡처해 한 자리 숫자로 읽는다. 앱 내부 전용이다 —
+ * 글자 없는 보안 키패드(네이버페이)의 숫자 배치를 앱이 스스로 알아낼 때만 쓰고,
+ * 결과를 모델에게 넘기지 않는다. OCR 이 꺼져 있거나 모델이 아직 없거나(내려받기는 시작한다),
+ * 읽은 글자가 정확히 숫자 하나가 아니면 null
+ */
+export async function ocrDigitInRegion(
+  tab: Tab,
+  rect: { x: number; y: number; width: number; height: number }
+): Promise<string | null> {
+  if (!enabled) return null
+  try {
+    const bounds = tab.view.getBounds()
+    if (bounds.width === 0 || bounds.height === 0) return null
+    const ocr = getEngine()
+    if (!ocr.hasModels()) {
+      startModelDownload(ocr)
+      return null
+    }
+    const clamped = clampRect(rect, bounds.width, bounds.height)
+    if (clamped.width < 1 || clamped.height < 1) return null
+    const image = await tab.view.webContents.capturePage(clamped)
+    const size = image.getSize()
+    if (size.width === 0 || size.height === 0) return null
+    const result = await ocr.recognize(image.toPNG())
+    const text = result.lines
+      .map((l) => l.text)
+      .join('')
+      .replace(/\s+/g, '')
+    return SINGLE_DIGIT_RE.test(text) ? text : null
+  } catch {
+    // 캡처·인식 실패는 "못 읽음"으로 본다 — 호출부가 사람에게 넘긴다
+    return null
+  }
 }
 
 const regionSchema = z.object({
@@ -82,12 +131,7 @@ export function createOcrTool(ctx: ToolContext): SdkMcpToolDefinition<typeof ocr
         const ocr = getEngine()
         if (!ocr.hasModels()) {
           // 첫 호출은 즉시 돌려주고 다운로드는 뒤에서 돈다(모델 합계 약 18MB)
-          if (!ocr.isDownloading()) {
-            lastDownloadError = ''
-            void ocr.ensureModels().catch((e: unknown) => {
-              lastDownloadError = e instanceof Error ? e.message : String(e)
-            })
-          }
+          startModelDownload(ocr)
           ctx.onStep(STEP_LABEL, false)
           return textResult(lastDownloadError ? `error: ${lastDownloadError}` : DOWNLOADING)
         }
