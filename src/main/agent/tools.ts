@@ -34,7 +34,7 @@ import {
 } from '../vault/access-gate'
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
 import { formatDialogNote } from '../browser/dialogs'
-import { createOcrTool, ocrDigitInRegion } from './tools-ocr'
+import { createOcrTool, ocrDigitInRegion, resolveKeypadDigits, type DigitRead } from './tools-ocr'
 import {
   createPayTool,
   createPhoneTools,
@@ -1027,30 +1027,30 @@ ${raw}`
       ctx.onStep('키패드 배치(OCR): 글자 없는 버튼 10~14개를 못 찾음', false)
       return null
     }
-    const digits: Record<string, number> = {}
-    let count = 0
-    let duplicates = 0
     // 못 읽은 사유만 모은다(어느 칸이 어느 숫자인지는 남기지 않는다)
     const reasons: string[] = []
+    const reads: DigitRead[] = []
     for (const cell of cells) {
-      const digit = await ocrDigitInRegion(tab, cell, reasons).catch(() => null)
+      const scores: number[] = []
+      const digit = await ocrDigitInRegion(tab, cell, reasons, scores).catch(() => null)
       if (digit === null) continue
-      if (digits[digit] !== undefined) {
-        duplicates += 1
-        continue
-      }
-      digits[digit] = cell.id
-      count += 1
+      // 확신도를 안 주는 경로(시험의 목 등)는 1 로 본다
+      reads.push({ cellId: cell.id, digit, score: scores[0] ?? 1 })
     }
-    if (count !== 10 || duplicates > 0) {
+    const resolved = resolveKeypadDigits(reads)
+    if (!resolved) {
+      const distinct = new Set(reads.map((r) => r.digit)).size
       const why = [...new Set(reasons)].slice(0, 4).join(' ')
       ctx.onStep(
-        `키패드 배치(OCR): 칸 ${cells.length}, 읽은 숫자 ${count}, 중복 ${duplicates}${why ? `, 사유 ${why}` : ''}`,
+        `키패드 배치(OCR): 칸 ${cells.length}, 읽은 숫자 ${reads.length}(서로 다른 ${distinct})${why ? `, 사유 ${why}` : ''}`,
         false
       )
       return null
     }
-    return { digits, filled: null, frameIndex: 0 }
+    if (resolved.inferred !== null) {
+      ctx.onStep(`키패드 배치(OCR): 9개 읽고 빠진 숫자 1개는 혼동 짝으로 추론`, true)
+    }
+    return { digits: resolved.digits, filled: null, frameIndex: 0 }
   }
 
   /**
