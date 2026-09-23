@@ -82,6 +82,8 @@ class WaveOrder(BaseModel):
     product_option: str | None = None
     quantity: int = 1
     sale_price: float = 0
+    # SAMBA 정산금. 목록 응답에 실리면 마진을 정산금 기준으로 계산한다(없으면 판매가 근사)
+    revenue: float | None = None
     seller: str | None = None
     sourcing_account_id: str | None = None
     sourcing_account_username: str | None = None
@@ -96,6 +98,12 @@ class WaveOrder(BaseModel):
     shipping_fee: float | None = None
     # 주문 종류 — 목록 응답에는 없어 기본 direct 다. 상세 응답이 실제 값을 준다
     order_type: OrderType = 'direct'
+
+    @property
+    def flags(self) -> tuple[str, ...]:
+        """action_tag('no_price,staff_a') → ('no_price', 'staff_a'). 소문자로 맞추고 빈 토큰은 버린다."""
+        tokens = (t.strip().lower() for t in (self.action_tag or '').split(','))
+        return tuple(t for t in tokens if t)
 
     @property
     def option(self) -> str | None:
@@ -122,6 +130,8 @@ class WaveOrder(BaseModel):
             account_id=(self.sourcing_account_id or '').strip() or None,
             order_type=self.order_type,
             sale_price=float(self.sale_price or 0),
+            revenue=float(self.revenue or 0),
+            flags=self.flags,
         )
 
 

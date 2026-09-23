@@ -195,3 +195,14 @@ def test_상세는_요청한_배송_종류를_인자로_보낸다():
 def test_판매가를_OrderRef_로_옮긴다():
     o = WaveOrder(order_number='A1', product_name='x', sale_price=12345)
     assert o.to_order_ref().sale_price == 12345
+
+
+def test_플래그는_action_tag_토큰을_소문자로_옮긴다():
+    o = WaveOrder(order_number='A1', action_tag=' No_Price, staff_a ,,kkadaegi')
+    assert o.to_order_ref().flags == ('no_price', 'staff_a', 'kkadaegi')
+    assert WaveOrder(order_number='A1').to_order_ref().flags == ()
+
+
+def test_정산금이_있으면_OrderRef_로_옮기고_없으면_0이다():
+    assert WaveOrder(order_number='A1', revenue=110000).to_order_ref().revenue == 110000
+    assert WaveOrder(order_number='A1').to_order_ref().revenue == 0
