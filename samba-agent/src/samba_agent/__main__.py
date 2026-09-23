@@ -26,6 +26,7 @@ from samba_agent.ops.masking import mask_text
 from samba_agent.ops.releases import ReleaseStore
 from samba_agent.ops.tracing import configure_tracing
 from samba_agent.queue.db import Job, JobQueue
+from samba_agent.queue.intake import Intake
 from samba_agent.queue.orders import LOOKUP_TOOLS, parse_order_fn
 from samba_agent.queue.worker import Worker, WorkerDeps
 from samba_agent.settings import Settings, load_settings
@@ -175,6 +176,12 @@ def main() -> None:
 
     bot = SambaBot(slack_app, worker, queue, settings, _diagnose_text)
 
+    # 자동 수집 — 삼바웨이브 클라이언트가 있고 켜져 있을 때만 돈다. 슬랙이 없으면 스레드 없이 큐에만 쌓인다
+    intake: Intake | None = None
+    if wave is not None and settings.intake_enabled:
+        intake = Intake(wave, queue, reg, bot.post_new, bot.post, days=settings.intake_days)
+        bot.intake = intake
+
     app = build_app(
         reg=reg,
         queue=queue,
@@ -196,6 +203,16 @@ def main() -> None:
     api_thread = threading.Thread(target=serve, args=(app,), daemon=True, name='api')
     worker_thread.start()
     api_thread.start()
+
+    if intake is not None:
+        threading.Thread(
+            target=intake.run_forever,
+            args=(stop.is_set, float(settings.intake_interval_s)),
+            daemon=True,
+            name='intake',
+        ).start()
+    else:
+        log.warning('자동 수집을 띄우지 않는다 — 삼바웨이브 설정이 없거나 꺼져 있다')
 
     if slack_app is not None:
         # start() 안에서 Socket Mode 핸들러를 직접 띄운다 — 여기서 또 띄우지 않는다(리뷰 지적 — Minor)

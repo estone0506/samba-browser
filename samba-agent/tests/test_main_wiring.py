@@ -113,3 +113,11 @@ def test_에이전트_공장이_삼바웨이브를_구매_기록_검증에_꽂�
     plain = build_agents(reg, bridge, lambda p, m: m(choice='x', reason='r'))
     assert plain['recorder']._wave is None
     assert plain['buyer.musinsa']._shipping_fn is None
+
+
+# ---- 자동 수집 배선(Task D) ----
+
+
+def test_자동_수집은_기본으로_켜져_있고_끌_수_있다():
+    assert _settings().intake_enabled is True
+    assert _settings(SAMBA_INTAKE_ENABLED='false').intake_enabled is False
