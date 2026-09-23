@@ -54,7 +54,7 @@ sources:
     label: SSG닷컴
     home: https://www.ssg.com/
     login_host: ssg.com
-    status: scripts_pending
+    status: active
   - id: FashionPlus
     key: fashionplus
     label: 패션플러스
