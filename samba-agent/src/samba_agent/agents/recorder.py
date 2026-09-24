@@ -11,7 +11,15 @@ import json
 
 from samba_agent.agents.base import AgentBase, AgentFailure, Decision, run_agent
 from samba_agent.agents.contracts import AgentResult, Assignment
+from samba_agent.agents.source_detail import (
+    SOURCE_DETAIL_SCRIPT,
+    actual_cost,
+    detail_args,
+    detail_check,
+    detail_goal,
+)
 from samba_agent.failures import FailReason
+from samba_agent.ops.masking import mask_text
 from samba_agent.wave.client import WaveClient, WaveError, wave_fields
 
 SAVE_SCRIPT = 'samba_save_order'
@@ -46,10 +54,12 @@ def _won(value: object) -> str:
 
 def wave_notes(a: Assignment, values: dict[str, object]) -> str:
     """삼바웨이브 간단메모 한 줄(플레이북 §6-3) — 계정·수단·실결제액·원가. 개인정보는 없다."""
-    card = a.handoff.get('card') or a.options.get('card') or '미확인'
+    # 실제 주문 상세에서 읽은 값이 있으면 그것을 쓴다(결제 뒤 재계산)
+    card = values.get('card') or a.handoff.get('card') or a.options.get('card') or '미확인'
+    paid = values.get('paid') or a.handoff.get('paid')
     return (
         f'계정 {values.get("account") or "미확인"} · 수단 {card} · '
-        f'실결제 {_won(a.handoff.get("paid"))} · 원가 {_won(values.get("real_price"))}'
+        f'실결제 {_won(paid)} · 원가 {_won(values.get("real_price"))}'
     )
 
 
@@ -73,6 +83,8 @@ class RecorderAgent(AgentBase):
     # 저장하고 되읽어 확인할 필드
     RECORD_FIELDS = ('account', 'source_order_no', 'real_price', 'shipping_fee', 'memo', 'flags')
 
+    # 결제 뒤 소싱처 주문 상세로 원가를 다시 계산할지(기본 켬)
+    read_actual_cost: bool = True
     # 삼바웨이브 내부 API 클라이언트. factory 가 꽂는다(없으면 앱 저장 스크립트 경로)
     _wave: 'WaveClient | None' = None
 
@@ -81,6 +93,7 @@ class RecorderAgent(AgentBase):
         self._wave = wave
 
     def __call__(self, assignment: Assignment) -> AgentResult:
+        self.reset_repairs()
         return run_agent(lambda: self._record(assignment), lambda: self.evidence)
 
     def _record(self, a: Assignment) -> AgentResult:
@@ -190,6 +203,38 @@ class RecorderAgent(AgentBase):
             )
         return a.order.account_id or (str(a.handoff.get('sourcing_account_id') or '') or None)
 
+    def _apply_actual_cost(
+        self, a: Assignment, values: dict[str, object], sourcing_no: str
+    ) -> None:
+        """결제 뒤 소싱처 주문 상세에서 실제 결제액·적립금·적립·카드를 읽어 원가를 다시 잡는다.
+
+        견적 원가는 적립금·적립이 빠질 수 있다(실기: 88,300 기록, 실제 95,520). 상세를 못 읽으면 견적 원가로 두고 남긴다.
+        """
+        self.step('recorder: 소싱처 주문 상세 읽기')
+        try:
+            detail = self.script_json(
+                SOURCE_DETAIL_SCRIPT,
+                detail_args(a, sourcing_no),
+                goal=detail_goal(a.order.source),
+                check=detail_check(sourcing_no),
+            )
+        except AgentFailure as e:
+            self.note('실제 원가', mask_text(f'상세를 못 읽어 견적 원가로 기록({e.reason[:80]})'))
+            return
+        cost = actual_cost(detail)
+        if cost is None:
+            self.note('실제 원가', '결제액을 못 읽어 견적 원가로 기록')
+            return
+        quoted = values.get('real_price')
+        values['real_price'] = cost
+        values['paid'] = detail.get('paid')
+        values['card'] = detail.get('card')
+        self.note(
+            '실제 원가',
+            f'결제 {detail.get("paid")} · 적립금 {detail.get("points_used") or 0} · 적립 {detail.get("reward") or 0}'
+            f' · {detail.get("card") or ""} → 원가 {cost:,.0f}원(견적 {quoted})',
+        )
+
     def _record_via_wave(
         self, a: Assignment, values: dict[str, object], memo_reason: str
     ) -> AgentResult:
@@ -201,6 +246,8 @@ class RecorderAgent(AgentBase):
         sourcing_no = str(values.get('source_order_no') or '').strip()
         if not sourcing_no:
             raise AgentFailure('needs_human', '기입할 소싱주문번호가 없다', FailReason.UNKNOWN)
+        if self.read_actual_cost:
+            self._apply_actual_cost(a, values, sourcing_no)
         self.step('recorder: 삼바웨이브 기입')
         try:
             self._wave.record_sourcing(  # type: ignore[union-attr]

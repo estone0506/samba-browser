@@ -249,6 +249,7 @@ def wave_client():
 def recorder_with_wave(reg) -> RecorderAgent:
     a = agent(reg)
     a.set_wave(wave_client())
+    a.read_actual_cost = False  # 기존 기입 흐름 시험 — 상세 재계산은 아래 별도 시험
     return a
 
 
@@ -365,3 +366,28 @@ def test_마진_미달_건은_기록하지_않는다(reg):
     out = recorder_with_wave(reg)(assignment(reg, dry_run=False, handoff={'margin_pct': -3.5}))
     assert (out.status, out.fail_reason) == ('needs_human', FailReason.MARGIN)
     assert not put.called and not script.called
+
+
+@respx.mock
+def test_결제_뒤_주문_상세로_원가를_다시_계산해_기록한다(reg):
+    """견적 원가(89,000) 대신 실제 상세(결제 95,950 · 적립 7,650 · 적립금 7,220)로 원가 95,520 을 기록한다."""
+    put = respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
+    )
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(200, json=WAVE_ORDER))
+    detail = {
+        'source_order_no': 'M-777',
+        'paid': 95950,
+        'points_used': 7220,
+        'reward': 7650,
+        'card': '무신사머니',
+    }
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(detail))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    a = agent(reg)
+    a.set_wave(wave_client())
+    out = a(assignment(reg, dry_run=False))
+    assert out.status == 'ok'
+    body = json.loads(put.calls[0].request.content)
+    assert body['cost'] == 95520
+    assert '실결제 95,950' in body['notes']

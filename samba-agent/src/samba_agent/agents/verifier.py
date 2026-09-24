@@ -4,11 +4,17 @@ import json
 
 from samba_agent.agents.base import AgentBase, AgentFailure, Decision, run_agent
 from samba_agent.agents.contracts import AgentResult, Assignment
+from samba_agent.agents.source_detail import (
+    SOURCE_DETAIL_SCRIPT,
+    actual_cost,
+    detail_args,
+    detail_check,
+    detail_goal,
+)
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_value
 from samba_agent.wave.client import WaveClient, WaveError, wave_fields
 
-SOURCE_DETAIL_SCRIPT = 'source_order_detail'
 SAMBA_READ_SCRIPT = 'samba_read_order'
 
 
@@ -64,38 +70,31 @@ class VerifierAgent(AgentBase):
             )
         self.step('verifier: 소싱처 주문 상세 읽기')
         want_no = a.expected.get('source_order_no')
-        args: dict[str, object] = {'orderNo': a.order.order_no, 'site': a.order.source}
-        if want_no:
-            args['source_order_no'] = want_no
-        account = a.handoff.get('account') or a.order.account
-        if account:
-            args['profile'] = account
         # 스크립트가 없거나 실패하면 AI 가 고쳐 이어 간다(실기: source_order_detail 없음으로 검증만 실패)
         source = self.script_json(
             SOURCE_DETAIL_SCRIPT,
-            args,
-            goal=(
-                f'소싱처({a.order.source}) 계정 profile 의 주문 상세에서 주문번호 source_order_no 의 주문을 열어 '
-                '{source_order_no, status, paid(결제 금액 숫자)} 를 돌려준다. 주문을 바꾸거나 취소하지 않는다.'
-            ),
-            check=lambda o: (
-                None
-                if not want_no or str(o.get('source_order_no') or '') == str(want_no)
-                else f'주문번호 {want_no} 의 상세를 읽지 못했다(읽은 번호 {o.get("source_order_no")})'
-            ),
+            detail_args(a, want_no),
+            goal=detail_goal(a.order.source),
+            check=detail_check(want_no),
         )
+        # 원가는 결제 뒤 실제 상세로 다시 계산해 기록한다(기록 에이전트) — 견적 원가 대신 그 값으로 대조한다
+        expected = dict(a.expected)
+        recomputed = actual_cost(source)
+        if recomputed is not None and 'real_price' in expected:
+            expected['real_price'] = recomputed
+            source = {**source, 'real_price': recomputed}
         samba, unverified = self._read_samba(a)
         if unverified:
             self.note('대조 불가', f'삼바웨이브에 없는 필드: {", ".join(unverified)}')
         # 소싱처 화면에 원래 없는 값(원가·배송 종류·플래그)은 소싱처 쪽 대조에서 빼고 남긴다 — 주문번호는 꼭 맞아야 한다
-        source_missing = [f for f in a.expected if f not in source and f != 'source_order_no']
+        source_missing = [f for f in expected if f not in source and f != 'source_order_no']
         if source_missing:
             self.note('소싱처 대조 불가', ', '.join(source_missing))
         # 대조 자체는 날것 값으로 한다 — 마스킹은 밖으로 내보낼 때만 씌운다.
         # 확인할 수 없는 필드는 '같다' 가 아니라 대조에서 빼고 따로 남긴다
         mismatches = [
             {'field': f, 'expected': v, 'source': source.get(f), 'samba': samba.get(f)}
-            for f, v in a.expected.items()
+            for f, v in expected.items()
             if (f not in source_missing and source.get(f) != v)
             or (f not in unverified and samba.get(f) != v)
         ]
