@@ -448,6 +448,8 @@ def test_quote_parallel_uses_one_lane_per_account(buyer, monkeypatch) -> None:
         return {'cost': {'buyer01': 100, 'buyer02': 90}[account]}
 
     monkeypatch.setattr(BuyerAgent, '_quote', fake_quote)
+    # 비교가 끝나면 레인마다 제 탭을 닫는다(이긴 계정 주문서를 레인 밖에서 다시 만들 때 남의 주문서를 집지 않게)
+    closed = respx.post(f'{URL}/tool/run_js').mock(return_value=page('ok'))
     order = OrderRef(order_no='A1', source='MUSINSA', seller='포이즌', sku='1', qty=1)
     a = Assignment(order=order, allowed_tools=buyer.spec.tools, rules='', dry_run=False)
     buyer.evidence = []
@@ -456,6 +458,10 @@ def test_quote_parallel_uses_one_lane_per_account(buyer, monkeypatch) -> None:
     out = buyer._quote_parallel(a, ['buyer01', 'buyer02'])
     assert [acc for acc, _ in out] == ['buyer01', 'buyer02']
     assert sorted(lanes) == ['musinsa-buyer02', 'musinsa-buyer01']
+    assert sorted(c.request.headers['X-Samba-Lane'] for c in closed.calls) == [
+        'musinsa-buyer02',
+        'musinsa-buyer01',
+    ]
     assert [e.detail for e in buyer.evidence if e.label == '계정 견적'] == [
         'buyer01: 원가',
         'buyer02: 원가',

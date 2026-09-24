@@ -512,6 +512,10 @@ def pay_card_quote_problem(out: dict[str, object]) -> str | None:
     return None
 
 
+# 레인 보기에서는 제 레인이 연 탭만 보인다 — 전부 닫으면 그 레인 탭만 닫힌다
+_CLOSE_LANE_TABS_JS = 'for (const t of await tabs.list()) { try { await tabs.close(t.id) } catch (e) {} } return "ok"'
+
+
 def snapshot_login_required(out: dict[str, object]) -> bool:
     """스냅샷이 '이 계정 프로필은 로그인이 안 돼 있다'고 알렸는가."""
     return out.get('error') == 'login_required' or (
@@ -1402,6 +1406,13 @@ class BuyerAgent(AgentBase):
         self.step(f'{self.spec.name}: 계정 {len(accounts)}개 동시 비교')
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(accounts)) as pool:
             outs = list(pool.map(run, accounts))
+        # 레인이 연 탭(각 계정 주문서)을 닫는다 — 이긴 계정 주문서를 레인 밖에서 다시 만들 때 저장 스크립트가
+        # "열린 주문서 탭" 중 다른 계정 것을 집지 않게 한다(레인 밖에서는 모든 탭이 보인다)
+        for _account, _q, clone in outs:
+            try:
+                clone.tool('run_js', code=_CLOSE_LANE_TABS_JS, safety='no_pay')
+            except AgentFailure as e:
+                self.note('계정 비교', mask_text(f'{_account} 레인 탭 정리 실패: {e.reason[:80]}'))
         quotes: list[tuple[str, dict[str, object]]] = []
         issued = dict(getattr(self, '_issued', {}))
         for account, q, clone in outs:
