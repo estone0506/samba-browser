@@ -1688,7 +1688,7 @@ overlays left: ${after.length}${kept}`
       'page.get({query,selector,interactive}) -> {tree,diff,total,elements}, page.click(id), ' +
       'page.type(id,text,submit), page.select(id,value), page.scroll(dir,id), page.text(id), ' +
       'page.find(query), page.idOf(text,nth) -> id or -1, page.clickText(text,nth), ' +
-      'page.dismissOverlay(), page.url(), page.title(), ' +
+      'page.dismissOverlay(), page.url(), page.title(), page.waitFor(textOrRegex, ms) -> true/false (use instead of fixed sleep), ' +
       'tabs.list()/switch(id)/close(id)/open({url, profile}), sleep(ms), log(...). ' +
       'Use log() and return a value; both come back to you. ' +
       'fill_secret, login and the phone tools are NOT available here - call those tools directly.',

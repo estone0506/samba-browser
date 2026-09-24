@@ -61,6 +61,14 @@ class VerifierAgent(AgentBase):
 
     def _verify(self, a: Assignment) -> AgentResult:
         self.evidence = []
+        if a.dry_run:
+            # 결제 없는 시험 실행 — 산 주문이 없어 대조할 소싱처 상세가 없다(읽으려 하면 다른 주문을 읽는다)
+            return AgentResult(
+                status='ok',
+                reason='dry-run: 산 주문이 없어 대조하지 않는다',
+                payload={'dry_run': True, 'mismatches': []},
+                evidence=tuple(self.evidence),
+            )
         if not a.expected:
             # 대조할 값이 하나도 없으면 '다 맞았다' 가 아니라 '확인하지 못했다' 다(리뷰 지적 — Minor)
             return AgentResult(

@@ -104,7 +104,20 @@ const BOOTSTRAP = `(() => {
     clickNative: (id) => invoke('page.clickNative', [id]),
     dismissOverlay: () => invoke('page.dismissOverlay', []),
     url: () => invoke('page.url', []),
-    title: () => invoke('page.title', [])
+    title: () => invoke('page.title', []),
+    // 고정 sleep 대신 쓴다 — 화면(요소 목록·본문)에 글자(또는 정규식)가 보이면 바로 true, ms 안에 안 보이면 false.
+    // 페이지가 빨리 뜨면 기다리지 않고 넘어간다(실기: 스크립트마다 2~4초 고정 대기가 쌓여 계정당 1~2분)
+    waitFor: async (pattern, ms) => {
+      const limit = Date.now() + Math.min(Math.max(Number(ms) || 8000, 200), 30000)
+      const re = pattern instanceof RegExp ? pattern : null
+      while (true) {
+        const snap = await invoke('page.get', [{}])
+        const tree = snap && typeof snap.tree === 'string' ? snap.tree : ''
+        if (re ? re.test(tree) : tree.includes(String(pattern))) return true
+        if (Date.now() >= limit) return false
+        await invoke('sleep', [250])
+      }
+    }
   }
   g.tabs = {
     list: () => invoke('tabs.list', []),
