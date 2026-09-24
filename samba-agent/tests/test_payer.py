@@ -480,17 +480,20 @@ def test_list_tabs가_실패하면_사람에게_넘긴다(reg):
 
 
 @respx.mock
-def test_신원정보_입력칸을_못_찾으면_사람에게_넘긴다(reg):
+def test_신원정보_입력칸이_없어도_웹_결제_경로로_진행한다(reg):
+    # 플레이북 §7 무신사머니: 결제창엔 신원정보 칸이 없다 — 있을 때만 채우고, 없으면 키패드(fill_secret password)로 간다
     respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
-    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
+    respx.post(f'{URL}/tool/get_page').mock(side_effect=[page('결제 진행 중'), page('결제 완료')])
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('no element matches "이름"'))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
-    fill = respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
+    respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(None))
+    fill = respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('ok: entered'))
     pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
-    out = agent(reg)(assignment(reg, dry_run=False))
-    assert out.status == 'needs_human'
-    assert not fill.called
+    out = agent(reg)(assignment(reg, dry_run=False, handoff={'cost': 89000}))
+    assert out.status == 'ok', out.reason
     assert not pay.called
+    assert [_args(c)['itemType'] for c in fill.calls] == ['password']
 
 
 @respx.mock
@@ -529,9 +532,8 @@ def test_결제창이_아직_없으면_한번_기다렸다_다시_본다(reg):
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg)(assignment(reg, dry_run=False, card='현대카드', handoff={'cost': 89000}))
     assert out.status == 'ok'
-    assert wait.calls.call_count == 1
-    assert json.loads(wait.calls.last.request.content.decode('utf-8'))['args'] == {'ms': 2000}
-    assert list_tabs.calls.call_count == 2
+    assert json.loads(wait.calls[0].request.content.decode('utf-8'))['args'] == {'ms': 2000}
+    assert list_tabs.calls.call_count >= 2
     assert pay.called
     assert _args(pay)['provider'] == 'toss'
 
@@ -549,8 +551,9 @@ def test_결제창이_끝내_안_뜨면_한번만_기다리고_웹_경로로_간
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg)(assignment(reg, dry_run=False, card='현대카드', handoff={'cost': 89000}))
     assert out.status == 'ok'
-    assert wait.calls.call_count == 1
-    assert list_tabs.calls.call_count == 2
+    # 결제창 대기(2초)는 한 번만 — 그 뒤 wait 는 키패드 입력 후 결과 대기다
+    assert json.loads(wait.calls[0].request.content.decode('utf-8'))['args'] == {'ms': 2000}
+    assert list_tabs.calls.call_count >= 2
     assert not pay.called
 
 

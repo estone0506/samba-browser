@@ -7,6 +7,7 @@
 
 import json
 import re
+from urllib.parse import urlparse
 from urllib.parse import urlsplit
 
 from samba_agent.agents.base import AgentBase, AgentFailure, run_agent
@@ -55,6 +56,26 @@ PAY_HOST_PROVIDERS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r'(^|\.)kakaopay\.com$|(^|\.)kakao\.com$'), 'kakaopay'),
     (re.compile(r'(^|\.)pay\.naver\.com$'), 'naverpay'),
 )
+
+# 키패드 입력 뒤 주문 완료 화면이 뜰 때까지 기다리는 시간(ms)
+PAY_RESULT_WAIT_MS = 4000
+
+
+def _host_of(url: str) -> str:
+    try:
+        return (urlparse(url).hostname or '').lower()
+    except ValueError:
+        return ''
+
+
+def _pay_host_provider(url: str) -> str | None:
+    """결제창 URL 의 호스트가 폰 결제 앱(토스·페이코·카카오·네이버)이면 그 이름, 아니면 None(웹 결제창)."""
+    host = _host_of(url)
+    for pattern, provider in PAY_HOST_PROVIDERS:
+        if pattern.search(host):
+            return provider
+    return None
+
 
 # run_script checkout_enter_* 직후 결제창(팝업)이 아직 하나도 없을 때 한 번 더 보기 전 기다리는
 # 시간(ms) — 사이트가 팝업을 띄우는 타이밍과 어긋나 곧장 웹 결제 경로로 새지 않게 한다(리뷰 지적 — Minor 4)
@@ -303,6 +324,59 @@ class PayerAgent(AgentBase):
             )
         return matches[-1][1]
 
+    def _web_pay(self, a: Assignment) -> None:
+        """사이트 결제창(팝업)의 '결제하기' → 웹 키패드에 fill_secret(password) — 플레이북 §7 무신사머니 흐름.
+
+        결제창이 뜨면 그 창으로 옮겨 '결제하기'를 한 번 누른다(무신사머니 금액 확인창). 이어 뜨는 비밀번호
+        키패드는 앱이 배치를 읽어 누른다(fill_secret, provider 는 앱이 결제창으로 고른다). 결제창이 없으면
+        지금 화면의 키패드를 바로 찾는다. 비밀번호 값은 어디서도 다루지 않는다.
+        """
+        popups, _active = self._list_tabs_popups()
+        web_popup = next(
+            (p for p in popups if _host_of(str(p.get('url') or '')) and _pay_host_provider(str(p.get('url') or '')) is None),
+            None,
+        )
+        if web_popup is not None and web_popup.get('id'):
+            self.tool('switch_tab', id=str(web_popup['id']))
+            found = self.tool('find_elements', query='결제하기')
+            pay_btn = _element_id(found)
+            if pay_btn is not None:
+                self.step('payer: 결제창 결제하기')
+                self.tool('click', id=pay_btn, label='결제하기')
+                self.tool('wait', ms=PAY_POPUP_WAIT_MS)
+        # 키패드 창은 별도 팝업으로 뜰 수 있다 — 가장 최근 팝업으로 옮겨 본다
+        popups, _active = self._list_tabs_popups()
+        if popups and popups[-1].get('id'):
+            self.tool('switch_tab', id=str(popups[-1]['id']))
+        self.step('payer: 결제 비밀번호(앱 입력)')
+        found = self.tool('find_elements', query=KEYPAD_QUERY)
+        out = self.tool(
+            'fill_secret',
+            elementId=_element_id(found) or 0,
+            itemType='password',
+            **({'accountLabel': a.order.account} if a.order.account else {}),
+        )
+        self.note('키패드 입력', mask_text(out[:200]))
+        low = out.lower()
+        if low.startswith('refused') or 'not found' in low or 'ambiguous' in low:
+            raise AgentFailure(
+                'needs_human',
+                f'결제 비밀번호를 앱이 넣지 못했다 — 사람이 직접 누른다: {mask_text(out[:100])}',
+                FailReason.PERMISSION_DENIED,
+            )
+        self.tool('wait', ms=PAY_RESULT_WAIT_MS)
+
+    def _success_page(self) -> str:
+        """결제 뒤 화면 — 주문 완료 탭(…/order/result/…)이 있으면 그 탭으로 옮겨 읽는다."""
+        try:
+            listed = self.tool('list_tabs')
+            for m in re.finditer(r'"id"\s*:\s*"([^"]+)"[^}]*?"url"\s*:\s*"([^"]*order/result[^"]*)"', listed):
+                self.tool('switch_tab', id=m.group(1))
+                break
+        except AgentFailure:
+            pass
+        return self.tool('get_page')
+
     def _dry_run_keypad(self, a: Assignment, card: str, digits: int) -> AgentResult:
         """결제창까지 간 뒤 결제 비밀번호를 `digits` 자리만 눌러 보고 취소한다.
 
@@ -412,14 +486,13 @@ class PayerAgent(AgentBase):
                 FailReason.UNKNOWN,
             )
 
-        self.step('payer: 신원정보 입력')
+        # 신원정보 칸(주문자 연락처 등)은 사이트에 따라 있을 때만 채운다 — 무신사머니 결제창에는 없다(플레이북 §7)
         # 값은 앱이 직접 채운다 — 여기서는 어떤 비밀값도 보내거나 받지 않는다.
-        # 앱 스키마는 elementId(정수)와 itemType 이 필수다(리뷰 지적 — I6)
         found = self.tool('find_elements', query=IDENTITY_QUERY)
         element_id = _element_id(found)
-        if element_id is None:
-            raise AgentFailure('needs_human', '신원정보 입력칸을 찾지 못했다', FailReason.UNKNOWN)
-        self.tool('fill_secret', elementId=element_id, itemType='identity')
+        if element_id is not None:
+            self.step('payer: 신원정보 입력')
+            self.tool('fill_secret', elementId=element_id, itemType='identity')
 
         # 결제 앱은 사람이 지정하지 않는다 — 카드 이름 자체가 앱을 가리키면(예: 토스페이) 그것을,
         # 아니면 지금 뜬 결제창(팝업)의 호스트를 보고 정한다. phone_approve_payment 를 부르기
@@ -453,13 +526,12 @@ class PayerAgent(AgentBase):
                     FailReason.UNKNOWN,
                 )
         else:
-            # 결제 앱을 정할 수 없다 — 사이트 자체 결제(카드 직접 결제)다. phone_approve_payment 는
-            # 부르지 않는다(승인 앱이 없으니 승인할 것도 없다). 이 경로도 성공 문구를 확인하기
-            # 전에는 ok 를 내지 않는다 — 아래 공통 성공 확인이 그대로 지킨다
-            self.step('payer: 결제 앱을 정할 수 없다 — 웹 결제 경로로 진행')
+            # 결제 앱이 없다 — 사이트 자체 결제창(무신사머니 등)의 웹 키패드 경로. 비밀번호는 앱(fill_secret)이 누른다
+            self.step('payer: 결제 앱 없음 — 웹 결제창 경로')
+            self._web_pay(a)
 
         self.step('payer: 성공 확인')
-        page = self.tool('get_page')
+        page = self._success_page()
         if not any(m in page for m in PAY_SUCCESS_MARKERS):
             raise AgentFailure(
                 'needs_human',
