@@ -224,8 +224,13 @@ class WaveClient:
         shipping_fee: float = 0,
         sourcing_account_id: str | None = None,
         notes: str | None = None,
+        order_type: OrderType | None = None,
     ) -> WaveOrder:
-        """소싱주문번호·매입금액을 삼바웨이브 행에 기입한다. 다른 번호가 이미 있으면 409(DUPLICATE)."""
+        """소싱주문번호·매입금액을 삼바웨이브 행에 기입한다. 다른 번호가 이미 있으면 409(DUPLICATE).
+
+        order_type 은 하네스가 판정한 배송 종류(직배/까대기) — 삼바웨이브가 action_tag 로 기록한다(결과값).
+        삼바웨이브가 아직 이 필드를 모르면 무시된다.
+        """
         payload: dict[str, object] = {
             'sourcing_order_number': sourcing_order_number,
             'cost': cost,
@@ -233,6 +238,8 @@ class WaveClient:
         }
         if sourcing_account_id:
             payload['sourcing_account_id'] = sourcing_account_id
+        if order_type:
+            payload['order_type'] = order_type
         if notes:
             payload['notes'] = notes
         body = self._request('PUT', f'/orders/{order_no}/sourcing', json=payload)

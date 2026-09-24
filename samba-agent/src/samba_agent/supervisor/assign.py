@@ -77,6 +77,8 @@ def _expected(state: RunState) -> dict[str, object]:
                     'source_order_no': r.payload.get('source_order_no'),
                     'shipping_fee': r.payload.get('shipping_fee', 0),
                     'flags': r.payload.get('flags', []),
+                    # 구매 에이전트가 판정한 배송 종류 — 기록 단계가 삼바웨이브 태그로 남긴다
+                    'order_type': r.payload.get('order_type'),
                 }
             )
         if name == 'payer':

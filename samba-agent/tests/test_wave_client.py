@@ -221,3 +221,18 @@ def test_플래그_토큰은_한글_이름으로_보여_준다():
     )
     assert flag_text(('hold',)) == 'hold'  # 모르는 토큰은 그대로
     assert flag_text(()) == ''
+
+
+@respx.mock
+def test_record_sourcing_은_판정한_배송_종류를_함께_보낸다():
+    import json
+
+    route = respx.put(f'{API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': ORDER_JSON})
+    )
+    client().record_sourcing('A1', sourcing_order_number='M-777', cost=1, order_type='kkadaegi')
+    body = json.loads(route.calls.last.request.content)
+    assert body['order_type'] == 'kkadaegi'
+    # 판정이 없으면 필드를 아예 보내지 않는다
+    client().record_sourcing('A1', sourcing_order_number='M-777', cost=1)
+    assert 'order_type' not in json.loads(route.calls.last.request.content)

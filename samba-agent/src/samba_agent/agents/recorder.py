@@ -21,6 +21,12 @@ READ_SCRIPT = 'samba_read_order'
 NUMERIC_FIELDS = ('real_price', 'shipping_fee')
 
 
+def _order_type_value(raw: object) -> str | None:
+    """구매 에이전트가 판정한 배송 종류만 삼바웨이브에 보낸다(direct/kkadaegi/gift). 그 밖의 값·빈 값은 보내지 않는다."""
+    value = str(raw or '').strip()
+    return value if value in ('direct', 'kkadaegi', 'gift') else None
+
+
 def _won(value: object) -> str:
     """금액 → '89,000원'. 모르면 '미확인'."""
     try:
@@ -186,6 +192,7 @@ class RecorderAgent(AgentBase):
                 or (str(a.handoff.get('sourcing_account_id') or '') or None),
                 # 간단메모는 정해진 한 줄(계정·수단·실결제·원가) — LLM 문장을 싣지 않는다
                 notes=wave_notes(a, values),
+                order_type=_order_type_value(a.expected.get('order_type')),
             )
             self.step('recorder: 기입 확인')
             saved = self._wave.get_order(a.order.order_no)  # type: ignore[union-attr]
