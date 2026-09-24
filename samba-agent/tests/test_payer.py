@@ -863,3 +863,14 @@ def test_card_app_code_는_카드사를_결제_앱_검색어로_바꾼다():
     assert card_app_code('농협카드') == 'zgm'
     assert card_app_code('삼성카드') == '삼성카드'
     assert card_app_code(None) is None
+
+
+def test_web_pay_provider_separates_musinsapay_from_site_money() -> None:
+    from samba_agent.agents.payer import _keypad_not_ready, web_pay_provider
+
+    assert web_pay_provider('무신사페이') == 'musinsapay'
+    assert web_pay_provider('무신사머니') == 'site'
+    assert web_pay_provider('토스페이') is None
+    # 키패드가 아직 안 뜬 화면의 거절은 기다렸다 다시 본다 — 한 번 누른 뒤의 거절은 다시 누르지 않는다
+    assert _keypad_not_ready('refused: target is not a secret input')
+    assert not _keypad_not_ready('ok: the app entered the payment password on the keypad.')

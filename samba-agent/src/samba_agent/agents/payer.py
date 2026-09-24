@@ -7,8 +7,7 @@
 
 import json
 import re
-from urllib.parse import urlparse
-from urllib.parse import urlsplit
+from urllib.parse import urlparse, urlsplit
 
 from samba_agent.agents.base import AgentBase, AgentFailure, run_agent
 from samba_agent.agents.contracts import AgentResult, Assignment
@@ -59,6 +58,25 @@ PAY_HOST_PROVIDERS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 # 키패드 입력 뒤 주문 완료 화면이 뜰 때까지 기다리는 시간(ms)
 PAY_RESULT_WAIT_MS = 4000
+# 키패드가 뜰 때까지 팝업을 다시 보는 횟수·간격(최대 약 20초)
+KEYPAD_POLL_TRIES = 10
+KEYPAD_POLL_WAIT_MS = 2000
+# 아직 키패드·비밀번호 칸이 아닌 화면에서 앱이 돌려주는 거절 — 기다렸다 다시 본다
+_KEYPAD_NOT_READY = ('target is not a secret input', 'not found', 'no active tab')
+
+
+def _keypad_not_ready(out: str) -> bool:
+    low = out.lower()
+    return any(k in low for k in _KEYPAD_NOT_READY)
+
+
+def web_pay_provider(card: str) -> str | None:
+    """웹 결제 비밀번호의 제공자 — 무신사페이는 musinsapay, 사이트 머니(무신사머니·SSG PAY…)는 site, 모르면 None."""
+    if '무신사페이' in card or 'musinsapay' in card.lower():
+        return 'musinsapay'
+    if any(k in card for k in ('머니', 'SSG PAY', 'L.pay', '스마일')):
+        return 'site'
+    return None
 
 
 def _host_of(url: str) -> str:
@@ -333,7 +351,12 @@ class PayerAgent(AgentBase):
         """
         popups, _active = self._list_tabs_popups()
         web_popup = next(
-            (p for p in popups if _host_of(str(p.get('url') or '')) and _pay_host_provider(str(p.get('url') or '')) is None),
+            (
+                p
+                for p in popups
+                if _host_of(str(p.get('url') or ''))
+                and _pay_host_provider(str(p.get('url') or '')) is None
+            ),
             None,
         )
         if web_popup is not None and web_popup.get('id'):
@@ -344,23 +367,36 @@ class PayerAgent(AgentBase):
                 self.step('payer: 결제창 결제하기')
                 self.tool('click', id=pay_btn, label='결제하기')
                 self.tool('wait', ms=PAY_POPUP_WAIT_MS)
-        # 키패드 창은 별도 팝업으로 뜰 수 있다 — 가장 최근 팝업으로 옮겨 본다
-        popups, _active = self._list_tabs_popups()
-        if popups and popups[-1].get('id'):
-            self.tool('switch_tab', id=str(popups[-1]['id']))
-        self.step('payer: 결제 비밀번호(앱 입력)')
-        found = self.tool('find_elements', query=KEYPAD_QUERY)
-        # 결제 비밀번호 종류 — 사이트 자체 결제(무신사머니 등)는 'site'. 계정에 비밀번호가 여럿이면 없을 때 모호하다(실기)
+        # 결제 비밀번호 종류 — 무신사페이는 무신사머니와 비밀번호가 따로다(musinsapay), 사이트 머니는 'site'.
+        # 계정에 비밀번호가 여럿이면 없을 때 모호하다(실기)
         card = str(a.handoff.get('card') or a.options.get('card') or '')
-        provider = 'site' if any(k in card for k in ('머니', 'SSG PAY', 'L.pay', '스마일')) else None
+        provider = web_pay_provider(card)
         account = str(a.handoff.get('account') or a.order.account or '')
-        out = self.tool(
-            'fill_secret',
-            elementId=_element_id(found) or 0,
-            itemType='password',
-            **({'provider': provider} if provider else {}),
-            **({'accountLabel': account} if account else {}),
-        )
+        self.step('payer: 결제 비밀번호(앱 입력)')
+        # 키패드는 결제하기 뒤 늦게, 다른 팝업에 뜰 수 있다(실기: 무신사페이 — 활성 탭이 키패드가 아니라 거절).
+        # 앱은 키패드·비밀번호 칸이 실제로 있을 때만 누르고 아니면 아무것도 누르지 않고 거절하므로,
+        # 최근 팝업부터 돌며 뜰 때까지 기다렸다 다시 시도한다. 한 번 누른 키패드는 앱이 다시 누르지 않는다
+        out = ''
+        for attempt in range(KEYPAD_POLL_TRIES):
+            popups, _active = self._list_tabs_popups()
+            targets = [str(p['id']) for p in reversed(popups) if p.get('id')] or ['']
+            for tab_id in targets:
+                if tab_id:
+                    self.tool('switch_tab', id=tab_id)
+                found = self.tool('find_elements', query=KEYPAD_QUERY)
+                out = self.tool(
+                    'fill_secret',
+                    elementId=_element_id(found) or 0,
+                    itemType='password',
+                    **({'provider': provider} if provider else {}),
+                    **({'accountLabel': account} if account else {}),
+                )
+                if not _keypad_not_ready(out):
+                    break
+            if not _keypad_not_ready(out):
+                break
+            if attempt + 1 < KEYPAD_POLL_TRIES:
+                self.tool('wait', ms=KEYPAD_POLL_WAIT_MS)
         self.note('키패드 입력', mask_text(out[:200]))
         low = out.lower()
         if low.startswith('refused') or 'not found' in low or 'ambiguous' in low:
@@ -375,7 +411,9 @@ class PayerAgent(AgentBase):
         """결제 뒤 화면 — 주문 완료 탭(…/order/result/…)이 있으면 그 탭으로 옮겨 읽는다."""
         try:
             listed = self.tool('list_tabs')
-            for m in re.finditer(r'"id"\s*:\s*"([^"]+)"[^}]*?"url"\s*:\s*"([^"]*order/result[^"]*)"', listed):
+            for m in re.finditer(
+                r'"id"\s*:\s*"([^"]+)"[^}]*?"url"\s*:\s*"([^"]*order/result[^"]*)"', listed
+            ):
                 self.tool('switch_tab', id=m.group(1))
                 break
         except AgentFailure:
@@ -399,7 +437,9 @@ class PayerAgent(AgentBase):
                     FailReason.UNKNOWN,
                 )
             # 카드사(card_issuer)가 있으면 결제 앱 검색어로, 없고 카드 이름 자체가 결제 앱(예: 토스페이)이면 카드 아님
-            card_hint = card_app_code(a.handoff.get('card_issuer')) or (None if _pay_provider(card) else card)
+            card_hint = card_app_code(a.handoff.get('card_issuer')) or (
+                None if _pay_provider(card) else card
+            )
             out = self.tool(
                 'phone_approve_payment',
                 provider=provider,
@@ -514,7 +554,9 @@ class PayerAgent(AgentBase):
         if provider is not None:
             self.step('payer: 폰 승인')
             # 카드사(card_issuer)가 있으면 결제 앱 검색어로, 없고 카드 이름 자체가 결제 앱(예: 토스페이)이면 카드 아님
-            card_hint = card_app_code(a.handoff.get('card_issuer')) or (None if _pay_provider(card) else card)
+            card_hint = card_app_code(a.handoff.get('card_issuer')) or (
+                None if _pay_provider(card) else card
+            )
             # payAccount 는 앱 스키마상 네이버페이 전용이다. 사용자 결정 — 결제 앱이 쇼핑몰
             # 계정에 연결된 네이버 계정으로 스스로 고르게 두고, 어떤 provider 에도 payAccount 를
             # 넘기지 않는다(리뷰 지적 — Critical 1)
