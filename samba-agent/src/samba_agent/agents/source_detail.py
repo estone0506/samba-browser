@@ -15,7 +15,8 @@ SOURCE_DETAIL_SCRIPT = 'source_order_detail'
 
 def detail_args(a: Assignment, source_order_no: object) -> dict[str, object]:
     """상세 스크립트 인자 — 삼바 주문번호·소싱처·소싱 주문번호·산 계정(프로필)."""
-    args: dict[str, object] = {'orderNo': a.order.order_no, 'site': a.order.source}
+    site = str(a.handoff.get('buy_source') or a.order.source)  # 실제로 산 사이트
+    args: dict[str, object] = {'orderNo': a.order.order_no, 'site': site}
     if source_order_no:
         args['source_order_no'] = source_order_no
     account = a.handoff.get('account') or a.order.account

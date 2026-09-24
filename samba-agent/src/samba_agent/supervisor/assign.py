@@ -21,6 +21,8 @@ BUYER_HANDOFF_FIELDS = (
     'pay_provider',
     'paid',
     'card_issuer',
+    # 실제로 산 소싱처(교차 비교로 주문 소싱처와 다를 수 있다)
+    'buy_source',
 )
 
 

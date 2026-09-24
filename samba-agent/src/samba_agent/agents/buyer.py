@@ -581,6 +581,8 @@ class BuyerAgent(AgentBase):
     compare_accounts_max: int = 3
     # 결제에 쓸 수 있는 결제 제공자(SAMBA_ALLOWED_PAY_PROVIDERS). None 이면 키마스터에 있는 것 전부
     allowed_pay_providers: set[str] | None = None
+    # 같은 상품을 같이 비교할 다른 소싱처의 구매 에이전트(무신사 ↔ 29CM). factory 가 잇는다
+    sibling: 'BuyerAgent | None' = None
     # (계정, 시각) — 같은 사이트에서 마지막으로 로그인한 계정
     _last_login: tuple[str, float] | None = None
     _order_type_noted: tuple[str, str] | None = None
@@ -1186,6 +1188,88 @@ class BuyerAgent(AgentBase):
             self.note('견적 검증', mask_text(f'AI 검토 실패 — 규칙 검사만 씀({e.reason[:60]})'))
         return flags
 
+    def _find_same_product(self, a: Assignment) -> str | None:
+        """다른 사이트 주문의 상품을 이 사이트에서 찾는다(`<key>_find_product`). 없으면 None."""
+        source = source_of(self.spec.name)
+        host = urlparse(source.home or '').hostname or ''
+        site_key = host.replace('www.', '')
+        out = self.script_json(
+            f'{source.key}_find_product',
+            {'source_url': a.order.product_url, 'option': a.order.option or ''},
+            goal=(
+                f'source_url(다른 쇼핑몰 상품 페이지)을 열어 브랜드·품번(모델코드)·상품명을 읽고 {host} 검색에서 '
+                '같은 상품(품번 일치 우선, 없으면 브랜드+상품명 일치)을 찾아 {found, product_url, name, model} 을 돌려준다. '
+                '같은 상품이 없으면 found:false. 다른 상품을 같은 것으로 치지 않는다. 결제·장바구니는 누르지 않는다.'
+            ),
+            check=lambda o: (
+                None
+                if not o.get('found')
+                or (site_key and site_key in str(o.get('product_url') or '') and o.get('name'))
+                else f'found 인데 이 사이트({site_key}) 상품 주소·이름이 없다'
+            ),
+        )
+        if not out.get('found'):
+            return None
+        return str(out.get('product_url') or '') or None
+
+    def _cross_compare(
+        self, a: Assignment, account: str, snap: dict[str, object]
+    ) -> AgentResult | None:
+        """다른 사이트(sibling)의 같은 상품과 최종 원가(결제수단 견적 포함)를 비교한다.
+
+        다른 사이트가 더 싸면 그 사이트 에이전트가 그 계정으로 산 결과를 돌려준다. 같거나 비싸면 None(이 사이트로 산다).
+        """
+        sib = self.sibling
+        if sib is None or a.options.get('no_cross') or not a.order.product_url:
+            return None
+        sib_src = source_of(sib.spec.name)
+        self.step(f'{self.spec.name}: 교차 비교({sib_src.id})')
+        sib._dry_run = self._dry_run
+        sib.evidence = []
+        sib._quote_errors = []
+        sib._option_ai = {}
+        sib.reset_repairs()
+        try:
+            url = sib._find_same_product(a)
+        except AgentFailure as e:
+            self.note(
+                '교차 비교',
+                mask_text(f'{sib_src.id} 상품 찾기 실패({e.reason[:60]}) — 이 사이트로 산다'),
+            )
+            return None
+        if not url:
+            self.note('교차 비교', f'{sib_src.id} 에 같은 상품 없음 — 이 사이트로 산다')
+            return None
+        if source_of(self.spec.name).payment_quotes and _as_float(snap.get('cost')) > 0:
+            self._apply_payment_quotes(a, account, snap)
+            snap['_quoted'] = True
+        own = _as_float(snap.get('cost'))
+        order2 = a.order.model_copy(
+            update={'product_url': url, 'sku': url, 'source': sib_src.id, 'account': None}
+        )
+        a2 = a.model_copy(update={'order': order2, 'options': {**a.options, 'no_cross': True}})
+        try:
+            s_acc, s_snap = sib._pick_cheapest(a2, sib._candidate_accounts(a2))
+            if sib_src.payment_quotes and _as_float(s_snap.get('cost')) > 0:
+                sib._apply_payment_quotes(a2, s_acc, s_snap)
+        except AgentFailure as e:
+            self.note(
+                '교차 비교',
+                mask_text(f'{sib_src.id} 견적 실패({e.reason[:60]}) — 이 사이트로 산다'),
+            )
+            return None
+        other = _as_float(s_snap.get('cost'))
+        self.note(
+            '교차 비교',
+            f'{source_of(self.spec.name).id} {account} {own:,.0f}원 vs {sib_src.id} {s_acc} {other:,.0f}원 ({url})',
+        )
+        if not (0 < other < own):
+            return None
+        self.note('교차 비교', f'{sib_src.id} 가 더 싸다 — {sib_src.id} {s_acc} 로 산다')
+        a3 = a2.model_copy(update={'order': order2.model_copy(update={'account': s_acc})})
+        result = sib(a3)
+        return result.model_copy(update={'evidence': (*self.evidence, *result.evidence)})
+
     def _pick_cheapest(self, a: Assignment, accounts: list[str]) -> tuple[str, dict[str, object]]:
         """계정마다 견적을 내고 원가가 가장 낮은 계정(같으면 앞 계정)과 그 스냅샷을 고른다.
 
@@ -1261,9 +1345,15 @@ class BuyerAgent(AgentBase):
         else:
             account, snap = self._pick_cheapest(a, accounts)
 
+        # 무신사 ↔ 29CM 같은 상품을 같이 비교해 더 싼 쪽에서 산다(사용자 2026-09-24)
+        delegated = self._cross_compare(a, account, snap)
+        if delegated is not None:
+            return delegated
+
         self._check_account(account, snap)
         if (
             source_of(self.spec.name).payment_quotes
+            and not snap.get('_quoted')
             and _as_float(snap.get('cost')) > 0
             and not snap.get('already_ordered')
             and not snap.get('existing_order_no')
@@ -1370,6 +1460,8 @@ class BuyerAgent(AgentBase):
             payload={
                 'option': picked.choice,
                 'account': account,
+                # 실제로 산 소싱처 — 교차 비교로 다른 사이트에서 샀을 수 있다. 결제·기록·검증이 이 사이트 기준으로 일한다
+                'buy_source': source_of(self.spec.name).id,
                 'accounts_compared': len(accounts),
                 'shipping_set': True,
                 'order_type': self.order_type_of(a.order, snap),

@@ -194,7 +194,9 @@ class RecorderAgent(AgentBase):
         """구매 에이전트가 쓴 계정(handoff account)의 삼바웨이브 id. 주문 계정과 같거나 못 찾으면 주문 값."""
         bought = str(a.handoff.get('account') or '').strip()
         if bought and bought != (a.order.account or '') and self._wave is not None:
-            found = self._wave.sourcing_account_id(_source_site(a.order.source), bought)
+            found = self._wave.sourcing_account_id(
+                _source_site(str(a.handoff.get('buy_source') or a.order.source)), bought
+            )
             if found:
                 self.note('주문계정', f'실제 구매 계정 {bought} 로 기록')
                 return found
@@ -215,7 +217,7 @@ class RecorderAgent(AgentBase):
             detail = self.script_json(
                 SOURCE_DETAIL_SCRIPT,
                 detail_args(a, sourcing_no),
-                goal=detail_goal(a.order.source),
+                goal=detail_goal(str(a.handoff.get('buy_source') or a.order.source)),
                 check=detail_check(sourcing_no),
             )
         except AgentFailure as e:

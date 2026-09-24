@@ -48,6 +48,18 @@ def build_agents(
         elif isinstance(agent, PayerAgent | RecorderAgent | VerifierAgent):
             agent.set_wave(wave)
         agents[spec.name] = agent
+    # 교차 비교 짝(무신사 ↔ 29CM) — 소싱처 표의 cross_with 로 잇는다
+    by_source = {
+        reg.source_of(n).id: ag  # type: ignore[union-attr]
+        for n, ag in agents.items()
+        if isinstance(ag, BuyerAgent) and reg.source_of(n) is not None
+    }
+    for n, ag in agents.items():
+        src = reg.source_of(n)
+        if isinstance(ag, BuyerAgent) and src is not None and src.cross_with:
+            sib = by_source.get(src.cross_with)
+            if isinstance(sib, BuyerAgent) and sib is not ag:
+                ag.sibling = sib
     return agents
 
 

@@ -58,6 +58,8 @@ class Source(BaseModel):
     coupon_download: bool = False
     # True 면 결제수단 견적에 `<key>_pay_card_quote`(간편결제 등록 기본 카드 한 줄)를 더한다 — 카드 청구할인 비교용
     pay_card_quote: bool = False
+    # 같은 상품을 같이 비교할 다른 소싱처 id(예: 무신사 ↔ 29CM) — 더 싼 쪽에서 산다(사용자 2026-09-24)
+    cross_with: str | None = None
     # 이 소싱처의 주문은 항상 이 배송 종류로 본다(예: ABC마트는 전부 까대기 = 사무실 배송).
     # None 이면 주문(삼바웨이브 action_tag)이 정한 종류를 따른다
     order_type: Literal['direct', 'kkadaegi', 'gift'] | None = None

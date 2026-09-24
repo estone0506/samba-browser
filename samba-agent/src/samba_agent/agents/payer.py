@@ -517,10 +517,12 @@ class PayerAgent(AgentBase):
         self._recheck_wave(a)
 
         self.step('payer: 결제창 진입')
-        script = checkout_script_for(a.order.source)
+        # 실제로 산 사이트(교차 비교) 기준으로 결제창에 들어간다
+        script = checkout_script_for(str(a.handoff.get('buy_source') or a.order.source))
         payload: dict[str, object] = {'card': card}
-        if a.order.account:
-            payload['profile'] = a.order.account  # 구매가 연 계정 프로필의 주문서에서 결제창을 연다
+        profile = a.handoff.get('account') or a.order.account
+        if profile:
+            payload['profile'] = profile  # 구매가 연 계정 프로필의 주문서에서 결제창을 연다
         # 결제창 진입은 AI 수리 대상이 아니다 — 비밀번호 없는 간편결제(무신사페이 카드 등)는 '결제하기' 한 번에
         # 결제가 끝난다(실기 2026-09-24: 수리 시험 중 결제하기 클릭으로 실결제 발생). 실패하면 사람에게 넘긴다
         raw_enter = self.tool(

@@ -74,7 +74,7 @@ class VerifierAgent(AgentBase):
         source = self.script_json(
             SOURCE_DETAIL_SCRIPT,
             detail_args(a, want_no),
-            goal=detail_goal(a.order.source),
+            goal=detail_goal(str(a.handoff.get('buy_source') or a.order.source)),
             check=detail_check(want_no),
         )
         # 원가는 결제 뒤 실제 상세로 다시 계산해 기록한다(기록 에이전트) — 견적 원가 대신 그 값으로 대조한다

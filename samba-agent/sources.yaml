@@ -6,6 +6,7 @@
 sources:
   - id: MUSINSA
     key: musinsa
+    cross_with: 29CM   # 같은 상품을 29CM 에서도 비교해 싼 쪽에서 산다
     order_prep: true   # musinsa_order_prep — 적립금 5만 미만 0원·선할인(플레이북 §7)
     coupon_download: true   # musinsa_coupon_download — 상품 페이지 '쿠폰받기'로 안 받은 쿠폰을 먼저 받는다
     pay_card_quote: true    # musinsa_pay_card_quote — 무신사페이 등록 기본 카드 견적(롯데·현대 청구할인 비교)
@@ -20,6 +21,7 @@ sources:
     status: active
   - id: 29CM
     key: cm29
+    cross_with: MUSINSA   # 같은 상품을 무신사에서도 비교해 싼 쪽에서 산다
     payment_quotes: true  # 2026-09-23 cm29_payment_quotes
     label: 29CM
     home: https://www.29cm.co.kr/
