@@ -7,6 +7,7 @@ run_agent 가 그것을 결과로 바꾼다 — 감독자는 예외를 보지 �
 import json
 import logging
 import re
+import threading
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -31,6 +32,16 @@ log = logging.getLogger(__name__)
 
 # 스크립트 결과 JSON → 문제 문장(None 이면 통과)
 ScriptCheck = Callable[[dict[str, object]], str | None]
+# 스크립트마다 수리 잠금 — 계정 레인이 동시에 돌 때 같은 스크립트를 서로 덮어쓰며 고치지 않게
+_REPAIR_LOCKS: dict[str, threading.Lock] = {}
+_REPAIR_LOCKS_GUARD = threading.Lock()
+
+
+def _repair_lock(name: str) -> threading.Lock:
+    with _REPAIR_LOCKS_GUARD:
+        return _REPAIR_LOCKS.setdefault(name, threading.Lock())
+
+
 # 앱 run_script 가 그 이름의 스크립트가 없을 때 돌려주는 문구
 _MISSING_SCRIPT = 'no saved script named'
 # 이 사유의 실패는 스크립트를 고쳐도 소용없다 — 수리하지 않고 그대로 던진다
@@ -134,8 +145,9 @@ class AgentBase:
     _repair_tried: dict[str, str]
 
     def reset_repairs(self) -> None:
-        """작업 시작 때 부른다 — 수리 시도 기록을 비운다."""
+        """작업 시작 때 부른다 — 수리 시도 기록을 비운다. 기록 사전은 계정 레인 사본들이 함께 쓴다."""
         self._repair_tried = {}
+        self._repair_fixed: set[str] = set()
 
     def script_json(
         self,
@@ -188,6 +200,35 @@ class AgentBase:
         """AI 수리 1회. 검증 통과 결과를 돌려주거나 None(못 고침·진짜 불가·꺼짐)."""
         if self.repairer is None:
             return None
+        with _repair_lock(name):
+            return self._repair_locked(
+                name, args, goal, check, problem, last_output, allow_pay_button
+            )
+
+    def _repair_locked(
+        self,
+        name: str,
+        args: dict[str, object],
+        goal: str,
+        check: ScriptCheck,
+        problem: str,
+        last_output: str,
+        allow_pay_button: bool = False,
+    ) -> dict[str, object] | None:
+        """잠금 안에서 수리. 다른 레인이 이 작업에서 이미 고쳤으면 고친 스크립트로 먼저 다시 돌려 본다."""
+        fixed = getattr(self, '_repair_fixed', None)
+        if fixed is None:
+            fixed = self._repair_fixed = set()
+        if name in fixed:
+            try:
+                again = self.json_tool(
+                    'run_script', name=name, args=json.dumps(args, ensure_ascii=False)
+                )
+            except AgentFailure:
+                again = None
+            if again is not None and check(again) is None:
+                self.note('스크립트 수리', f'{name}: 다른 계정에서 고친 스크립트로 통과')
+                return again
         tried = getattr(self, '_repair_tried', None)
         if tried is None:
             tried = self._repair_tried = {}
@@ -240,6 +281,7 @@ class AgentBase:
             self.note('스크립트 수리', mask_text(f'{name}: 못 고침 — {outcome.reason[:160]}'))
             return None
         self._save_repaired(name, outcome.code, current, goal, problem, outcome.tests)
+        fixed.add(name)
         return outcome.output
 
     def _save_repaired(
