@@ -556,10 +556,10 @@ EMPTY_SHIPPING_MARKERS = (
     '배송지가 없습니다',
 )
 
-# dry_run 이면 구매 에이전트가 절대 부르지 않는 부수효과 도구(허용 목록에 있어도 막는다)
+# dry_run 이면 구매 에이전트가 절대 부르지 않는 부수효과 도구(허용 목록에 있어도 막는다).
+# save_script 는 뺐다 — 결제 없는 검증 실행에서 AI 가 고친 스크립트도 남아야 검증이 쌓인다(사용자 2026-09-24 전면 재검증)
 DRY_RUN_BLOCKED_TOOLS = frozenset(
     {
-        'save_script',
         'update_playbook',
         'remember_site',
         'phone_approve_payment',

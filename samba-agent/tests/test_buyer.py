@@ -281,11 +281,11 @@ def test_결제_도구는_부르지도_못한다(reg):
 
 @respx.mock
 def test_dry_run이면_부수효과_도구를_아예_부르지_않는다(reg):
-    route = respx.post(f'{URL}/tool/save_script')
+    route = respx.post(f'{URL}/tool/phone_tap')
     b = agent(reg, lambda p, m: m(choice='260', reason='x'))
     b._dry_run = True
     with pytest.raises(AgentFailure) as e:
-        b.tool('save_script', name='x', args='{}')
+        b.tool('phone_tap', x=1, y=1)
     assert (e.value.status, e.value.fail_reason) == ('fail', FailReason.PERMISSION_DENIED)
     assert not route.called
 
