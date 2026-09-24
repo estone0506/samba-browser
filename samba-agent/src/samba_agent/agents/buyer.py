@@ -441,12 +441,28 @@ def shipping_set_problem(shipping: dict[str, object]) -> Callable[[dict[str, obj
     return check
 
 
-def snapshot_problem(option: str | None) -> Callable[[dict[str, object]], str | None]:
-    """상품 스냅샷 검증: 원가를 읽었고 주문 옵션과 맞는 선택지가 있어야 통과. 중복 구매 흔적은 그대로 통과."""
+def snapshot_problem(
+    option: str | None, selected_ok: Callable[[str], bool] | None = None
+) -> Callable[[dict[str, object]], str | None]:
+    """상품 스냅샷 검증: 원가를 읽었고 주문 옵션과 맞는 선택지가 있고, 주문서에 실제로 담긴 옵션(selected)이
+    주문 옵션과 같아야 통과. 중복 구매 흔적은 그대로 통과.
+
+    실기: 선택지 목록에는 110 이 있었는데 이름이 한 칸 밀려 주문서엔 105 가 담겼다(무신사 데상트) — 목록만 보면 못 잡는다.
+    """
 
     def check(out: dict[str, object]) -> str | None:
         if out.get('already_ordered') or out.get('existing_order_no'):
             return None
+        if option:
+            sel = str(out.get('selected') or '').strip()
+            if not sel:
+                return (
+                    '주문서에 실제로 담긴 옵션(selected)을 돌려주지 않았다 — 주문서의 상품 옵션 글자를 읽어 '
+                    'selected 로 돌려줘라'
+                )
+            if selected_ok is not None and not selected_ok(sel):
+                return f'주문서에 담긴 옵션 "{sel}" 이 주문 옵션 "{option}" 과 다르다 — 옵션을 잘못 골랐다'
+
         options = [str(o) for o in (out.get('options') or [])]  # type: ignore[union-attr]
         # 표기만 다른 옵션(7 1/8 ↔ 718(56.8cm))은 하네스가 AI 로 맞춘다 — 스크립트 수리 대상이 아니다
         if (
@@ -729,9 +745,12 @@ class BuyerAgent(AgentBase):
             json.loads(snapshot_args(self.spec.name, a.order, account=account)),
             goal=(
                 f'상품 {a.order.sku} 페이지에서 주문 옵션 "{a.order.option or "(없음)"}" 을 골라 주문서(구매하기)까지 가서 '
-                '원가(cost, 숫자)·선택지 목록(options, 고른 옵션 포함)·결제수단(methods)을 원래 키 그대로 돌려준다.'
+                '원가(cost, 숫자)·선택지 목록(options, 고른 옵션 포함)·결제수단(methods)을 원래 키 그대로 돌려주고, '
+                '주문서에 실제로 담긴 상품 옵션 글자를 selected 로 돌려준다(고른 버튼 이름이 아니라 주문서에서 되읽은 값).'
             ),
-            check=snapshot_problem(a.order.option),
+            check=snapshot_problem(
+                a.order.option, lambda sel: self._selected_matches(sel, a.order.option)
+            ),
         )
         if snap.get('already_ordered') or snap.get('existing_order_no'):
             return snap  # 중복 구매 흔적 — 정돈·견적 없이 호출부가 바로 거절한다
@@ -924,6 +943,14 @@ class BuyerAgent(AgentBase):
             self.note('계정 견적', mask_text(f'{account}: 불가(주문 옵션 품절)'))
             self._quote_skips.append(f'{account}: 옵션 불일치 {options[:6]}')
             return None
+        selected = str(snap.get('selected') or '').strip()
+        if a.order.option and not (selected and self._selected_matches(selected, a.order.option)):
+            # 주문서에 엉뚱한 옵션이 담긴 채 사면 안 된다(실기: 110 주문에 105 결제)
+            self.note(
+                '계정 견적', mask_text(f'{account}: 불가(주문서 옵션 불일치: {selected or "모름"})')
+            )
+            self._quote_skips.append(f'{account}: 주문서 옵션 불일치({selected or "모름"})')
+            return None
         cost = _as_float(snap.get('cost'))
         if cost <= 0:
             self.note('계정 견적', mask_text(f'{account}: 불가(원가를 읽지 못함)'))
@@ -931,6 +958,15 @@ class BuyerAgent(AgentBase):
             return None
         self.note('계정 견적', mask_text(f'{account}: 원가 {cost:,.0f}원'))
         return {**snap, 'cost': cost}
+
+    def _selected_matches(self, selected: str, wanted: str | None) -> bool:
+        """주문서에 담긴 옵션이 주문 옵션과 같은가. 주문 옵션에 사이즈 숫자가 있으면 그 숫자가 꼭 겹쳐야 한다."""
+        if not wanted:
+            return True
+        sizes = size_numbers(wanted)
+        if sizes and not (size_numbers(selected) & sizes):
+            return False
+        return bool(self._match_options([selected], wanted))
 
     def _match_options(self, options: list[str], wanted: str | None) -> list[str]:
         """주문 옵션과 맞는 후보. 규칙 매칭이 실패하면 AI 가 표기만 다른 같은 옵션을 고른다.

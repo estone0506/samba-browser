@@ -945,7 +945,7 @@ def test_한_계정이_품절이면_다른_계정으로_산다(generic_musinsa, 
         side_effect=_per_account_snapshots(
             {
                 'A': {**SNAPSHOT_OK, 'options': ['260 (품절)', '265'], 'cost': 70000},
-                'B': {**SNAPSHOT_OK, 'cost': 85000},
+                'B': {**SNAPSHOT_OK, 'cost': 85000, 'selected': '260'},
             },
             calls,
         )

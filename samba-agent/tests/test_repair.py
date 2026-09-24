@@ -156,15 +156,23 @@ def test_one_repair_attempt_per_script_per_job(buyer) -> None:
 
 def test_snapshot_problem_checks_option_and_cost() -> None:
     check = snapshot_problem('EU 그린 EU 44 · KR 285')
-    assert check({'options': ['285'], 'cost': 1000}) is None
+    assert check({'options': ['285'], 'cost': 1000, 'selected': '285'}) is None
+    # 주문서에 실제로 담긴 옵션을 안 돌려주면 수리 대상(실기: 110 주문에 105 가 담김)
+    assert 'selected' in (check({'options': ['285'], 'cost': 1000}) or '')
+    strict = snapshot_problem('블랙 110', lambda sel: '110' in sel)
+    assert '다르다' in (
+        strict({'options': ['105', '110'], 'cost': 1, 'selected': 'BLK0 · 105'}) or ''
+    )
     # 사이즈 숫자가 하나도 안 겹치면 스크립트가 엉뚱한 목록을 읽은 것 — 수리 대상
-    assert '맞는 선택지가 없다' in (check({'options': ['270', '275'], 'cost': 1000}) or '')
-    assert '원가' in (check({'options': ['285'], 'cost': 0}) or '')
+    assert '맞는 선택지가 없다' in (
+        check({'options': ['270', '275'], 'cost': 1000, 'selected': '270'}) or ''
+    )
+    assert '원가' in (check({'options': ['285'], 'cost': 0, 'selected': '285'}) or '')
     assert check({'already_ordered': True}) is None
     # 숫자 없는 옵션(색·S)은 표기 차이를 하네스 AI 매칭이 맡는다 — 빈 목록만 수리 대상
     color = snapshot_problem('상아색 S')
-    assert color({'options': ['IVORY / S'], 'cost': 1000}) is None
-    assert color({'options': [], 'cost': 1000})
+    assert color({'options': ['IVORY / S'], 'cost': 1000, 'selected': 'IVORY / S'}) is None
+    assert color({'options': [], 'cost': 1000, 'selected': 'IVORY / S'})
 
 
 def test_numeric_overlap_and_choice_resolution() -> None:
