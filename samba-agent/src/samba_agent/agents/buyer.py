@@ -22,6 +22,7 @@ from samba_agent.agents.registry import AgentSpec
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_text
 from samba_agent.sources import Source, default_sources
+from samba_agent.supervisor.policy import is_poison_seller
 from samba_agent.wave.client import WaveError
 
 # (주문번호, 배송 종류) → 배송지 사전. 배송 종류는 소싱처 강제값이 있으면 그것, 없으면 주문의 값.
@@ -176,12 +177,55 @@ def cheapest_quotes(
             provider = quote_provider(method, card)
             if provider is None or provider not in payable:
                 continue
+            # 카드 직접 결제는 허용 카드사만(현대·삼성·롯데). 카드사를 모르는 '카드' 한 줄은 뺀다
+            if provider == 'card' and not any(k in (card or '') for k in ALLOWED_CARD_ISSUERS):
+                continue
         if wanted_card:
             w = wanted_card.strip()
             if w not in method and (card is None or w not in card):
                 continue
         rows.append({'method': method, 'card': card, 'cost': cost})
     return sorted(rows, key=lambda r: float(r['cost']))
+
+
+# 포이즌 외 마켓의 까대기 건 배송비(삼바웨이브 기록, 원). 사무실 경유 재발송비 — poizon-sourcing 스킬 규칙
+KKADAEGI_SHIPPING_FEE = 2300
+# 사무실 주소 표식 — 까대기의 기본 배송지가 이 주소여야 한다(경북 가상시 사무실길 58)
+OFFICE_ADDRESS_HINT = '사무실길 58'
+# 카드 직접 결제에서 비교·구매를 허용하는 카드사(poizon-sourcing 스킬 규칙). 그 밖의 카드사 견적은 후보에서 뺀다
+ALLOWED_CARD_ISSUERS = ('현대', '삼성', '롯데')
+
+
+def decide_order_type(
+    order: OrderRef, normal_price: float | None, forced: str | None = None
+) -> tuple[str, str]:
+    """이 주문을 직배/까대기 중 무엇으로 이행할지와 그 근거(poizon-sourcing 스킬 "대상과 처리 순서").
+
+    - 소싱처가 강제하면(ABC마트·그랜드스테이지 = 까대기) 그것
+    - 포이즌 판매건은 소싱처와 무관하게 까대기
+    - 그 밖의 마켓(KT알파·롯데홈쇼핑·쿠팡 …)은 **소싱처 정가(세일가 아님)** 와 고객 결제액을 비교한다:
+      정가 ≤ 고객 결제액 → 까대기(고객이 정가를 보면 클레임), 정가 > 고객 결제액 → 직배
+    - 정가나 고객 결제액을 모르면 판정 불가(빈 문자열) — 호출부가 사람에게 넘긴다
+    선물(gift) 태그가 있는 주문은 배송지 입력 흐름이 다르니 그대로 둔다.
+    """
+    if forced:
+        return forced, f'소싱처 규칙({forced})'
+    if order.order_type == 'gift':
+        return 'gift', '선물 태그'
+    if is_poison_seller(order.seller):
+        return 'kkadaegi', '포이즌 판매건은 전부 까대기'
+    if normal_price is None or normal_price <= 0 or order.sale_price <= 0:
+        return '', '정가 또는 고객 결제액을 몰라 직배/까대기를 정할 수 없다'
+    if normal_price <= order.sale_price:
+        return 'kkadaegi', f'정가 {normal_price:,.0f} ≤ 고객 결제액 {order.sale_price:,.0f}'
+    return 'direct', f'정가 {normal_price:,.0f} > 고객 결제액 {order.sale_price:,.0f}'
+
+
+def shipping_fee_for(order: OrderRef, order_type: str) -> float:
+    """삼바웨이브에 기록할 배송비 — 포이즌 외 마켓의 까대기 건만 2,300원, 나머지(포이즌·직배)는 0."""
+    if order_type == 'kkadaegi' and not is_poison_seller(order.seller):
+        return float(KKADAEGI_SHIPPING_FEE)
+    return 0.0
 
 
 def matching_options(options: list[str], wanted: str | None) -> list[str]:
@@ -357,6 +401,7 @@ class BuyerAgent(AgentBase):
     compare_accounts_max: int = 2
     # (계정, 시각) — 같은 사이트에서 마지막으로 로그인한 계정
     _last_login: tuple[str, float] | None = None
+    _order_type_noted: tuple[str, str] | None = None
 
     def __call__(self, assignment: Assignment) -> AgentResult:
         self._dry_run = assignment.dry_run
@@ -483,7 +528,27 @@ class BuyerAgent(AgentBase):
         )
         if source_of(self.spec.name).payment_quotes and _as_float(snap.get('cost')) > 0:
             self._apply_payment_quotes(a, account, snap)
+        if source_of(self.spec.name).normal_price and snap.get('normal_price') is None:
+            self._apply_normal_price(a, account, snap)
         return snap
+
+    def _apply_normal_price(self, a: Assignment, account: str, snap: dict[str, object]) -> None:
+        """소싱처 정가(`<key>_normal_price`)를 스냅샷에 싣는다. 못 읽으면 None 으로 두고 근거만 남긴다."""
+        try:
+            out = self.json_tool(
+                'run_script',
+                name=source_of(self.spec.name).normal_price_script,
+                args=json.dumps(
+                    {'sku': product_ref(self.spec.name, a.order), 'profile': account}, ensure_ascii=False
+                ),
+            )
+        except AgentFailure as e:
+            self.note('정가', mask_text(f'못 읽음({e.reason[:80]})'))
+            return
+        price = _as_float(out.get('normal_price'))
+        if price > 0:
+            snap['normal_price'] = price
+            self.note('정가', f'{price:,.0f}원')
 
     def _payable_providers(self, account: str) -> set[str] | None:
         """이 계정으로 실제 낼 수 있는 결제 제공자(키마스터에 결제 비밀번호·카드가 있는 것).
@@ -735,6 +800,8 @@ class BuyerAgent(AgentBase):
                 'account': account,
                 'accounts_compared': len(accounts),
                 'shipping_set': True,
+                'order_type': self.order_type_of(a.order, snap),
+                'shipping_fee': shipping_fee_for(a.order, self.order_type_of(a.order, snap)),
                 'card': card,
                 'cost': cost,
                 'margin_pct': margin,
@@ -776,10 +843,24 @@ class BuyerAgent(AgentBase):
         """
         self._shipping_fn = provider
 
-    def order_type_of(self, order: OrderRef) -> str:
-        """이 주문의 배송 종류 — 소싱처가 강제하면 그것(ABC마트·그랜드스테이지 = 까대기), 아니면 주문의 값."""
-        forced = source_of(self.spec.name).order_type
-        return forced or order.order_type
+    def order_type_of(self, order: OrderRef, snap: dict[str, object] | None = None) -> str:
+        """이 주문의 배송 종류(decide_order_type). 정할 수 없으면 사람에게 넘긴다.
+
+        삼바웨이브 태그는 이 판정의 **결과**로 기록되는 값이지 입력이 아니다(사용자 설명 2026-09-24).
+        """
+        source = source_of(self.spec.name)
+        forced = source.order_type
+        if not source.normal_price and not forced and not is_poison_seller(order.seller):
+            # 정가 스크립트가 없는 소싱처는 아직 자동 판정을 못 한다 — 삼바웨이브 태그(order_type)를 따른다
+            return order.order_type
+        normal = _as_float(snap.get('normal_price')) if snap else 0.0
+        kind, why = decide_order_type(order, normal if normal > 0 else None, forced)
+        if not kind:
+            raise AgentFailure('needs_human', f'직배/까대기 판정 불가 — {why}', FailReason.UNKNOWN)
+        if self._order_type_noted != (order.order_no, kind):
+            self._order_type_noted = (order.order_no, kind)
+            self.note('배송 종류', f'{"까대기" if kind == "kkadaegi" else "선물" if kind == "gift" else "직배"} — {why}')
+        return kind
 
     def _fetch_shipping(self, a: Assignment, snap: dict[str, object]) -> dict[str, object]:
         """배송지 출처 — 삼바웨이브(공급자) > 스냅샷에 실려 온 값 > 전용 스크립트 순.
@@ -788,7 +869,7 @@ class BuyerAgent(AgentBase):
         """
         if self._shipping_fn is not None:
             try:
-                fetched = self._shipping_fn(a.order.order_no, self.order_type_of(a.order))
+                fetched = self._shipping_fn(a.order.order_no, self.order_type_of(a.order, snap))
             except WaveError as e:
                 raise AgentFailure('fail', f'배송지 조회 실패: {e}', e.reason) from e
             if fetched:
@@ -807,7 +888,7 @@ class BuyerAgent(AgentBase):
 
         원문은 이 함수 밖으로 나가지 않는다 — self.note 에는 마스킹된 요약만 남긴다.
         """
-        if self.order_type_of(a.order) == 'kkadaegi':
+        if self.order_type_of(a.order, snap) == 'kkadaegi':
             self._keep_default_shipping(snap)
             return
 
@@ -868,10 +949,19 @@ class BuyerAgent(AgentBase):
         embedded = snap.get('shipping')
         if isinstance(embedded, dict) and embedded:
             filled = all(str(embedded.get(f) or '').strip() for f in SHIPPING_FIELDS)
+            office = OFFICE_ADDRESS_HINT in str(embedded.get('address') or '')
         else:
             page = self.tool('get_page')
             filled = any(m in page for m in RECIPIENT_MARKERS) and not any(
                 m in page for m in EMPTY_SHIPPING_MARKERS
+            )
+            office = OFFICE_ADDRESS_HINT in page
+        if filled and not office:
+            # 기본 배송지가 사무실이 아니면 까대기로 보내면 안 된다 — 사람이 계정 기본 배송지를 사무실로 바꿔야 한다
+            raise AgentFailure(
+                'needs_human',
+                f'까대기인데 계정 기본 배송지가 사무실({OFFICE_ADDRESS_HINT})이 아니다',
+                FailReason.UNKNOWN,
             )
         if not filled:
             raise AgentFailure(

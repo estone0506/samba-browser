@@ -15,7 +15,7 @@ from samba_agent.ops.masking import find_leaks
 from samba_agent.settings import DEFAULT_ROOT
 
 URL = 'http://127.0.0.1:47811'
-ORDER = OrderRef(order_no='A1', source='무신사', seller='포이즌', sku='SKU-260', qty=1)
+ORDER = OrderRef(order_no='A1', source='무신사', seller='쿠팡', sku='SKU-260', qty=1)
 
 # 배송지 표본 — 테스트에서만 쓰는 가짜 개인정보. 어디에도 원문으로 남으면 안 된다
 SHIPPING = {'name': '홍길동', 'phone': '010-1234-5678', 'address': '서울특별시 강남구 테헤란로 1'}
@@ -446,14 +446,18 @@ def buyer_with_wave(reg, decide):
     return a
 
 
-def _recording_handler(snapshot_name, applied, echo_extra=None):
+def _recording_handler(snapshot_name, applied, echo_extra=None, snapshot=None):
     """스냅샷은 표본을, 배송지 스크립트는 받은 인자(+전화 칸 번호)를 메아리친다."""
     extra = {'phone_field_id': 42} if echo_extra is None else echo_extra
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         if body['args']['name'] == snapshot_name:
-            return page(json.dumps(SNAPSHOT_OK, ensure_ascii=False))
+            return page(json.dumps(snapshot or SNAPSHOT_OK, ensure_ascii=False))
+        if body['args']['name'].endswith('_payment_quotes'):
+            return page('{"quotes": []}')  # 견적 없음 — 스냅샷 원가로 진행
+        if body['args']['name'].endswith('_normal_price'):
+            return page('{}')  # 정가 없음
         args = json.loads(body['args']['args'])
         if body['args']['name'].endswith('_confirm_shipping'):
             # 확정 스크립트 — 폼을 저장한 뒤 주문서에서 되읽은 값을 그대로 메아리친다
@@ -641,7 +645,12 @@ def test_ABC마트는_항상_까대기로_기본_배송지를_유지한다(reg):
     abc, spec = _abc_agent(reg)
     applied: dict[str, object] = {}
     respx.post(f'{URL}/tool/run_script').mock(
-        side_effect=_recording_handler('abc_product_snapshot', applied)
+        side_effect=_recording_handler(
+            'abc_product_snapshot',
+            applied,
+            # 까대기 계정의 기본 배송지 = 경주 사무실
+            snapshot={**SNAPSHOT_OK, 'shipping': {**SHIPPING, 'address': '경북 가상시 사무실길 58, 1층 102호'}},
+        )
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     mock_accounts()
@@ -669,7 +678,7 @@ def test_까대기_주문서에_기본_배송지가_없으면_사람에게_넘�
 @pytest.mark.parametrize(
     ('page_text', 'ok'),
     [
-        ('배송지 받는 분 삼바 사무실 주소 서울시', True),
+        ('배송지 받는 분 삼바 사무실 경북 가상시 사무실길 58 1층', True),
         ('배송지 등록된 배송지가 없습니다 배송지를 추가해 주세요', False),
         ('결제수단 선택', False),
     ],
@@ -1115,3 +1124,39 @@ def test_결제_가능한_수단이_없으면_사람에게_넘긴다(monkeypatch
     agent._payable_providers = lambda _account: {'site'}
     agent._apply_payment_quotes(a, 'buyer05', snap)
     assert snap['pay_method'] == '무신사머니' and snap['cost'] == 29000.0
+
+
+def test_직배_까대기_판정_규칙():
+    from samba_agent.agents.buyer import decide_order_type, shipping_fee_for
+    from samba_agent.agents.contracts import OrderRef
+
+    def order(seller, sale_price=50000, order_type='direct'):
+        return OrderRef(order_no='X', source='무신사', seller=seller, sku='S', sale_price=sale_price, order_type=order_type)
+
+    # 포이즌은 전부 까대기, 배송비 0
+    assert decide_order_type(order('포이즌'), 79000)[0] == 'kkadaegi'
+    assert shipping_fee_for(order('포이즌'), 'kkadaegi') == 0
+    # 소싱처 강제
+    assert decide_order_type(order('쿠팡'), None, 'kkadaegi')[0] == 'kkadaegi'
+    # 그 외 마켓: 정가 vs 고객 결제액
+    assert decide_order_type(order('쿠팡', 50000), 79000)[0] == 'direct'
+    assert decide_order_type(order('쿠팡', 50000), 39000)[0] == 'kkadaegi'
+    assert shipping_fee_for(order('쿠팡', 50000), 'kkadaegi') == 2300
+    assert shipping_fee_for(order('쿠팡', 50000), 'direct') == 0
+    # 정가 모르면 판정 불가
+    assert decide_order_type(order('쿠팡', 50000), None)[0] == ''
+    assert decide_order_type(order('쿠팡', 0), 79000)[0] == ''
+    # 선물 태그는 그대로
+    assert decide_order_type(order('쿠팡', 50000, 'gift'), 79000)[0] == 'gift'
+
+
+def test_cheapest_quotes_카드는_허용_카드사만():
+    from samba_agent.agents.buyer import cheapest_quotes
+
+    quotes = [
+        {'method': '카드', 'card': 'KB카드', 'cost': 27000},
+        {'method': '카드', 'card': '현대카드', 'cost': 28000},
+        {'method': '무신사머니', 'card': None, 'cost': 29000},
+    ]
+    got = cheapest_quotes(quotes, None, {'card', 'site'})
+    assert [(q['card'], q['cost']) for q in got] == [('현대카드', 28000), (None, 29000)]
