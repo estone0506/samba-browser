@@ -14,6 +14,8 @@ from samba_agent.ops.masking import find_leaks
 from samba_agent.settings import DEFAULT_ROOT
 
 URL = 'http://127.0.0.1:47811'
+# 결제창 진입 스크립트의 실제 응답 형식(checkout_enter_*: {ok, method, popup_url})
+ENTER_OK = '{"ok": true, "method": "현대카드", "popup_url": null}'
 ORDER = OrderRef(order_no='A1', source='무신사', seller='포이즌', sku='S1', qty=1)
 
 
@@ -82,7 +84,7 @@ TOSS_POPUP_URL = 'https://pay.toss.im/checkout'
 
 @respx.mock
 def test_dry_run_이면_결제하지_않는다(reg):
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     pay = respx.post(f'{URL}/tool/phone_approve_payment')
     out = agent(reg)(assignment(reg, dry_run=True))
@@ -93,7 +95,7 @@ def test_dry_run_이면_결제하지_않는다(reg):
 
 @respx.mock
 def test_실제_결제는_폰_승인까지_하고_성공_문구를_확인한다(reg):
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -130,7 +132,7 @@ def test_캡차는_사람에게_넘긴다(reg):
 
 @respx.mock
 def test_폰_승인이_거절되면_사람에게_넘긴다(reg):
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -144,7 +146,7 @@ def test_폰_승인이_거절되면_사람에게_넘긴다(reg):
 
 @respx.mock
 def test_성공_문구를_못_보면_ok_를_내지_않는다(reg):
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -159,7 +161,7 @@ def test_성공_문구를_못_보면_ok_를_내지_않는다(reg):
 
 @respx.mock
 def test_결제_응답에_비밀값이_실리지_않는다(reg):
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     fill = respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -179,7 +181,7 @@ def test_결제_응답에_비밀값이_실리지_않는다(reg):
 @respx.mock
 def test_결제창_진입_인자는_카드명에_따옴표가_있어도_유효한_JSON이다(reg):
     """수기 문자열 포맷 대신 json.dumps 를 쓴다 — 카드명에 따옴표가 섞여도 깨지지 않는다."""
-    enter = respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    enter = respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg)(assignment(reg, dry_run=True, card='현대"카드'))
     assert out.status == 'ok'
@@ -192,7 +194,7 @@ def test_결제창_진입_인자는_카드명에_따옴표가_있어도_유효�
 
 @respx.mock
 def test_카드_요구_거절은_카드_없음으로_분류한다(reg):
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -207,7 +209,7 @@ def test_카드_요구_거절은_카드_없음으로_분류한다(reg):
 
 @respx.mock
 def test_카드를_못_찾으면_카드_없음으로_분류한다(reg):
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -233,7 +235,7 @@ def test_카드를_못_찾으면_카드_없음으로_분류한다(reg):
 )
 @respx.mock
 def test_계정_모호_불일치_잠김_인증실패는_사람에게_넘기고_사유를_담는다(reg, refusal, reason):
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -248,7 +250,7 @@ def test_계정_모호_불일치_잠김_인증실패는_사람에게_넘기고_�
 
 @respx.mock
 def test_거절_한글_표기도_사람에게_넘긴다(reg):
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -267,7 +269,7 @@ def test_결제_에이전트는_재시도하지_않는다(reg):
     """
     spec = reg['payer']
     assert spec.retry == 0
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -296,7 +298,7 @@ def test_권한_부족이면_재시도_없이_바로_실패한다(reg):
 @respx.mock
 def test_이미_결제된_화면이면_폰_승인을_부르지_않는다(reg):
     # 리뷰 지적 — Critical 2 ③: 폰 승인 전에 주문 상세를 1회 읽어 재결제를 막는다
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 완료되었습니다'))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     fill = respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -311,7 +313,7 @@ def test_이미_결제된_화면이면_폰_승인을_부르지_않는다(reg):
 @respx.mock
 def test_요청자가_카드를_안_주면_구매가_고른_카드로_결제한다(reg):
     # 리뷰 지적 — C3: options 에 카드가 없으면 인계값의 카드를 쓴다
-    enter = respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    enter = respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg)(assignment(reg, dry_run=True, card=None, handoff={'card': '현대'}))
     assert out.status == 'ok'
@@ -322,7 +324,7 @@ def test_요청자가_카드를_안_주면_구매가_고른_카드로_결제한�
 @respx.mock
 def test_성공_화면에서_소싱_주문번호를_뽑아_넘긴다(reg):
     # 리뷰 지적 — I2: 아무도 source_order_no 를 만들지 않아 기록·검증이 비어 있었다
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -349,7 +351,7 @@ def _args(route) -> dict:
 
 
 def _full_pay_mocks(popup_url: str | None = TOSS_POPUP_URL):
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(popup_url))
     # 팝업이 0개일 때만 실제로 불린다(리뷰 지적 — Minor 4) — 다른 시나리오에서는 그냥 등록만 해 둔다
     respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
@@ -465,7 +467,7 @@ def test_결제앱을_정할_수_없으면_폰_승인_없이_웹_결제_경로�
 def test_list_tabs가_실패하면_사람에게_넘긴다(reg):
     # 결제창을 못 본 채로 결제 앱을 찍어 승인하면 안 된다 — list_tabs 자체가 실패하면
     # (브릿지 오류 등) needs_human 이다
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -482,7 +484,7 @@ def test_list_tabs가_실패하면_사람에게_넘긴다(reg):
 @respx.mock
 def test_신원정보_입력칸이_없어도_웹_결제_경로로_진행한다(reg):
     # 플레이북 §7 무신사머니: 결제창엔 신원정보 칸이 없다 — 있을 때만 채우고, 없으면 키패드(fill_secret password)로 간다
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/get_page').mock(side_effect=[page('결제 진행 중'), page('결제 완료')])
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('no element matches "이름"'))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
@@ -501,7 +503,7 @@ def test_list_tabs_실패_사유는_원래_fail_reason을_그대로_남긴다(re
     # 리뷰 지적 — Minor 3: list_tabs 의 AgentFailure 를 UNKNOWN 으로 재포장하지 않는다.
     # 403 은 브릿지가 PERMISSION_DENIED 로 분류한다(client.py) — needs_human 으로 넘어가도
     # 그 사유가 그대로 남아야 한다
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -520,12 +522,16 @@ def test_list_tabs_실패_사유는_원래_fail_reason을_그대로_남긴다(re
 def test_결제창이_아직_없으면_한번_기다렸다_다시_본다(reg):
     # 리뷰 지적 — Minor 4: run_script checkout_enter_* 직후 팝업이 0개면 바로 웹 경로로
     # 가지 않고 wait(2초) 후 list_tabs 를 한 번 더 본다. 두 번째에는 팝업이 잡힌다
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
     wait = respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
     list_tabs = respx.post(f'{URL}/tool/list_tabs').mock(
-        side_effect=[list_tabs_page(None), list_tabs_page(TOSS_POPUP_URL), list_tabs_page(TOSS_POPUP_URL)]
+        side_effect=[
+            list_tabs_page(None),
+            list_tabs_page(TOSS_POPUP_URL),
+            list_tabs_page(TOSS_POPUP_URL),
+        ]
     )
     pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
     respx.post(f'{URL}/tool/get_page').mock(side_effect=[page('결제 진행 중'), page('결제 완료')])
@@ -541,7 +547,7 @@ def test_결제창이_아직_없으면_한번_기다렸다_다시_본다(reg):
 @respx.mock
 def test_결제창이_끝내_안_뜨면_한번만_기다리고_웹_경로로_간다(reg):
     # 두 번째 list_tabs 도 팝업이 0개면 더 기다리지 않고(wait 는 딱 한 번) 웹 결제 경로로 간다
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
     wait = respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
@@ -591,7 +597,7 @@ def _list_tabs_with_two_popups(providers: tuple[str, str]) -> httpx.Response:
 def test_매칭_팝업이_둘이고_서로_다른_provider면_사람에게_넘긴다(reg):
     # 리뷰 지적 — Important 2: 팝업이 여럿이고 서로 다른 결제 앱을 가리키면 코드가 짐작하지
     # 않고 사람에게 넘긴다. 근거에 두 호스트가 남는다
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
     respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 진행 중'))
@@ -635,7 +641,7 @@ def test_매칭_팝업이_여러개면_활성_탭이_연_팝업을_우선한다(
             'openerId': 't2',
         },
     ]
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
     respx.post(f'{URL}/tool/list_tabs').mock(
@@ -671,7 +677,7 @@ def test_활성_탭이_연_팝업이_없으면_가장_최근_팝업을_쓴다(re
             'openerId': 't2',
         },
     ]
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
     respx.post(f'{URL}/tool/list_tabs').mock(
@@ -689,7 +695,7 @@ def test_활성_탭이_연_팝업이_없으면_가장_최근_팝업을_쓴다(re
 @respx.mock
 def test_시험_입력은_폰_승인을_자리수만_실어_한_번_부른다(reg):
     """dry_run_digits 가 있으면 결제창 진입 뒤 결제 비밀번호를 그 자리수만 눌러 보고 취소한다."""
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     get_page = respx.post(f'{URL}/tool/get_page')
@@ -719,7 +725,7 @@ def test_시험_입력은_폰_승인을_자리수만_실어_한_번_부른다(re
 @respx.mock
 def test_시험_입력에서_결제창이_웹_키패드면_fill_secret_을_부른다(reg):
     """결제 앱을 정할 수 없으면(팝업 없음) 웹 키패드 경로로 같은 시험 입력을 한다."""
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(None))
     respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
@@ -741,7 +747,7 @@ def test_시험_입력에서_결제창이_웹_키패드면_fill_secret_을_부�
 @respx.mock
 def test_시험_입력이_아닌_응답이_오면_사람에게_넘긴다(reg):
     """시험 입력을 시켰는데 'ok'(결제됨)가 오면 그냥 넘기지 않는다."""
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
@@ -751,7 +757,7 @@ def test_시험_입력이_아닌_응답이_오면_사람에게_넘긴다(reg):
 
 @respx.mock
 def test_시험_입력에서도_진짜_거절은_그대로_실패다(reg):
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     respx.post(f'{URL}/tool/phone_approve_payment').mock(
@@ -763,7 +769,7 @@ def test_시험_입력에서도_진짜_거절은_그대로_실패다(reg):
 
 @respx.mock
 def test_자리수가_0이면_예전처럼_결제창까지만_간다(reg):
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     pay = respx.post(f'{URL}/tool/phone_approve_payment')
     fill = respx.post(f'{URL}/tool/fill_secret')
@@ -827,7 +833,7 @@ def test_결제_직전_재조회가_실패하면_결제하지_않는다(reg):
 @respx.mock
 def test_재조회가_미처리면_결제를_이어가고_누가_결제했는지_남긴다(reg):
     _wave_order(status='pending')
-    respx.post(f'{URL}/tool/run_script').mock(return_value=page('결제창 진입 ok'))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(TOSS_POPUP_URL))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
@@ -874,3 +880,37 @@ def test_web_pay_provider_separates_musinsapay_from_site_money() -> None:
     # 키패드가 아직 안 뜬 화면의 거절은 기다렸다 다시 본다 — 한 번 누른 뒤의 거절은 다시 누르지 않는다
     assert _keypad_not_ready('refused: target is not a secret input')
     assert not _keypad_not_ready('ok: the app entered the payment password on the keypad.')
+
+
+@respx.mock
+def test_결제창_진입_실패면_비밀번호_단계로_가지_않는다(reg):
+    respx.post(f'{URL}/tool/run_script').mock(
+        return_value=page('{"ok": false, "error": "method-not-found"}')
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    fill = respx.post(f'{URL}/tool/fill_secret')
+    out = agent(reg)(assignment(reg, dry_run=False))
+    assert out.status == 'needs_human'
+    assert 'method-not-found' in out.reason
+    assert not fill.called
+
+
+@respx.mock
+def test_웹_키패드가_늦게_뜨면_기다렸다_다시_누른다(reg, monkeypatch):
+    from samba_agent.agents import payer as payer_mod
+
+    monkeypatch.setattr(payer_mod, 'KEYPAD_POLL_WAIT_MS', 100)
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=page('[]'))
+    respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[3] textbox "비밀번호"'))
+    respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
+    fill = respx.post(f'{URL}/tool/fill_secret').mock(
+        side_effect=[
+            page('refused: target is not a secret input'),
+            page('ok: the app entered the payment password on the keypad.'),
+        ]
+    )
+    a = agent(reg)
+    a._dry_run = False
+    a._web_pay(assignment(reg, dry_run=False))
+    assert fill.call_count == 2

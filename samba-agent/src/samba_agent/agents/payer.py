@@ -238,6 +238,7 @@ class PayerAgent(AgentBase):
 
     def __call__(self, assignment: Assignment) -> AgentResult:
         self._dry_run = assignment.dry_run
+        self.reset_repairs()
         return run_agent(lambda: self._pay(assignment), lambda: self.evidence)
 
     def _recheck_wave(self, a: Assignment) -> None:
@@ -384,13 +385,17 @@ class PayerAgent(AgentBase):
                 if tab_id:
                     self.tool('switch_tab', id=tab_id)
                 found = self.tool('find_elements', query=KEYPAD_QUERY)
-                out = self.tool(
-                    'fill_secret',
-                    elementId=_element_id(found) or 0,
-                    itemType='password',
-                    **({'provider': provider} if provider else {}),
-                    **({'accountLabel': account} if account else {}),
-                )
+                try:
+                    out = self.tool(
+                        'fill_secret',
+                        elementId=_element_id(found) or 0,
+                        itemType='password',
+                        **({'provider': provider} if provider else {}),
+                        **({'accountLabel': account} if account else {}),
+                    )
+                except AgentFailure as e:
+                    # 앱 거절은 예외로 온다 — 문구로 바꿔 '아직 키패드 아님'이면 다시 본다
+                    out = e.reason
                 if not _keypad_not_ready(out):
                     break
             if not _keypad_not_ready(out):
@@ -491,9 +496,29 @@ class PayerAgent(AgentBase):
         payload: dict[str, object] = {'card': card}
         if a.order.account:
             payload['profile'] = a.order.account  # 구매가 연 계정 프로필의 주문서에서 결제창을 연다
-        args = json.dumps(payload, ensure_ascii=False)
-        enter = self.tool('run_script', name=script, args=args)
-        self.note('결제창', mask_text(enter[:200]))
+        # 결제창 진입 실패(수단 못 찾음 등)는 AI 가 스크립트를 고쳐 이어 간다. 결제하기까지만 누를 수 있고
+        # 비밀번호·폰 승인은 AI 에게 없으므로 결제가 확정되지는 않는다
+        entered = self.script_json(
+            script,
+            payload,
+            goal=(
+                f'열린 주문서에서 결제수단 "{card}"(간편결제 이름 또는 카드사)를 고르고 결제하기를 눌러 결제창'
+                '(팝업 또는 화면 안 결제 레이어)이 뜨게 한다. 비밀번호·입력완료는 누르지 않는다. '
+                '{ok:true, method, popup_url} 를 돌려준다.'
+            ),
+            check=lambda o: (
+                None if o.get('ok') else f'결제창 진입 실패: {o.get("error") or o.get("note")}'
+            ),
+            allow_pay_button=True,
+        )
+        self.note('결제창', mask_text(json.dumps(entered, ensure_ascii=False)[:200]))
+        if not entered.get('ok'):
+            # 결제하기를 못 눌렀다 — 비밀번호 단계로 가지 않는다(실기: 수단을 못 찾고도 키패드를 찾다 거절)
+            raise AgentFailure(
+                'needs_human',
+                f'결제창을 열지 못했다: {mask_text(str(entered.get("error") or entered.get("note"))[:80])}',
+                FailReason.UNKNOWN,
+            )
 
         if a.dry_run and a.dry_run_digits > 0:
             # 키패드 시험 입력: 결제 비밀번호를 절반만 누르고 취소한다(결제는 하지 않는다)

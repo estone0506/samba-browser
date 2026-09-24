@@ -138,7 +138,13 @@ class AgentBase:
         self._repair_tried = {}
 
     def script_json(
-        self, name: str, args: dict[str, object], *, goal: str, check: ScriptCheck
+        self,
+        name: str,
+        args: dict[str, object],
+        *,
+        goal: str,
+        check: ScriptCheck,
+        allow_pay_button: bool = False,
     ) -> dict[str, object]:
         """저장 스크립트를 돌리고 check 로 결과를 본다. 실패하면 AI 가 고쳐 이어 간다.
 
@@ -157,14 +163,16 @@ class AgentBase:
             if e.fail_reason in _NO_REPAIR_REASONS and not missing:
                 raise
             problem = '저장 스크립트가 없다 — 처음부터 만들어라' if missing else e.reason
-            fixed = self._repair(name, args, goal, check, problem, '')
+            fixed = self._repair(name, args, goal, check, problem, '', allow_pay_button)
             if fixed is None:
                 raise
             return fixed
         problem = check(out)
         if problem is None:
             return out
-        fixed = self._repair(name, args, goal, check, problem, json.dumps(out, ensure_ascii=False))
+        fixed = self._repair(
+            name, args, goal, check, problem, json.dumps(out, ensure_ascii=False), allow_pay_button
+        )
         return fixed if fixed is not None else out
 
     def _repair(
@@ -175,6 +183,7 @@ class AgentBase:
         check: ScriptCheck,
         problem: str,
         last_output: str,
+        allow_pay_button: bool = False,
     ) -> dict[str, object] | None:
         """AI 수리 1회. 검증 통과 결과를 돌려주거나 None(못 고침·진짜 불가·꺼짐)."""
         if self.repairer is None:
@@ -210,6 +219,7 @@ class AgentBase:
             last_output=last_output,
             validate=check,
             current=current,
+            allow_pay_button=allow_pay_button,
         )
         tried[name] = outcome.status
         log.info('스크립트 수리 결과: %s %s (시험 %d회)', name, outcome.status, outcome.tests)

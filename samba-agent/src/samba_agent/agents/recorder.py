@@ -185,7 +185,9 @@ class RecorderAgent(AgentBase):
             if found:
                 self.note('주문계정', f'실제 구매 계정 {bought} 로 기록')
                 return found
-            self.note('주문계정', f'실제 구매 계정 {bought} 의 삼바 id 를 찾지 못해 주문 값으로 둔다')
+            self.note(
+                '주문계정', f'실제 구매 계정 {bought} 의 삼바 id 를 찾지 못해 주문 값으로 둔다'
+            )
         return a.order.account_id or (str(a.handoff.get('sourcing_account_id') or '') or None)
 
     def _record_via_wave(

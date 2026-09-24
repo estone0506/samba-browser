@@ -49,13 +49,21 @@ _BLOCKED: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r'password|비밀번호|fill_secret', re.IGNORECASE), '비밀번호'),
     (re.compile(r'삭제하기|주문\s*취소'), '삭제·취소 버튼'),
 )
+# 결제창 진입 스크립트에서도 막는 확정 버튼(결제하기는 허용)
+_CONFIRM_ONLY = re.compile(r'입력완료|구매확정|결제\s*승인')
 # 앱 저장 규칙: 9자리 이상 숫자(주문번호 등)를 코드에 박으면 저장이 거절된다
 _HARDCODED_ID_RE = re.compile(r'\d{9,}')
 
 
-def blocked_reason(code: str) -> str | None:
-    """막힌 글자가 있으면 그 사유, 없으면 None."""
+def blocked_reason(code: str, allow_pay_button: bool = False) -> str | None:
+    """막힌 글자가 있으면 그 사유, 없으면 None.
+
+    allow_pay_button: 결제창 진입 스크립트(주문서 '결제하기' → 결제창)만 True. 결제는 비밀번호·폰 승인이
+    있어야 끝나고 AI 는 그 도구가 없으므로 '결제하기' 글자만 풀어 준다(입력완료·결제창 도메인·비밀번호는 그대로 막힘).
+    """
     for pattern, label in _BLOCKED:
+        if allow_pay_button and label == '결제 확정 버튼':
+            pattern = _CONFIRM_ONLY
         if pattern.search(code):
             return f'금지: {label}은(는) 수리 스크립트에서 다룰 수 없다'
     return None
@@ -113,9 +121,9 @@ def hardcoded_amounts(code: str, output: dict[str, object]) -> list[str]:
     return found
 
 
-def check_candidate(code: str) -> str | None:
+def check_candidate(code: str, allow_pay_button: bool = False) -> str | None:
     """시험 전에 거를 것(금지 글자·길이·박힌 번호). 문제 없으면 None."""
-    blocked = blocked_reason(code)
+    blocked = blocked_reason(code, allow_pay_button)
     if blocked:
         return blocked
     if len(code) > CODE_MAX:
@@ -152,6 +160,7 @@ class ScriptRepairer:
         last_output: str,
         validate: Validate,
         current: dict[str, object] | None,
+        allow_pay_button: bool = False,
     ) -> RepairOutcome:
         """AI 로 고친다. 검증을 통과한 코드가 나오면 fixed, 진짜 불가면 genuine, 아니면 gave_up."""
         state = _State()
@@ -159,7 +168,8 @@ class ScriptRepairer:
         try:
             _run_sync(
                 asyncio.wait_for(
-                    self._loop(prompt, call, args, validate, state), timeout=self.timeout_s
+                    self._loop(prompt, call, args, validate, state, allow_pay_button),
+                    timeout=self.timeout_s,
                 )
             )
         except TimeoutError:
@@ -183,6 +193,7 @@ class ScriptRepairer:
         args: dict[str, object],
         validate: Validate,
         state: _State,
+        allow_pay_button: bool = False,
     ) -> None:
         from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, tool
         from claude_agent_sdk import query as default_query
@@ -204,7 +215,7 @@ class ScriptRepairer:
         )
         async def run_js(inp: dict[str, Any]) -> dict[str, Any]:
             code = str(inp.get('code', ''))
-            blocked = blocked_reason(code)
+            blocked = blocked_reason(code, allow_pay_button)
             if blocked:
                 return text(blocked)
             return text(await run(code))
@@ -218,7 +229,7 @@ class ScriptRepairer:
         )
         async def test_script(inp: dict[str, Any]) -> dict[str, Any]:
             code = str(inp.get('code', ''))
-            problem = check_candidate(code)
+            problem = check_candidate(code, allow_pay_button)
             prefix = args_prefix(args)
             if not problem and len(prefix) + len(code) > CODE_MAX:
                 # 시험 때는 인자 줄이 앞에 붙는다 — 그만큼 여유를 둬야 앱 run_js 상한에 걸리지 않는다

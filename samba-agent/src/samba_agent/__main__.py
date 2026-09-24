@@ -16,6 +16,7 @@ from slack_bolt import App
 
 from samba_agent.agents.buyer import BuyerAgent
 from samba_agent.agents.factory import build_agents
+from samba_agent.agents.payer import PayerAgent
 from samba_agent.agents.registry import Registry
 from samba_agent.api.server import build_app, serve
 from samba_agent.bridge.client import BridgeClient, BridgeError
@@ -122,7 +123,7 @@ def main() -> None:
         script_source = FileScriptSource(settings.site_scripts_file)
         script_history = ScriptHistory(settings.root / 'script-history')
         for agent in agents.values():
-            if isinstance(agent, BuyerAgent):
+            if isinstance(agent, BuyerAgent | PayerAgent):
                 agent.repairer = repairer
                 agent.script_source = script_source
                 agent.script_history = script_history
