@@ -1156,10 +1156,12 @@ class BuyerAgent(AgentBase):
             office = OFFICE_ADDRESS_HINT in str(embedded.get('address') or '')
         else:
             page = self.tool('get_page')
-            filled = any(m in page for m in RECIPIENT_MARKERS) and not any(
-                m in page for m in EMPTY_SHIPPING_MARKERS
-            )
             office = OFFICE_ADDRESS_HINT in page
+            # 사무실 주소가 보이면 채워진 것이다 — 무신사 주문서엔 '받는 분' 문구가 없다(실기: 새 배송지를 또 만듦)
+            filled = office or (
+                any(m in page for m in RECIPIENT_MARKERS)
+                and not any(m in page for m in EMPTY_SHIPPING_MARKERS)
+            )
         if not (filled and office):
             return False
         self.note('배송지', '사무실 수령(기본 배송지 유지)')
