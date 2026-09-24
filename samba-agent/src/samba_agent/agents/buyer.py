@@ -424,7 +424,22 @@ def _as_float(value: object) -> float:
         return 0.0
 
 
-def snapshot_problem(option: str | None):
+def shipping_set_problem(shipping: dict[str, object]) -> Callable[[dict[str, object]], str | None]:
+    """배송지 입력 검증: 되읽은 이름·주소가 같고 전화 칸 번호(1~3개)를 알려야 통과."""
+
+    def check(out: dict[str, object]) -> str | None:
+        if not shipping_matches(shipping, out):
+            return '입력 후 되읽은 이름·주소가 다르다'
+        raw = out.get('phone_field_ids')
+        ids = _int_ids(raw) if isinstance(raw, list) else _int_ids([out.get('phone_field_id')])
+        if not 1 <= len(ids) <= 3:
+            return '전화 칸 요소 번호(phone_field_id 또는 phone_field_ids)를 돌려주지 않았다'
+        return None
+
+    return check
+
+
+def snapshot_problem(option: str | None) -> Callable[[dict[str, object]], str | None]:
     """상품 스냅샷 검증: 원가를 읽었고 주문 옵션과 맞는 선택지가 있어야 통과. 중복 구매 흔적은 그대로 통과."""
 
     def check(out: dict[str, object]) -> str | None:
@@ -1297,10 +1312,13 @@ class BuyerAgent(AgentBase):
         applied = self.script_json(
             source_of(self.spec.name).set_shipping_script,
             args,
-            goal='주문서 배송지에 args 의 이름·주소를 입력하고, 입력된 값을 되읽어 원래 키 그대로 돌려준다.',
-            check=lambda o: (
-                None if shipping_matches(shipping, o) else '입력 후 되읽은 이름·주소가 다르다'
+            goal=(
+                '주문서 배송지(새 배송지·직접 입력)에 args 의 name·address(·address_detail·postal_code)를 입력하고, '
+                '입력된 이름·주소를 되읽어 {"name","address"} 로 돌려준다. 전화 칸은 비워 두고 그 요소 번호를 '
+                'phone_field_id(칸 하나) 또는 phone_field_ids(2~3칸, 앞→뒤)로 돌려준다 — 번호는 하네스가 따로 채운다. '
+                '주소 검색 팝업이 있으면 우편번호·주소를 검색해 고른다.'
             ),
+            check=shipping_set_problem(shipping),
         )
         # 원문끼리 비교하지 않는다 — 마스킹한 값끼리만 비교해서 판단에도 개인정보를 안 남긴다
         if not shipping_matches(shipping, applied):

@@ -31,6 +31,8 @@ log = logging.getLogger(__name__)
 
 # 스크립트 결과 JSON → 문제 문장(None 이면 통과)
 ScriptCheck = Callable[[dict[str, object]], str | None]
+# 앱 run_script 가 그 이름의 스크립트가 없을 때 돌려주는 문구
+_MISSING_SCRIPT = 'no saved script named'
 # 이 사유의 실패는 스크립트를 고쳐도 소용없다 — 수리하지 않고 그대로 던진다
 _NO_REPAIR_REASONS = frozenset(
     {
@@ -149,9 +151,13 @@ class AgentBase:
         try:
             out = self.json_tool('run_script', name=name, args=raw_args)
         except AgentFailure as e:
-            if e.fail_reason in _NO_REPAIR_REASONS:
+            # 저장 스크립트가 아예 없으면 앱은 권한 거절 문구로 답한다 — 이건 AI 가 새로 만들 수 있다
+            # (실기: 29CM 직배에 cm29_set_shipping 이 없어 멈춤)
+            missing = _MISSING_SCRIPT in e.reason
+            if e.fail_reason in _NO_REPAIR_REASONS and not missing:
                 raise
-            fixed = self._repair(name, args, goal, check, e.reason, '')
+            problem = '저장 스크립트가 없다 — 처음부터 만들어라' if missing else e.reason
+            fixed = self._repair(name, args, goal, check, problem, '')
             if fixed is None:
                 raise
             return fixed

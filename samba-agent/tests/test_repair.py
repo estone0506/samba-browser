@@ -267,4 +267,27 @@ def test_match_options_uses_ai_only_within_numeric_pool(buyer) -> None:
     assert len(asked) == 1
     # 모델이 후보 밖(숫자 안 겹치는 712)을 골라도 받아 주지 않는다
     buyer._decide = lambda p, m: Decision(choice='712(59.6cm)', reason='가까움')
-    assert buyer._match_options(['712(59.6cm)', '718(56.8cm)'], '레오파드 7 1/8（56.8cm） 포장') == []
+    assert (
+        buyer._match_options(['712(59.6cm)', '718(56.8cm)'], '레오파드 7 1/8（56.8cm） 포장') == []
+    )
+
+
+def test_missing_script_is_created_by_ai(buyer) -> None:
+    respx.post(f'{URL}/tool/run_script').mock(
+        return_value=page('refused: no saved script named "cm29_set_shipping"')
+    )
+    respx.post(f'{URL}/tool/save_script').mock(return_value=page('saved: cm29_set_shipping'))
+    fake = FakeRepairer(RepairOutcome('fixed', 'ok', {'cost': 1}, 'return {cost:1}', 1))
+    buyer.repairer = fake
+    assert buyer.script_json('cm29_set_shipping', {}, goal='g', check=ok_check) == {'cost': 1}
+    assert '처음부터' in str(fake.calls[0]['problem'])
+
+
+def test_shipping_set_problem_needs_phone_field() -> None:
+    from samba_agent.agents.buyer import shipping_set_problem
+
+    ship = {'name': '홍길동', 'address': '서울특별시 강남구 테헤란로 1'}
+    check = shipping_set_problem(ship)
+    assert check({**ship, 'phone_field_id': 42}) is None
+    assert check({**ship, 'phone_field_ids': [1, 2]}) is None
+    assert '전화 칸' in (check(dict(ship)) or '')
