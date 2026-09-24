@@ -355,6 +355,16 @@ def size_numbers(text: str) -> set[str]:
     return {n for n in _SIZE_NUM_RE.findall(text) if len(n.replace('.', '')) >= 2}
 
 
+_SIZE_LETTER_RE = re.compile(
+    r'(?<![A-Za-z])(XXS|XS|S|M|L|XL|XXL|XXXL|2XL|3XL|4XL|FREE|ONE)(?![A-Za-z])'
+)
+
+
+def size_letters(text: str) -> set[str]:
+    """옵션 글자 속 사이즈 글자(S·M·L·XL·FREE·ONE …, 대문자 기준)."""
+    return set(_SIZE_LETTER_RE.findall(text.upper()))
+
+
 def numeric_overlap_options(options: list[str], wanted: str | None) -> list[str]:
     """AI 옵션 매칭에 넘길 후보 — 품절이 아니고, 주문 옵션에 사이즈 숫자가 있으면 그 숫자가 하나라도 든 것만.
 
@@ -1115,6 +1125,10 @@ class BuyerAgent(AgentBase):
             return True
         sizes = size_numbers(wanted)
         if sizes and not (size_numbers(selected) & sizes):
+            return False
+        # 사이즈 글자(S·M·L·XL·FREE…)도 꼭 맞아야 한다(실기: '상아색 S' 주문에 색만 담긴 'IVORY' 가 통과)
+        letters = size_letters(wanted)
+        if letters and not (size_letters(selected) & letters):
             return False
         return bool(self._match_options([selected], wanted))
 

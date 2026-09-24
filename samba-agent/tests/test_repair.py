@@ -469,3 +469,12 @@ def test_bridge_client_sends_lane_header() -> None:
     c = BridgeClient(URL, 'a' * 64, allowed=('get_page',)).with_lane('musinsa-buyer01')
     c.call('get_page')
     assert route.calls[0].request.headers['X-Samba-Lane'] == 'musinsa-buyer01'
+
+
+def test_size_letters_must_match() -> None:
+    from samba_agent.agents.buyer import size_letters
+
+    assert size_letters('상아색 S') == {'S'}
+    assert size_letters('-SHIRT_IVORY [LW263TS02IV]') == set()
+    assert size_letters('IVORY [SIZE]S') == {'S'}
+    assert size_letters('BLACK · ONE') == {'ONE'}
