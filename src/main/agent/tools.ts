@@ -1,3 +1,4 @@
+import { payPriorityOf, visibleTags } from '../../shared/vault'
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import type { TabManager, Tab } from '../browser/tab-manager'
@@ -1791,7 +1792,9 @@ overlays left: ${after.length}${kept}`
           // 결제 비밀번호가 있는 결제 제공자(site·musinsapay·toss·kakao·naver·payco …) — 하네스가
           // "결제 가능한 수단"만 견적 후보로 남기는 데 쓴다
           payments: a.paymentProviders ?? [],
-          tags: a.tags
+          // 키마스터에서 사용자가 정한 결제 우선순위(1 = 먼저). 없으면 null
+          priority: payPriorityOf(a.tags),
+          tags: visibleTags(a.tags)
         }))
         if (state !== 'unlocked') return JSON.stringify({ vaultLocked: true, accounts })
         return JSON.stringify(accounts)

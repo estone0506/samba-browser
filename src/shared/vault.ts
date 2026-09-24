@@ -230,3 +230,29 @@ export interface ExportResult {
   itemCount: number
   filePath: string
 }
+
+// --- 결제 우선순위 ------------------------------------------------------------
+// 같은 사이트의 여러 계정 중 결제(구매)에 먼저 쓸 순서. 서버 스키마를 바꾸지 않고 모든 PC 에 동기화되도록
+// 계정 태그에 예약 태그 `결제순위:N`(N = 1 이 가장 먼저)으로 저장한다. 사용자 태그 목록에서는 숨긴다
+export const PAY_PRIORITY_TAG_PREFIX = '결제순위:'
+
+/** 태그 목록에서 결제 우선순위(1 이상 정수)를 읽는다. 없으면 null */
+export function payPriorityOf(tags: readonly string[]): number | null {
+  for (const tag of tags) {
+    if (!tag.startsWith(PAY_PRIORITY_TAG_PREFIX)) continue
+    const n = Number(tag.slice(PAY_PRIORITY_TAG_PREFIX.length))
+    if (Number.isInteger(n) && n >= 1) return n
+  }
+  return null
+}
+
+/** 결제 우선순위를 바꾼 태그 목록. null 이면 지운다. 다른 태그의 순서는 그대로 */
+export function withPayPriority(tags: readonly string[], priority: number | null): string[] {
+  const rest = tags.filter((t) => !t.startsWith(PAY_PRIORITY_TAG_PREFIX))
+  return priority === null ? rest : [...rest, `${PAY_PRIORITY_TAG_PREFIX}${priority}`]
+}
+
+/** 화면에 보여 줄 사용자 태그(예약 태그 제외) */
+export function visibleTags(tags: readonly string[]): string[] {
+  return tags.filter((t) => !t.startsWith(PAY_PRIORITY_TAG_PREFIX))
+}

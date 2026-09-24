@@ -799,7 +799,14 @@
       "other": "기타"
     },
     "preparing": "키마스터를 계정 비밀번호로 준비하는 중…",
-    "accountUnlockHint": "계정 비밀번호가 키마스터 열쇠예요. 로그인 비밀번호를 넣어 주세요"
+    "accountUnlockHint": "계정 비밀번호가 키마스터 열쇠예요. 로그인 비밀번호를 넣어 주세요",
+    "payPriority": {
+      "label": "결제 우선순위",
+      "none": "지정 안 함",
+      "rank": "{{n}}순위",
+      "hint": "같은 사이트 계정 중 구매·결제에 먼저 쓸 순서(동일 조건이면 앞 순위)",
+      "badge": "결제 {{n}}순위"
+    }
   },
   "settingsPage": {
     "title": "설정",

@@ -573,7 +573,7 @@ describe('금고 AI 도구', () => {
     const raw = await callTool(b, 'list_accounts', {})
     expect(b.listAccounts).toHaveBeenCalledWith('shop.example')
     expect(JSON.parse(raw)).toEqual([
-      { label: '메인', username: 'ho***', types: ['login'], payments: [], tags: [] }
+      { label: '메인', username: 'ho***', types: ['login'], payments: [], priority: null, tags: [] }
     ])
     expect(raw).not.toContain('hongildong')
   })
@@ -584,7 +584,7 @@ describe('금고 AI 도구', () => {
     expect(b.listAccounts).toHaveBeenCalledWith('shop.example')
     expect(JSON.parse(raw)).toEqual({
       vaultLocked: true,
-      accounts: [{ label: '메인', username: 'ho***', types: ['login'], payments: [], tags: [] }]
+      accounts: [{ label: '메인', username: 'ho***', types: ['login'], payments: [], priority: null, tags: [] }]
     })
   })
 
@@ -883,7 +883,7 @@ describe('list_accounts 응답', () => {
     const b = build({ accounts: [account({ tags: ['쇼핑', '해외'] })] })
     const raw = await callTool(b, 'list_accounts', {})
     expect(JSON.parse(raw)).toEqual([
-      { label: '메인', username: 'ho***', types: ['login'], payments: [], tags: ['쇼핑', '해외'] }
+      { label: '메인', username: 'ho***', types: ['login'], payments: [], priority: null, tags: ['쇼핑', '해외'] }
     ])
   })
 

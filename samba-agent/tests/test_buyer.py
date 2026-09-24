@@ -356,7 +356,7 @@ def test_이미_로그인돼_있으면_바로_진행한다(generic_musinsa, reg)
 
 
 @respx.mock
-def test_저장된_계정이_없으면_사람에게_넘긴다(reg):
+def test_저장된_계정이_없으면_사람에게_넘긴다(generic_musinsa, reg):
     _login_mocks('account not found: use list_accounts')
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment_with_account(reg))
@@ -535,7 +535,7 @@ def test_삼바웨이브_배송지_조회가_실패하면_그_사유로_실패�
 
 
 @respx.mock
-def test_스냅샷이_표시_이름을_돌려주면_대조를_건너뛴다(reg):
+def test_스냅샷이_표시_이름을_돌려주면_대조를_건너뛴다(generic_musinsa, reg):
     """실기: 사이트가 로그인 아이디 대신 한글 별명(김사무1)을 돌려준다 — 불일치로 보지 않는다."""
     snap = {**SNAPSHOT_OK, 'account': '김사무1'}
     respx.post(f'{URL}/tool/run_script').mock(
@@ -557,7 +557,7 @@ def test_스냅샷이_표시_이름을_돌려주면_대조를_건너뛴다(reg):
 
 
 @respx.mock
-def test_스냅샷이_다른_아이디를_돌려주면_사람에게_넘긴다(reg):
+def test_스냅샷이_다른_아이디를_돌려주면_사람에게_넘긴다(generic_musinsa, reg):
     snap = {**SNAPSHOT_OK, 'account': 'someone_else'}
     respx.post(f'{URL}/tool/run_script').mock(
         side_effect=route_run_script({'musinsa_product_snapshot': snap})
@@ -1275,3 +1275,11 @@ def test_무신사는_4계정을_지정_순서로_비교한다():
     # 동률이면 앞 계정(buyer01 → buyer02 순)이 이긴다(사용자 2026-09-24)
     assert src.buy_accounts[:2] == ['buyer01', 'buyer02']
     assert set(src.buy_accounts) == {'buyer01', 'buyer02', 'buyer03', 'buyer05'}
+
+
+def test_결제_우선순위를_읽는다():
+    from samba_agent.agents.buyer import parse_account_priorities
+
+    raw = '[{"label":"buyer01","priority":1},{"label":"buyer02","priority":2},{"label":"x","priority":null}]'
+    assert parse_account_priorities(raw) == {'buyer01': 1, 'buyer02': 2}
+    assert parse_account_priorities('vault locked') == {}

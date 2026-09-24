@@ -799,7 +799,14 @@
       "other": "Other"
     },
     "preparing": "Preparing KeyMaster with your account password…",
-    "accountUnlockHint": "Your account password is the KeyMaster key. Enter your sign-in password"
+    "accountUnlockHint": "Your account password is the KeyMaster key. Enter your sign-in password",
+    "payPriority": {
+      "label": "Payment priority",
+      "none": "Not set",
+      "rank": "#{{n}}",
+      "hint": "Order to use among accounts on this site when buying (ties go to the higher rank)",
+      "badge": "Pay #{{n}}"
+    }
   },
   "settingsPage": {
     "title": "Settings",

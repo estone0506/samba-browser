@@ -127,6 +127,26 @@ def quote_provider(method: str, card: str | None = None) -> str | None:
     return None
 
 
+def parse_account_priorities(raw: str) -> dict[str, int]:
+    """앱 list_accounts 결과 → {계정 라벨: 결제 우선순위}. 순위가 없는 계정은 빠진다."""
+    body, _ = split_page_dialogs(raw)
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return {}
+    items: object = parsed.get('accounts') if isinstance(parsed, dict) else parsed
+    out: dict[str, int] = {}
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get('label') or '').strip()
+            pr = item.get('priority')
+            if label and isinstance(pr, int) and pr >= 1:
+                out[label] = pr
+    return out
+
+
 def parse_account_payments(raw: str, label: str) -> set[str] | None:
     """앱 list_accounts 결과에서 그 계정의 결제 가능 제공자 집합. 계정을 못 찾거나 형식이 아니면 None.
 
@@ -522,9 +542,11 @@ class BuyerAgent(AgentBase):
         """
         source = source_of(self.spec.name)
         if source.buy_accounts:
-            # 플레이북이 계정을 정해 둔 소싱처 — SAMBA 주문계정은 기록용일 뿐 구매 계정이 아니다(§5)
-            self.note('계정 후보', f'{source.id}: 플레이북 지정 계정 {source.buy_accounts}')
-            return list(source.buy_accounts)
+            # 비교 계정을 정해 둔 소싱처 — SAMBA 주문계정은 기록용일 뿐 구매 계정이 아니다(§5).
+            # 순서(= 동률일 때 이기는 쪽)는 키마스터의 결제 우선순위가 먼저, 없으면 sources.yaml 순서
+            ordered = self._by_pay_priority(source, list(source.buy_accounts))
+            self.note('계정 후보', f'{source.id}: 비교 계정 {ordered}')
+            return ordered
         if a.order.account:
             # 비교 계정을 정해 두지 않은 소싱처는 주문이 지정한 계정으로 산다
             return [a.order.account]
@@ -575,6 +597,24 @@ class BuyerAgent(AgentBase):
         if len(out) > 1:
             self.note('계정 후보', f'주문 계정 {first} + 결제 항목 있는 {out[1:]} 비교')
         return out
+
+    def _by_pay_priority(self, source: Source, accounts: list[str]) -> list[str]:
+        """키마스터 결제 우선순위(list_accounts 의 priority, 1 = 먼저) 순으로 정렬한다. 순위 없는 계정은 뒤(원래 순서).
+
+        목록을 못 읽으면 원래 순서 그대로.
+        """
+        home = self._home()
+        host = source.login_host or urlparse(home).hostname or ''
+        try:
+            self.tool('new_tab', url=home)
+            self.tool('wait', ms=_LOGIN_SETTLE_MS)
+            ranks = parse_account_priorities(self.tool('list_accounts', host=host))
+        except AgentFailure:
+            return accounts
+        if not ranks:
+            return accounts
+        big = 10**6
+        return sorted(accounts, key=lambda acc: (ranks.get(acc, big), accounts.index(acc)))
 
     def _first_account(self, source: Source) -> tuple[list[str], bool]:
         home = self._home()

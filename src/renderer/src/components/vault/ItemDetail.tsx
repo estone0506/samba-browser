@@ -6,7 +6,7 @@ import { useVaultStore } from '@renderer/stores/vaultStore'
 import { usePhoneStore } from '@renderer/stores/phoneStore'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
-import { AGENT_ACCESS_VALUES, paymentProviderOfSections } from '@shared/vault'
+import { AGENT_ACCESS_VALUES, paymentProviderOfSections, payPriorityOf, withPayPriority, visibleTags } from '@shared/vault'
 import {
   PhoneAssignDialog,
   PhoneAssignSuggestion
@@ -289,10 +289,36 @@ function AccountSettings({ account }: { account: AccountDto }): React.JSX.Elemen
 
       <section className="mb-5">
         <h4 className="mb-2 text-[12px] font-semibold text-[var(--text2)]">
+          {t('vault.payPriority.label')}
+        </h4>
+        <div className="flex items-center gap-2">
+          <select
+            aria-label={t('vault.payPriority.label')}
+            value={payPriorityOf(account.tags) ?? ''}
+            onChange={(e) =>
+              patch({
+                tags: withPayPriority(account.tags, e.target.value ? Number(e.target.value) : null)
+              })
+            }
+            className="h-8 rounded-[9px] border border-black/10 bg-[var(--bg)] px-2 text-[12.5px]"
+          >
+            <option value="">{t('vault.payPriority.none')}</option>
+            {PAY_PRIORITY_CHOICES.map((n) => (
+              <option key={n} value={n}>
+                {t('vault.payPriority.rank', { n })}
+              </option>
+            ))}
+          </select>
+          <span className="text-[11.5px] text-[var(--text3)]">{t('vault.payPriority.hint')}</span>
+        </div>
+      </section>
+
+      <section className="mb-5">
+        <h4 className="mb-2 text-[12px] font-semibold text-[var(--text2)]">
           {t('vault.tags.label')}
         </h4>
         <div className="flex flex-wrap items-center gap-1.5">
-          {account.tags.map((tag) => (
+          {visibleTags(account.tags).map((tag) => (
             <button
               key={tag}
               type="button"
@@ -323,6 +349,9 @@ function AccountSettings({ account }: { account: AccountDto }): React.JSX.Elemen
     </>
   )
 }
+
+// 결제 우선순위 선택지(1 = 가장 먼저)
+const PAY_PRIORITY_CHOICES = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 interface Props {
   onEdit: () => void
