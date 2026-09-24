@@ -739,6 +739,8 @@ class BuyerAgent(AgentBase):
         소싱처가 payment_quotes 면 주문서에서 결제수단별 금액까지 읽어 가장 싼 수단을 스냅샷에 싣는다
         (cost 를 그 금액으로 바꾸고 pay_method·pay_card 를 붙인다) — 계정 비교도 이 금액으로 한다.
         """
+        if source_of(self.spec.name).coupon_download:
+            self._download_coupons(a, account)
         self.step(f'{self.spec.name}: 상품 확인({account})')
         snap = self.script_json(
             source_of(self.spec.name).snapshot_script,
@@ -760,6 +762,26 @@ class BuyerAgent(AgentBase):
         if source_of(self.spec.name).normal_price and snap.get('normal_price') is None:
             self._apply_normal_price(a, account, snap)
         return snap
+
+    def _download_coupons(self, a: Assignment, account: str) -> None:
+        """상품 페이지 '쿠폰받기'로 이 계정이 받을 수 있는 쿠폰을 먼저 받는다. 실패해도 구매는 이어 간다(근거만 남긴다)."""
+        self.step(f'{self.spec.name}: 쿠폰 받기({account})')
+        try:
+            out = self.script_json(
+                source_of(self.spec.name).coupon_download_script,
+                {'sku': product_ref(self.spec.name, a.order), 'profile': account},
+                goal=(
+                    '계정 profile 로 상품 페이지를 열어 "쿠폰받기"(또는 쿠폰 레이어의 모두 받기)를 눌러 받을 수 있는 '
+                    '쿠폰을 모두 받고 레이어를 닫은 뒤 {ok:true, clicked, issued(발급된 할인액 목록)} 를 돌려준다. '
+                    '쿠폰받기 버튼이 없으면 {ok:true, clicked:false}.'
+                ),
+                check=lambda o: None if o.get('ok') else f'쿠폰 받기 실패: {o.get("note")}',
+            )
+        except AgentFailure as e:
+            self.note('쿠폰 받기', mask_text(f'{account}: 못 함({e.reason[:80]})'))
+            return
+        if out.get('clicked'):
+            self.note('쿠폰 받기', f'{account}: 받음 {out.get("issued") or []}')
 
     def _apply_normal_price(self, a: Assignment, account: str, snap: dict[str, object]) -> None:
         """소싱처 정가(`<key>_normal_price`)를 스냅샷에 싣는다. 못 읽으면 None 으로 두고 근거만 남긴다."""

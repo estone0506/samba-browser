@@ -53,6 +53,9 @@ class Source(BaseModel):
     normal_price: bool = False
     # True 면 스냅샷(주문서 생성) 직후 `<key>_order_prep` 으로 주문서를 규칙대로 정돈한다 — 무신사 적립금(5만 미만 0원)·선할인(플레이북 §7)
     order_prep: bool = False
+    # True 면 스냅샷 전에 `<key>_coupon_download` 로 상품 페이지의 '쿠폰받기'를 눌러 받을 수 있는 쿠폰을 먼저 받는다.
+    # 안 받은 쿠폰은 주문서에 안 뜬다 — 계정 비교가 틀린다(실기: buyer01 데상트 10% 쿠폰 미발급으로 0원)
+    coupon_download: bool = False
     # 이 소싱처의 주문은 항상 이 배송 종류로 본다(예: ABC마트는 전부 까대기 = 사무실 배송).
     # None 이면 주문(삼바웨이브 action_tag)이 정한 종류를 따른다
     order_type: Literal['direct', 'kkadaegi', 'gift'] | None = None
@@ -76,6 +79,10 @@ class Source(BaseModel):
     @property
     def normal_price_script(self) -> str:
         return f'{self.key}_normal_price'
+
+    @property
+    def coupon_download_script(self) -> str:
+        return f'{self.key}_coupon_download'
 
     @property
     def order_prep_script(self) -> str:

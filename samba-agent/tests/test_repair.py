@@ -331,3 +331,20 @@ def test_app_supports_pay_guard_detects_old_app() -> None:
     assert not app_supports_pay_guard(Old())
     assert app_supports_pay_guard(New())
     assert not app_supports_pay_guard(Down())
+
+
+@pytest.mark.coupon_download
+def test_download_coupons_runs_script_per_account(buyer) -> None:
+    """상품 확인 전에 계정마다 '쿠폰받기' 스크립트를 부른다(실기: 안 받은 쿠폰으로 계정 비교가 틀렸다)."""
+    from samba_agent.agents.contracts import Assignment, OrderRef
+
+    route = respx.post(f'{URL}/tool/run_script').mock(
+        return_value=page('{"ok": true, "clicked": true, "issued": ["11,940"]}')
+    )
+    order = OrderRef(order_no='A1', source='MUSINSA', seller='포이즌', sku='5458452', qty=1)
+    a = Assignment(order=order, allowed_tools=buyer.spec.tools, rules='', dry_run=False)
+    buyer._download_coupons(a, 'buyer01')
+    body = json.loads(route.calls[0].request.content)['args']
+    assert body['name'] == 'musinsa_coupon_download'
+    assert json.loads(body['args'])['profile'] == 'buyer01'
+    assert any('11,940' in e.detail for e in buyer.evidence)
