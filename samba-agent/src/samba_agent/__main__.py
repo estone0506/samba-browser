@@ -142,6 +142,14 @@ def main() -> None:
                 agent.repairer = repairer
                 agent.script_source = script_source
                 agent.script_history = script_history
+    if bridge.supports_lanes():
+        # 앱이 레인을 알면 계정 비교를 동시에 돌린다(모르면 예전처럼 순서대로 — 한 탭을 서로 건드린다)
+        for agent in agents.values():
+            if isinstance(agent, BuyerAgent):
+                agent.parallel_accounts = True
+        log.info('앱이 레인을 지원한다 — 계정 비교를 동시에 돌린다')
+    else:
+        log.warning('앱이 레인을 모른다 — 계정 비교를 순서대로 돌린다(앱 재시작 필요)')
     allowed_pay = {x.strip() for x in settings.allowed_pay_providers.split(',') if x.strip()}
     if allowed_pay:
         # 결제에 쓸 수 있는 수단을 좁힌다(사용자 설정) — 구매 에이전트의 결제수단 견적이 이 안에서만 고른다

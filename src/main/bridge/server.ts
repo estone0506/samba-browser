@@ -167,7 +167,8 @@ export class BridgeServer {
           }, timeoutMs)
         })
       ])
-      json(res, 200, { ok: true, result, steps })
+      // 레인 요청이면 레인 이름을 돌려준다 — 하네스가 이 앱이 레인을 아는지 확인한다(예전 앱은 머리글을 무시한다)
+      json(res, 200, { ok: true, result, steps, ...(lane ? { lane } : {}) })
     } catch (e: unknown) {
       if (settledByTimer) {
         // 504 를 먼저 보낸다 — 세션은 아직 안 닫는다, callPromise 가 끝날 때 정리한다

@@ -434,3 +434,38 @@ def test_quotes_drop_disallowed_card_issuers() -> None:
     ]
     rows = cheapest_quotes(raw, None, None)
     assert [r['method'] for r in rows] == ['무신사머니']
+
+
+def test_quote_parallel_uses_one_lane_per_account(buyer, monkeypatch) -> None:
+    """계정 비교를 레인(소싱처-계정)마다 동시에 돌리고 결과·근거를 계정 순서대로 모은다."""
+    from samba_agent.agents.contracts import Assignment, OrderRef
+
+    lanes: list[str | None] = []
+
+    def fake_quote(self, a, account):
+        lanes.append(self.bridge._lane)
+        self.note('계정 견적', f'{account}: 원가')
+        return {'cost': {'buyer01': 100, 'buyer02': 90}[account]}
+
+    monkeypatch.setattr(BuyerAgent, '_quote', fake_quote)
+    order = OrderRef(order_no='A1', source='MUSINSA', seller='포이즌', sku='1', qty=1)
+    a = Assignment(order=order, allowed_tools=buyer.spec.tools, rules='', dry_run=False)
+    buyer.evidence = []
+    buyer._quote_errors = []
+    buyer._quote_skips = []
+    out = buyer._quote_parallel(a, ['buyer01', 'buyer02'])
+    assert [acc for acc, _ in out] == ['buyer01', 'buyer02']
+    assert sorted(lanes) == ['musinsa-buyer02', 'musinsa-buyer01']
+    assert [e.detail for e in buyer.evidence if e.label == '계정 견적'] == [
+        'buyer01: 원가',
+        'buyer02: 원가',
+    ]
+
+
+def test_bridge_client_sends_lane_header() -> None:
+    from samba_agent.bridge.client import BridgeClient
+
+    route = respx.post(f'{URL}/tool/get_page').mock(return_value=page('ok'))
+    c = BridgeClient(URL, 'a' * 64, allowed=('get_page',)).with_lane('musinsa-buyer01')
+    c.call('get_page')
+    assert route.calls[0].request.headers['X-Samba-Lane'] == 'musinsa-buyer01'

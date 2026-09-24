@@ -616,6 +616,8 @@ class BuyerAgent(AgentBase):
     allowed_pay_providers: set[str] | None = None
     # 같은 상품을 같이 비교할 다른 소싱처의 구매 에이전트(무신사 ↔ 29CM). factory 가 잇는다
     sibling: 'BuyerAgent | None' = None
+    # 계정 비교를 레인으로 동시에 돌린다(앱이 레인을 알 때만 main 이 켠다)
+    parallel_accounts: bool = False
     # (계정, 시각) — 같은 사이트에서 마지막으로 로그인한 계정
     _last_login: tuple[str, float] | None = None
     _order_type_noted: tuple[str, str] | None = None
@@ -1327,6 +1329,40 @@ class BuyerAgent(AgentBase):
         result = sib(a3)
         return result.model_copy(update={'evidence': (*self.evidence, *result.evidence)})
 
+    def _quote_parallel(
+        self, a: Assignment, accounts: list[str]
+    ) -> list[tuple[str, dict[str, object]]]:
+        """계정마다 레인을 붙여 동시에 견적한다. 근거·실패 사유·받은 쿠폰은 계정 순서대로 모은다."""
+        import concurrent.futures
+        import copy
+
+        key = source_of(self.spec.name).key
+
+        def run(account: str) -> tuple[str, dict[str, object] | None, 'BuyerAgent']:
+            clone = copy.copy(self)
+            clone.bridge = self.bridge.with_lane(f'{key}-{account}')
+            clone.evidence = []
+            clone._quote_errors = []
+            clone._quote_skips = []
+            clone._last_login = None
+            clone._issued = {}
+            return account, clone._quote(a, account), clone
+
+        self.step(f'{self.spec.name}: 계정 {len(accounts)}개 동시 비교')
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(accounts)) as pool:
+            outs = list(pool.map(run, accounts))
+        quotes: list[tuple[str, dict[str, object]]] = []
+        issued = dict(getattr(self, '_issued', {}))
+        for account, q, clone in outs:
+            self.evidence.extend(clone.evidence)
+            self._quote_errors.extend(clone._quote_errors)
+            self._quote_skips.extend(clone._quote_skips)
+            issued.update(getattr(clone, '_issued', {}))
+            if q is not None:
+                quotes.append((account, q))
+        self._issued = issued
+        return quotes
+
     def _pick_cheapest(self, a: Assignment, accounts: list[str]) -> tuple[str, dict[str, object]]:
         """계정마다 견적을 내고 원가가 가장 낮은 계정(같으면 앞 계정)과 그 스냅샷을 고른다.
 
@@ -1336,10 +1372,14 @@ class BuyerAgent(AgentBase):
         self._quote_errors = []
         self._quote_skips: list[str] = []
         quotes: list[tuple[str, dict[str, object]]] = []
-        for account in accounts:
-            q = self._quote(a, account)
-            if q is not None:
-                quotes.append((account, q))
+        parallel = self.parallel_accounts and len(accounts) > 1
+        if parallel:
+            quotes = self._quote_parallel(a, accounts)
+        else:
+            for account in accounts:
+                q = self._quote(a, account)
+                if q is not None:
+                    quotes.append((account, q))
         if not quotes:
             # 어느 계정도 스냅샷까지 못 갔고 전부 사람 확인(로그인 실패·캡차)이면 그 사유가 맞다 — 품절이 아니다
             errors = self._quote_errors
@@ -1363,7 +1403,8 @@ class BuyerAgent(AgentBase):
         winner, snap = min(quotes, key=lambda q: _as_float(q[1].get('cost')))
         cost = _as_float(snap.get('cost'))
         self.note('계정 선택', f'{winner} — 원가 최저 {cost:,.0f}원 (비교 {len(accounts)}계정)')
-        if winner != accounts[-1]:
+        if parallel or winner != accounts[-1]:
+            # 동시 비교면 이긴 계정의 주문서를 레인 밖(뒤 단계가 보는 곳)에서 다시 만든다
             self._login_as(winner)
             snap = self._snapshot(a, winner)
         return winner, snap
