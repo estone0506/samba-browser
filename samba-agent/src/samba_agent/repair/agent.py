@@ -134,12 +134,15 @@ def check_candidate(code: str, allow_pay_button: bool = False) -> str | None:
 
 
 def app_supports_pay_guard(bridge: Any) -> bool:
-    """앱의 run_js 가 safety:no_pay 를 아는가. 모르는 값을 주면 새 앱은 거절하고 예전 앱은 무시하고 실행한다."""
+    """앱의 run_js 가 safety:no_pay(결제 버튼 클릭 차단)를 아는가 — safety:probe 에 지원 문구로 답해야 참.
+
+    브릿지는 도구 스키마 검사를 거치지 않아 예전 앱은 모르는 값을 무시하고 코드를 그냥 돌린다(실기).
+    """
     try:
-        out = bridge.call('run_js', code='return "probe-ran"', safety='__probe__').result
-    except Exception:  # noqa: BLE001 — 새 앱의 스키마 거절(4xx)이 여기로 온다
-        return True
-    return 'probe-ran' not in out
+        out = bridge.call('run_js', code='return "probe-ran"', safety='probe').result
+    except Exception:  # noqa: BLE001 — 연결 실패 등은 지원 안 함으로 본다(안전 쪽)
+        return False
+    return 'no_pay supported' in out
 
 
 class ScriptRepairer:

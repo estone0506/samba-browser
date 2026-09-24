@@ -314,7 +314,12 @@ def test_app_supports_pay_guard_detects_old_app() -> None:
 
     class New:
         def call(self, name, **kw):
-            raise RuntimeError('400 invalid enum')  # 새 앱: 스키마 거절
+            return R('safety: no_pay supported')  # 새 앱: 지원 문구
+
+    class Down:
+        def call(self, name, **kw):
+            raise RuntimeError('bridge down')
 
     assert not app_supports_pay_guard(Old())
     assert app_supports_pay_guard(New())
+    assert not app_supports_pay_guard(Down())

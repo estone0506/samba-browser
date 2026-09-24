@@ -141,6 +141,7 @@ const NOT_A_SECRET_FIELD = 'refused: target is not a secret input'
 // run_js safety:no_pay 에서 누르지 않는 결제 확정 버튼 글자(요소 자신 + 감싸는 버튼·링크 글자로 판정)
 export const PAY_CLICK_RE =
   /결제\s*하기|입력\s*완료|구매\s*확정|결제\s*승인|주문\s*확정|place\s*order|pay\s*now/i
+export const RUN_JS_SAFETY_PROBE = 'safety: no_pay supported'
 const PAY_CLICK_REFUSAL = 'refused: safety no_pay — payment confirm buttons cannot be clicked here'
 // 접근 정책이 never 일 때 돌려주는 문자열
 const VAULT_ACCESS_NEVER = 'refused: KeyMaster access policy is Never'
@@ -1694,9 +1695,14 @@ overlays left: ${after.length}${kept}`
     {
       code: z.string().describe(`JavaScript, ${RUN_JS_MAX_CODE} characters or fewer`),
       // 하네스의 AI 스크립트 수리 전용 — 결제 확정 버튼 클릭·Enter 제출을 앱이 거절한다
-      safety: z.enum(['no_pay']).optional().describe('no_pay: refuse clicks on payment-confirm buttons')
+      safety: z
+        .enum(['no_pay', 'probe'])
+        .optional()
+        .describe('no_pay: refuse clicks on payment-confirm buttons; probe: report support')
     },
     ({ code, safety }) => {
+      // 하네스가 이 앱이 결제 버튼 차단을 아는지 묻는다(모르는 예전 앱은 코드를 그냥 돌린다)
+      if (safety === 'probe') return Promise.resolve(text(RUN_JS_SAFETY_PROBE))
       const clicked: string[] = []
       return guard(
         runJsLabel(code),

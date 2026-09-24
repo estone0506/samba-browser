@@ -64,7 +64,7 @@ function build(
     mode?: ToolContext['mode']
     confirmResult?: boolean
     limit?: number
-    safety?: 'no_pay'
+    safety?: 'no_pay' | 'probe'
   } = {}
 ): {
   run: (code: string) => Promise<string>
@@ -167,6 +167,11 @@ describe('run_js 는 도구와 같은 가드를 지난다', () => {
     expect(await run('return await page.click(3)')).toContain('safety no_pay')
     expect(await run('return await page.clickNative(3)')).toContain('safety no_pay')
     expect(pageBridge.click).not.toHaveBeenCalled()
+  })
+
+  it('safety probe 는 코드를 돌리지 않고 지원 여부만 답한다', async () => {
+    const { run } = build({ safety: 'probe' })
+    expect(await run('return "probe-ran"')).toBe('safety: no_pay supported')
   })
 
   it('safety no_pay 여도 결제 버튼이 아니면 누른다', async () => {
