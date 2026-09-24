@@ -804,10 +804,12 @@ class BuyerAgent(AgentBase):
         options = [str(o) for o in (snap.get('options') or [])]
         if not matching_options(options, a.order.option):
             self.note('계정 견적', mask_text(f'{account}: 불가(주문 옵션 품절)'))
+            self._quote_skips.append(f'{account}: 옵션 불일치 {options[:6]}')
             return None
         cost = _as_float(snap.get('cost'))
         if cost <= 0:
             self.note('계정 견적', mask_text(f'{account}: 불가(원가를 읽지 못함)'))
+            self._quote_skips.append(f'{account}: 원가 못 읽음({snap.get("note")})')
             return None
         self.note('계정 견적', mask_text(f'{account}: 원가 {cost:,.0f}원'))
         return {**snap, 'cost': cost}
@@ -819,6 +821,7 @@ class BuyerAgent(AgentBase):
         다시 로그인·스냅샷해서 그 주문서를 최신 탭으로 만든다.
         """
         self._quote_errors = []
+        self._quote_skips: list[str] = []
         quotes: list[tuple[str, dict[str, object]]] = []
         for account in accounts:
             q = self._quote(a, account)
@@ -832,9 +835,11 @@ class BuyerAgent(AgentBase):
                 raise AgentFailure(
                     'needs_human', f'모든 계정 불가 — {first.reason}', first.fail_reason
                 )
+            # 계정별 사유를 함께 남긴다 — 진짜 품절인지 스크립트·로그인 실패인지 가려야 한다(실기: 3건 모두 원인 불명)
+            why = '; '.join([e.reason[:60] for e in errors[:4]] + self._quote_skips[:4]) or '견적 없음'
             raise AgentFailure(
                 'fail',
-                mask_text(f'모든 계정에서 살 수 없다(품절·실패): {", ".join(accounts)}'),
+                mask_text(f'모든 계정에서 살 수 없다(품절·실패): {", ".join(accounts)} — {why}'),
                 FailReason.OUT_OF_STOCK,
             )
         # min 은 같은 값이면 앞 것을 준다 — 동률이면 먼저 비교한 계정
