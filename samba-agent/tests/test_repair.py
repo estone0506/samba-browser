@@ -382,3 +382,12 @@ def test_audit_drops_account_that_stays_expensive(buyer) -> None:
     buyer._quote = lambda a, acc: {'cost': 114630, 'coupons_issued': ['11,940']}
     out = dict(buyer._audit_quotes(a, quotes))
     assert 'buyer01' not in out and 'buyer02' in out
+
+
+def test_quote_cost_adds_points_used_from_order_prep() -> None:
+    """견적 행에 적립금이 없으면 주문서 정돈의 사용 적립금이 원가에 들어간다(원가 = 결제×청구할인 − 적립 + 적립금)."""
+    from samba_agent.agents.buyer import cheapest_quotes
+
+    raw = [{'method': '무신사페이', 'card': '롯데카드', 'cost': 51360, 'points_used': 6150}]
+    best = cheapest_quotes(raw, None, None)[0]
+    assert best['cost'] == 56483

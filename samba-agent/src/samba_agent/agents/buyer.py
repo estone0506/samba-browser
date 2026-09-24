@@ -935,6 +935,13 @@ class BuyerAgent(AgentBase):
         if not isinstance(raw_quotes, list) or not raw_quotes:
             self.note('결제수단 견적', '견적 없음 — 스냅샷 원가로 진행')
             return
+        # 견적 스크립트는 사용 적립금을 안 돌려준다 — 주문서 정돈에서 쓴 적립금을 넣어야 원가 공식이 맞는다
+        # (실기: 적립금 6,150 이 빠져 원가 49,310·마진 +2.6% 로 결제, 실제 원가 56,483·마진 −8.3%)
+        used = _as_float(snap.get('points_used'))
+        raw_quotes = [
+            {**q, 'points_used': used} if isinstance(q, dict) and not q.get('points_used') else q
+            for q in raw_quotes
+        ]
         quotes = cheapest_quotes(raw_quotes, a.options.get('card'), payable)
         if not quotes:
             # 결제 항목은 있는데 이 주문서의 수단과 겹치지 않는다 — 모델이 고르게 두면 실결제에서 어차피 막힌다
