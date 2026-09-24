@@ -14,7 +14,8 @@ import vm from 'node:vm'
 // - require·process 는 애초에 컨텍스트에 없다(참조하면 ReferenceError).
 
 /** 받아 줄 코드 길이 상한 */
-export const RUN_JS_MAX_CODE = 4000
+// 8000: 사이트 스크립트가 옵션·쿠폰·결제수단 처리를 덧붙이며 4000 을 넘어 AI 수리가 시험조차 못 했다(2026-09-24)
+export const RUN_JS_MAX_CODE = 8000
 /** 모델에게 돌려주는 결과 문자열 상한 */
 export const RUN_JS_MAX_OUTPUT = 12000
 /** 동기 실행 상한(무한 루프 차단) */

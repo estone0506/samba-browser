@@ -220,7 +220,7 @@ def test_numeric_overlap_and_choice_resolution() -> None:
 def test_candidate_guard_blocks_payment_and_long_or_hardcoded_code() -> None:
     assert check_candidate("await page.clickText('결제하기')")
     assert check_candidate("location='https://money.musinsapayments.com'")
-    assert check_candidate('x'.ljust(4001, 'x'))
+    assert check_candidate('x'.ljust(8001, 'x'))
     assert check_candidate('const no="213152056133"')
     assert check_candidate("await page.clickText('구매하기'); return {}") is None
 

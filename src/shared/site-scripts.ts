@@ -21,8 +21,8 @@ export const SITE_SCRIPT_MAX = 200
 export const SITE_SCRIPT_DESCRIPTION_MAX = 240
 export const SITE_SCRIPT_PARAM_MAX = 10
 export const SITE_SCRIPT_PARAM_LENGTH_MAX = 60
-/** run_js 상한과 같다(RUN_JS_MAX_CODE) */
-export const SITE_SCRIPT_CODE_MAX = 4000
+/** run_js 상한과 같다(RUN_JS_MAX_CODE, 8000) */
+export const SITE_SCRIPT_CODE_MAX = 8000
 /** 연속 실패가 이만큼 쌓이면 프롬프트 목록에서 뺀다 */
 export const SITE_SCRIPT_FAIL_LIMIT = 3
 /** 프롬프트에 붙이는 목록 블록 길이 상한 */

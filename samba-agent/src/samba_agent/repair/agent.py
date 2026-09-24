@@ -35,7 +35,7 @@ DEFAULT_REPAIR_MODEL = 'claude-opus-5'
 DEFAULT_MAX_TURNS = 40
 DEFAULT_TIMEOUT_S = 900.0
 # 앱 run_js·저장 스크립트 코드 상한(RUN_JS_MAX_CODE)
-CODE_MAX = 4000
+CODE_MAX = 8000
 # AI 에게 돌려주는 화면·결과 길이 상한
 _RESULT_MAX = 12000
 
