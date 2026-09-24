@@ -497,7 +497,11 @@ class PayerAgent(AgentBase):
         element_id = _element_id(found)
         if element_id is not None:
             self.step('payer: 신원정보 입력')
-            self.tool('fill_secret', elementId=element_id, itemType='identity')
+            try:
+                self.tool('fill_secret', elementId=element_id, itemType='identity')
+            except AgentFailure as e:
+                # 신원정보 칸이 아닌 요소가 잡힌 경우(실기: 무신사 주문서 "주문자" 글자) — 결제를 막지 않는다
+                self.note('신원정보 입력', mask_text(f'건너뜀({e.reason[:80]})'))
 
         # 결제 앱은 사람이 지정하지 않는다 — 카드 이름 자체가 앱을 가리키면(예: 토스페이) 그것을,
         # 아니면 지금 뜬 결제창(팝업)의 호스트를 보고 정한다. phone_approve_payment 를 부르기
