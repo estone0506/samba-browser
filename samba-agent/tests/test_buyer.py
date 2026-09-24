@@ -82,6 +82,8 @@ def route_run_script(responses: dict[str, object]) -> object:
         if name not in responses and str(name).endswith('_payment_quotes'):
             # 결제수단 견적은 표본에 없으면 "견적 없음" — 스냅샷 원가로 진행한다
             return page('{"quotes": []}')
+        if name not in responses and str(name).endswith('_normal_price'):
+            return page('{"normal_price": 150000}')  # 정가 표본
         if name not in responses:
             raise AssertionError(f'예상치 못한 run_script 호출: {name}')
         return page(json.dumps(responses[name], ensure_ascii=False))
@@ -457,7 +459,7 @@ def _recording_handler(snapshot_name, applied, echo_extra=None, snapshot=None):
         if body['args']['name'].endswith('_payment_quotes'):
             return page('{"quotes": []}')  # 견적 없음 — 스냅샷 원가로 진행
         if body['args']['name'].endswith('_normal_price'):
-            return page('{}')  # 정가 없음
+            return page('{"normal_price": 150000}')
         args = json.loads(body['args']['args'])
         if body['args']['name'].endswith('_confirm_shipping'):
             # 확정 스크립트 — 폼을 저장한 뒤 주문서에서 되읽은 값을 그대로 메아리친다
@@ -813,6 +815,8 @@ def _per_account_snapshots(by_account: dict[str, object], calls: list[str]):
         if name.endswith('_payment_quotes'):
             # 결제수단 견적도 calls 에 남기지 않는다 — "견적 없음"이면 스냅샷 원가로 간다
             return page('{"quotes": []}')
+        if name.endswith('_normal_price'):
+            return page('{"normal_price": 150000}')  # 정가도 calls 에 남기지 않는다
         calls.append(f'{name}:{args.get("profile")}')
         return page(json.dumps(SHIPPING_ECHO, ensure_ascii=False))
 
@@ -1143,9 +1147,9 @@ def test_직배_까대기_판정_규칙():
     assert decide_order_type(order('쿠팡', 50000), 39000)[0] == 'kkadaegi'
     assert shipping_fee_for(order('쿠팡', 50000), 'kkadaegi') == 2300
     assert shipping_fee_for(order('쿠팡', 50000), 'direct') == 0
-    # 정가 모르면 판정 불가
+    # 정가 모르면 판정 불가, 고객 결제액을 모르면 태그를 따른다
     assert decide_order_type(order('쿠팡', 50000), None)[0] == ''
-    assert decide_order_type(order('쿠팡', 0), 79000)[0] == ''
+    assert decide_order_type(order('쿠팡', 0), 79000)[0] == 'direct'
     # 선물 태그는 그대로
     assert decide_order_type(order('쿠팡', 50000, 'gift'), 79000)[0] == 'gift'
 

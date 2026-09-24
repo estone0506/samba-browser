@@ -214,8 +214,11 @@ def decide_order_type(
         return 'gift', '선물 태그'
     if is_poison_seller(order.seller):
         return 'kkadaegi', '포이즌 판매건은 전부 까대기'
-    if normal_price is None or normal_price <= 0 or order.sale_price <= 0:
-        return '', '정가 또는 고객 결제액을 몰라 직배/까대기를 정할 수 없다'
+    if normal_price is None or normal_price <= 0:
+        return '', '소싱처 정가를 읽지 못해 직배/까대기를 정할 수 없다'
+    if order.sale_price <= 0:
+        # 고객 결제액을 모르는 주문(삼바웨이브 판매가 0) — 비교할 수 없으니 태그를 따른다
+        return order.order_type, '고객 결제액을 몰라 삼바웨이브 태그를 따름'
     if normal_price <= order.sale_price:
         return 'kkadaegi', f'정가 {normal_price:,.0f} ≤ 고객 결제액 {order.sale_price:,.0f}'
     return 'direct', f'정가 {normal_price:,.0f} > 고객 결제액 {order.sale_price:,.0f}'
