@@ -250,6 +250,7 @@ def recorder_with_wave(reg) -> RecorderAgent:
     a = agent(reg)
     a.set_wave(wave_client())
     a.read_actual_cost = False  # 기존 기입 흐름 시험 — 상세 재계산은 아래 별도 시험
+    a.mark_status = False  # 상태 변경도 아래 별도 시험
     return a
 
 
@@ -386,8 +387,50 @@ def test_결제_뒤_주문_상세로_원가를_다시_계산해_기록한다(reg
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     a = agent(reg)
     a.set_wave(wave_client())
+    a.mark_status = False
     out = a(assignment(reg, dry_run=False))
     assert out.status == 'ok'
     body = json.loads(put.calls[0].request.content)
     assert body['cost'] == 95520
     assert '실결제 95,950' in body['notes']
+
+
+@respx.mock
+def test_이행하면_주문상태를_배송대기중으로_바꾸고_확인한다(reg):
+    """주문접수로 남으면 다시 주문된다 — 상태 스크립트를 부르고 내부 API 로 wait_ship 을 확인한다."""
+    respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
+    )
+    respx.get(f'{WAVE_API}/orders/A1').mock(
+        side_effect=[
+            httpx.Response(200, json=WAVE_ORDER),
+            httpx.Response(200, json={**WAVE_ORDER, 'status': 'wait_ship'}),
+        ]
+    )
+    status = respx.post(f'{URL}/tool/run_script').mock(
+        return_value=page({'ok': True, 'status': '배송대기중'})
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    a = recorder_with_wave(reg)
+    a.mark_status = True
+    out = a(assignment(reg, dry_run=False))
+    assert out.status == 'ok'
+    body = json.loads(status.calls[0].request.content)['args']
+    assert body['name'] == 'samba_set_status'
+
+
+@respx.mock
+def test_배송대기중으로_못_바꾸면_사람에게_넘긴다(reg):
+    respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
+    )
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(200, json=WAVE_ORDER))
+    respx.post(f'{URL}/tool/run_script').mock(
+        return_value=page({'ok': False, 'note': '주문 행 없음'})
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    a = recorder_with_wave(reg)
+    a.mark_status = True
+    out = a(assignment(reg, dry_run=False))
+    assert out.status == 'needs_human'
+    assert '재주문 위험' in out.reason

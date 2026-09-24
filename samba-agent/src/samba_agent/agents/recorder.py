@@ -24,6 +24,8 @@ from samba_agent.wave.client import WaveClient, WaveError, wave_fields
 
 SAVE_SCRIPT = 'samba_save_order'
 READ_SCRIPT = 'samba_read_order'
+# 이행한 주문을 배송대기중으로 바꾸는 앱 저장 스크립트(재주문 방지)
+STATUS_SCRIPT = 'samba_set_status'
 
 # 되읽어 숫자로 비교할 필드 — 문자열 "89000" 과 숫자 89000 을 같은 값으로 본다
 NUMERIC_FIELDS = ('real_price', 'shipping_fee')
@@ -85,6 +87,8 @@ class RecorderAgent(AgentBase):
 
     # 결제 뒤 소싱처 주문 상세로 원가를 다시 계산할지(기본 켬)
     read_actual_cost: bool = True
+    # 이행 뒤 삼바웨이브 주문상태를 배송대기중으로 바꿀지(기본 켬 — 재주문 방지)
+    mark_status: bool = True
     # 삼바웨이브 내부 API 클라이언트. factory 가 꽂는다(없으면 앱 저장 스크립트 경로)
     _wave: 'WaveClient | None' = None
 
@@ -205,6 +209,44 @@ class RecorderAgent(AgentBase):
             )
         return a.order.account_id or (str(a.handoff.get('sourcing_account_id') or '') or None)
 
+    def _mark_waiting_ship(self, a: Assignment, sourcing_no: str) -> None:
+        """이행한 주문의 삼바웨이브 상태를 '배송대기중'으로 바꾼다 — 주문접수로 남으면 다시 주문된다(사용자 지시).
+
+        앱 저장 스크립트(`samba_set_status`)로 바꾸고 내부 API 로 되읽어 확인한다. 못 바꾸면 사람에게 넘긴다.
+        """
+        self.step('recorder: 주문상태 배송대기중')
+        try:
+            out = self.json_tool(
+                'run_script',
+                name=STATUS_SCRIPT,
+                args=json.dumps(
+                    {
+                        'orderNo': a.order.order_no,
+                        'sourcingNo': sourcing_no,
+                        'status': '배송대기중',
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        except AgentFailure as e:
+            out = {'ok': False, 'note': e.reason[:80]}
+        status = ''
+        if self._wave is not None:
+            try:
+                status = str(self._wave.get_order(a.order.order_no).status or '')
+            except WaveError:
+                status = ''
+        if status == 'wait_ship':
+            self.note('주문상태', '배송대기중으로 변경 확인')
+            return
+        raise AgentFailure(
+            'needs_human',
+            mask_text(
+                f'기록은 됐지만 주문상태를 배송대기중으로 못 바꿨다(재주문 위험) — {out.get("note") or status}'
+            ),
+            FailReason.UNKNOWN,
+        )
+
     def _apply_actual_cost(
         self, a: Assignment, values: dict[str, object], sourcing_no: str
     ) -> None:
@@ -290,6 +332,8 @@ class RecorderAgent(AgentBase):
             if checked
             else '삼바웨이브 응답에 대조할 필드가 없다 — 기입 자체는 200 으로 확인',
         )
+        if self.mark_status:
+            self._mark_waiting_ship(a, sourcing_no)
         return AgentResult(
             status='ok',
             reason=f'삼바웨이브에 소싱주문번호 {sourcing_no} 를 기입하고 되읽어 확인했다({memo_reason})',
