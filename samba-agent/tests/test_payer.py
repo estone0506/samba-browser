@@ -848,3 +848,15 @@ def test_공장이_결제_에이전트에도_삼바웨이브를_꽂는다(reg):
     agents = build_agents(reg, bridge, lambda p, m: m(choice='x', reason='r'), wave)
     assert agents['payer']._wave is wave
     assert build_agents(reg, bridge, lambda p, m: m(choice='x', reason='r'))['payer']._wave is None
+
+
+def test_card_app_code_는_카드사를_결제_앱_검색어로_바꾼다():
+    from samba_agent.agents.payer import card_app_code
+
+    assert card_app_code('현대카드') == '현대'
+    assert card_app_code('KB국민카드') == 'Smart'
+    assert card_app_code('롯데카드') == 'LOCA'
+    assert card_app_code('신한카드') == '11번가'
+    assert card_app_code('농협카드') == 'zgm'
+    assert card_app_code('삼성카드') == '삼성카드'
+    assert card_app_code(None) is None

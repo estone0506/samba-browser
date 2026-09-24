@@ -173,8 +173,8 @@ def cheapest_quotes(
         if cost <= 0 or not method:
             continue
         card = str(q.get('card') or '').strip() or None
-        if q.get('available') is False:
-            # 스크립트가 낼 수 없다고 본 수단(무신사머니 연결 계좌 없음·잔액 부족)
+        if q.get('available') is False or q.get('allowed') is False or q.get('registered') is False:
+            # 낼 수 없는 수단(무신사머니 연결 계좌 없음·잔액 부족), 허용 안 된 조합(토스페이×계좌 등), 미등록 카드
             continue
         if payable is not None:
             provider = quote_provider(method, card)
@@ -849,10 +849,12 @@ class BuyerAgent(AgentBase):
         methods = [str(m) for m in (snap.get('methods') or [])]
         card = a.options.get('card')
         quoted = snap.get('pay_method')
+        card_issuer: str | None = None
         if quoted:
-            # 결제수단 견적이 고른 조합 — 카드사가 있으면 카드사 이름을 결제 에이전트의 card 로 넘긴다
-            card = str(snap.get('pay_card') or quoted)
-            self.note('수단 선택', f'{card} — 결제수단 견적 최저')
+            # 결제수단 견적이 고른 조합 — 수단 이름은 card(결제창 진입용), 카드사는 card_issuer(결제 앱 안에서 고름)
+            card = str(quoted)
+            card_issuer = str(snap.get('pay_card') or '') or None
+            self.note('수단 선택', f'{card}{"/" + card_issuer if card_issuer else ""} — 결제수단 견적 최저')
         elif card and card not in methods:
             raise AgentFailure(
                 'fail', f'지시받은 카드가 결제수단에 없다: {card}', FailReason.CARD_MISSING
@@ -892,6 +894,7 @@ class BuyerAgent(AgentBase):
                 'order_type': self.order_type_of(a.order, snap),
                 'shipping_fee': shipping_fee_for(a.order, self.order_type_of(a.order, snap)),
                 'card': card,
+                **({'card_issuer': card_issuer} if card_issuer else {}),
                 'cost': cost,
                 'margin_pct': margin,
                 **({'paid': paid} if paid > 0 else {}),

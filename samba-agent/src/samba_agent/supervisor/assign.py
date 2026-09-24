@@ -19,8 +19,7 @@ BUYER_HANDOFF_FIELDS = (
     'margin_pct',
     'option',
     'pay_provider',
-    'paid',
-)
+    'paid', 'card_issuer',)
 
 
 def build_assignment(reg: Registry, spec: AgentSpec, state: RunState) -> Assignment:

@@ -89,6 +89,27 @@ WAVE_PENDING_STATUS = 'pending'
 SOURCE_ORDER_NO_RE = re.compile(r'주문\s?번호[^0-9A-Za-z]{0,4}([A-Za-z0-9][A-Za-z0-9-]{4,31})')
 
 
+# 결제 앱 안에서 고를 카드의 검색어(플레이북 §0) — 카드사 이름 조각 → phone_approve_payment 의 card 값
+CARD_APP_CODES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (('현대',), '현대'),
+    (('KB', '국민'), 'Smart'),
+    (('롯데',), 'LOCA'),
+    (('신한',), '11번가'),
+    (('농협', 'NH'), 'zgm'),
+)
+
+
+def card_app_code(issuer: object) -> str | None:
+    """카드사 이름('농협카드') → 결제 앱 검색어('zgm'). 표에 없으면 이름 그대로, 비어 있으면 None"""
+    text = str(issuer or '').strip()
+    if not text:
+        return None
+    for names, code in CARD_APP_CODES:
+        if any(n in text for n in names):
+            return code
+    return text
+
+
 def _pay_provider(*candidates: object) -> str | None:
     """결제수단 이름에서 폰 결제 앱을 고른다. 못 고르면 None — 결제하지 않는다."""
     for candidate in candidates:
@@ -298,8 +319,8 @@ class PayerAgent(AgentBase):
                     '결제 금액을 모른다 — 시험 입력도 하지 않는다',
                     FailReason.UNKNOWN,
                 )
-            # 카드 이름 자체가 결제 앱을 가리키면(예: 토스페이) 앱 안에서 고를 카드가 아니다
-            card_hint = None if _pay_provider(card) else card
+            # 카드사(card_issuer)가 있으면 결제 앱 검색어로, 없고 카드 이름 자체가 결제 앱(예: 토스페이)이면 카드 아님
+            card_hint = card_app_code(a.handoff.get('card_issuer')) or (None if _pay_provider(card) else card)
             out = self.tool(
                 'phone_approve_payment',
                 provider=provider,
@@ -410,8 +431,8 @@ class PayerAgent(AgentBase):
 
         if provider is not None:
             self.step('payer: 폰 승인')
-            # 카드 이름 자체가 결제 앱을 가리키면(예: 토스페이) 앱 안에서 고를 카드가 아니다
-            card_hint = None if _pay_provider(card) else card
+            # 카드사(card_issuer)가 있으면 결제 앱 검색어로, 없고 카드 이름 자체가 결제 앱(예: 토스페이)이면 카드 아님
+            card_hint = card_app_code(a.handoff.get('card_issuer')) or (None if _pay_provider(card) else card)
             # payAccount 는 앱 스키마상 네이버페이 전용이다. 사용자 결정 — 결제 앱이 쇼핑몰
             # 계정에 연결된 네이버 계정으로 스스로 고르게 두고, 어떤 provider 에도 payAccount 를
             # 넘기지 않는다(리뷰 지적 — Critical 1)
