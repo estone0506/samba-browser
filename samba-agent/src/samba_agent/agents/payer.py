@@ -113,6 +113,9 @@ def _pay_host_provider(url: str) -> str | None:
 # run_script checkout_enter_* 직후 결제창(팝업)이 아직 하나도 없을 때 한 번 더 보기 전 기다리는
 # 시간(ms) — 사이트가 팝업을 띄우는 타이밍과 어긋나 곧장 웹 결제 경로로 새지 않게 한다(리뷰 지적 — Minor 4)
 PAY_POPUP_WAIT_MS = 2000
+# 결제창 '결제하기' 버튼이 뜰 때까지 다시 보는 횟수·간격(중간 bridge 페이지를 지나는 시간)
+PAY_BUTTON_POLL_TRIES = 12
+PAY_BUTTON_POLL_WAIT_MS = 700
 
 # list_tabs 응답에서 팝업 kind 만 그물망으로 건질 때 쓰는 보조 정규식.
 # 정상 응답은 JSON 배열(id·kind·title·url·…)이지만, 형식이 바뀌어도 최소한
@@ -387,8 +390,16 @@ class PayerAgent(AgentBase):
         )
         if web_popup is not None and web_popup.get('id'):
             self.tool('switch_tab', id=str(web_popup['id']))
-            found = self.tool('find_elements', query='결제하기')
-            pay_btn = _element_id(found)
+            # 결제창은 중간 페이지(money.musinsapayments.com/bridge)를 거쳐 /payment 로 넘어간다 — 그 사이엔
+            # '결제하기'가 없다. 버튼이 뜰 때까지 기다린다(실기 2026-09-25: 못 누르고 넘어가 결제 미완료 2건)
+            pay_btn = None
+            for _ in range(PAY_BUTTON_POLL_TRIES):
+                pay_btn = _element_id(self.tool('find_elements', query='결제하기'))
+                if pay_btn is not None:
+                    break
+                self.tool('wait', ms=PAY_BUTTON_POLL_WAIT_MS)
+            if pay_btn is None:
+                self.note('결제창', '결제하기 버튼이 뜨지 않음 — 키패드를 바로 찾는다')
             if pay_btn is not None:
                 self.step('payer: 결제창 결제하기')
                 self.tool('click', id=pay_btn, label='결제하기')
