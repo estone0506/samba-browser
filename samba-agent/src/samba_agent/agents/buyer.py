@@ -512,6 +512,13 @@ def pay_card_quote_problem(out: dict[str, object]) -> str | None:
     return None
 
 
+def snapshot_login_required(out: dict[str, object]) -> bool:
+    """스냅샷이 '이 계정 프로필은 로그인이 안 돼 있다'고 알렸는가."""
+    return out.get('error') == 'login_required' or (
+        out.get('error') == 'no_checkout' and '로그인' in str(out.get('note') or '')
+    )
+
+
 def snapshot_problem(
     option: str | None, selected_ok: Callable[[str], bool] | None = None
 ) -> Callable[[dict[str, object]], str | None]:
@@ -523,6 +530,9 @@ def snapshot_problem(
 
     def check(out: dict[str, object]) -> str | None:
         if out.get('already_ordered') or out.get('existing_order_no'):
+            return None
+        # 로그인 안 된 계정 — 스크립트 잘못이 아니다(고치게 두면 다른 세션으로 넘어가 견적한다). 호출부가 그 계정을 뺀다
+        if snapshot_login_required(out):
             return None
         if option:
             sel = str(out.get('selected') or '').strip()
@@ -837,6 +847,13 @@ class BuyerAgent(AgentBase):
         )
         if snap.get('already_ordered') or snap.get('existing_order_no'):
             return snap  # 중복 구매 흔적 — 정돈·견적 없이 호출부가 바로 거절한다
+        if snapshot_login_required(snap):
+            # 이 계정은 견적에서 빠진다(다른 계정 세션으로 대신 견적하지 않는다 — 실기 2026-09-25)
+            raise AgentFailure(
+                'needs_human',
+                f'{account}: 로그인이 안 돼 있어 견적 못 함({snap.get("note") or snap.get("error")})',
+                FailReason.PERMISSION_DENIED,
+            )
         if source_of(self.spec.name).order_prep and _as_float(snap.get('cost')) > 0:
             self._order_prep(account, snap)
         # 결제수단 견적은 계정을 고른 뒤 한 번만(_buy) — 계정 비교 중에는 쿠폰 반영 총액만 본다

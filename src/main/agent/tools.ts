@@ -589,19 +589,28 @@ export async function findLoginFieldsWithFallback(
 
   // 2) 페이지 안의 로그인 링크를 눌러 본다. 눌러 간 곳이 입력칸 없는 로그인 방법 선택 화면이면
   //    (실기: 29CM LOGIN → 카카오·Apple·무신사 통합계정·이메일 버튼만 있는 화면) 한 번 더 누른다
-  try {
-    for (let hop = 0; hop < LOGIN_LINK_HOPS; hop += 1) {
-      if (!(await clickLoginLink(tab))) break
-      fields = await pageBridge.findLoginFields(tab)
-      // 통합 로그인은 다른 도메인을 거쳐 오느라 늦게 뜬다(실기: 29CM → member.one.musinsa.com) — 두 배로 기다린다
-      for (let attempt = 0; fields.stage === 'none' && attempt < LOGIN_FIELDS_POLL_MAX * 2; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, LOGIN_FIELDS_POLL_MS))
-        fields = await pageBridge.findLoginFields(tab)
-      }
-      if (fields.stage !== 'none') break
+  // 페이지가 넘어가는 중에는 조회가 "응답 없음"으로 던진다 — 그 한 번은 못 찾은 것으로 보고 계속 기다린다
+  // (실기: 29CM 통합계정 버튼 → member.one.musinsa.com 이동 중 오류가 반복 전체를 끝내 "칸 없음"으로 답함)
+  const detect = async (): Promise<LoginFieldsResult> => {
+    try {
+      return await pageBridge.findLoginFields(tab)
+    } catch {
+      return fields
     }
-  } catch {
-    // 스냅샷·클릭 실패는 무시하고 마지막 탐지 결과를 돌려준다
+  }
+  for (let hop = 0; hop < LOGIN_LINK_HOPS; hop += 1) {
+    try {
+      if (!(await clickLoginLink(tab))) break
+    } catch {
+      // 누르다 페이지가 넘어가면 던질 수 있다 — 넘어간 화면을 아래에서 본다
+    }
+    fields = await detect()
+    // 통합 로그인은 다른 도메인을 거쳐 오느라 늦게 뜬다(실기: 29CM → member.one.musinsa.com) — 두 배로 기다린다
+    for (let attempt = 0; fields.stage === 'none' && attempt < LOGIN_FIELDS_POLL_MAX * 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, LOGIN_FIELDS_POLL_MS))
+      fields = await detect()
+    }
+    if (fields.stage !== 'none') break
   }
   return fields
 }
