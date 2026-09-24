@@ -66,6 +66,18 @@ def _same_host(url: str, home: str | None) -> bool:
     return a == b
 
 
+def office_block_in(page: str) -> bool:
+    """주문서 글자에 사무실 배송지(김사무 · 사무실길 58 · 1층 102호)가 한 덩어리로 보이는가.
+
+    이름과 주소가 따로 보이는 것으로는 부족하다 — 29CM 기본 배송지가 '김가명 … 사무실길 58 1층 101호'
+    인데 다른 곳의 이름과 합쳐 사무실로 봤다(실기 2026-09-25).
+    """
+    flat = re.sub(r'\s+', ' ', page)
+    detail = r'\s*'.join(re.escape(part) for part in OFFICE_DETAIL.split())
+    near = rf'{OFFICE_NAME}.{{0,160}}?{re.escape(OFFICE_ADDRESS_HINT)}\s*,?\s*{detail}'
+    return re.search(near, flat) is not None
+
+
 def _norm(text: str) -> str:
     """옵션 비교용 정규화 — 공백·구두점 제거, 소문자."""
     return re.sub(r'[\s\-_/·,()\[\]]+', '', text).lower()
@@ -232,10 +244,11 @@ OFFICE_ADDRESS_HINT = '사무실길 58'
 # 사무실 수령인 — 주소가 사무실이어도 이름이 다르면 사무실 배송지로 보지 않는다(사용자 2026-09-24)
 OFFICE_NAME = '김사무'
 # 까대기 주문 배송지(사무실). 기본 배송지가 사무실이 아닐 때 이번 주문에만 넣는다 — poizon-sourcing 스킬 "사무실 배송"
+OFFICE_DETAIL = '1층 102호'
 OFFICE_SHIPPING: dict[str, object] = {
     'name': OFFICE_NAME,
     'address': '경북 가상시 사무실길 58',
-    'address_detail': '1층 102호',
+    'address_detail': OFFICE_DETAIL,
     'postal_code': '38069',
 }
 # 카드 청구할인(플레이북 §7): 결제창에 안 보이는 카드 대금 할인 — 원가 = 카드 결제액 × 계수 − 적립
@@ -1791,12 +1804,15 @@ class BuyerAgent(AgentBase):
         if isinstance(embedded, dict) and embedded:
             filled = all(str(embedded.get(f) or '').strip() for f in SHIPPING_FIELDS)
             # 주소만 사무실이고 수령인이 다르면(실기: 김가명) 사무실 배송지가 아니다 — 수령인까지 같아야 한다
-            office = OFFICE_ADDRESS_HINT in str(embedded.get('address') or '') and _norm(
-                str(embedded.get('name') or '')
-            ) == _norm(OFFICE_NAME)
+            addr = f"{embedded.get('address') or ''} {embedded.get('address_detail') or ''}"
+            office = (
+                OFFICE_ADDRESS_HINT in addr
+                and _norm(OFFICE_DETAIL) in _norm(addr)
+                and _norm(str(embedded.get('name') or '')) == _norm(OFFICE_NAME)
+            )
         else:
             page = self.tool('get_page')
-            office = OFFICE_ADDRESS_HINT in page and OFFICE_NAME in page
+            office = office_block_in(page)
             # 사무실 주소가 보이면 채워진 것이다 — 무신사 주문서엔 '받는 분' 문구가 없다(실기: 새 배송지를 또 만듦)
             filled = office or (
                 any(m in page for m in RECIPIENT_MARKERS)

@@ -317,6 +317,30 @@ export function resolveAccount(
   return accounts.length === 1 ? accounts[0] : null
 }
 
+/**
+ * 통합 로그인으로 다른 도메인에 넘어갔을 때 원래 사이트 계정과 짝인 계정을 고른다.
+ * 실기: 29CM 계정 라벨 "buyer02@naver.com" 은 무신사 통합 로그인 화면에서 무신사 계정 "buyer02" 다.
+ * 아이디가 같거나, 넘어간 쪽 라벨이 원래 계정의 아이디·라벨 @ 앞부분과 같으면 짝으로 본다
+ */
+export function movedHostAccount(
+  origin: AccountDto[],
+  moved: AccountDto[],
+  label?: string
+): AccountDto | null {
+  if (!label) return null
+  const src = origin.find((a) => a.label === label)
+  const keys = new Set(
+    [label, label.split('@')[0], src?.username, src?.username.split('@')[0]]
+      .filter((k): k is string => typeof k === 'string' && k.length > 0)
+      .map((k) => k.toLowerCase())
+  )
+  return (
+    moved.find((a) => keys.has(a.username.toLowerCase())) ??
+    moved.find((a) => keys.has(a.label.toLowerCase())) ??
+    null
+  )
+}
+
 // 도구 하나의 상한 시간. run_js 는 자체 30초 상한이 있으므로 그보다 넉넉히 둔다
 const TOOL_TIMEOUT_MS = 90_000
 // 로그인 제출 뒤 사이트의 실패 대화상자(비밀번호 불일치)가 뜰 때까지 기다리는 시간
@@ -503,6 +527,9 @@ function activeOr(ctx: ToolContext): Tab | null {
 // 크림처럼 소셜 로그인 버튼만 보이고 이메일 로그인은 한 번 더 눌러야 나오는 사이트가 있어
 // "이메일로 로그인" 류를 가장 먼저 찾는다
 const EMAIL_LOGIN_TEXT_RE = /이메일(로| )?\s?로그인|email.*(login|sign in)|아이디로 로그인/i
+// 통합계정 로그인 — 29CM 는 무신사 통합계정으로 전환된 계정이라 "이메일 로그인"으로 들어가면
+// "무신사 통합계정으로 다시 로그인해주세요"로 막힌다(실기 2026-09-25). 이메일 로그인보다 먼저 찾는다
+const UNIFIED_LOGIN_TEXT_RE = /통합\s?계정.{0,12}로그인|통합\s?로그인/
 const LOGIN_TEXT_RE = /^(로그인|로그인하기|login|log in|sign\s?in|signin)$/i
 const LOGIN_HREF_RE = /login|signin|sign-in|logon/i
 
@@ -510,6 +537,7 @@ const LOGIN_HREF_RE = /login|signin|sign-in|logon/i
 async function clickLoginLink(tab: Tab): Promise<boolean> {
   const snapshot = await pageBridge.snapshot(tab)
   const target =
+    snapshot.elements.find((el) => UNIFIED_LOGIN_TEXT_RE.test(el.text)) ??
     snapshot.elements.find((el) => EMAIL_LOGIN_TEXT_RE.test(el.text)) ??
     snapshot.elements.find((el) => LOGIN_TEXT_RE.test(el.text.trim())) ??
     snapshot.elements.find((el) => el.href !== undefined && LOGIN_HREF_RE.test(el.href)) ??
@@ -529,6 +557,8 @@ async function clickLoginLink(tab: Tab): Promise<boolean> {
 // 알려진 로그인 URL 로 옮긴 뒤 폼이 나타날 때까지 다시 보는 횟수·간격
 const LOGIN_FIELDS_POLL_MAX = 6
 const LOGIN_FIELDS_POLL_MS = 700
+// 로그인 링크를 따라가는 최대 횟수(로그인 링크 → 로그인 방법 선택 화면 → 입력 화면)
+const LOGIN_LINK_HOPS = 2
 
 export async function findLoginFieldsWithFallback(
   tabs: TabManager,
@@ -557,9 +587,18 @@ export async function findLoginFieldsWithFallback(
     }
   }
 
-  // 2) 페이지 안의 로그인 링크를 눌러 본다
+  // 2) 페이지 안의 로그인 링크를 눌러 본다. 눌러 간 곳이 입력칸 없는 로그인 방법 선택 화면이면
+  //    (실기: 29CM LOGIN → 카카오·Apple·무신사 통합계정·이메일 버튼만 있는 화면) 한 번 더 누른다
   try {
-    if (await clickLoginLink(tab)) fields = await pageBridge.findLoginFields(tab)
+    for (let hop = 0; hop < LOGIN_LINK_HOPS; hop += 1) {
+      if (!(await clickLoginLink(tab))) break
+      fields = await pageBridge.findLoginFields(tab)
+      for (let attempt = 0; fields.stage === 'none' && attempt < LOGIN_FIELDS_POLL_MAX; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, LOGIN_FIELDS_POLL_MS))
+        fields = await pageBridge.findLoginFields(tab)
+      }
+      if (fields.stage !== 'none') break
+    }
   } catch {
     // 스냅샷·클릭 실패는 무시하고 마지막 탐지 결과를 돌려준다
   }
@@ -1995,6 +2034,14 @@ overlays left: ${after.length}${kept}`
                 if (hint.weak && knownLoginUrl(host) !== undefined) {
                   verified = await findLoginFieldsWithFallback(ctx.tabs, tab, host, first)
                 }
+                // 확인하러 간 곳이 로그인 전 화면이면(로그인 링크만 보임 등) 로그인된 게 아니다
+                // (실기: 29CM 홈 "마이페이지" → 로그인 방법 선택 화면이라 칸이 없어 "이미 로그인"으로 잘못 답함)
+                // (URL 로는 가리지 않는다 — 29CM 는 로그인된 상태에서도 /mypage/login 에 머문다)
+                const stillOut =
+                  verified !== undefined &&
+                  verified.stage === 'none' &&
+                  !(await pageBridge.signedInHint(tab)).signedIn
+                if (stillOut) return 'fields not found: navigate to the login page first'
                 if (!verified || verified.stage === 'none') {
                   label = `이미 로그인됨: ${host}`
                   return `${ALREADY_SIGNED_IN} (${hint.matched})`
@@ -2018,11 +2065,15 @@ overlays left: ${after.length}${kept}`
           label = `로그인: ${loginHost}`
           if (wrongPasswordHosts.has(loginHost)) return LOGIN_WRONG_PASSWORD(loginHost)
           // 라벨을 안 주면 탭 프로필과 같은 라벨의 계정을 자동으로 고른다(계정 순회 지원)
-          const account = resolveAccount(
-            available.listAccounts(loginHost),
-            accountLabel,
-            tab.profile
-          )
+          const account =
+            resolveAccount(available.listAccounts(loginHost), accountLabel, tab.profile) ??
+            (loginHost !== host
+              ? movedHostAccount(
+                  available.listAccounts(host),
+                  available.listAccounts(loginHost),
+                  accountLabel ?? tab.profile
+                )
+              : null)
           if (!account) return ACCOUNT_NOT_FOUND
           const gate = await applyPolicy(
             available,
