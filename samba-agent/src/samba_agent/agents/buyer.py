@@ -809,8 +809,9 @@ class BuyerAgent(AgentBase):
         snap['points_used'] = used
         total = _as_float(out.get('total'))
         if total > 0:
-            # 쿠폰·장바구니 쿠폰·선할인이 반영된 총 결제 금액 — 계정 비교와 원가의 출발점
-            snap['cost'] = total
+            # 계정 비교·원가는 '결제액 + 사용 적립금'으로 — 원가 공식이 사용 적립금을 다시 더한다(플레이북 §6).
+            # 결제액만 비교하면 적립금 많은 계정(buyer02)이 늘 싸 보인다(사용자 지적 2026-09-24)
+            snap['cost'] = total + used
             snap['pay_amount'] = total
         self.note(
             '쿠폰',
