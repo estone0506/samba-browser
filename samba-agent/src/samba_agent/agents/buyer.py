@@ -114,8 +114,7 @@ QUOTE_PROVIDER_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ('apple', ('애플', 'apple')),
     # 사이트 자체 결제(웹에서 끝나는 결제) — 무신사머니·SSG PAY·L.pay·스마일페이 등
     ('site', ('머니', 'ssg pay', 'ssgpay', 'l.pay', 'lpay', '엘페이', '스마일', 'smile', '포인트')),
-    # 카드 직접 결제 — 키마스터에 카드(card) 항목이 있어야 한다
-    ('card', ('카드', 'card')),
+    # 주문서의 '카드'(직접 결제)는 쓰지 않는다 — 결제 가능 수단에 절대 들어가지 않게 표에서 뺀다
 )
 
 
@@ -131,7 +130,7 @@ def quote_provider(method: str, card: str | None = None) -> str | None:
 def parse_account_payments(raw: str, label: str) -> set[str] | None:
     """앱 list_accounts 결과에서 그 계정의 결제 가능 제공자 집합. 계정을 못 찾거나 형식이 아니면 None.
 
-    payments(결제 비밀번호 항목의 제공자)에 더해 types 에 'card' 가 있으면 카드 직접 결제('card')도 된다.
+    payments(결제 비밀번호 항목의 제공자)만 본다. 카드 직접 결제는 쓰지 않는다(카드는 간편결제 창 안에서 고른다).
     """
     body, _ = split_page_dialogs(raw)
     try:
@@ -145,12 +144,13 @@ def parse_account_payments(raw: str, label: str) -> set[str] | None:
         if not isinstance(item, dict) or str(item.get('label') or '').strip() != label:
             continue
         payments = item.get('payments')
-        out = {str(x) for x in payments} if isinstance(payments, list) else set()
-        types = item.get('types')
-        if isinstance(types, list) and 'card' in types:
-            out.add('card')
-        return out
+        return {str(x) for x in payments} if isinstance(payments, list) else set()
     return None
+
+
+def payable_methods(methods: list[str], payable: set[str]) -> list[str]:
+    """주문서에 보이는 결제수단 이름 중 키마스터로 낼 수 있는 것만(사이트 표기 그대로). 순서는 화면 순서."""
+    return [m for m in methods if (quote_provider(m) or '') in payable]
 
 
 def cheapest_quotes(
@@ -177,9 +177,6 @@ def cheapest_quotes(
             provider = quote_provider(method, card)
             if provider is None or provider not in payable:
                 continue
-            # 카드 직접 결제는 허용 카드사만(현대·삼성·롯데). 카드사를 모르는 '카드' 한 줄은 뺀다
-            if provider == 'card' and not any(k in (card or '') for k in ALLOWED_CARD_ISSUERS):
-                continue
         if wanted_card:
             w = wanted_card.strip()
             if w not in method and (card is None or w not in card):
@@ -199,7 +196,8 @@ OFFICE_SHIPPING: dict[str, object] = {
     'address_detail': '1층 102호',
     'postal_code': '38069',
 }
-# 카드 직접 결제에서 비교·구매를 허용하는 카드사(poizon-sourcing 스킬 규칙). 그 밖의 카드사 견적은 후보에서 뺀다
+# 결제창(토스페이·네이버페이) 안에서 고를 수 있는 카드사(poizon-sourcing 스킬 규칙). 주문서 단계의 '카드 직접 결제'는
+# 쓰지 않는다(사용자 2026-09-24) — 카드는 간편결제 창 안에서만 고른다
 ALLOWED_CARD_ISSUERS = ('현대', '삼성', '롯데')
 
 
@@ -584,12 +582,32 @@ class BuyerAgent(AgentBase):
         요청자가 카드를 지정했으면 그 수단·카드사만 후보다. 견적을 못 읽으면(스크립트 실패·빈 목록)
         스냅샷 원가 그대로 간다 — 견적은 더 싸게 사기 위한 것이지 구매 조건이 아니다.
         """
+        # 주문서 결제수단 중 우리가 낼 수 있는 종류(간편결제·사이트 머니)가 하나도 없으면 견적할 것이 없다
+        offered = [str(m) for m in (snap.get('methods') or [])]
+        if not any(quote_provider(m) for m in offered):
+            self.note('결제수단 견적', f'견적할 수단 없음(주문서 {offered}) — 스냅샷 원가로 진행')
+            return
+        # 결제 가능한 수단을 먼저 정한다 — 그 수단만 시험한다(카드사 12개를 전부 돌리는 낭비·화면 소란 방지)
+        payable = self._payable_providers(account)
+        if payable is None:
+            # 결제 가능 여부를 모르면 견적으로 수단을 바꾸지 않는다 — 계좌이체처럼 낼 수 없는 수단을 고를 수 있다
+            self.note('결제수단 견적', '키마스터 결제 항목을 못 읽어 견적을 돌리지 않는다 — 스냅샷 원가로 진행')
+            return
+        if not payable:
+            # 이 계정엔 키마스터 결제 항목이 하나도 없다 — 견적을 돌리지 않고 스냅샷 기본 수단으로 간다.
+            # 실결제 때 결제 에이전트가 항목 없음으로 멈추고, 승인 카드 근거에 이 사실이 남는다
+            self.note('결제수단 견적', f'{account} 에 키마스터 결제 항목 없음 — 견적 미실행, 스냅샷 원가로 진행')
+            return
+        methods = payable_methods(offered, payable)
+        if not methods:
+            self.note('결제수단 견적', f'주문서 결제수단 중 결제 가능한 것 없음(가능 {sorted(payable)}) — 스냅샷 원가로 진행')
+            return
         self.step(f'{self.spec.name}: 결제수단 견적({account})')
         try:
             out = self.json_tool(
                 'run_script',
                 name=source_of(self.spec.name).payment_quotes_script,
-                args=json.dumps({'profile': account}, ensure_ascii=False),
+                args=json.dumps({'profile': account, 'methods': methods}, ensure_ascii=False),
             )
         except AgentFailure as e:
             self.note('결제수단 견적', mask_text(f'못 읽음({e.reason[:80]}) — 스냅샷 원가로 진행'))
@@ -597,16 +615,6 @@ class BuyerAgent(AgentBase):
         raw_quotes = out.get('quotes')
         if not isinstance(raw_quotes, list) or not raw_quotes:
             self.note('결제수단 견적', '견적 없음 — 스냅샷 원가로 진행')
-            return
-        payable = self._payable_providers(account)
-        if payable is None:
-            # 결제 가능 여부를 모르면 견적으로 수단을 바꾸지 않는다 — 계좌이체처럼 낼 수 없는 수단을 고를 수 있다
-            self.note('결제수단 견적', '키마스터 결제 항목을 못 읽어 견적을 쓰지 않는다 — 스냅샷 원가로 진행')
-            return
-        if not payable:
-            # 이 계정엔 키마스터 결제 항목이 하나도 없다 — 견적으로 수단을 바꾸지 않고 스냅샷 기본 수단으로 간다.
-            # 실결제 때 결제 에이전트가 항목 없음으로 멈추고, 승인 카드 근거에 이 사실이 남는다
-            self.note('결제수단 견적', f'{account} 에 키마스터 결제 항목 없음 — 견적 미적용, 스냅샷 원가로 진행')
             return
         quotes = cheapest_quotes(raw_quotes, a.options.get('card'), payable)
         if not quotes:

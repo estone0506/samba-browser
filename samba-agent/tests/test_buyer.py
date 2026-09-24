@@ -1089,17 +1089,13 @@ def test_cheapest_quotes_결제_가능한_수단만_싼_순으로():
     # 키마스터에 무신사머니(site)·토스만 있으면 그 둘만, 휴대폰결제는 제공자를 몰라 뺀다
     got = cheapest_quotes(quotes, None, {'site', 'toss'})
     assert [(q['method'], q['cost']) for q in got] == [('토스페이', 28000), ('무신사머니', 29000)]
-    # 카드 항목이 있으면 신용카드도 후보
-    assert cheapest_quotes(quotes, None, {'card'})[0]['card'] == '현대카드'
-    # 요청자가 카드사를 지정하면 그 줄만
-    assert cheapest_quotes(quotes, '현대', {'card', 'site'}) == [
-        {'method': '신용카드', 'card': '현대카드', 'cost': 27500.0}
-    ]
+    # 카드 직접 결제는 후보가 아니다 — 카드는 토스페이·네이버페이 창 안에서 고른다
+    assert cheapest_quotes(quotes, None, {'site', 'toss', 'card'})[0]['method'] == '토스페이'
     assert quote_provider('무신사페이') == 'musinsapay'
-    assert quote_provider('신용/체크카드', '롯데카드') == 'card'
+    assert quote_provider('신용/체크카드', '롯데카드') is None
     assert quote_provider('휴대폰결제') is None
     raw = '[{"label":"buyer05","types":["login","password","card"],"payments":["site","toss"]}]'
-    assert parse_account_payments(raw, 'buyer05') == {'site', 'toss', 'card'}
+    assert parse_account_payments(raw, 'buyer05') == {'site', 'toss'}
     assert parse_account_payments(raw, 'other') is None
     assert parse_account_payments('vault locked', 'buyer05') is None
 
@@ -1118,14 +1114,14 @@ def test_결제_가능한_수단이_없으면_사람에게_넘긴다(monkeypatch
         'quotes': [{'method': '무신사머니', 'card': None, 'cost': 29000}],
         'base_cost': 29000,
     }
-    snap = {'cost': 29000}
+    snap = {'cost': 29000, 'methods': ['무신사머니', '카드', '토스페이']}
     a = type('A', (), {'options': {}})()
-    # 결제 항목이 하나도 없으면 견적을 안 쓰고 그대로 간다(승인 근거에 남긴다)
+    # 결제 항목이 하나도 없으면 견적을 돌리지 않고 그대로 간다(승인 근거에 남긴다)
     agent._payable_providers = lambda _account: set()
     agent._apply_payment_quotes(a, 'buyer05', snap)
     assert 'pay_method' not in snap
-    # 결제 항목은 있는데 주문서 수단과 안 겹치면 사람에게
-    agent._payable_providers = lambda _account: {'naver'}
+    # 결제 항목은 있는데(토스) 견적에 그 수단이 없으면 사람에게
+    agent._payable_providers = lambda _account: {'toss'}
     try:
         agent._apply_payment_quotes(a, 'buyer05', snap)
     except AgentFailure as e:
@@ -1163,7 +1159,7 @@ def test_직배_까대기_판정_규칙():
     assert decide_order_type(order('쿠팡', 50000, 'gift'), 79000)[0] == 'gift'
 
 
-def test_cheapest_quotes_카드는_허용_카드사만():
+def test_cheapest_quotes_카드_직접_결제는_후보가_아니다():
     from samba_agent.agents.buyer import cheapest_quotes
 
     quotes = [
@@ -1171,8 +1167,8 @@ def test_cheapest_quotes_카드는_허용_카드사만():
         {'method': '카드', 'card': '현대카드', 'cost': 28000},
         {'method': '무신사머니', 'card': None, 'cost': 29000},
     ]
-    got = cheapest_quotes(quotes, None, {'card', 'site'})
-    assert [(q['card'], q['cost']) for q in got] == [('현대카드', 28000), (None, 29000)]
+    got = cheapest_quotes(quotes, None, {'site'})
+    assert [(q['method'], q['cost']) for q in got] == [('무신사머니', 29000)]
 
 
 def test_matching_options_토큰_경계_일치가_우선():
@@ -1181,3 +1177,12 @@ def test_matching_options_토큰_경계_일치가_우선():
     opts = ['Black-XS (품절)', 'Black-XL', 'Black-XLT (품절)', 'Black-XXL', 'Black-3XL']
     assert matching_options(opts, '블랙 XL') == ['Black-XL']
     assert matching_options(opts, '블랙 3XL') == ['Black-3XL']
+
+
+def test_payable_methods_는_결제_가능한_수단_이름만_남긴다():
+    from samba_agent.agents.buyer import payable_methods
+
+    methods = ['무신사머니', '무신사페이', '카드', '카카오페이', '토스페이', '페이코', '휴대폰결제']
+    assert payable_methods(methods, {'site', 'toss'}) == ['무신사머니', '토스페이']
+    assert payable_methods(methods, {'card', 'kakao'}) == ['카카오페이']  # '카드'는 절대 안 들어간다
+    assert payable_methods(methods, set()) == []
