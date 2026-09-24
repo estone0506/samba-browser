@@ -6,7 +6,12 @@ import pytest
 import respx
 
 from samba_agent.agents.base import AgentFailure
-from samba_agent.agents.buyer import BuyerAgent, snapshot_problem
+from samba_agent.agents.buyer import (
+    BuyerAgent,
+    numeric_overlap_options,
+    resolve_choice,
+    snapshot_problem,
+)
 from samba_agent.agents.registry import Registry
 from samba_agent.bridge.client import BridgeClient
 from samba_agent.failures import FailReason
@@ -150,11 +155,27 @@ def test_one_repair_attempt_per_script_per_job(buyer) -> None:
 
 
 def test_snapshot_problem_checks_option_and_cost() -> None:
-    check = snapshot_problem('상아색 S')
-    assert check({'options': ['상아색 / S'], 'cost': 1000}) is None
-    assert '맞는 선택지가 없다' in (check({'options': ['블랙 / M'], 'cost': 1000}) or '')
-    assert '원가' in (check({'options': ['상아색 S'], 'cost': 0}) or '')
+    check = snapshot_problem('EU 그린 EU 44 · KR 285')
+    assert check({'options': ['285'], 'cost': 1000}) is None
+    # 사이즈 숫자가 하나도 안 겹치면 스크립트가 엉뚱한 목록을 읽은 것 — 수리 대상
+    assert '맞는 선택지가 없다' in (check({'options': ['270', '275'], 'cost': 1000}) or '')
+    assert '원가' in (check({'options': ['285'], 'cost': 0}) or '')
     assert check({'already_ordered': True}) is None
+    # 숫자 없는 옵션(색·S)은 표기 차이를 하네스 AI 매칭이 맡는다 — 빈 목록만 수리 대상
+    color = snapshot_problem('상아색 S')
+    assert color({'options': ['IVORY / S'], 'cost': 1000}) is None
+    assert color({'options': [], 'cost': 1000})
+
+
+def test_numeric_overlap_and_choice_resolution() -> None:
+    opts = ['712(59.6cm)', '714(57.7cm)', '718(56.8cm)', '734(61.5cm)']
+    wanted = '레오파드 색상 7 1/8（56.8cm） 미국 버전 포장 미포함'
+    assert numeric_overlap_options(opts, wanted) == ['718(56.8cm)']
+    # 230 주문에 220 을 고르는 사고 — 숫자가 안 겹치면 AI 후보에서 빠진다
+    assert numeric_overlap_options(['220', '225'], '230') == []
+    assert numeric_overlap_options(['S [품절]', 'M'], '상아색 S') == ['M']
+    assert resolve_choice('BLACK, ONE', ['BLACK / ONE', 'WHITE / ONE']) == 'BLACK / ONE'
+    assert resolve_choice('없음', ['BLACK / ONE']) is None
 
 
 def test_candidate_guard_blocks_payment_and_long_or_hardcoded_code() -> None:
@@ -226,3 +247,24 @@ def test_hardcoded_amounts_are_caught() -> None:
     assert hardcoded_amounts('return {cost: num(m[1])}', {'cost': 46370}) == []
     # 작은 수(수량·대기 ms)는 보지 않는다
     assert hardcoded_amounts('await sleep(700)', {'qty': 700}) == []
+
+
+def test_match_options_uses_ai_only_within_numeric_pool(buyer) -> None:
+    from samba_agent.agents.base import Decision
+
+    asked: list[str] = []
+
+    def decide(prompt, model):
+        asked.append(prompt)
+        return Decision(choice='718(56.8cm)', reason='7 1/8 = 718')
+
+    buyer._decide = decide
+    opts = ['712(59.6cm)', '718(56.8cm)']
+    wanted = '레오파드 색상 7 1/8（56.8cm）'
+    assert buyer._match_options(opts, wanted) == ['718(56.8cm)']
+    # 같은 질문은 작업 안에서 다시 묻지 않는다(계정 4개 비교)
+    assert buyer._match_options(opts, wanted) == ['718(56.8cm)']
+    assert len(asked) == 1
+    # 모델이 후보 밖(숫자 안 겹치는 712)을 골라도 받아 주지 않는다
+    buyer._decide = lambda p, m: Decision(choice='712(59.6cm)', reason='가까움')
+    assert buyer._match_options(['712(59.6cm)', '718(56.8cm)'], '레오파드 7 1/8（56.8cm） 포장') == []

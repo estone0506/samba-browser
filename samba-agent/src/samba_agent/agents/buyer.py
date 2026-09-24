@@ -336,6 +336,49 @@ def matching_options(options: list[str], wanted: str | None) -> list[str]:
     return []
 
 
+# 사이즈를 가르는 숫자 — 두 자리 이상(285·56.8·44). '7 1/8' 의 한 자리 숫자는 너무 헐거워 뺀다
+_SIZE_NUM_RE = re.compile(r'\d+(?:\.\d+)?')
+
+
+def size_numbers(text: str) -> set[str]:
+    """옵션 글자 속 사이즈 숫자들(두 자리 이상)."""
+    return {n for n in _SIZE_NUM_RE.findall(text) if len(n.replace('.', '')) >= 2}
+
+
+def numeric_overlap_options(options: list[str], wanted: str | None) -> list[str]:
+    """AI 옵션 매칭에 넘길 후보 — 품절이 아니고, 주문 옵션에 사이즈 숫자가 있으면 그 숫자가 하나라도 든 것만.
+
+    주문 옵션에 사이즈 숫자가 없으면(예: '상아색 S') 품절 아닌 전부다. 숫자가 있는데 겹치는 후보가 없으면
+    빈 목록 — AI 가 '가장 가까운 220' 을 230 주문에 고르는 사고를 코드로 막는다(실기).
+    """
+    live = [o for o in options if not _sold_out(o)]
+    nums = size_numbers(wanted or '')
+    if not nums:
+        return live
+    return [o for o in live if size_numbers(o) & nums]
+
+
+def resolve_choice(choice: str, candidates: list[str]) -> str | None:
+    """모델이 답한 옵션 글자를 후보 중 하나로 맞춘다 — 정확 → 공백 무시 → 정규화 → 하나만 포함.
+
+    실기: 후보 'BLACK / ONE' 에 모델이 'BLACK, ONE' 이라 답해 멀쩡한 주문이 품절로 끝났다.
+    """
+    c = choice.strip()
+    if c in candidates:
+        return c
+    for o in candidates:
+        if o.strip() == c:
+            return o
+    nc = _norm(c)
+    if not nc:
+        return None
+    same = [o for o in candidates if _norm(o) == nc]
+    if len(same) == 1:
+        return same[0]
+    contains = [o for o in candidates if _norm(o) and (nc in _norm(o) or _norm(o) in nc)]
+    return contains[0] if len(contains) == 1 else None
+
+
 # 품절 표시: "[품절]"·끝의 "품절"·"(품절)". "품절임박"(재고 적음)은 품절이 아니다(실기: 롯데온)
 _SOLD_OUT_RE = re.compile(r'\[품절\]|품절(?!임박)')
 
@@ -388,7 +431,12 @@ def snapshot_problem(option: str | None):
         if out.get('already_ordered') or out.get('existing_order_no'):
             return None
         options = [str(o) for o in (out.get('options') or [])]  # type: ignore[union-attr]
-        if option and not matching_options(options, option):
+        # 표기만 다른 옵션(7 1/8 ↔ 718(56.8cm))은 하네스가 AI 로 맞춘다 — 스크립트 수리 대상이 아니다
+        if (
+            option
+            and not matching_options(options, option)
+            and not numeric_overlap_options(options, option)
+        ):
             return f'주문 옵션 "{option}" 과 맞는 선택지가 없다(읽은 선택지 {options[:8]}, note={out.get("note")})'
         if _as_float(out.get('cost')) <= 0:
             return f'원가(cost)를 못 읽음(note={out.get("note")})'
@@ -494,6 +542,7 @@ class BuyerAgent(AgentBase):
         self._dry_run = assignment.dry_run
         # 계정 비교 중 견적이 실패한 사유들(모든 계정 실패 때 결과 판정에 쓴다)
         self._quote_errors: list[AgentFailure] = []
+        self._option_ai: dict[tuple[str, tuple[str, ...]], list[str]] = {}
         self.reset_repairs()
         return run_agent(lambda: self._buy(assignment), lambda: self.evidence)
 
@@ -854,7 +903,7 @@ class BuyerAgent(AgentBase):
                 'fail', f'이미 구매한 흔적이 있다: {a.order.sku}', FailReason.DUPLICATE
             )
         options = [str(o) for o in (snap.get('options') or [])]
-        if not matching_options(options, a.order.option):
+        if not self._match_options(options, a.order.option):
             self.note('계정 견적', mask_text(f'{account}: 불가(주문 옵션 품절)'))
             self._quote_skips.append(f'{account}: 옵션 불일치 {options[:6]}')
             return None
@@ -865,6 +914,46 @@ class BuyerAgent(AgentBase):
             return None
         self.note('계정 견적', mask_text(f'{account}: 원가 {cost:,.0f}원'))
         return {**snap, 'cost': cost}
+
+    def _match_options(self, options: list[str], wanted: str | None) -> list[str]:
+        """주문 옵션과 맞는 후보. 규칙 매칭이 실패하면 AI 가 표기만 다른 같은 옵션을 고른다.
+
+        AI 에게는 사이즈 숫자가 겹치는 후보만 준다(numeric_overlap_options). 답은 후보 중 하나로 맞춰지지
+        않으면 버린다. 같은 (주문 옵션, 후보) 는 작업 안에서 한 번만 묻는다(계정 4개 비교).
+        """
+        rule = matching_options(options, wanted)
+        if rule or not wanted:
+            return rule
+        pool = numeric_overlap_options(options, wanted)
+        if not pool:
+            return []
+        cache: dict[tuple[str, tuple[str, ...]], list[str]] = getattr(self, '_option_ai', {})
+        self._option_ai = cache
+        key = (wanted, tuple(pool))
+        if key in cache:
+            return cache[key]
+        try:
+            picked = self.decide_once(
+                f'주문 옵션 [{wanted}] 과 **같은 상품 옵션**을 후보에서 하나 고르라.\n'
+                '표기만 다른 같은 것만 고른다(예: 7 1/8 = 718, 56.8cm 같음 / EU 44 = KR 285 / 상아색 = 아이보리 = IVORY).\n'
+                '사이즈·색이 다르면 절대 고르지 말고 choice 에 "없음" 이라고 답하라.\n'
+                f'후보: {pool}',
+                Decision,
+            )
+        except AgentFailure as e:
+            self.note('옵션 AI 매칭', mask_text(f'판단 실패: {e.reason[:80]}'))
+            cache[key] = []
+            return []
+        choice = resolve_choice(str(getattr(picked, 'choice', '')), pool)
+        result = [choice] if choice else []
+        self.note(
+            '옵션 AI 매칭',
+            mask_text(
+                f'[{wanted}] → {choice or "없음"} ({str(getattr(picked, "reason", ""))[:80]})'
+            ),
+        )
+        cache[key] = result
+        return result
 
     def _pick_cheapest(self, a: Assignment, accounts: list[str]) -> tuple[str, dict[str, object]]:
         """계정마다 견적을 내고 원가가 가장 낮은 계정(같으면 앞 계정)과 그 스냅샷을 고른다.
@@ -961,7 +1050,7 @@ class BuyerAgent(AgentBase):
 
         # 주문 옵션과 맞는 후보만 남긴다 — 모델이 "가장 가까운 220" 을 골라 230 주문에 220 을 넣을 뻔했다(실기).
         # 맞는 후보가 없으면 품절, 하나면 그대로, 여럿이면 그 안에서만 모델이 고른다
-        candidates = matching_options(options, a.order.option)
+        candidates = self._match_options(options, a.order.option)
         if not candidates:
             raise AgentFailure(
                 'fail',
@@ -978,6 +1067,9 @@ class BuyerAgent(AgentBase):
                 f'후보(주문 옵션과 맞는 것만): {candidates}',
                 Decision,
             )
+        resolved = resolve_choice(picked.choice, candidates)
+        if resolved is not None:
+            picked = Decision(choice=resolved, reason=picked.reason)
         if picked.choice not in candidates:
             raise AgentFailure(
                 'fail', f'고른 옵션이 후보에 없다: {picked.choice}', FailReason.OUT_OF_STOCK
