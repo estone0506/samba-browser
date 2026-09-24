@@ -758,13 +758,20 @@ class BuyerAgent(AgentBase):
         self.step(f'{self.spec.name}: 계정 목록 확인')
         self.tool('new_tab', url=home)
         self.tool('wait', ms=_LOGIN_SETTLE_MS)
-        labels, locked = parse_account_labels(self.tool('list_accounts', host=host))
+        listed = self.tool('list_accounts', host=host)
+        labels, locked = parse_account_labels(listed)
         if locked or not labels:
             raise AgentFailure(
                 'needs_human',
                 f'소싱처 계정 없음/금고 잠김: {source.id}',
                 FailReason.PERMISSION_DENIED,
             )
+        # 동률이면 앞 계정이 이긴다 — 키마스터 결제 우선순위(1 = 먼저) 순으로 세운다
+        # (실기 2026-09-25: 29CM 세 계정 원가가 같은데 목록 첫째 buyer02 를 골랐다. 우선순위는 buyer01)
+        ranks = parse_account_priorities(listed)
+        if ranks:
+            big = 10**6
+            labels = sorted(labels, key=lambda acc: (ranks.get(acc, big), labels.index(acc)))
         cap = self.compare_accounts_max
         if len(labels) > cap:
             self.note(
