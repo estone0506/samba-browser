@@ -484,3 +484,15 @@ def test_size_letters_must_match() -> None:
     assert size_letters('-SHIRT_IVORY [LW263TS02IV]') == set()
     assert size_letters('IVORY [SIZE]S') == {'S'}
     assert size_letters('BLACK · ONE') == {'ONE'}
+
+
+def test_size_letter_options_matches_asia_size_prefix() -> None:
+    """색이 하나뿐인 상품의 사이즈만 있는 선택지(A/S)를 주문 옵션 '블랙 S' 와 맞춘다 — 여럿이 맞으면 고르지 않는다."""
+    from samba_agent.agents.buyer import size_letter_options
+
+    opts = ['A/XS', 'A/S', 'A/M', 'A/L', 'A/XL']
+    assert size_letter_options(opts, '블랙 S') == ['A/S']
+    assert size_letter_options(opts, '그레이 L') == ['A/L']
+    assert size_letter_options(opts, '블랙 250') == []
+    assert size_letter_options(['블랙 S', '화이트 S'], '블랙 S') == []
+    assert size_letter_options(['A/S 품절', 'A/M'], '블랙 S') == []

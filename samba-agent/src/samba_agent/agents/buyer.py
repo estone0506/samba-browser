@@ -385,6 +385,20 @@ def size_letters(text: str) -> set[str]:
     return set(_SIZE_LETTER_RE.findall(text.upper()))
 
 
+def size_letter_options(options: list[str], wanted: str | None) -> list[str]:
+    """사이즈 글자만으로 맞는 후보 하나 — 주문 옵션에 사이즈 숫자가 없고 글자 사이즈(S·M·L…)가 있을 때.
+
+    색이 하나뿐인 상품은 선택지에 사이즈만 있다(실기 29CM 아디다스: 주문 '블랙 S' ↔ 선택지 'A/XS·A/S·A/M' —
+    'A/'는 아시아 사이즈 표기). 사이즈 글자가 똑같은 후보가 정확히 하나일 때만 그것을 준다.
+    """
+    letters = size_letters(wanted or '')
+    if not letters or size_numbers(wanted or ''):
+        return []
+    live = [o for o in options if not _sold_out(o)]
+    same = [o for o in live if size_letters(o) == letters]
+    return same if len(same) == 1 else []
+
+
 def numeric_overlap_options(options: list[str], wanted: str | None) -> list[str]:
     """AI 옵션 매칭에 넘길 후보 — 품절이 아니고, 주문 옵션에 사이즈 숫자가 있으면 그 숫자가 하나라도 든 것만.
 
@@ -1189,6 +1203,10 @@ class BuyerAgent(AgentBase):
         rule = matching_options(options, wanted)
         if rule or not wanted:
             return rule
+        by_letter = size_letter_options(options, wanted)
+        if by_letter:
+            self.note('옵션 선택', mask_text(f'[{wanted}] → {by_letter[0]} (사이즈 글자 일치, 선택지에 색 표기 없음)'))
+            return by_letter
         pool = numeric_overlap_options(options, wanted)
         if not pool:
             return []
@@ -1200,7 +1218,8 @@ class BuyerAgent(AgentBase):
         try:
             picked = self.decide_once(
                 f'주문 옵션 [{wanted}] 과 **같은 상품 옵션**을 후보에서 하나 고르라.\n'
-                '표기만 다른 같은 것만 고른다(예: 7 1/8 = 718, 56.8cm 같음 / EU 44 = KR 285 / 상아색 = 아이보리 = IVORY).\n'
+                '표기만 다른 같은 것만 고른다(예: 7 1/8 = 718, 56.8cm 같음 / EU 44 = KR 285 / 상아색 = 아이보리 = IVORY / '
+                'A/S = S(아시아 사이즈 표기)). 색이 하나뿐인 상품은 후보에 사이즈만 있다 — 그때는 사이즈만 맞으면 된다.\n'
                 '사이즈·색이 다르면 절대 고르지 말고 choice 에 "없음" 이라고 답하라.\n'
                 f'후보: {pool}',
                 Decision,
