@@ -317,7 +317,7 @@ def assignment_with_account(reg) -> Assignment:
 
 
 @respx.mock
-def test_소싱_계정이_있으면_스냅샷_전에_로그인한다(reg):
+def test_소싱_계정이_있으면_스냅샷_전에_로그인한다(generic_musinsa, reg):
     login = _login_mocks(
         'submitted: check the page for success or captcha/2FA', 'already signed in (logout)'
     )
@@ -340,7 +340,7 @@ def test_소싱_계정이_있으면_스냅샷_전에_로그인한다(reg):
 
 
 @respx.mock
-def test_이미_로그인돼_있으면_바로_진행한다(reg):
+def test_이미_로그인돼_있으면_바로_진행한다(generic_musinsa, reg):
     login = _login_mocks('already signed in (logout)')
     respx.post(f'{URL}/tool/run_script').mock(
         side_effect=route_run_script(
@@ -366,7 +366,7 @@ def test_저장된_계정이_없으면_사람에게_넘긴다(reg):
 
 
 @respx.mock
-def test_스냅샷의_계정이_주문_계정과_다르면_사람에게_넘긴다(reg):
+def test_스냅샷의_계정이_주문_계정과_다르면_사람에게_넘긴다(generic_musinsa, reg):
     _login_mocks('already signed in (logout)')
     other = {**SNAPSHOT_OK, 'account': 'buyer02'}
     respx.post(f'{URL}/tool/run_script').mock(
@@ -865,7 +865,7 @@ def _login_accounts(login_route) -> list[str]:
 
 
 @respx.mock
-def test_주문_계정이_지정되면_비교하지_않고_그_계정으로_산다(reg):
+def test_주문_계정이_지정되면_비교하지_않고_그_계정으로_산다(generic_musinsa, reg):
     listed = respx.post(f'{URL}/tool/list_accounts')
     _login_mocks('already signed in (logout)')
     calls: list[str] = []
@@ -1266,3 +1266,12 @@ def test_원가는_적립과_청구할인을_반영한다():
     assert effective_cost({'cost': 39200, 'card': '현대카드', 'reward': 1170}) == round(39200 * 0.973 - 1170)
     # 기존 적립금 사용액은 원가에 다시 더한다
     assert effective_cost({'cost': 30000, 'reward': 0, 'points_used': 2000}) == 32000
+
+
+def test_무신사는_4계정을_지정_순서로_비교한다():
+    from samba_agent.sources import default_sources
+
+    src = default_sources().by_id('MUSINSA')
+    # 동률이면 앞 계정(buyer01 → buyer02 순)이 이긴다(사용자 2026-09-24)
+    assert src.buy_accounts[:2] == ['buyer01', 'buyer02']
+    assert set(src.buy_accounts) == {'buyer01', 'buyer02', 'buyer03', 'buyer05'}

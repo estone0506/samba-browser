@@ -487,7 +487,8 @@ class BuyerAgent(AgentBase):
         self.step(f'{self.spec.name}: 로그인 확인({account})')
         # 같은 사이트에서 직전에 다른 계정으로 로그인했으면 간격을 둔다(연달아 바꾸면 차단)
         last = self._last_login
-        if last is not None and last[0] != account:
+        # 프로필 탭으로 계정을 나누는 소싱처(buy_accounts)는 로그아웃·재로그인이 없어 간격이 필요 없다
+        if last is not None and last[0] != account and not source_of(self.spec.name).buy_accounts:
             gap = _ACCOUNT_SWITCH_GAP_S - (time.monotonic() - last[1])
             if gap > 0:
                 self.note('계정 전환', f'차단 방지 대기 {int(gap)}초')
@@ -524,12 +525,9 @@ class BuyerAgent(AgentBase):
             # 플레이북이 계정을 정해 둔 소싱처 — SAMBA 주문계정은 기록용일 뿐 구매 계정이 아니다(§5)
             self.note('계정 후보', f'{source.id}: 플레이북 지정 계정 {source.buy_accounts}')
             return list(source.buy_accounts)
-        if a.order.account and not source.compare_accounts:
-            return [a.order.account]
         if a.order.account:
-            # 주문 계정을 먼저 두되, 키마스터 결제 항목이 있는 다른 계정도 함께 견적한다 — 주문 계정에
-            # 무신사머니가 없거나 다른 계정이 더 싼 경우가 있다(사용자 지적 2026-09-24)
-            return self._with_payable_accounts(source, a.order.account)
+            # 비교 계정을 정해 두지 않은 소싱처는 주문이 지정한 계정으로 산다
+            return [a.order.account]
         if not source.compare_accounts:
             # 계정 전환이 차단을 부르는 사이트 — 첫 계정 하나로만 산다
             labels, locked = self._first_account(source)
@@ -608,8 +606,7 @@ class BuyerAgent(AgentBase):
             return snap  # 중복 구매 흔적 — 정돈·견적 없이 호출부가 바로 거절한다
         if source_of(self.spec.name).order_prep and _as_float(snap.get('cost')) > 0:
             self._order_prep(account, snap)
-        if source_of(self.spec.name).payment_quotes and _as_float(snap.get('cost')) > 0:
-            self._apply_payment_quotes(a, account, snap)
+        # 결제수단 견적은 계정을 고른 뒤 한 번만(_buy) — 계정 비교 중에는 쿠폰 반영 총액만 본다
         if source_of(self.spec.name).normal_price and snap.get('normal_price') is None:
             self._apply_normal_price(a, account, snap)
         return snap
@@ -648,6 +645,15 @@ class BuyerAgent(AgentBase):
             )
         used = _as_float(out.get('points_used'))
         snap['points_used'] = used
+        total = _as_float(out.get('total'))
+        if total > 0:
+            # 쿠폰·장바구니 쿠폰·선할인이 반영된 총 결제 금액 — 계정 비교와 원가의 출발점
+            snap['cost'] = total
+            snap['pay_amount'] = total
+        self.note(
+            '쿠폰',
+            f"상품 쿠폰 {_as_float(out.get('coupon')):,.0f}원 · 장바구니 쿠폰 {_as_float(out.get('cart_coupon')):,.0f}원 → 총 {total:,.0f}원",
+        )
         self.note(
             '주문서 정돈',
             f"보유 적립금 {_as_float(out.get('points_balance')):,.0f}원 → 사용 {used:,.0f}원, 선할인 {out.get('prepay')}",
@@ -830,6 +836,13 @@ class BuyerAgent(AgentBase):
             account, snap = self._pick_cheapest(a, accounts)
 
         self._check_account(account, snap)
+        if (
+            source_of(self.spec.name).payment_quotes
+            and _as_float(snap.get('cost')) > 0
+            and not snap.get('already_ordered')
+            and not snap.get('existing_order_no')
+        ):
+            self._apply_payment_quotes(a, account, snap)
         # 같은 상품을 이미 산 흔적 — 옵션 선택 전에 끝낸다(규칙 파일 §3)
         if snap.get('already_ordered') or snap.get('existing_order_no'):
             raise AgentFailure(
