@@ -81,6 +81,8 @@ class Intake:
         days: int,
         requester: str = 'intake',
         max_new: int = 5,
+        sources: frozenset[str] = frozenset(),
+        poison_only: bool = False,
     ) -> None:
         self._wave = wave
         self._queue = queue
@@ -91,6 +93,9 @@ class Intake:
         self._requester = requester
         # 한 바퀴에 새로 접수하는 상한 — 첫 기동 때 수십 건이 슬랙에 한꺼번에 쏟아지지 않게
         self._max_new = max_new
+        # 수집 범위 — 비어 있으면 전부. 소싱처 id(대문자)로 비교한다
+        self._sources = frozenset(x.upper() for x in sources)
+        self._poison_only = poison_only
         # 슬랙 `수집 중지` 가 세우는 깃발. 세워져 있으면 run_once 는 아무것도 하지 않는다
         self.paused = False
 
@@ -115,6 +120,8 @@ class Intake:
         for wave_order in sorted(orders, key=_paid_key):
             seen += 1
             order = wave_order.to_order_ref()
+            if not self._in_scope(wave_order):
+                continue
             if order.order_no in handled or self._already_queued(order.order_no):
                 skipped_live += 1
                 continue
@@ -146,6 +153,17 @@ class Intake:
                 nap = min(TICK_S, interval_s - waited)
                 time.sleep(nap)
                 waited += nap
+
+    def _in_scope(self, order: WaveOrder) -> bool:
+        """수집 범위 안인가 — 소싱처 목록·포이즌 판매만(사용자 설정)."""
+        if self._sources and str(order.source_site or '').upper() not in self._sources:
+            return False
+        if self._poison_only:
+            from samba_agent.supervisor.policy import is_poison_seller
+
+            if not is_poison_seller(order.seller):
+                return False
+        return True
 
     def _already_queued(self, order_no: str) -> bool:
         """큐에 어떤 상태로든 이미 있는 주문인가.

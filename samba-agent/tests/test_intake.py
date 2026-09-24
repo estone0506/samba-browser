@@ -218,3 +218,20 @@ def test_플래그가_있어도_제외하지_않고_접수한다(setup):
     assert report.enqueued == 1
     assert q.get('A1').state == 'queued'
     assert '재고X, 직원A' in slack.tops[0]
+
+
+def test_수집_범위는_소싱처와_포이즌_판매만():
+    from samba_agent.queue.intake import Intake
+    from samba_agent.wave.client import WaveOrder
+
+    it = Intake.__new__(Intake)
+    it._sources = frozenset({'MUSINSA', '29CM'})
+    it._poison_only = True
+
+    def o(site, seller):
+        return WaveOrder.model_validate({'order_number': 'X', 'source_site': site, 'seller': seller})
+
+    assert it._in_scope(o('MUSINSA', 'poison(a@b.com)'))
+    assert it._in_scope(o('29CM', '포이즌'))
+    assert not it._in_scope(o('ABCmart', 'poison'))
+    assert not it._in_scope(o('MUSINSA', '쿠팡(seller02)'))

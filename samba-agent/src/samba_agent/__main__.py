@@ -114,6 +114,12 @@ def main() -> None:
     _parse_order = parse_order_fn(wave, lookup_bridge)
 
     agents = build_agents(reg, bridge, decide, wave, settings.compare_accounts_max)
+    allowed_pay = {x.strip() for x in settings.allowed_pay_providers.split(',') if x.strip()}
+    if allowed_pay:
+        # 결제에 쓸 수 있는 수단을 좁힌다(사용자 설정) — 구매 에이전트의 결제수단 견적이 이 안에서만 고른다
+        for agent in agents.values():
+            if hasattr(agent, 'allowed_pay_providers'):
+                agent.allowed_pay_providers = allowed_pay
 
     version_fn = functools.partial(harness_version, settings.root, {})
     # from_conn_string 은 컨텍스트 매니저라 __enter__ 만 꺼내 쓰면 매니저가 버려지는 순간 연결이 닫힌다
@@ -173,6 +179,7 @@ def main() -> None:
             dry_run=settings.dry_run,
             dry_run_digits=settings.dry_run_digits,
             keep_tabs=settings.keep_tabs,
+            auto_approve=settings.auto_approve,
             # 관측 배선 — 실행 1건이 LangSmith span + 로컬 이벤트로 남는다(리뷰 지적 — I3)
             events=events,
             env=settings.harness_env,
@@ -206,6 +213,8 @@ def main() -> None:
             bot.post,
             days=settings.intake_days,
             max_new=settings.intake_max_new,
+            sources=frozenset(x.strip() for x in settings.intake_sources.split(',') if x.strip()),
+            poison_only=settings.intake_poison_only,
         )
         bot.intake = intake
 

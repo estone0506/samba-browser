@@ -466,6 +466,8 @@ class BuyerAgent(AgentBase):
     _shipping_fn: 'ShippingFn | None' = None
     # 계정 비교 상한(SAMBA_COMPARE_ACCOUNTS_MAX). 배선은 factory 가 한다
     compare_accounts_max: int = 3
+    # 결제에 쓸 수 있는 결제 제공자(SAMBA_ALLOWED_PAY_PROVIDERS). None 이면 키마스터에 있는 것 전부
+    allowed_pay_providers: set[str] | None = None
     # (계정, 시각) — 같은 사이트에서 마지막으로 로그인한 계정
     _last_login: tuple[str, float] | None = None
     _order_type_noted: tuple[str, str] | None = None
@@ -726,6 +728,9 @@ class BuyerAgent(AgentBase):
             return
         # 결제 가능한 수단을 먼저 정한다 — 그 수단만 시험한다(카드사 12개를 전부 돌리는 낭비·화면 소란 방지)
         payable = self._payable_providers(account)
+        if payable is not None and self.allowed_pay_providers is not None:
+            # 사용자가 허용한 결제수단만(예: 무신사머니·무신사페이)
+            payable = payable & self.allowed_pay_providers
         if payable is None:
             # 결제 가능 여부를 모르면 견적으로 수단을 바꾸지 않는다 — 계좌이체처럼 낼 수 없는 수단을 고를 수 있다
             self.note('결제수단 견적', '키마스터 결제 항목을 못 읽어 견적을 돌리지 않는다 — 스냅샷 원가로 진행')
@@ -925,6 +930,15 @@ class BuyerAgent(AgentBase):
 
         # 결제수단·카드 — 지시받은 카드가 목록에 없으면 여기서 거절한다
         methods = [str(m) for m in (snap.get('methods') or [])]
+        if self.allowed_pay_providers is not None:
+            # 허용 결제수단만 후보(SAMBA_ALLOWED_PAY_PROVIDERS) — 견적이 없을 때도 이 밖은 고르지 않는다
+            methods = [m for m in methods if (quote_provider(m) or '') in self.allowed_pay_providers]
+            if not methods:
+                raise AgentFailure(
+                    'needs_human',
+                    f'허용 결제수단({sorted(self.allowed_pay_providers)})이 주문서에 없다',
+                    FailReason.CARD_MISSING,
+                )
         card = a.options.get('card')
         quoted = snap.get('pay_method')
         card_issuer: str | None = None

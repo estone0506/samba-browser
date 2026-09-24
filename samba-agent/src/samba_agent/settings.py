@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     intake_enabled: bool = Field(default=True, alias='SAMBA_INTAKE_ENABLED')
     # 한 바퀴에 새로 접수하는 상한(슬랙 폭주 방지)
     intake_max_new: int = Field(default=5, ge=1, alias='SAMBA_INTAKE_MAX_NEW')
+    # 자동 수집 대상 소싱처(쉼표, 비우면 전부)와 판매처 제한(포이즌만)
+    intake_sources: str = Field(default='', alias='SAMBA_INTAKE_SOURCES')
+    intake_poison_only: bool = Field(default=False, alias='SAMBA_INTAKE_POISON_ONLY')
+    # 결제에 쓸 수 있는 결제 제공자(쉼표, 비우면 키마스터에 있는 것 전부). 예: site,musinsapay
+    allowed_pay_providers: str = Field(default='', alias='SAMBA_ALLOWED_PAY_PROVIDERS')
+    # True 면 결제 승인 요청을 사람 대신 즉시 승인한다(사용자가 자동 이행을 켠 경우만)
+    auto_approve: bool = Field(default=False, alias='SAMBA_AUTO_APPROVE')
     # 주문 계정이 지정되지 않은 구매에서 원가를 비교할 소싱 계정 수 상한(계정마다 로그인·주문서를 만든다)
     compare_accounts_max: int = Field(default=5, ge=1, alias='SAMBA_COMPARE_ACCOUNTS_MAX')
     root: Path = Field(default=DEFAULT_ROOT, alias='SAMBA_AGENT_ROOT')

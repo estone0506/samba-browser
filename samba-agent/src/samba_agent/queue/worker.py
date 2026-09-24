@@ -62,6 +62,8 @@ class WorkerDeps:
     # True 면 작업이 끝나도 탭을 바로 닫지 않고 **다음 작업이 시작할 때** 닫는다 — 사용자가 결과 화면(주문서·
     # 실패 화면)을 눈으로 확인할 수 있어야 한다(사용자 지시 2026-09-24). 옛 주문서 오독은 다음 작업 시작 전 정리로 막는다
     keep_tabs: bool = False
+    # True 면 결제 승인 요청을 즉시 승인한다(SAMBA_AUTO_APPROVE — 사용자가 자동 이행을 켠 경우)
+    auto_approve: bool = False
     # 브릿지가 지금 일을 받을 수 있는가(앱 채팅이 도는 동안은 409 busy). 거짓이면 큐를 집지 않고
     # 다음 주기를 기다린다 — 실기: 사용자가 앱에서 채팅을 돌리는 동안 5건이 전부 bridge_down 으로 사람에게 넘어갔다
     ready: Callable[[], bool] | None = None
@@ -298,6 +300,11 @@ class Worker:
             else:
                 # 버튼을 달 통로가 없을 때의 폴백 — 사람이 `@삼바` 명령으로 이어가야 한다
                 self.d.report(job, f'승인 요청\n{summary}')
+            if self.d.auto_approve:
+                # 사용자가 자동 이행을 켰다 — 요약을 남긴 채 곧바로 승인해 이어 간다
+                self.d.report(job, f'자동 승인: {order_no} {stage}')
+                resumed = self.resume(order_no, True, 'auto-approve', stage)
+                return resumed if resumed is not None else self.d.queue.get(job.order_no)  # type: ignore[return-value]
             return self.d.queue.get(job.order_no)  # type: ignore[return-value]
         outcome = out['outcome']
         fail = out.get('fail_reason')
