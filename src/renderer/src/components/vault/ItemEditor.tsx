@@ -19,7 +19,7 @@ import { PasswordGenerator } from './PasswordGenerator'
 import {
   DEFAULT_PAYMENT_PROVIDER,
   PAYMENT_PROVIDER_FIELD_KEY,
-  PAYMENT_PROVIDERS,
+  SELECTABLE_PAYMENT_PROVIDERS,
   paymentProviderOfSections,
   normalizePaymentProvider,
   PAYMENT_PROVIDER_ACCOUNT_HOST,
@@ -64,7 +64,7 @@ const FORM_SPECS: Record<VaultItemType, SectionSpec[]> = {
           key: PAYMENT_PROVIDER_FIELD_KEY,
           labelKey: 'vault.fieldNames.paymentProvider',
           kind: 'select',
-          options: PAYMENT_PROVIDERS,
+          options: SELECTABLE_PAYMENT_PROVIDERS,
           optionLabelPrefix: 'vault.paymentProvider'
         },
         { key: 'value', labelKey: 'vault.fieldNames.password', kind: 'secret' },

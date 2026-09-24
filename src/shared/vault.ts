@@ -55,6 +55,12 @@ export const PAYMENT_PROVIDERS: readonly PaymentProvider[] = [
   'other'
 ]
 
+/** 키마스터 편집 화면에서 고를 수 있는 결제 수단 — 삼성페이·애플페이는 쓰지 않는다(사용자 2026-09-24).
+ *  예전에 저장된 값은 그대로 읽히도록 PAYMENT_PROVIDERS 에는 남겨 둔다 */
+export const SELECTABLE_PAYMENT_PROVIDERS: readonly PaymentProvider[] = PAYMENT_PROVIDERS.filter(
+  (p) => p !== 'samsung' && p !== 'apple'
+)
+
 /** 결제 비밀번호 항목에서 제공자를 담는 평문 필드 키 */
 export const PAYMENT_PROVIDER_FIELD_KEY = 'payment.provider'
 

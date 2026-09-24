@@ -93,7 +93,7 @@ export const NAVERPAY_ACCOUNT_UNKNOWN =
 // 임의로 고르면 잘못 눌러 계정이 잠기므로 반드시 모델에게 되묻게 한다
 const PAYMENT_PROVIDER_AMBIGUOUS =
   'ambiguous: this account has several payment passwords; pass provider ' +
-  '(site for the site own pay such as 무신사머니, toss, kakao, naver, payco, samsung, apple, other)'
+  '(site for the site own pay such as 무신사머니, musinsapay, toss, kakao, naver, payco, other)'
 // guard 모드에서 추가 확인을 받아야 하는 민감 항목
 const CONFIRM_ITEM_TYPES: VaultItemType[] = ['password', 'card']
 // PG 결제창(토스·ePAY 팝업)에서 채우는 항목 — 그 창의 호스트가 아니라 창을 연 사이트의 계정을 쓴다
