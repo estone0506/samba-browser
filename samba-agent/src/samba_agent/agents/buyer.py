@@ -221,9 +221,11 @@ def cheapest_quotes(
 KKADAEGI_SHIPPING_FEE = 2300
 # 사무실 주소 표식 — 까대기의 기본 배송지가 이 주소여야 한다(경북 가상시 사무실길 58)
 OFFICE_ADDRESS_HINT = '사무실길 58'
+# 사무실 수령인 — 주소가 사무실이어도 이름이 다르면 사무실 배송지로 보지 않는다(사용자 2026-09-24)
+OFFICE_NAME = '김사무'
 # 까대기 주문 배송지(사무실). 기본 배송지가 사무실이 아닐 때 이번 주문에만 넣는다 — poizon-sourcing 스킬 "사무실 배송"
 OFFICE_SHIPPING: dict[str, object] = {
-    'name': '김사무',
+    'name': OFFICE_NAME,
     'address': '경북 가상시 사무실길 58',
     'address_detail': '1층 102호',
     'postal_code': '38069',
@@ -1365,10 +1367,13 @@ class BuyerAgent(AgentBase):
         embedded = snap.get('shipping')
         if isinstance(embedded, dict) and embedded:
             filled = all(str(embedded.get(f) or '').strip() for f in SHIPPING_FIELDS)
-            office = OFFICE_ADDRESS_HINT in str(embedded.get('address') or '')
+            # 주소만 사무실이고 수령인이 다르면(실기: 김가명) 사무실 배송지가 아니다 — 수령인까지 같아야 한다
+            office = OFFICE_ADDRESS_HINT in str(embedded.get('address') or '') and _norm(
+                str(embedded.get('name') or '')
+            ) == _norm(OFFICE_NAME)
         else:
             page = self.tool('get_page')
-            office = OFFICE_ADDRESS_HINT in page
+            office = OFFICE_ADDRESS_HINT in page and OFFICE_NAME in page
             # 사무실 주소가 보이면 채워진 것이다 — 무신사 주문서엔 '받는 분' 문구가 없다(실기: 새 배송지를 또 만듦)
             filled = office or (
                 any(m in page for m in RECIPIENT_MARKERS)

@@ -675,7 +675,10 @@ def test_ABC마트는_항상_까대기로_기본_배송지를_유지한다(reg):
             'abc_product_snapshot',
             applied,
             # 까대기 계정의 기본 배송지 = 경주 사무실
-            snapshot={**SNAPSHOT_OK, 'shipping': {**SHIPPING, 'address': '경북 가상시 사무실길 58, 1층 102호'}},
+            snapshot={
+                **SNAPSHOT_OK,
+                'shipping': {**SHIPPING, 'name': '김사무', 'address': '경북 가상시 사무실길 58, 1층 102호'},
+            },
         )
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
@@ -709,7 +712,9 @@ def test_까대기_주문서에_기본_배송지가_없으면_사무실_주소�
 @pytest.mark.parametrize(
     ('page_text', 'keeps_default'),
     [
-        ('배송지 받는 분 삼바 사무실 경북 가상시 사무실길 58 1층', True),
+        ('배송지 받는 분 김사무 경북 가상시 사무실길 58 1층', True),
+        # 주소는 사무실이어도 수령인이 다르면 사무실 배송지가 아니다(실기: 김가명)
+        ('배송지 받는 분 김가명 경북 가상시 사무실길 58 1층', False),
         ('배송지 등록된 배송지가 없습니다 배송지를 추가해 주세요', False),
         ('결제수단 선택', False),
     ],
