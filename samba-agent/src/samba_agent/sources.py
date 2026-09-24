@@ -60,6 +60,9 @@ class Source(BaseModel):
     pay_card_quote: bool = False
     # 같은 상품을 같이 비교할 다른 소싱처 id(예: 무신사 ↔ 29CM) — 더 싼 쪽에서 산다(사용자 2026-09-24)
     cross_with: str | None = None
+    # 이 소싱처는 이 결제 제공자로만 결제한다(예: ABC마트·그랜드스테이지 = naver 네이버페이, 사용자 2026-09-24).
+    # 전역 허용 수단(SAMBA_ALLOWED_PAY_PROVIDERS)보다 우선한다
+    pay_provider: str | None = None
     # 이 소싱처의 주문은 항상 이 배송 종류로 본다(예: ABC마트는 전부 까대기 = 사무실 배송).
     # None 이면 주문(삼바웨이브 action_tag)이 정한 종류를 따른다
     order_type: Literal['direct', 'kkadaegi', 'gift'] | None = None

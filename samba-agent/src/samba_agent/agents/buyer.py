@@ -891,6 +891,13 @@ class BuyerAgent(AgentBase):
             return None
         return parse_account_payments(raw, account)
 
+    def _allowed_providers(self) -> set[str] | None:
+        """이 소싱처에서 쓸 수 있는 결제 제공자. 소싱처가 하나로 고정했으면(pay_provider) 그것만, 아니면 전역 허용 수단."""
+        fixed = source_of(self.spec.name).pay_provider
+        if fixed:
+            return {fixed}
+        return self.allowed_pay_providers
+
     def _pay_card_quote(self, account: str) -> list[dict[str, object]]:
         """무신사페이 등록 기본 카드 견적 한 줄(`<key>_pay_card_quote`). 못 읽으면 빈 목록."""
         try:
@@ -927,9 +934,10 @@ class BuyerAgent(AgentBase):
             return
         # 결제 가능한 수단을 먼저 정한다 — 그 수단만 시험한다(카드사 12개를 전부 돌리는 낭비·화면 소란 방지)
         payable = self._payable_providers(account)
-        if payable is not None and self.allowed_pay_providers is not None:
-            # 사용자가 허용한 결제수단만(예: 무신사머니·무신사페이)
-            payable = payable & self.allowed_pay_providers
+        allowed = self._allowed_providers()
+        if payable is not None and allowed is not None:
+            # 사용자가 허용한 결제수단만(예: 무신사머니·무신사페이, ABC마트·그랜드스테이지는 네이버페이만)
+            payable = payable & allowed
         if payable is None:
             # 결제 가능 여부를 모르면 견적으로 수단을 바꾸지 않는다 — 계좌이체처럼 낼 수 없는 수단을 고를 수 있다
             self.note(
@@ -1407,15 +1415,14 @@ class BuyerAgent(AgentBase):
 
         # 결제수단·카드 — 지시받은 카드가 목록에 없으면 여기서 거절한다
         methods = [str(m) for m in (snap.get('methods') or [])]
-        if self.allowed_pay_providers is not None:
+        allowed_now = self._allowed_providers()
+        if allowed_now is not None:
             # 허용 결제수단만 후보(SAMBA_ALLOWED_PAY_PROVIDERS) — 견적이 없을 때도 이 밖은 고르지 않는다
-            methods = [
-                m for m in methods if (quote_provider(m) or '') in self.allowed_pay_providers
-            ]
+            methods = [m for m in methods if (quote_provider(m) or '') in allowed_now]
             if not methods:
                 raise AgentFailure(
                     'needs_human',
-                    f'허용 결제수단({sorted(self.allowed_pay_providers)})이 주문서에 없다',
+                    f'허용 결제수단({sorted(allowed_now)})이 주문서에 없다',
                     FailReason.CARD_MISSING,
                 )
         card = a.options.get('card')
@@ -1429,6 +1436,11 @@ class BuyerAgent(AgentBase):
                 '수단 선택',
                 f'{card}{"/" + card_issuer if card_issuer else ""} — 결제수단 견적 최저',
             )
+        elif card and card not in methods and source_of(self.spec.name).pay_provider and methods:
+            # 결제수단이 하나로 고정된 소싱처(ABC마트 = 네이버페이) — 지정 카드는 그 수단 안에서 고르는 카드사다
+            card_issuer = str(card)
+            card = methods[0]
+            self.note('수단 선택', f'{card}/{card_issuer} — 소싱처 고정 결제수단 안의 지정 카드')
         elif card and card not in methods:
             raise AgentFailure(
                 'fail', f'지시받은 카드가 결제수단에 없다: {card}', FailReason.CARD_MISSING

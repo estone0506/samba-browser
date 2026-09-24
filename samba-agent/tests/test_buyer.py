@@ -475,7 +475,11 @@ def _recording_handler(snapshot_name, applied, echo_extra=None, snapshot=None):
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         if body['args']['name'] == snapshot_name:
-            return page(json.dumps(snapshot or SNAPSHOT_OK, ensure_ascii=False))
+            snap = dict(snapshot or SNAPSHOT_OK)
+            if snapshot_name.startswith('abc_'):
+                # ABC마트·그랜드스테이지는 네이버페이로만 결제한다(sources.yaml pay_provider)
+                snap['methods'] = [*snap.get('methods', []), '네이버페이']
+            return page(json.dumps(snap, ensure_ascii=False))
         if body['args']['name'].endswith('_payment_quotes'):
             return page('{"quotes": []}')  # 견적 없음 — 스냅샷 원가로 진행
         if body['args']['name'].endswith('_normal_price'):
@@ -695,7 +699,11 @@ def test_ABC마트는_항상_까대기로_기본_배송지를_유지한다(reg):
 def test_까대기_주문서에_기본_배송지가_없으면_사무실_주소를_넣는다(reg):
     # poizon-sourcing 스킬: 사무실 주소가 등록돼 있지 않을 때만 사무실 주소를 주문 배송지로 쓴다(기본 배송지는 안 바꿈)
     abc, spec = _abc_agent(reg)
-    snap = {**SNAPSHOT_OK, 'shipping': {'name': '', 'address': ''}}
+    snap = {
+        **SNAPSHOT_OK,
+        'methods': [*SNAPSHOT_OK['methods'], '네이버페이'],  # ABC마트는 네이버페이로만 결제
+        'shipping': {'name': '', 'address': ''},
+    }
     applied: dict[str, object] = {}
     respx.post(f'{URL}/tool/run_script').mock(
         side_effect=_recording_handler('abc_product_snapshot', applied, snapshot=snap)
@@ -1225,7 +1233,11 @@ def test_payable_methods_는_결제_가능한_수단_이름만_남긴다():
 def test_까대기_사무실_배송지가_목록에_있으면_골라서_쓴다(reg):
     """신규 입력(set_shipping) 없이 `<key>_select_shipping` 으로 기존 사무실 항목을 고른다."""
     abc, spec = _abc_agent(reg)
-    snap = {**SNAPSHOT_OK, 'shipping': {'name': '', 'address': ''}}
+    snap = {
+        **SNAPSHOT_OK,
+        'methods': [*SNAPSHOT_OK['methods'], '네이버페이'],  # ABC마트는 네이버페이로만 결제
+        'shipping': {'name': '', 'address': ''},
+    }
     calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
