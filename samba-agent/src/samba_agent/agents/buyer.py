@@ -604,6 +604,8 @@ class BuyerAgent(AgentBase):
             name=source_of(self.spec.name).snapshot_script,
             args=snapshot_args(self.spec.name, a.order, account=account),
         )
+        if snap.get('already_ordered') or snap.get('existing_order_no'):
+            return snap  # 중복 구매 흔적 — 정돈·견적 없이 호출부가 바로 거절한다
         if source_of(self.spec.name).order_prep and _as_float(snap.get('cost')) > 0:
             self._order_prep(account, snap)
         if source_of(self.spec.name).payment_quotes and _as_float(snap.get('cost')) > 0:
