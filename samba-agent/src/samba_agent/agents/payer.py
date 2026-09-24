@@ -350,11 +350,16 @@ class PayerAgent(AgentBase):
             self.tool('switch_tab', id=str(popups[-1]['id']))
         self.step('payer: 결제 비밀번호(앱 입력)')
         found = self.tool('find_elements', query=KEYPAD_QUERY)
+        # 결제 비밀번호 종류 — 사이트 자체 결제(무신사머니 등)는 'site'. 계정에 비밀번호가 여럿이면 없을 때 모호하다(실기)
+        card = str(a.handoff.get('card') or a.options.get('card') or '')
+        provider = 'site' if any(k in card for k in ('머니', 'SSG PAY', 'L.pay', '스마일')) else None
+        account = str(a.handoff.get('account') or a.order.account or '')
         out = self.tool(
             'fill_secret',
             elementId=_element_id(found) or 0,
             itemType='password',
-            **({'accountLabel': a.order.account} if a.order.account else {}),
+            **({'provider': provider} if provider else {}),
+            **({'accountLabel': account} if account else {}),
         )
         self.note('키패드 입력', mask_text(out[:200]))
         low = out.lower()
