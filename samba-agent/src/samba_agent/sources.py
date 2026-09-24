@@ -51,6 +51,8 @@ class Source(BaseModel):
     # True 면 `<key>_normal_price` 로 소싱처 정가(세일 전 정상가)를 읽는다 — 포이즌 외 마켓의 직배/까대기 판정에 쓴다
     # (정가 < 고객 결제액 → 까대기, 정가 > 고객 결제액 → 직배; poizon-sourcing 스킬 규칙)
     normal_price: bool = False
+    # True 면 스냅샷(주문서 생성) 직후 `<key>_order_prep` 으로 주문서를 규칙대로 정돈한다 — 무신사 적립금(5만 미만 0원)·선할인(플레이북 §7)
+    order_prep: bool = False
     # 이 소싱처의 주문은 항상 이 배송 종류로 본다(예: ABC마트는 전부 까대기 = 사무실 배송).
     # None 이면 주문(삼바웨이브 action_tag)이 정한 종류를 따른다
     order_type: Literal['direct', 'kkadaegi', 'gift'] | None = None
@@ -74,6 +76,10 @@ class Source(BaseModel):
     @property
     def normal_price_script(self) -> str:
         return f'{self.key}_normal_price'
+
+    @property
+    def order_prep_script(self) -> str:
+        return f'{self.key}_order_prep'
 
     @property
     def set_shipping_script(self) -> str:

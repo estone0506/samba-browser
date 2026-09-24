@@ -102,6 +102,8 @@ def route_run_script(responses: dict[str, object]) -> object:
             return page('{"normal_price": 150000}')  # 정가 표본
         if name not in responses and str(name).endswith('_select_shipping'):
             return page('{"ok": false, "found": false, "note": "목록에 맞는 배송지 없음"}')
+        if name not in responses and str(name).endswith('_order_prep'):
+            return page('{"ok": true, "points_balance": 220, "points_used": 0, "prepay": true}')
         if name not in responses:
             raise AssertionError(f'예상치 못한 run_script 호출: {name}')
         return page(json.dumps(responses[name], ensure_ascii=False))
@@ -480,6 +482,8 @@ def _recording_handler(snapshot_name, applied, echo_extra=None, snapshot=None):
             return page('{"normal_price": 150000}')
         if body['args']['name'].endswith('_select_shipping'):
             return page('{"ok": false, "found": false, "note": "목록에 맞는 배송지 없음"}')
+        if body['args']['name'].endswith('_order_prep'):
+            return page('{"ok": true, "points_balance": 220, "points_used": 0, "prepay": true}')
         args = json.loads(body['args']['args'])
         if body['args']['name'].endswith('_confirm_shipping'):
             # 확정 스크립트 — 폼을 저장한 뒤 주문서에서 되읽은 값을 그대로 메아리친다
@@ -848,6 +852,8 @@ def _per_account_snapshots(by_account: dict[str, object], calls: list[str]):
             return page('{"normal_price": 150000}')  # 정가도 calls 에 남기지 않는다
         if name.endswith('_select_shipping'):
             return page('{"ok": false, "found": false, "note": "목록에 맞는 배송지 없음"}')
+        if name.endswith('_order_prep'):
+            return page('{"ok": true, "points_balance": 220, "points_used": 0, "prepay": true}')
         calls.append(f'{name}:{args.get("profile")}')
         return page(json.dumps(SHIPPING_ECHO, ensure_ascii=False))
 

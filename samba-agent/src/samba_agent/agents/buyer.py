@@ -604,6 +604,8 @@ class BuyerAgent(AgentBase):
             name=source_of(self.spec.name).snapshot_script,
             args=snapshot_args(self.spec.name, a.order, account=account),
         )
+        if source_of(self.spec.name).order_prep and _as_float(snap.get('cost')) > 0:
+            self._order_prep(account, snap)
         if source_of(self.spec.name).payment_quotes and _as_float(snap.get('cost')) > 0:
             self._apply_payment_quotes(a, account, snap)
         if source_of(self.spec.name).normal_price and snap.get('normal_price') is None:
@@ -627,6 +629,27 @@ class BuyerAgent(AgentBase):
         if price > 0:
             snap['normal_price'] = price
             self.note('정가', f'{price:,.0f}원')
+
+    def _order_prep(self, account: str, snap: dict[str, object]) -> None:
+        """주문서 정돈(`<key>_order_prep`): 적립금 규칙(5만 미만 0원·이상 최대)·선할인. 규칙대로 못 맞추면 사람에게."""
+        self.step(f'{self.spec.name}: 주문서 정돈({account})')
+        out = self.json_tool(
+            'run_script',
+            name=source_of(self.spec.name).order_prep_script,
+            args=json.dumps({'profile': account}, ensure_ascii=False),
+        )
+        if not out.get('ok'):
+            raise AgentFailure(
+                'needs_human',
+                f'주문서 정돈 실패: {mask_text(str(out.get("note") or "")[:80])}',
+                FailReason.UNKNOWN,
+            )
+        used = _as_float(out.get('points_used'))
+        snap['points_used'] = used
+        self.note(
+            '주문서 정돈',
+            f"보유 적립금 {_as_float(out.get('points_balance')):,.0f}원 → 사용 {used:,.0f}원, 선할인 {out.get('prepay')}",
+        )
 
     def _payable_providers(self, account: str) -> set[str] | None:
         """이 계정으로 실제 낼 수 있는 결제 제공자(키마스터에 결제 비밀번호·카드가 있는 것).
