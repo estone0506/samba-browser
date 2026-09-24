@@ -5,9 +5,10 @@ run_agent 가 그것을 결과로 바꾼다 — 감독자는 예외를 보지 �
 """
 
 import json
+import logging
 import re
 from collections.abc import Callable
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +26,21 @@ NEEDS_USER_MARKERS = ('needs_user', '캡차', 'captcha')
 _MARKER_EXEMPT_PREFIXES = ('submitted:',)
 # 구조화 출력은 한 번만 다시 묻는다(스펙 §6)
 DECIDE_RETRIES = 1
+
+log = logging.getLogger(__name__)
+
+# 스크립트 결과 JSON → 문제 문장(None 이면 통과)
+ScriptCheck = Callable[[dict[str, object]], str | None]
+# 이 사유의 실패는 스크립트를 고쳐도 소용없다 — 수리하지 않고 그대로 던진다
+_NO_REPAIR_REASONS = frozenset(
+    {
+        FailReason.CAPTCHA,
+        FailReason.PERMISSION_DENIED,
+        FailReason.BRIDGE_DOWN,
+        FailReason.DUPLICATE,
+        FailReason.PAY_INTERRUPTED,
+    }
+)
 
 
 class Decision(BaseModel):
@@ -105,6 +121,134 @@ class AgentBase:
         if not isinstance(parsed, dict):
             raise AgentFailure('fail', f'{name} 결과가 객체가 아니다', FailReason.UNKNOWN)
         return parsed
+
+    # ---- 저장 스크립트 자가 수리(사용자 2026-09-24) ----
+    # 배선은 factory 가 한다. repairer 가 None 이면 예전처럼 실패·결과를 그대로 돌려준다
+    repairer: Any = None
+    # 원본 코드 읽기(FileScriptSource)·교체 이력(ScriptHistory)
+    script_source: Any = None
+    script_history: Any = None
+    # 이번 작업에서 이미 수리를 시도한 스크립트 — 같은 작업 안에서 두 번 고치지 않는다
+    _repair_tried: dict[str, str]
+
+    def reset_repairs(self) -> None:
+        """작업 시작 때 부른다 — 수리 시도 기록을 비운다."""
+        self._repair_tried = {}
+
+    def script_json(
+        self, name: str, args: dict[str, object], *, goal: str, check: ScriptCheck
+    ) -> dict[str, object]:
+        """저장 스크립트를 돌리고 check 로 결과를 본다. 실패하면 AI 가 고쳐 이어 간다.
+
+        - 통과: 결과 그대로.
+        - 실패(예외·검증 불통): 수리 에이전트가 화면을 보고 고친 스크립트를 이번 인자로 시험해 check 를
+          통과하면 그 결과를 돌려주고 저장 스크립트를 갈아 끼운다(이전 판은 이력 폴더).
+        - 수리도 못 하면 예전과 똑같이 원래 예외를 던지거나 원래 결과를 돌려준다 — 호출부 판단은 그대로다.
+        """
+        raw_args = json.dumps(args, ensure_ascii=False)
+        try:
+            out = self.json_tool('run_script', name=name, args=raw_args)
+        except AgentFailure as e:
+            if e.fail_reason in _NO_REPAIR_REASONS:
+                raise
+            fixed = self._repair(name, args, goal, check, e.reason, '')
+            if fixed is None:
+                raise
+            return fixed
+        problem = check(out)
+        if problem is None:
+            return out
+        fixed = self._repair(name, args, goal, check, problem, json.dumps(out, ensure_ascii=False))
+        return fixed if fixed is not None else out
+
+    def _repair(
+        self,
+        name: str,
+        args: dict[str, object],
+        goal: str,
+        check: ScriptCheck,
+        problem: str,
+        last_output: str,
+    ) -> dict[str, object] | None:
+        """AI 수리 1회. 검증 통과 결과를 돌려주거나 None(못 고침·진짜 불가·꺼짐)."""
+        if self.repairer is None:
+            return None
+        tried = getattr(self, '_repair_tried', None)
+        if tried is None:
+            tried = self._repair_tried = {}
+        if name in tried:
+            return None
+        tried[name] = 'running'
+        current = self.script_source.get(name) if self.script_source is not None else None
+        self.step(f'{self.spec.name}: AI 스크립트 수리({name})')
+        self.note('스크립트 수리', mask_text(f'{name}: 시작 — {problem[:120]}'))
+        log.info('스크립트 수리 시작: %s', name)
+
+        def call(tool: str, tool_args: dict[str, object]) -> str:
+            try:
+                return self.bridge.call(tool, **tool_args).result
+            except BridgeError as e:
+                return f'Error: {e}'
+
+        outcome = self.repairer.repair(
+            call=call,
+            name=name,
+            args=args,
+            goal=goal,
+            problem=problem,
+            last_output=last_output,
+            validate=check,
+            current=current,
+        )
+        tried[name] = outcome.status
+        log.info('스크립트 수리 결과: %s %s (시험 %d회)', name, outcome.status, outcome.tests)
+        if outcome.status == 'genuine':
+            self.note(
+                '스크립트 수리', mask_text(f'{name}: 스크립트 문제 아님 — {outcome.reason[:160]}')
+            )
+            return None
+        if outcome.status != 'fixed' or outcome.output is None or not outcome.code:
+            self.note('스크립트 수리', mask_text(f'{name}: 못 고침 — {outcome.reason[:160]}'))
+            return None
+        self._save_repaired(name, outcome.code, current, goal, problem, outcome.tests)
+        return outcome.output
+
+    def _save_repaired(
+        self,
+        name: str,
+        code: str,
+        current: dict[str, object] | None,
+        goal: str,
+        problem: str,
+        tests: int,
+    ) -> None:
+        """검증 통과한 코드로 저장 스크립트를 갈아 끼운다. 이전 판은 이력 폴더에 먼저 남긴다."""
+        cur = current or {}
+        if self.script_history is not None:
+            try:
+                self.script_history.record(
+                    name,
+                    str(cur.get('code') or ''),
+                    code,
+                    {'agent': self.spec.name, 'problem': mask_text(problem[:300]), 'tests': tests},
+                )
+            except OSError as e:
+                log.warning('스크립트 이력 저장 실패: %s %s', name, e)
+        params = cur.get('params')
+        try:
+            self.tool(
+                'save_script',
+                name=name,
+                host=str(cur.get('host') or ''),
+                description=str(cur.get('description') or goal)[:240],
+                params=[str(p) for p in params] if isinstance(params, list) else [],
+                code=code,
+            )
+        except AgentFailure as e:
+            # 저장이 막혀도(dry_run·거절) 이번 결과는 검증을 통과했으니 쓴다 — 다음 작업이 다시 고친다
+            self.note('스크립트 수리', mask_text(f'{name}: 고쳤지만 저장 못 함 — {e.reason[:100]}'))
+            return
+        self.note('스크립트 수리', f'{name}: 고친 스크립트로 교체(시험 {tests}회)')
 
     def decide_once(self, prompt: str, model: type[BaseModel]) -> BaseModel:
         """구조화 출력. 실패하면 한 번만 다시 묻고, 또 실패하면 사람에게 넘긴다."""

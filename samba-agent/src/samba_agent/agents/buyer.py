@@ -251,6 +251,8 @@ def effective_cost(row: dict[str, object]) -> float:
     reward = _as_float(row.get('reward'))
     used = _as_float(row.get('points_used'))
     return round(paid * billing_factor(str(row.get('card') or '') or None) - reward + used)
+
+
 # 결제창(토스페이·네이버페이) 안에서 고를 수 있는 카드사(사용자 2026-09-24: 현대·KB·롯데·신한·농협). 주문서 단계의
 # '카드 직접 결제'는 쓰지 않는다 — 카드는 간편결제 창 안에서만 고른다. 결제 에이전트가 카드를 고를 때 이 표를 쓴다
 ALLOWED_CARD_ISSUERS = ('현대', 'KB', '국민', '롯데', '신한', '농협', 'NH')
@@ -379,6 +381,22 @@ def _as_float(value: object) -> float:
         return 0.0
 
 
+def snapshot_problem(option: str | None):
+    """상품 스냅샷 검증: 원가를 읽었고 주문 옵션과 맞는 선택지가 있어야 통과. 중복 구매 흔적은 그대로 통과."""
+
+    def check(out: dict[str, object]) -> str | None:
+        if out.get('already_ordered') or out.get('existing_order_no'):
+            return None
+        options = [str(o) for o in (out.get('options') or [])]  # type: ignore[union-attr]
+        if option and not matching_options(options, option):
+            return f'주문 옵션 "{option}" 과 맞는 선택지가 없다(읽은 선택지 {options[:8]}, note={out.get("note")})'
+        if _as_float(out.get('cost')) <= 0:
+            return f'원가(cost)를 못 읽음(note={out.get("note")})'
+        return None
+
+    return check
+
+
 def parse_account_labels(raw: str) -> tuple[list[str], bool]:
     """앱 list_accounts 결과 → (계정 라벨 목록, 금고 잠김 여부).
 
@@ -476,6 +494,7 @@ class BuyerAgent(AgentBase):
         self._dry_run = assignment.dry_run
         # 계정 비교 중 견적이 실패한 사유들(모든 계정 실패 때 결과 판정에 쓴다)
         self._quote_errors: list[AgentFailure] = []
+        self.reset_repairs()
         return run_agent(lambda: self._buy(assignment), lambda: self.evidence)
 
     def tool(self, name: str, /, **args: object) -> str:
@@ -639,10 +658,14 @@ class BuyerAgent(AgentBase):
         (cost 를 그 금액으로 바꾸고 pay_method·pay_card 를 붙인다) — 계정 비교도 이 금액으로 한다.
         """
         self.step(f'{self.spec.name}: 상품 확인({account})')
-        snap = self.json_tool(
-            'run_script',
-            name=source_of(self.spec.name).snapshot_script,
-            args=snapshot_args(self.spec.name, a.order, account=account),
+        snap = self.script_json(
+            source_of(self.spec.name).snapshot_script,
+            json.loads(snapshot_args(self.spec.name, a.order, account=account)),
+            goal=(
+                f'상품 {a.order.sku} 페이지에서 주문 옵션 "{a.order.option or "(없음)"}" 을 골라 주문서(구매하기)까지 가서 '
+                '원가(cost, 숫자)·선택지 목록(options, 고른 옵션 포함)·결제수단(methods)을 원래 키 그대로 돌려준다.'
+            ),
+            check=snapshot_problem(a.order.option),
         )
         if snap.get('already_ordered') or snap.get('existing_order_no'):
             return snap  # 중복 구매 흔적 — 정돈·견적 없이 호출부가 바로 거절한다
@@ -656,11 +679,14 @@ class BuyerAgent(AgentBase):
     def _apply_normal_price(self, a: Assignment, account: str, snap: dict[str, object]) -> None:
         """소싱처 정가(`<key>_normal_price`)를 스냅샷에 싣는다. 못 읽으면 None 으로 두고 근거만 남긴다."""
         try:
-            out = self.json_tool(
-                'run_script',
-                name=source_of(self.spec.name).normal_price_script,
-                args=json.dumps(
-                    {'sku': product_ref(self.spec.name, a.order), 'profile': account}, ensure_ascii=False
+            out = self.script_json(
+                source_of(self.spec.name).normal_price_script,
+                {'sku': product_ref(self.spec.name, a.order), 'profile': account},
+                goal='상품의 정상가(할인 전 판매가, normal_price 숫자)를 읽어 돌려준다.',
+                check=lambda o: (
+                    None
+                    if _as_float(o.get('normal_price')) > 0
+                    else '정상가(normal_price)를 못 읽음'
                 ),
             )
         except AgentFailure as e:
@@ -674,10 +700,19 @@ class BuyerAgent(AgentBase):
     def _order_prep(self, account: str, snap: dict[str, object]) -> None:
         """주문서 정돈(`<key>_order_prep`): 적립금 규칙(5만 미만 0원·이상 최대)·선할인. 규칙대로 못 맞추면 사람에게."""
         self.step(f'{self.spec.name}: 주문서 정돈({account})')
-        out = self.json_tool(
-            'run_script',
-            name=source_of(self.spec.name).order_prep_script,
-            args=json.dumps({'profile': account}, ensure_ascii=False),
+        out = self.script_json(
+            source_of(self.spec.name).order_prep_script,
+            {'profile': account},
+            goal=(
+                '주문서에서 상품 쿠폰·장바구니 쿠폰(확인까지)을 최대 할인으로 적용하고, 적립금은 보유 5만원 미만이면 0원·'
+                '이상이면 최대 사용(사용 제한 상품은 0원), 선할인이 가능하면 켠 뒤 총 결제 금액(total)을 돌려준다. '
+                '규칙대로 맞췄으면 ok:true.'
+            ),
+            check=lambda o: (
+                None
+                if o.get('ok') and _as_float(o.get('total')) > 0
+                else f'정돈 실패(ok={o.get("ok")}, total={o.get("total")}, note={o.get("note")})'
+            ),
         )
         if not out.get('ok'):
             raise AgentFailure(
@@ -694,11 +729,11 @@ class BuyerAgent(AgentBase):
             snap['pay_amount'] = total
         self.note(
             '쿠폰',
-            f"상품 쿠폰 {_as_float(out.get('coupon')):,.0f}원 · 장바구니 쿠폰 {_as_float(out.get('cart_coupon')):,.0f}원 → 총 {total:,.0f}원",
+            f'상품 쿠폰 {_as_float(out.get("coupon")):,.0f}원 · 장바구니 쿠폰 {_as_float(out.get("cart_coupon")):,.0f}원 → 총 {total:,.0f}원',
         )
         self.note(
             '주문서 정돈',
-            f"보유 적립금 {_as_float(out.get('points_balance')):,.0f}원 → 사용 {used:,.0f}원, 선할인 {out.get('prepay')}",
+            f'보유 적립금 {_as_float(out.get("points_balance")):,.0f}원 → 사용 {used:,.0f}원, 선할인 {out.get("prepay")}',
         )
 
     def _payable_providers(self, account: str) -> set[str] | None:
@@ -733,23 +768,40 @@ class BuyerAgent(AgentBase):
             payable = payable & self.allowed_pay_providers
         if payable is None:
             # 결제 가능 여부를 모르면 견적으로 수단을 바꾸지 않는다 — 계좌이체처럼 낼 수 없는 수단을 고를 수 있다
-            self.note('결제수단 견적', '키마스터 결제 항목을 못 읽어 견적을 돌리지 않는다 — 스냅샷 원가로 진행')
+            self.note(
+                '결제수단 견적',
+                '키마스터 결제 항목을 못 읽어 견적을 돌리지 않는다 — 스냅샷 원가로 진행',
+            )
             return
         if not payable:
             # 이 계정엔 키마스터 결제 항목이 하나도 없다 — 견적을 돌리지 않고 스냅샷 기본 수단으로 간다.
             # 실결제 때 결제 에이전트가 항목 없음으로 멈추고, 승인 카드 근거에 이 사실이 남는다
-            self.note('결제수단 견적', f'{account} 에 키마스터 결제 항목 없음 — 견적 미실행, 스냅샷 원가로 진행')
+            self.note(
+                '결제수단 견적',
+                f'{account} 에 키마스터 결제 항목 없음 — 견적 미실행, 스냅샷 원가로 진행',
+            )
             return
         methods = payable_methods(offered, payable)
         if not methods:
-            self.note('결제수단 견적', f'주문서 결제수단 중 결제 가능한 것 없음(가능 {sorted(payable)}) — 스냅샷 원가로 진행')
+            self.note(
+                '결제수단 견적',
+                f'주문서 결제수단 중 결제 가능한 것 없음(가능 {sorted(payable)}) — 스냅샷 원가로 진행',
+            )
             return
         self.step(f'{self.spec.name}: 결제수단 견적({account})')
         try:
-            out = self.json_tool(
-                'run_script',
-                name=source_of(self.spec.name).payment_quotes_script,
-                args=json.dumps({'profile': account, 'methods': methods}, ensure_ascii=False),
+            out = self.script_json(
+                source_of(self.spec.name).payment_quotes_script,
+                {'profile': account, 'methods': methods},
+                goal=(
+                    f'주문서에서 결제수단 {methods} 을 하나씩 골라 각 수단의 할인·적립 반영 결제 금액을 읽어 '
+                    'quotes 목록(원래 키 그대로)으로 돌려준다. 결제하기는 누르지 않는다.'
+                ),
+                check=lambda o: (
+                    None
+                    if isinstance(o.get('quotes'), list) and o.get('quotes')
+                    else f'견적 목록(quotes)이 비었다: note={o.get("note")}'
+                ),
             )
         except AgentFailure as e:
             self.note('결제수단 견적', mask_text(f'못 읽음({e.reason[:80]}) — 스냅샷 원가로 진행'))
@@ -773,12 +825,12 @@ class BuyerAgent(AgentBase):
         snap['pay_amount'] = best['paid']
         snap['pay_method'] = best['method']
         snap['pay_card'] = best['card']
-        label = f"{best['method']}/{best['card']}" if best['card'] else best['method']
+        label = f'{best["method"]}/{best["card"]}' if best['card'] else best['method']
         payable_note = '' if payable is None else f', 결제 가능 {sorted(payable)}'
         self.note(
             '결제수단 견적',
-            f"{label} {best['cost']:,.0f}원 — 최저 (후보 {len(quotes)}건, 기본 "
-            f"{_as_float(out.get('base_cost')):,.0f}원{payable_note})",
+            f'{label} {best["cost"]:,.0f}원 — 최저 (후보 {len(quotes)}건, 기본 '
+            f'{_as_float(out.get("base_cost")):,.0f}원{payable_note})',
         )
 
     def _quote(self, a: Assignment, account: str) -> dict[str, object] | None:
@@ -836,7 +888,10 @@ class BuyerAgent(AgentBase):
                     'needs_human', f'모든 계정 불가 — {first.reason}', first.fail_reason
                 )
             # 계정별 사유를 함께 남긴다 — 진짜 품절인지 스크립트·로그인 실패인지 가려야 한다(실기: 3건 모두 원인 불명)
-            why = '; '.join([e.reason[:60] for e in errors[:4]] + self._quote_skips[:4]) or '견적 없음'
+            why = (
+                '; '.join([e.reason[:60] for e in errors[:4]] + self._quote_skips[:4])
+                or '견적 없음'
+            )
             raise AgentFailure(
                 'fail',
                 mask_text(f'모든 계정에서 살 수 없다(품절·실패): {", ".join(accounts)} — {why}'),
@@ -937,7 +992,9 @@ class BuyerAgent(AgentBase):
         methods = [str(m) for m in (snap.get('methods') or [])]
         if self.allowed_pay_providers is not None:
             # 허용 결제수단만 후보(SAMBA_ALLOWED_PAY_PROVIDERS) — 견적이 없을 때도 이 밖은 고르지 않는다
-            methods = [m for m in methods if (quote_provider(m) or '') in self.allowed_pay_providers]
+            methods = [
+                m for m in methods if (quote_provider(m) or '') in self.allowed_pay_providers
+            ]
             if not methods:
                 raise AgentFailure(
                     'needs_human',
@@ -951,7 +1008,10 @@ class BuyerAgent(AgentBase):
             # 결제수단 견적이 고른 조합 — 수단 이름은 card(결제창 진입용), 카드사는 card_issuer(결제 앱 안에서 고름)
             card = str(quoted)
             card_issuer = str(snap.get('pay_card') or '') or None
-            self.note('수단 선택', f'{card}{"/" + card_issuer if card_issuer else ""} — 결제수단 견적 최저')
+            self.note(
+                '수단 선택',
+                f'{card}{"/" + card_issuer if card_issuer else ""} — 결제수단 견적 최저',
+            )
         elif card and card not in methods:
             raise AgentFailure(
                 'fail', f'지시받은 카드가 결제수단에 없다: {card}', FailReason.CARD_MISSING
@@ -1048,7 +1108,10 @@ class BuyerAgent(AgentBase):
             raise AgentFailure('needs_human', f'직배/까대기 판정 불가 — {why}', FailReason.UNKNOWN)
         if self._order_type_noted != (order.order_no, kind):
             self._order_type_noted = (order.order_no, kind)
-            self.note('배송 종류', f'{"까대기" if kind == "kkadaegi" else "선물" if kind == "gift" else "직배"} — {why}')
+            self.note(
+                '배송 종류',
+                f'{"까대기" if kind == "kkadaegi" else "선물" if kind == "gift" else "직배"} — {why}',
+            )
         return kind
 
     def _fetch_shipping(self, a: Assignment, snap: dict[str, object]) -> dict[str, object]:
@@ -1101,14 +1164,29 @@ class BuyerAgent(AgentBase):
         if account:
             args['profile'] = account
         try:
-            out = self.json_tool(
-                'run_script', name=f'{source.key}_select_shipping', args=json.dumps(args, ensure_ascii=False)
+            out = self.script_json(
+                f'{source.key}_select_shipping',
+                args,
+                goal=(
+                    '주문서 배송지 변경 목록에서 이름·주소가 args 와 같은 기존 배송지를 골라 주문서에 반영하고, '
+                    '반영된 이름·주소를 되읽어 ok:true 와 함께 돌려준다. 목록에 정말 없을 때만 ok:false. 새 배송지는 만들지 않는다.'
+                ),
+                check=lambda o: (
+                    None
+                    if o.get('ok') and shipping_matches(shipping, o)
+                    else f'기존 배송지 선택 실패: note={o.get("note")}'
+                ),
             )
         except AgentFailure as e:
             self.note('배송지', mask_text(f'기존 항목 선택 불가({e.reason[:60]}) — 신규 입력으로'))
             return False
         if not out.get('ok') or not shipping_matches(shipping, out):
-            self.note('배송지', mask_text(f'기존 항목 선택 실패({str(out.get("note") or "")[:60]}) — 신규 입력으로'))
+            self.note(
+                '배송지',
+                mask_text(
+                    f'기존 항목 선택 실패({str(out.get("note") or "")[:60]}) — 신규 입력으로'
+                ),
+            )
             return False
         self.note('배송지', '목록의 사무실 배송지를 골라 주문서에 반영')
         return True
@@ -1124,10 +1202,13 @@ class BuyerAgent(AgentBase):
         if account:
             args['profile'] = account
 
-        applied = self.json_tool(
-            'run_script',
-            name=source_of(self.spec.name).set_shipping_script,
-            args=json.dumps(args, ensure_ascii=False),
+        applied = self.script_json(
+            source_of(self.spec.name).set_shipping_script,
+            args,
+            goal='주문서 배송지에 args 의 이름·주소를 입력하고, 입력된 값을 되읽어 원래 키 그대로 돌려준다.',
+            check=lambda o: (
+                None if shipping_matches(shipping, o) else '입력 후 되읽은 이름·주소가 다르다'
+            ),
         )
         # 원문끼리 비교하지 않는다 — 마스킹한 값끼리만 비교해서 판단에도 개인정보를 안 남긴다
         if not shipping_matches(shipping, applied):
@@ -1146,12 +1227,14 @@ class BuyerAgent(AgentBase):
         spec = source_of(self.spec.name)
         if not spec.shipping_confirm:
             return
-        confirmed = self.json_tool(
-            'run_script',
-            name=spec.confirm_shipping_script,
-            args=json.dumps(
-                {k: v for k, v in args.items() if k in ('name', 'address', 'profile')},
-                ensure_ascii=False,
+        confirmed = self.script_json(
+            spec.confirm_shipping_script,
+            {k: v for k, v in args.items() if k in ('name', 'address', 'profile')},
+            goal='배송지 폼을 저장·적용해 주문서에 반영하고, 주문서에서 되읽은 이름·주소를 ok:true 와 함께 돌려준다.',
+            check=lambda o: (
+                None
+                if o.get('ok') and shipping_matches(shipping, o)
+                else f'확정 실패: note={o.get("note")}'
             ),
         )
         if not confirmed.get('ok') or not shipping_matches(shipping, confirmed):

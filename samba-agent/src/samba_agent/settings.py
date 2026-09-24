@@ -1,5 +1,6 @@
 """`.env` → 설정 객체. 비밀은 SecretStr 로만 들고 다녀 로그·프롬프트에 새지 않는다."""
 
+import os
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -8,6 +9,10 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # 이 파일 기준 samba-agent/ 폴더 — registry.yaml 과 rules/ 가 있는 곳
 DEFAULT_ROOT = Path(__file__).resolve().parents[2]
+# 앱(SAMBA Browser)의 저장 스크립트 파일 — 하네스는 앱과 같은 PC 에서 돈다
+DEFAULT_SITE_SCRIPTS_FILE = (
+    Path(os.environ.get('APPDATA', '')) / 'SAMBA Browser' / 'site-scripts.json'
+)
 
 
 class Settings(BaseSettings):
@@ -61,6 +66,13 @@ class Settings(BaseSettings):
     dry_run_digits: int = Field(default=0, ge=0, le=3, alias='SAMBA_DRY_RUN_DIGITS')
     # 작업이 끝나도 브라우저 탭을 남긴다(다음 작업 시작 때 정리) — 사람이 과정을 눈으로 확인하려고
     keep_tabs: bool = Field(default=False, alias='SAMBA_KEEP_TABS')
+    # 저장 스크립트가 실패하면 AI 가 화면을 보고 고쳐 이어 간다(검증 통과한 코드만 저장, 이전 판은 이력 폴더)
+    repair_enabled: bool = Field(default=True, alias='SAMBA_REPAIR_ENABLED')
+    repair_model: str = Field(default='claude-opus-5-5', alias='SAMBA_REPAIR_MODEL')
+    repair_timeout_s: float = Field(default=900.0, ge=60, alias='SAMBA_REPAIR_TIMEOUT_S')
+    site_scripts_file: Path = Field(
+        default=DEFAULT_SITE_SCRIPTS_FILE, alias='SAMBA_SITE_SCRIPTS_FILE'
+    )
 
     @field_validator('slack_allowed_users', mode='before')
     @classmethod

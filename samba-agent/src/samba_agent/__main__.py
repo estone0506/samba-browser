@@ -14,6 +14,7 @@ from collections.abc import Callable
 from langgraph.checkpoint.sqlite import SqliteSaver
 from slack_bolt import App
 
+from samba_agent.agents.buyer import BuyerAgent
 from samba_agent.agents.factory import build_agents
 from samba_agent.agents.registry import Registry
 from samba_agent.api.server import build_app, serve
@@ -30,6 +31,7 @@ from samba_agent.queue.intake import Intake
 from samba_agent.queue.orders import LOOKUP_TOOLS, parse_order_fn
 from samba_agent.queue.tabs import TAB_TOOLS, TabJanitor
 from samba_agent.queue.worker import Worker, WorkerDeps
+from samba_agent.repair import FileScriptSource, ScriptHistory, ScriptRepairer
 from samba_agent.settings import Settings, load_settings
 from samba_agent.supervisor.graph import build_supervisor
 from samba_agent.version import harness_version
@@ -114,6 +116,16 @@ def main() -> None:
     _parse_order = parse_order_fn(wave, lookup_bridge)
 
     agents = build_agents(reg, bridge, decide, wave, settings.compare_accounts_max)
+    if settings.repair_enabled:
+        # 스크립트 자가 수리 — 구매 에이전트가 저장 스크립트 실패를 AI 로 고쳐 이어 간다
+        repairer = ScriptRepairer(model=settings.repair_model, timeout_s=settings.repair_timeout_s)
+        script_source = FileScriptSource(settings.site_scripts_file)
+        script_history = ScriptHistory(settings.root / 'script-history')
+        for agent in agents.values():
+            if isinstance(agent, BuyerAgent):
+                agent.repairer = repairer
+                agent.script_source = script_source
+                agent.script_history = script_history
     allowed_pay = {x.strip() for x in settings.allowed_pay_providers.split(',') if x.strip()}
     if allowed_pay:
         # 결제에 쓸 수 있는 수단을 좁힌다(사용자 설정) — 구매 에이전트의 결제수단 견적이 이 안에서만 고른다
