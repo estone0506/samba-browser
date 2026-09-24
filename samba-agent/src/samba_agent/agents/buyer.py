@@ -196,6 +196,14 @@ def cheapest_quotes(
         if q.get('available') is False or q.get('allowed') is False or q.get('registered') is False:
             # 낼 수 없는 수단(무신사머니 연결 계좌 없음·잔액 부족), 허용 안 된 조합(토스페이×계좌 등), 미등록 카드
             continue
+        # '무신사 삼성카드'는 무신사 제휴카드다 — 사용자에겐 없다(일반 삼성카드와 다르다, 사용자 2026-09-24).
+        # 그 카드 전용 즉시할인(-5,000)을 받을 수 있다고 견적하면 안 된다
+        if card and ('무신사 삼성' in card or '무신사삼성' in card):
+            continue
+        if card and not any(n in card for n in ALLOWED_CARD_ISSUERS):
+            # 허용 카드사(현대·KB·롯데·신한·농협) 밖 — 견적만 싸고 실제로는 기본 카드로 결제된다
+            # (실기: 삼성카드 할인가 49,310 으로 골랐는데 롯데카드로 51,360 결제)
+            continue
         if payable is not None:
             provider = quote_provider(method, card)
             if provider is None or provider not in payable:

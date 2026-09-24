@@ -391,3 +391,15 @@ def test_quote_cost_adds_points_used_from_order_prep() -> None:
     raw = [{'method': '무신사페이', 'card': '롯데카드', 'cost': 51360, 'points_used': 6150}]
     best = cheapest_quotes(raw, None, None)[0]
     assert best['cost'] == 56483
+
+
+def test_quotes_drop_disallowed_card_issuers() -> None:
+    """허용 카드사 밖(삼성) 견적은 뺀다 — 무신사머니가 남는다."""
+    from samba_agent.agents.buyer import cheapest_quotes
+
+    raw = [
+        {'method': '무신사페이', 'card': '무신사 삼성카드', 'cost': 49310},
+        {'method': '무신사머니', 'card': None, 'cost': 51360, 'reward': 2000},
+    ]
+    rows = cheapest_quotes(raw, None, None)
+    assert [r['method'] for r in rows] == ['무신사머니']
