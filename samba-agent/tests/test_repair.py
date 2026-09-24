@@ -207,6 +207,7 @@ def test_repairer_loop_uses_only_validated_code(monkeypatch) -> None:
     ran: list[str] = []
 
     def call(tool: str, args: dict[str, object]) -> str:
+        assert args.get('safety') == 'no_pay'  # 앱 결제 버튼 차단을 늘 켠다
         code = str(args['code'])
         ran.append(code)
         return '{"cost": 0}' if 'bad' in code else '{"cost": 900}'
@@ -298,3 +299,22 @@ def test_history_recent_problems(tmp_path) -> None:
     hist.record('s', 'a', 'b', {'problem': '원가 못 읽음'})
     assert any('원가 못 읽음' in p for p in hist.recent_problems('s'))
     assert hist.recent_problems('none') == []
+
+
+def test_app_supports_pay_guard_detects_old_app() -> None:
+    from samba_agent.repair import app_supports_pay_guard
+
+    class R:
+        def __init__(self, result: str) -> None:
+            self.result = result
+
+    class Old:
+        def call(self, name, **kw):
+            return R('"probe-ran"')  # 예전 앱: 모르는 safety 를 무시하고 실행
+
+    class New:
+        def call(self, name, **kw):
+            raise RuntimeError('400 invalid enum')  # 새 앱: 스키마 거절
+
+    assert not app_supports_pay_guard(Old())
+    assert app_supports_pay_guard(New())

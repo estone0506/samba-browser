@@ -32,7 +32,12 @@ from samba_agent.queue.intake import Intake
 from samba_agent.queue.orders import LOOKUP_TOOLS, parse_order_fn
 from samba_agent.queue.tabs import TAB_TOOLS, TabJanitor
 from samba_agent.queue.worker import Worker, WorkerDeps
-from samba_agent.repair import FileScriptSource, ScriptHistory, ScriptRepairer
+from samba_agent.repair import (
+    FileScriptSource,
+    ScriptHistory,
+    ScriptRepairer,
+    app_supports_pay_guard,
+)
 from samba_agent.settings import Settings, load_settings
 from samba_agent.supervisor.graph import build_supervisor
 from samba_agent.version import harness_version
@@ -117,7 +122,15 @@ def main() -> None:
     _parse_order = parse_order_fn(wave, lookup_bridge)
 
     agents = build_agents(reg, bridge, decide, wave, settings.compare_accounts_max)
-    if settings.repair_enabled:
+    repair_on = settings.repair_enabled
+    if repair_on and not app_supports_pay_guard(bridge.scoped(['run_js'])):
+        # 앱이 run_js safety:no_pay(결제 버튼 클릭 차단)를 모르면 AI 수리를 켜지 않는다 — 예전 앱은 이 값을
+        # 조용히 무시해 가드 없이 돈다(2026-09-24 실결제 사고). 앱을 재시작하면 켜진다
+        log.warning(
+            '앱이 결제 버튼 차단(safety no_pay)을 지원하지 않아 AI 스크립트 수리를 끈다 — 앱 재시작 필요'
+        )
+        repair_on = False
+    if repair_on:
         # 스크립트 자가 수리 — 구매 에이전트가 저장 스크립트 실패를 AI 로 고쳐 이어 간다
         repairer = ScriptRepairer(model=settings.repair_model, timeout_s=settings.repair_timeout_s)
         script_source = FileScriptSource(settings.site_scripts_file)

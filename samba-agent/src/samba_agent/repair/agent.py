@@ -133,6 +133,15 @@ def check_candidate(code: str, allow_pay_button: bool = False) -> str | None:
     return None
 
 
+def app_supports_pay_guard(bridge: Any) -> bool:
+    """앱의 run_js 가 safety:no_pay 를 아는가. 모르는 값을 주면 새 앱은 거절하고 예전 앱은 무시하고 실행한다."""
+    try:
+        out = bridge.call('run_js', code='return "probe-ran"', safety='__probe__').result
+    except Exception:  # noqa: BLE001 — 새 앱의 스키마 거절(4xx)이 여기로 온다
+        return True
+    return 'probe-ran' not in out
+
+
 class ScriptRepairer:
     """저장 스크립트 1건을 고친다. 에이전트끼리 공유해도 된다(상태는 호출마다 새로 만든다)."""
 
@@ -202,7 +211,9 @@ class ScriptRepairer:
             return {'content': [{'type': 'text', 'text': body[:_RESULT_MAX]}]}
 
         async def run(code: str) -> str:
-            return await asyncio.to_thread(call, 'run_js', {'code': code})
+            # 앱이 결제 확정 버튼 클릭·Enter 제출을 요소 단위로 거절한다(글자 차단만으로는 요소 번호 클릭을 못 막는다 —
+            # 2026-09-24 수리 시험 중 결제하기 클릭으로 실결제 발생)
+            return await asyncio.to_thread(call, 'run_js', {'code': code, 'safety': 'no_pay'})
 
         @tool(
             'run_js',

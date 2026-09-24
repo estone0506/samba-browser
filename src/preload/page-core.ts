@@ -474,6 +474,10 @@ export function textOf(id: number): string {
   const el = get(id)
   if (!el) return ''
   const parts = [labelOf(el)]
+  // 버튼·링크 안의 글자 조각(예: 결제하기 버튼 안의 '37,850원')을 누르면 그 버튼이 눌린다 —
+  // 감싸는 버튼·링크의 글자도 함께 봐야 위험 판정(결제 버튼 차단)이 새지 않는다
+  const actionable = el.parentElement?.closest('button, a, [role="button"], [role="link"]')
+  if (actionable && actionable !== el) parts.push(labelOf(actionable as HTMLElement))
   // 입력칸은 라벨이 비는 경우가 많아 name/placeholder 도 함께 본다
   if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
     const name = el.getAttribute('name')

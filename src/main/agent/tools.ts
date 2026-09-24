@@ -138,6 +138,10 @@ export function formatFillValue(value: string, format?: FillFormat): string | nu
 const SECRET_TARGET_ITEM_TYPES: VaultItemType[] = ['login', 'password']
 // 대상 요소가 비밀 입력칸이 아닐 때 돌려주는 문자열
 const NOT_A_SECRET_FIELD = 'refused: target is not a secret input'
+// run_js safety:no_pay 에서 누르지 않는 결제 확정 버튼 글자(요소 자신 + 감싸는 버튼·링크 글자로 판정)
+export const PAY_CLICK_RE =
+  /결제\s*하기|입력\s*완료|구매\s*확정|결제\s*승인|주문\s*확정|place\s*order|pay\s*now/i
+const PAY_CLICK_REFUSAL = 'refused: safety no_pay — payment confirm buttons cannot be clicked here'
 // 접근 정책이 never 일 때 돌려주는 문자열
 const VAULT_ACCESS_NEVER = 'refused: KeyMaster access policy is Never'
 // 현재 호스트가 제외 도메인 목록에 있을 때 돌려주는 문자열
@@ -1530,8 +1534,16 @@ overlays left: ${after.length}${kept}`
     return pool[Math.max(nth, 0)]?.id ?? -1
   }
 
-  const makeRunJsBridge = (clicked?: string[]): RunJsBridge => {
+  const makeRunJsBridge = (clicked?: string[], noPay = false): RunJsBridge => {
     let lastTree: string | undefined
+    // noPay(safety no_pay): 결제 확정 버튼(결제하기·입력완료 …)은 누르지 않는다 — 하네스의 AI 스크립트 수리가 켠다.
+    // 비밀번호 없는 간편결제는 결제하기 한 번에 결제가 끝난다(실기 2026-09-24). 판정은 페이지 실제 글자
+    const payRefusal = async (id: number): Promise<string | null> => {
+      if (!noPay) return null
+      const tab = activeOr(ctx)
+      const text = tab ? await pageBridge.textOf(tab, id).catch(() => '') : ''
+      return PAY_CLICK_RE.test(text) ? `${PAY_CLICK_REFUSAL} (${text.slice(0, 40)})` : null
+    }
     return async (name, args) => {
       runJsTick()
       switch (name) {
@@ -1564,6 +1576,8 @@ overlays left: ${after.length}${kept}`
           }
         }
         case 'page.click': {
+          const blocked = await payRefusal(asId(args[0]))
+          if (blocked) return blocked
           // 학습용: 번호로 누른 요소가 무슨 글자였는지 남긴다
           if (clicked) {
             const tab = activeOr(ctx)
@@ -1575,6 +1589,8 @@ overlays left: ${after.length}${kept}`
         case 'page.idOf':
           return idOfText(asText(args[0]), asId(args[1]))
         case 'page.clickNative': {
+          const blocked = await payRefusal(asId(args[0]))
+          if (blocked) return blocked
           // 요소 가운데 좌표에 진짜 마우스 클릭(sendInputEvent). 프레임 안 요소는 좌표를 몰라 거절한다
           const tab = activeOr(ctx)
           if (!tab) return 'no active tab'
@@ -1587,6 +1603,8 @@ overlays left: ${after.length}${kept}`
         case 'page.clickText': {
           const id = await idOfText(asText(args[0]), asId(args[1]))
           if (id < 0) return `not found: no element with text "${asText(args[0])}"`
+          const blocked = await payRefusal(id)
+          if (blocked) return blocked
           return doClick(id, asText(args[0]))
         }
         case 'page.type': {
@@ -1594,7 +1612,8 @@ overlays left: ${after.length}${kept}`
           if (!tab) return 'no active tab'
           // 비밀 입력칸에는 run_js 로 값을 넣지 않는다 — fill_secret 만이 비밀 경로다
           if (await pageBridge.isSecretField(tab, asId(args[0]))) return RUN_JS_SECRET_REFUSAL
-          return doType(asId(args[0]), asText(args[1]), args[2] === true)
+          // safety no_pay 면 Enter 제출은 하지 않는다(주문서 폼 제출 = 결제 가능)
+          return doType(asId(args[0]), asText(args[1]), !noPay && args[2] === true)
         }
         case 'page.select':
           return doSelect(asId(args[0]), asText(args[1]))
@@ -1672,13 +1691,17 @@ overlays left: ${after.length}${kept}`
       'tabs.list()/switch(id)/close(id)/open({url, profile}), sleep(ms), log(...). ' +
       'Use log() and return a value; both come back to you. ' +
       'fill_secret, login and the phone tools are NOT available here - call those tools directly.',
-    { code: z.string().describe(`JavaScript, ${RUN_JS_MAX_CODE} characters or fewer`) },
-    ({ code }) => {
+    {
+      code: z.string().describe(`JavaScript, ${RUN_JS_MAX_CODE} characters or fewer`),
+      // 하네스의 AI 스크립트 수리 전용 — 결제 확정 버튼 클릭·Enter 제출을 앱이 거절한다
+      safety: z.enum(['no_pay']).optional().describe('no_pay: refuse clicks on payment-confirm buttons')
+    },
+    ({ code, safety }) => {
       const clicked: string[] = []
       return guard(
         runJsLabel(code),
         async () => {
-          const result = await runSandbox(code, makeRunJsBridge(clicked))
+          const result = await runSandbox(code, makeRunJsBridge(clicked, safety === 'no_pay'))
           ctx.onRunJs?.({ code, ok: isToolResultOk(result, true), url: currentUrl(), clicked })
           return result
         },
