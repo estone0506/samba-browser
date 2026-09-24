@@ -12,11 +12,12 @@ import json
 from samba_agent.agents.base import AgentBase, AgentFailure, Decision, run_agent
 from samba_agent.agents.contracts import AgentResult, Assignment
 from samba_agent.agents.source_detail import (
-    SOURCE_DETAIL_SCRIPT,
     actual_cost,
     detail_args,
     detail_check,
     detail_goal,
+    detail_script,
+    site_of,
 )
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_text
@@ -257,7 +258,7 @@ class RecorderAgent(AgentBase):
         self.step('recorder: 소싱처 주문 상세 읽기')
         try:
             detail = self.script_json(
-                SOURCE_DETAIL_SCRIPT,
+                detail_script(site_of(a)),
                 detail_args(a, sourcing_no),
                 goal=detail_goal(str(a.handoff.get('buy_source') or a.order.source)),
                 check=detail_check(sourcing_no),

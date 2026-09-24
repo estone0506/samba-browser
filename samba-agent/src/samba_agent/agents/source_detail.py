@@ -13,6 +13,19 @@ from samba_agent.agents.contracts import Assignment
 SOURCE_DETAIL_SCRIPT = 'source_order_detail'
 
 
+def detail_script(site: str) -> str:
+    """소싱처별 주문 상세 스크립트 이름(`<key>_order_detail`). 사이트마다 화면이 달라 하나로 쓰면 수리가 서로를 깬다."""
+    from samba_agent.sources import default_sources
+
+    src = default_sources().by_id(site)
+    return f'{src.key}_order_detail' if src is not None else SOURCE_DETAIL_SCRIPT
+
+
+def site_of(a: Assignment) -> str:
+    """실제로 산 사이트(교차 비교면 주문 소싱처와 다르다)."""
+    return str(a.handoff.get('buy_source') or a.order.source)
+
+
 def detail_args(a: Assignment, source_order_no: object) -> dict[str, object]:
     """상세 스크립트 인자 — 삼바 주문번호·소싱처·소싱 주문번호·산 계정(프로필)."""
     site = str(a.handoff.get('buy_source') or a.order.source)  # 실제로 산 사이트
@@ -28,9 +41,10 @@ def detail_args(a: Assignment, source_order_no: object) -> dict[str, object]:
 def detail_goal(site: str) -> str:
     return (
         f'소싱처({site}) 계정 profile 의 주문 상세에서 주문번호 source_order_no 의 주문을 열어 '
-        '{source_order_no, status, paid(결제 금액 숫자), points_used(사용한 적립금 숫자, 없으면 0), '
-        'reward(후기 적립을 뺀 이번 주문 적립 합계 숫자 — 머니 결제 적립·등급 적립 등, 없으면 0), '
-        'card(결제 수단 글자, 예: 무신사페이 - 롯데카드)} 를 돌려준다. 주문을 바꾸거나 취소하지 않는다.'
+        '{source_order_no, status, paid(결제 금액 숫자), points_used(사용한 적립금·포인트 숫자, 없으면 0), '
+        'reward(후기 적립을 뺀 이번 주문 적립·포인트 합계 숫자 — 머니 결제 적립·등급 적립·구매 적립 포인트·네이버페이 적립 '
+        '포인트 등, 없으면 0), card(결제 수단과 카드사 글자, 예: 무신사페이 - 롯데카드 / 네이버페이 - 현대카드)} 를 돌려준다. '
+        '카드사는 청구할인(현대 ×0.973, 롯데·KB ×0.98) 계산에 쓴다. 주문을 바꾸거나 취소하지 않는다.'
     )
 
 

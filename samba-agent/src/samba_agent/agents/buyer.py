@@ -958,8 +958,11 @@ class BuyerAgent(AgentBase):
                 source_of(self.spec.name).payment_quotes_script,
                 {'profile': account, 'methods': methods},
                 goal=(
-                    f'주문서에서 결제수단 {methods} 을 하나씩 골라 각 수단의 할인·적립 반영 결제 금액을 읽어 '
-                    'quotes 목록(원래 키 그대로)으로 돌려준다. 결제하기는 누르지 않는다.'
+                    f'주문서에서 결제수단 {methods} 을 하나씩 골라 각 수단의 할인 반영 결제 금액(cost)을 읽어 '
+                    'quotes 목록(원래 키 그대로)으로 돌려준다. 줄마다 reward 에는 후기 적립을 뺀 적립 합계(머니 결제 적립·'
+                    '등급 적립·네이버페이 적립 포인트 등)를, card 에는 결제에 쓸 카드사 이름(간편결제 안 카드 포함, 예: 현대카드)을, '
+                    'points_used 에는 사용한 적립금·포인트를 넣는다 — 원가 = cost × 카드 청구할인 − reward + points_used. '
+                    '결제하기는 누르지 않는다.'
                 ),
                 check=lambda o: (
                     None

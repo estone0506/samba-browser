@@ -5,11 +5,12 @@ import json
 from samba_agent.agents.base import AgentBase, AgentFailure, Decision, run_agent
 from samba_agent.agents.contracts import AgentResult, Assignment
 from samba_agent.agents.source_detail import (
-    SOURCE_DETAIL_SCRIPT,
     actual_cost,
     detail_args,
     detail_check,
     detail_goal,
+    detail_script,
+    site_of,
 )
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_value
@@ -72,7 +73,7 @@ class VerifierAgent(AgentBase):
         want_no = a.expected.get('source_order_no')
         # 스크립트가 없거나 실패하면 AI 가 고쳐 이어 간다(실기: source_order_detail 없음으로 검증만 실패)
         source = self.script_json(
-            SOURCE_DETAIL_SCRIPT,
+            detail_script(site_of(a)),
             detail_args(a, want_no),
             goal=detail_goal(str(a.handoff.get('buy_source') or a.order.source)),
             check=detail_check(want_no),
