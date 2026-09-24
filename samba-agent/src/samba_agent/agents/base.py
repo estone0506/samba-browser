@@ -224,7 +224,13 @@ class AgentBase:
             allow_pay_button=allow_pay_button,
         )
         tried[key] = outcome.status
-        log.info('스크립트 수리 결과: %s %s (시험 %d회)', name, outcome.status, outcome.tests)
+        log.info(
+            '스크립트 수리 결과: %s %s (시험 %d회) — %s',
+            name,
+            outcome.status,
+            outcome.tests,
+            mask_text(str(outcome.reason))[:200],
+        )
         if outcome.status == 'genuine':
             self.note(
                 '스크립트 수리', mask_text(f'{name}: 스크립트 문제 아님 — {outcome.reason[:160]}')
