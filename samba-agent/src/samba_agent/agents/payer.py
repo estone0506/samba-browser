@@ -18,6 +18,21 @@ from samba_agent.wave.client import WaveClient, WaveError
 
 # 결제 성공을 확인하는 문구. 이걸 보기 전에는 ok 를 내지 않는다(브리프 §완료조건)
 PAY_SUCCESS_MARKERS = ('결제 완료', '결제완료', '주문완료', '주문 완료', 'approved')
+# 결제 "전" 검사용 — 결제창·주문서에도 흔한 '결제 완료 시 적립' 같은 글자로 멈추지 않게 좁힌다
+# (실기: 무신사페이 결제창 문구에 걸려 결제 전 pay_interrupted). 주문 완료 주소의 탭이 있거나,
+# 화면에 주문 완료 문구와 주문번호가 함께 있어야 이미 결제된 것으로 본다
+_PAID_URL_RE = re.compile(
+    r'order/result|order/complete|order-complete|orderComplete|order_complete'
+)
+_PAID_TEXT = ('주문이 완료', '주문완료', '주문 완료')
+
+
+def looks_already_paid(list_tabs_output: str, page: str) -> bool:
+    """재진입 때 이미 결제가 끝났는지(재결제 금지). 주문 완료 탭이 있거나 완료 문구+주문번호가 함께 보이면 True."""
+    if _PAID_URL_RE.search(list_tabs_output or ''):
+        return True
+    return any(t in page for t in _PAID_TEXT) and '주문번호' in page
+
 
 # 'refused: <reason>' 응답은 공통 껍데기(agents/base.tool)가 사유로 옮긴다(리뷰 지적 — I5).
 # 여기서는 접두사 없이 오는 과거 형식만 한 번 더 본다
@@ -538,7 +553,11 @@ class PayerAgent(AgentBase):
         # 여기까지 다시 왔을 때 결제를 두 번 하지 않는다(리뷰 지적 — Critical 2 ③)
         self.step('payer: 이미 결제됐는지 확인')
         before = self.tool('get_page')
-        if any(m in before for m in PAY_SUCCESS_MARKERS):
+        try:
+            listed = self.tool('list_tabs')
+        except AgentFailure:
+            listed = ''
+        if looks_already_paid(listed, before):
             self.note('결제 전 확인', mask_text(before[:200]))
             raise AgentFailure(
                 'needs_human',

@@ -299,7 +299,8 @@ def test_권한_부족이면_재시도_없이_바로_실패한다(reg):
 def test_이미_결제된_화면이면_폰_승인을_부르지_않는다(reg):
     # 리뷰 지적 — Critical 2 ③: 폰 승인 전에 주문 상세를 1회 읽어 재결제를 막는다
     respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
-    respx.post(f'{URL}/tool/get_page').mock(return_value=page('결제 완료되었습니다'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('주문이 완료되었습니다 주문번호 A12345'))
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=page('[]'))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[12] textbox "주문자 이름"'))
     fill = respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
     pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
@@ -528,6 +529,7 @@ def test_결제창이_아직_없으면_한번_기다렸다_다시_본다(reg):
     wait = respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
     list_tabs = respx.post(f'{URL}/tool/list_tabs').mock(
         side_effect=[
+            list_tabs_page(None),  # 결제 전 '이미 결제됐나' 검사
             list_tabs_page(None),
             list_tabs_page(TOSS_POPUP_URL),
             list_tabs_page(TOSS_POPUP_URL),
@@ -914,3 +916,11 @@ def test_웹_키패드가_늦게_뜨면_기다렸다_다시_누른다(reg, monke
     a._dry_run = False
     a._web_pay(assignment(reg, dry_run=False))
     assert fill.call_count == 2
+
+
+def test_결제_전_검사는_결제창_일반_문구로_멈추지_않는다():
+    from samba_agent.agents.payer import looks_already_paid
+
+    assert not looks_already_paid('[]', '무신사페이 결제 완료 시 최대 5% 적립 approved')
+    assert looks_already_paid('[{"url":"https://www.musinsa.com/order/result/123"}]', '')
+    assert looks_already_paid('[]', '주문이 완료되었습니다 주문번호 202609241546330001')
