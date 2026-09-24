@@ -10,7 +10,8 @@ import { timingSafeEqual } from 'node:crypto'
 import type { ToolSession } from '../agent/runner'
 
 export interface BridgeDeps {
-  openSession: (onStep: (label: string, ok: boolean) => void) => ToolSession
+  /** lane 이 있으면 그 레인 세션(다른 레인과 동시에 열린다) */
+  openSession: (onStep: (label: string, ok: boolean) => void, lane?: string) => ToolSession
   token: () => string
   toolTimeoutMs?: number
   /** 제한 시간 뒤에도 도구 호출이 안 끝나면 이만큼 더 기다렸다가 강제로 busy 를 푼다 */
@@ -27,6 +28,8 @@ export class BridgeServer {
   private server: Server | null = null
   /** 지금 도구를 돌리는 중인가 — 한 손발이라 동시에 하나만 */
   private busy = false
+  /** 지금 도는 레인들 — 레인이 다르면 동시에 돈다(하네스 계정 동시 처리) */
+  private busyLanes = new Set<string>()
 
   constructor(private readonly deps: BridgeDeps) {}
 
@@ -106,7 +109,14 @@ export class BridgeServer {
   }
 
   private async tool(name: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const rawLane = req.headers['x-samba-lane']
+    const lane =
+      typeof rawLane === 'string' && /^[A-Za-z0-9_.@-]{1,64}$/.test(rawLane) ? rawLane : undefined
+    // 레인 없는 요청은 단독(다른 요청·레인이 없어야 한다). 레인 요청은 같은 레인만 겹치지 않으면 된다
     if (this.busy) return json(res, 409, { error: 'busy' })
+    if (lane ? this.busyLanes.has(lane) : this.busyLanes.size > 0) {
+      return json(res, 409, { error: 'busy' })
+    }
     let body: string
     try {
       body = await readBody(req)
@@ -125,7 +135,7 @@ export class BridgeServer {
     const steps: Array<{ label: string; ok: boolean }> = []
     let session: ToolSession
     try {
-      session = this.deps.openSession((label, ok) => steps.push({ label, ok }))
+      session = this.deps.openSession((label, ok) => steps.push({ label, ok }), lane)
     } catch {
       return json(res, 409, { error: 'busy' })
     }
@@ -133,7 +143,15 @@ export class BridgeServer {
       session.dispose()
       return json(res, 404, { error: `unknown tool: ${name}` })
     }
-    this.busy = true
+    const hold = (): void => {
+      if (lane) this.busyLanes.add(lane)
+      else this.busy = true
+    }
+    const free = (): void => {
+      if (lane) this.busyLanes.delete(lane)
+      else this.busy = false
+    }
+    hold()
     const timeoutMs = this.deps.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS
     let timer: NodeJS.Timeout | undefined
     const callPromise = session.call(name, args)
@@ -168,7 +186,7 @@ export class BridgeServer {
           if (why !== 'finished')
             console.warn(`브릿지: 도구 호출이 안 끝나 강제로 세션을 닫는다 (${why})`)
           session.dispose()
-          this.busy = false
+          free()
         }
         const graceMs = this.deps.hangGraceMs ?? DEFAULT_HANG_GRACE_MS
         const grace = setTimeout(() => release('hang'), graceMs)
@@ -183,7 +201,7 @@ export class BridgeServer {
           })
       } else {
         session.dispose()
-        this.busy = false
+        free()
       }
     }
   }

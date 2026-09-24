@@ -244,7 +244,7 @@ export function registerIpc(
   agent.setSiteScripts(new SiteScriptStore(join(app.getPath('userData'), 'site-scripts.json')))
   // 하네스 브릿지 — 밖의 LangGraph 하네스가 이 앱의 도구를 부르는 문. 설정으로 켜고 끈다
   const bridge = new BridgeServer({
-    openSession: (onStep) => agent.createToolSession({ onStep }),
+    openSession: (onStep, lane) => agent.createToolSession({ onStep, ...(lane ? { lane } : {}) }),
     token: () => settings.get().bridgeToken
   })
   const applyBridge = (): Promise<void> =>

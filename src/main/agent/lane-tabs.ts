@@ -1,0 +1,76 @@
+// 레인(lane) — 하네스가 계정마다 동시에 돌리는 브릿지 호출을 서로 떼어 놓는 탭 보기.
+//
+// 왜: 모든 페이지 조작이 앱 전체에 하나뿐인 "지금 작업 중인 탭"(agentTarget)을 쓴다. 계정 4개를
+// 동시에 돌리면 서로의 탭을 건드린다(실기 2026-09-24: 계정 비교가 순서대로라 주문 1건에 5~8분).
+//
+// 레인은 진짜 TabManager 를 감싼 보기다.
+//  - 레인이 연 탭과 그 탭에서 뜬 팝업만 목록에 보인다(저장 스크립트는 탭 목록에서 제 탭을 찾는다)
+//  - "지금 작업 중인 창"을 레인이 따로 쥔다 — 전역 활성 탭을 바꾸지 않는다
+//  - 그 밖의 기능(페이지 조작·대화상자·세션)은 진짜 TabManager 그대로다
+import type { Tab, TabManager } from '../browser/tab-manager'
+import type { AgentTarget } from '../browser/targets'
+
+export interface LaneState {
+  owned: Set<string>
+  current: string | null
+}
+
+export function newLaneState(): LaneState {
+  return { owned: new Set(), current: null }
+}
+
+/** 레인 보기. state 는 레인 이름마다 하나 — 브릿지 요청(세션)이 바뀌어도 이어진다 */
+export function laneTabs(real: TabManager, state: LaneState): TabManager {
+  const mine = (t: AgentTarget): boolean =>
+    state.owned.has(t.id) ||
+    (t.kind === 'popup' && typeof t.openerId === 'string' && state.owned.has(t.openerId))
+  const alive = (id: string): boolean => real.listTargets().some((t) => t.id === id && mine(t))
+  const overrides: Partial<Record<keyof TabManager, unknown>> = {
+    list: () => real.list().filter((t) => state.owned.has(t.id)),
+    listTargets: (): AgentTarget[] =>
+      real
+        .listTargets()
+        .filter(mine)
+        .map((t) => ({ ...t, active: t.id === state.current })),
+    active: (): Tab | null =>
+      state.current && state.owned.has(state.current) ? real.get(state.current) : null,
+    agentTarget: (): Tab | null => {
+      if (state.current && alive(state.current)) return real.targetTab(state.current)
+      // 작업 창이 닫혔으면(결제창 등) 레인의 마지막 탭으로 돌아간다
+      const last = [...state.owned].reverse().find((id) => real.get(id) !== null) ?? null
+      state.current = last
+      return last ? real.get(last) : null
+    },
+    focusTarget: (id: string): void => {
+      if (alive(id)) state.current = id
+    },
+    activate: (id: string): void => {
+      if (state.owned.has(id)) state.current = id
+    },
+    create: (opts: Parameters<TabManager['create']>[0]): ReturnType<TabManager['create']> => {
+      const t = real.create(opts)
+      state.owned.add(t.id)
+      state.current = t.id
+      return t
+    },
+    close: (id: string): void => {
+      if (!state.owned.has(id)) return
+      real.close(id)
+      state.owned.delete(id)
+      if (state.current === id) state.current = null
+    },
+    closeTarget: (id: string): void => {
+      if (!alive(id)) return
+      real.closeTarget(id)
+      state.owned.delete(id)
+      if (state.current === id) state.current = null
+    }
+  }
+  return new Proxy(real, {
+    get(target, prop, receiver) {
+      if (typeof prop === 'string' && prop in overrides) return overrides[prop as keyof TabManager]
+      const v: unknown = Reflect.get(target, prop, receiver)
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v
+    }
+  })
+}

@@ -490,6 +490,13 @@ export class TabManager {
   }
 
   /** id 로 팝업을 찾는다(살아 있는 것만) */
+  /** id 로 탭 또는 살아 있는 팝업(Tab 모양). 레인 보기(lane-tabs)가 제 작업 창을 돌려줄 때 쓴다 */
+  targetTab(id: string): Tab | null {
+    const popup = this.popupById(id)
+    if (popup && !popup.win.isDestroyed()) return this.asTab(popup)
+    return this.get(id)
+  }
+
   private popupById(id: string): Popup | null {
     return this.popups.find((p) => p.id === id)
   }

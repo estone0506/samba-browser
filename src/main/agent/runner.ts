@@ -37,6 +37,7 @@ import { makeCounter } from './counter'
 import type { SiteScriptStore } from './site-scripts-store'
 import { buildScriptsBlock } from '../../shared/site-scripts'
 import { createTextDeduper } from './dedupe'
+import { laneTabs, newLaneState, type LaneState } from './lane-tabs'
 import {
   watchHandoff,
   HANDOFF_TIMEOUT_MS,
@@ -156,6 +157,18 @@ export class AgentRunner {
   private releaseVaultHold: (() => void) | null = null
   // 밖의 하네스가 쥔 도구 세션. 있는 동안은 채팅 실행(run)을 받지 않는다(한 손발이라 동시에 못 돈다)
   private session: ToolSession | null = null
+  // 동시에 열린 레인 세션 수와 레인별 탭 보기 상태(하네스 계정 동시 처리)
+  private laneSessions = 0
+  private readonly lanes = new Map<string, LaneState>()
+
+  private laneStateOf(name: string): LaneState {
+    let st = this.lanes.get(name)
+    if (!st) {
+      st = newLaneState()
+      this.lanes.set(name, st)
+    }
+    return st
+  }
 
   constructor(
     private tabs: TabManager,
@@ -293,7 +306,7 @@ export class AgentRunner {
    * 도구 호출마다 세션을 열고 닫아 그 틈이 잦다)
    */
   isRunning(): boolean {
-    if (this.abort !== null || this.session !== null) return true
+    if (this.abort !== null || this.session !== null || this.laneSessions > 0) return true
     return Date.now() - this.automationIdleSince < AUTOMATION_GRACE_MS
   }
 
@@ -435,7 +448,7 @@ export class AgentRunner {
     // AI 창에 붙여 넣은 이미지. 모델에만 실어 주고 대화 기록에는 남기지 않는다
     images?: AgentImage[]
   ): Promise<void> {
-    if (this.session) throw new Error('브릿지 세션 사용 중')
+    if (this.session || this.laneSessions > 0) throw new Error('브릿지 세션 사용 중')
     // 이미 실행 중이면 세대 가드 없이 status 를 emit 하면 진행 중인 실행의 UI 를 덮어쓸 수 있다.
     // 핸들러가 throw 를 { ok: false, error } 로 ack 하므로 에러만 던진다.
     if (this.abort) {
@@ -875,9 +888,15 @@ ${CODEX_NO_IMAGE_NOTE}`
    * 캡차·2단계 인증 같은 넘김은 즉시 skipped 로 돌려 하네스가 needs_human 으로 처리하게 한다.
    * 채팅 실행이 도는 동안은 만들 수 없고, 세션이 있는 동안 채팅 실행은 거부된다
    */
-  createToolSession(opts: { onStep?: (label: string, ok: boolean) => void }): ToolSession {
+  createToolSession(opts: {
+    onStep?: (label: string, ok: boolean) => void
+    /** 레인 이름(하네스가 계정마다 동시에 돌릴 때). 있으면 그 레인의 탭 보기로 일하고 다른 레인과 동시에 열린다 */
+    lane?: string
+  }): ToolSession {
     if (this.abort) throw new Error('이미 실행 중')
+    // 레인 없는 세션은 단독이다(다른 세션·레인이 없어야 한다). 레인 세션은 레인 없는 세션만 없으면 된다
     if (this.session) throw new Error('브릿지 세션 사용 중')
+    if (!opts.lane && this.laneSessions > 0) throw new Error('브릿지 세션 사용 중')
     if (this.settings.get().permissionMode === 'read_only') {
       throw new Error('읽기 전용 모드에서는 브릿지를 쓸 수 없음')
     }
@@ -894,8 +913,8 @@ ${CODEX_NO_IMAGE_NOTE}`
       handoff: async (req) => ({ outcome: 'skipped', url: req.currentUrl() }),
       cancelled: () => false
     })
-    const server = createSambaTools(
-      this.buildToolContext({
+    const laneState = opts.lane ? this.laneStateOf(opts.lane) : null
+    const baseCtx = this.buildToolContext({
         s: { ...s, permissionMode: 'full', finalConfirm: false },
         jobId,
         tick: () => null,
@@ -916,6 +935,8 @@ ${CODEX_NO_IMAGE_NOTE}`
             : Promise.resolve({ ok: false, reason: 'declined' as const }),
         prompt: ''
       })
+    const server = createSambaTools(
+      laneState ? { ...baseCtx, tabs: laneTabs(this.tabs, laneState) } : baseCtx
     )
     const tools = extractSdkTools(server).filter((t) => t.name !== 'done')
     // 브릿지 세션이 열려 있는 동안은 금고 자동 잠금을 보류한다(run() 과 같은 패턴). 두 번 풀려도 안전하다
@@ -929,7 +950,13 @@ ${CODEX_NO_IMAGE_NOTE}`
         return r.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n')
       },
       dispose: () => {
-        if (this.session === session) {
+        if (laneState) {
+          if (!disposed) {
+            disposed = true
+            this.laneSessions -= 1
+            if (this.laneSessions === 0) this.markAutomationIdle()
+          }
+        } else if (this.session === session) {
           this.session = null
           this.markAutomationIdle()
         }
@@ -937,7 +964,9 @@ ${CODEX_NO_IMAGE_NOTE}`
         releaseVaultHold = null
       }
     }
-    this.session = session
+    let disposed = false
+    if (laneState) this.laneSessions += 1
+    else this.session = session
     return session
   }
 
