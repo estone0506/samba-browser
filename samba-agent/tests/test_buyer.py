@@ -17,6 +17,22 @@ from samba_agent.settings import DEFAULT_ROOT
 URL = 'http://127.0.0.1:47811'
 ORDER = OrderRef(order_no='A1', source='무신사', seller='쿠팡', sku='SKU-260', qty=1)
 
+
+@pytest.fixture
+def generic_musinsa(monkeypatch):
+    """계정 비교 로직 시험용 — 무신사의 플레이북 고정 계정(buy_accounts)을 잠시 비워 일반 비교 경로를 탄다."""
+    from samba_agent.agents import buyer as buyer_mod
+
+    real = buyer_mod.source_of
+
+    def patched(name):
+        src = real(name)
+        return src.model_copy(update={'buy_accounts': [], 'fallback_account': None})
+
+    monkeypatch.setattr(buyer_mod, 'source_of', patched)
+    return patched
+
+
 # 배송지 표본 — 테스트에서만 쓰는 가짜 개인정보. 어디에도 원문으로 남으면 안 된다
 SHIPPING = {'name': '홍길동', 'phone': '010-1234-5678', 'address': '서울특별시 강남구 테헤란로 1'}
 
@@ -177,7 +193,7 @@ def test_이미_구매한_흔적이_있으면_중복으로_거절한다(reg):
 
 @pytest.mark.parametrize('locked', [True, False])
 @respx.mock
-def test_금고가_잠겼거나_계정이_없으면_사람에게_넘긴다(reg, locked):
+def test_금고가_잠겼거나_계정이_없으면_사람에게_넘긴다(generic_musinsa, reg, locked):
     snap = respx.post(f'{URL}/tool/run_script')
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     if locked:
@@ -682,7 +698,7 @@ def test_까대기_주문서에_기본_배송지가_없으면_사무실_주소�
     mock_fill_secret()
     out = abc(_abc_assignment(reg, spec))
     assert out.status == 'ok', out.reason
-    assert applied['name'] == '김가명' and '사무실길 58' in str(applied['address'])
+    assert applied['name'] == '김사무' and '사무실길 58' in str(applied['address'])
     assert any('사무실 주소를 새로 넣는다' in e.detail for e in out.evidence)
 
 
@@ -861,7 +877,7 @@ def test_주문_계정이_지정되면_비교하지_않고_그_계정으로_산�
 
 
 @respx.mock
-def test_두_계정이면_원가가_낮은_계정으로_산다(reg):
+def test_두_계정이면_원가가_낮은_계정으로_산다(generic_musinsa, reg):
     listed = mock_accounts('A', 'B')
     login = respx.post(f'{URL}/tool/login').mock(return_value=page('already signed in'))
     calls: list[str] = []
@@ -891,7 +907,7 @@ def test_두_계정이면_원가가_낮은_계정으로_산다(reg):
 
 
 @respx.mock
-def test_싼_계정이_먼저면_그_계정으로_다시_로그인해_주문서를_최신으로_만든다(reg):
+def test_싼_계정이_먼저면_그_계정으로_다시_로그인해_주문서를_최신으로_만든다(generic_musinsa, reg):
     mock_accounts('A', 'B')
     login = respx.post(f'{URL}/tool/login').mock(return_value=page('already signed in'))
     calls: list[str] = []
@@ -910,7 +926,7 @@ def test_싼_계정이_먼저면_그_계정으로_다시_로그인해_주문서�
 
 
 @respx.mock
-def test_한_계정이_품절이면_다른_계정으로_산다(reg):
+def test_한_계정이_품절이면_다른_계정으로_산다(generic_musinsa, reg):
     mock_accounts('A', 'B')
     calls: list[str] = []
     order = ORDER.model_copy(update={'option': '260'})
@@ -934,7 +950,7 @@ def test_한_계정이_품절이면_다른_계정으로_산다(reg):
 
 
 @respx.mock
-def test_로그인에_실패한_계정은_빼고_비교한다(reg):
+def test_로그인에_실패한_계정은_빼고_비교한다(generic_musinsa, reg):
     mock_accounts('A', 'B')
     respx.post(f'{URL}/tool/login').mock(
         side_effect=lambda req: page(
@@ -956,7 +972,7 @@ def test_로그인에_실패한_계정은_빼고_비교한다(reg):
 
 
 @respx.mock
-def test_모든_계정이_품절이면_품절로_거절한다(reg):
+def test_모든_계정이_품절이면_품절로_거절한다(generic_musinsa, reg):
     mock_accounts('A', 'B')
     calls: list[str] = []
     respx.post(f'{URL}/tool/run_script').mock(
@@ -982,7 +998,7 @@ def test_모든_계정이_로그인에_실패하면_품절이_아니라_사람�
 
 
 @respx.mock
-def test_한_계정에서_이미_산_흔적이_보이면_비교를_멈추고_중복이다(reg):
+def test_한_계정에서_이미_산_흔적이_보이면_비교를_멈추고_중복이다(generic_musinsa, reg):
     mock_accounts('A', 'B')
     calls: list[str] = []
     respx.post(f'{URL}/tool/run_script').mock(
@@ -997,7 +1013,7 @@ def test_한_계정에서_이미_산_흔적이_보이면_비교를_멈추고_중
 
 
 @respx.mock
-def test_비교_계정_수는_상한까지만(reg):
+def test_비교_계정_수는_상한까지만(generic_musinsa, reg):
     mock_accounts('A', 'B', 'C', 'D')
     login = respx.post(f'{URL}/tool/login').mock(return_value=page('already signed in'))
     calls: list[str] = []
@@ -1090,8 +1106,8 @@ def test_cheapest_quotes_결제_가능한_수단만_싼_순으로():
         {'method': '휴대폰결제', 'card': None, 'cost': 26000},
         {'method': '카카오페이', 'card': None, 'cost': 0},
     ]
-    # 거르지 않으면 금액순(0 원은 뺀다)
-    assert [q['cost'] for q in cheapest_quotes(quotes, None)] == [26000, 27500, 28000, 29000]
+    # 거르지 않으면 원가순(0 원은 뺀다). 현대카드 줄은 청구할인 ×0.973 이 반영된다
+    assert [q['cost'] for q in cheapest_quotes(quotes, None)] == [26000, 26758, 28000, 29000]
     # 키마스터에 무신사머니(site)·토스만 있으면 그 둘만, 휴대폰결제는 제공자를 몰라 뺀다
     got = cheapest_quotes(quotes, None, {'site', 'toss'})
     assert [(q['method'], q['cost']) for q in got] == [('토스페이', 28000), ('무신사머니', 29000)]
@@ -1223,3 +1239,24 @@ def test_까대기_사무실_배송지가_목록에_있으면_골라서_쓴다(r
     assert out.status == 'ok', out.reason
     assert 'abc_select_shipping' in calls and 'abc_set_shipping' not in calls
     assert any('목록의 사무실 배송지' in e.detail for e in out.evidence)
+
+
+def test_cheapest_quotes_는_낼_수_없는_수단을_뺀다():
+    from samba_agent.agents.buyer import cheapest_quotes
+
+    quotes = [
+        {'method': '무신사머니', 'card': None, 'cost': 39200, 'available': False, 'note': '연결 계좌 없음'},
+        {'method': '토스페이', 'card': None, 'cost': 39200},
+    ]
+    assert [q['method'] for q in cheapest_quotes(quotes, None, {'site', 'toss'})] == ['토스페이']
+
+
+def test_원가는_적립과_청구할인을_반영한다():
+    from samba_agent.agents.buyer import effective_cost
+
+    # 39,200 결제, 무신사머니 적립 3,120 → 원가 36,080(사용자 예시 2026-09-24)
+    assert effective_cost({'cost': 39200, 'reward': 3120}) == 36080
+    # PAYCO×현대카드: 결제액 ×0.973, 적립 1,170
+    assert effective_cost({'cost': 39200, 'card': '현대카드', 'reward': 1170}) == round(39200 * 0.973 - 1170)
+    # 기존 적립금 사용액은 원가에 다시 더한다
+    assert effective_cost({'cost': 30000, 'reward': 0, 'points_used': 2000}) == 32000

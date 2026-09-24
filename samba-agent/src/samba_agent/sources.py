@@ -41,6 +41,10 @@ class Source(BaseModel):
     shipping_confirm: bool = False
     # False 면 계정 비교(여러 계정으로 견적)를 하지 않는다 — 계정을 연달아 바꿔 로그인하면 차단하는 사이트(실기: SSG)
     compare_accounts: bool = True
+    # 플레이북이 정한 구매 계정(§5·§7: 무신사는 buyer01 한 계정). 비어 있지 않으면 SAMBA 주문계정·계정 비교를 쓰지 않고
+    # 이 목록 순서대로 견적한다. fallback_account 는 앞 계정이 결제 불가(잔액 부족 등)일 때만 쓰는 대체 계정
+    buy_accounts: list[str] = []
+    fallback_account: str | None = None
     # True 면 주문서에서 결제수단(카드사 포함)마다 결제예정금액을 읽는 `<key>_payment_quotes` 로 견적을 내고
     # 계정×결제수단 가운데 가장 싼 조합으로 산다(사용자 지시 2026-09-23)
     payment_quotes: bool = False

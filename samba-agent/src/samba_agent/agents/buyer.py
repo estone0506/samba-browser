@@ -173,6 +173,9 @@ def cheapest_quotes(
         if cost <= 0 or not method:
             continue
         card = str(q.get('card') or '').strip() or None
+        if q.get('available') is False:
+            # 스크립트가 낼 수 없다고 본 수단(무신사머니 연결 계좌 없음·잔액 부족)
+            continue
         if payable is not None:
             provider = quote_provider(method, card)
             if provider is None or provider not in payable:
@@ -181,7 +184,16 @@ def cheapest_quotes(
             w = wanted_card.strip()
             if w not in method and (card is None or w not in card):
                 continue
-        rows.append({'method': method, 'card': card, 'cost': cost})
+        rows.append(
+            {
+                'method': method,
+                'card': card,
+                'paid': cost,
+                'reward': _as_float(q.get('reward')),
+                'points_used': _as_float(q.get('points_used')),
+                'cost': effective_cost({**q, 'cost': cost, 'card': card}),
+            }
+        )
     return sorted(rows, key=lambda r: float(r['cost']))
 
 
@@ -191,11 +203,34 @@ KKADAEGI_SHIPPING_FEE = 2300
 OFFICE_ADDRESS_HINT = '사무실길 58'
 # 까대기 주문 배송지(사무실). 기본 배송지가 사무실이 아닐 때 이번 주문에만 넣는다 — poizon-sourcing 스킬 "사무실 배송"
 OFFICE_SHIPPING: dict[str, object] = {
-    'name': '김가명',
+    'name': '김사무',
     'address': '경북 가상시 사무실길 58',
     'address_detail': '1층 102호',
     'postal_code': '38069',
 }
+# 카드 청구할인(플레이북 §7): 결제창에 안 보이는 카드 대금 할인 — 원가 = 카드 결제액 × 계수 − 적립
+CARD_BILLING_FACTORS: tuple[tuple[tuple[str, ...], float], ...] = (
+    (('현대',), 0.973),
+    (('롯데', 'KB', '국민'), 0.98),
+)
+
+
+def billing_factor(card: str | None) -> float:
+    """카드사 이름에 맞는 청구할인 계수. 없으면 1.0"""
+    if not card:
+        return 1.0
+    for names, factor in CARD_BILLING_FACTORS:
+        if any(n in card for n in names):
+            return factor
+    return 1.0
+
+
+def effective_cost(row: dict[str, object]) -> float:
+    """견적 한 줄의 원가(플레이북 §6): 실결제액 × 청구할인 계수 − 후기 제외 신규 적립 + 사용한 기존 적립금."""
+    paid = _as_float(row.get('cost'))
+    reward = _as_float(row.get('reward'))
+    used = _as_float(row.get('points_used'))
+    return round(paid * billing_factor(str(row.get('card') or '') or None) - reward + used)
 # 결제창(토스페이·네이버페이) 안에서 고를 수 있는 카드사(사용자 2026-09-24: 현대·KB·롯데·신한·농협). 주문서 단계의
 # '카드 직접 결제'는 쓰지 않는다 — 카드는 간편결제 창 안에서만 고른다. 결제 에이전트가 카드를 고를 때 이 표를 쓴다
 ALLOWED_CARD_ISSUERS = ('현대', 'KB', '국민', '롯데', '신한', '농협', 'NH')
@@ -410,7 +445,7 @@ class BuyerAgent(AgentBase):
     # 배송지 공급자(삼바웨이브 상세). 없으면 스냅샷·전용 스크립트로 받는다
     _shipping_fn: 'ShippingFn | None' = None
     # 계정 비교 상한(SAMBA_COMPARE_ACCOUNTS_MAX). 배선은 factory 가 한다
-    compare_accounts_max: int = 2
+    compare_accounts_max: int = 3
     # (계정, 시각) — 같은 사이트에서 마지막으로 로그인한 계정
     _last_login: tuple[str, float] | None = None
     _order_type_noted: tuple[str, str] | None = None
@@ -484,9 +519,17 @@ class BuyerAgent(AgentBase):
         (앱 list_accounts 는 현재 탭 호스트의 계정만 답한다). 비교 비용 때문에 앞에서부터
         최대 compare_accounts_max 개만 쓴다.
         """
-        if a.order.account:
-            return [a.order.account]
         source = source_of(self.spec.name)
+        if source.buy_accounts:
+            # 플레이북이 계정을 정해 둔 소싱처 — SAMBA 주문계정은 기록용일 뿐 구매 계정이 아니다(§5)
+            self.note('계정 후보', f'{source.id}: 플레이북 지정 계정 {source.buy_accounts}')
+            return list(source.buy_accounts)
+        if a.order.account and not source.compare_accounts:
+            return [a.order.account]
+        if a.order.account:
+            # 주문 계정을 먼저 두되, 키마스터 결제 항목이 있는 다른 계정도 함께 견적한다 — 주문 계정에
+            # 무신사머니가 없거나 다른 계정이 더 싼 경우가 있다(사용자 지적 2026-09-24)
+            return self._with_payable_accounts(source, a.order.account)
         if not source.compare_accounts:
             # 계정 전환이 차단을 부르는 사이트 — 첫 계정 하나로만 산다
             labels, locked = self._first_account(source)
@@ -511,6 +554,29 @@ class BuyerAgent(AgentBase):
             )
             labels = labels[:cap]
         return labels
+
+    def _with_payable_accounts(self, source: Source, first: str) -> list[str]:
+        """주문 계정 + 키마스터 결제 항목(payments)이 있는 같은 사이트 계정들(상한 compare_accounts_max).
+
+        목록을 못 읽으면 주문 계정 하나로 간다.
+        """
+        home = self._home()
+        host = source.login_host or urlparse(home).hostname or ''
+        self.step(f'{self.spec.name}: 계정 목록 확인')
+        self.tool('new_tab', url=home)
+        self.tool('wait', ms=_LOGIN_SETTLE_MS)
+        raw = self.tool('list_accounts', host=host)
+        labels, _locked = parse_account_labels(raw)
+        out = [first]
+        for label in labels:
+            if label == first or len(out) >= self.compare_accounts_max:
+                continue
+            payments = parse_account_payments(raw, label)
+            if payments:
+                out.append(label)
+        if len(out) > 1:
+            self.note('계정 후보', f'주문 계정 {first} + 결제 항목 있는 {out[1:]} 비교')
+        return out
 
     def _first_account(self, source: Source) -> tuple[list[str], bool]:
         home = self._home()
@@ -628,6 +694,7 @@ class BuyerAgent(AgentBase):
             )
         best = quotes[0]
         snap['cost'] = best['cost']
+        snap['pay_amount'] = best['paid']
         snap['pay_method'] = best['method']
         snap['pay_card'] = best['card']
         label = f"{best['method']}/{best['card']}" if best['card'] else best['method']

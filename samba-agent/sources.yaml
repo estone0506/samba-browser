@@ -6,6 +6,8 @@
 sources:
   - id: MUSINSA
     key: musinsa
+    buy_accounts: [buyer01]   # 플레이북 §5·§7: 무신사는 성희 한 계정으로 주문서·결제
+    fallback_account: buyer02  # buyer01 결제 불가(잔액 부족·핵심 쿠폰 없음)일 때만 무신사머니로 대체
     normal_price: true  # 2026-09-24 musinsa_normal_price(정가 → 직배/까대기 판정)
     payment_quotes: true  # 2026-09-23 musinsa_payment_quotes
     label: 무신사
