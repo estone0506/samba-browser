@@ -493,7 +493,7 @@ def test_신원정보_입력칸이_없어도_웹_결제_경로로_진행한다(r
     out = agent(reg)(assignment(reg, dry_run=False, handoff={'cost': 89000}))
     assert out.status == 'ok', out.reason
     assert not pay.called
-    assert [_args(c)['itemType'] for c in fill.calls] == ['password']
+    assert [json.loads(c.request.content)['args']['itemType'] for c in fill.calls] == ['password']
 
 
 @respx.mock
@@ -525,7 +525,7 @@ def test_결제창이_아직_없으면_한번_기다렸다_다시_본다(reg):
     respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('filled'))
     wait = respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
     list_tabs = respx.post(f'{URL}/tool/list_tabs').mock(
-        side_effect=[list_tabs_page(None), list_tabs_page(TOSS_POPUP_URL)]
+        side_effect=[list_tabs_page(None), list_tabs_page(TOSS_POPUP_URL), list_tabs_page(TOSS_POPUP_URL)]
     )
     pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
     respx.post(f'{URL}/tool/get_page').mock(side_effect=[page('결제 진행 중'), page('결제 완료')])
