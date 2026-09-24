@@ -47,3 +47,19 @@ class ScriptHistory:
             json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8'
         )
         return folder
+
+    def recent_problems(self, name: str, limit: int = 5) -> list[str]:
+        """이 스크립트의 지난 수리 사유(최근 순) — 새 수리가 예전에 고친 경우를 깨지 않게 알려 준다."""
+        folder = self.root / name
+        if not folder.is_dir():
+            return []
+        out: list[str] = []
+        for meta in sorted(folder.glob('*-meta.json'), reverse=True)[:limit]:
+            try:
+                row = json.loads(meta.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                continue
+            problem = str(row.get('problem') or '').strip()
+            if problem:
+                out.append(f'{meta.name[:15]} {problem[:160]}')
+        return out

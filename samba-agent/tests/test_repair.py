@@ -291,3 +291,10 @@ def test_shipping_set_problem_needs_phone_field() -> None:
     assert check({**ship, 'phone_field_id': 42}) is None
     assert check({**ship, 'phone_field_ids': [1, 2]}) is None
     assert '전화 칸' in (check(dict(ship)) or '')
+
+
+def test_history_recent_problems(tmp_path) -> None:
+    hist = ScriptHistory(tmp_path)
+    hist.record('s', 'a', 'b', {'problem': '원가 못 읽음'})
+    assert any('원가 못 읽음' in p for p in hist.recent_problems('s'))
+    assert hist.recent_problems('none') == []

@@ -186,6 +186,11 @@ class AgentBase:
             return None
         tried[name] = 'running'
         current = self.script_source.get(name) if self.script_source is not None else None
+        if self.script_history is not None:
+            # 지난 수리 사례를 같이 준다 — 이번 상품만 맞추다 예전에 고친 경우를 깨지 않게(실기: 무신사 스냅샷 2회 수리)
+            past = self.script_history.recent_problems(name)
+            if past:
+                current = {**(current or {}), 'past_repairs': past}
         self.step(f'{self.spec.name}: AI 스크립트 수리({name})')
         self.note('스크립트 수리', mask_text(f'{name}: 시작 — {problem[:120]}'))
         log.info('스크립트 수리 시작: %s', name)
