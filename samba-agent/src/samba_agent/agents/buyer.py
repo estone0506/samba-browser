@@ -252,6 +252,8 @@ OFFICE_ADDRESS_HINT = '사무실길 58'
 OFFICE_NAME = '김사무'
 # 까대기 주문 배송지(사무실). 기본 배송지가 사무실이 아닐 때 이번 주문에만 넣는다 — poizon-sourcing 스킬 "사무실 배송"
 OFFICE_DETAIL = '1층 102호'
+# 계정별 결제수단 제한 — buyer02 는 무신사머니(site)만 쓴다(사용자 지시 2026-09-25: 롯데카드로 결제된 모자 주문 취소)
+ACCOUNT_PAY_ONLY: dict[str, frozenset[str]] = {'buyer02': frozenset({'site'})}
 OFFICE_SHIPPING: dict[str, object] = {
     'name': OFFICE_NAME,
     'address': '경북 가상시 사무실길 58',
@@ -998,12 +1000,17 @@ class BuyerAgent(AgentBase):
             return None
         return parse_account_payments(raw, account)
 
-    def _allowed_providers(self) -> set[str] | None:
-        """이 소싱처에서 쓸 수 있는 결제 제공자. 소싱처가 하나로 고정했으면(pay_provider) 그것만, 아니면 전역 허용 수단."""
+    def _allowed_providers(self, account: str | None = None) -> set[str] | None:
+        """이 소싱처에서 쓸 수 있는 결제 제공자. 소싱처가 하나로 고정했으면(pay_provider) 그것만, 아니면 전역 허용 수단.
+
+        계정이 결제수단을 하나로 정해 뒀으면(ACCOUNT_PAY_ONLY) 그것과 겹치는 것만 — buyer02 는 무신사머니만.
+        """
         fixed = source_of(self.spec.name).pay_provider
-        if fixed:
-            return {fixed}
-        return self.allowed_pay_providers
+        allowed = {fixed} if fixed else self.allowed_pay_providers
+        only = ACCOUNT_PAY_ONLY.get((account or '').split('@')[0].lower())
+        if only:
+            allowed = set(only) if allowed is None else (set(allowed) & set(only))
+        return allowed
 
     def _pay_card_quote(self, account: str) -> list[dict[str, object]]:
         """무신사페이 등록 기본 카드 견적 한 줄(`<key>_pay_card_quote`). 못 읽으면 빈 목록."""
@@ -1049,7 +1056,7 @@ class BuyerAgent(AgentBase):
             return
         # 결제 가능한 수단을 먼저 정한다 — 그 수단만 시험한다(카드사 12개를 전부 돌리는 낭비·화면 소란 방지)
         payable = self._payable_providers(account)
-        allowed = self._allowed_providers()
+        allowed = self._allowed_providers(account)
         if payable is not None and allowed is not None:
             # 사용자가 허용한 결제수단만(예: 무신사머니·무신사페이, ABC마트·그랜드스테이지는 네이버페이만)
             payable = payable & allowed
@@ -1590,7 +1597,7 @@ class BuyerAgent(AgentBase):
 
         # 결제수단·카드 — 지시받은 카드가 목록에 없으면 여기서 거절한다
         methods = [str(m) for m in (snap.get('methods') or [])]
-        allowed_now = self._allowed_providers()
+        allowed_now = self._allowed_providers(account)
         if allowed_now is not None:
             # 허용 결제수단만 후보(SAMBA_ALLOWED_PAY_PROVIDERS) — 견적이 없을 때도 이 밖은 고르지 않는다
             methods = [m for m in methods if (quote_provider(m) or '') in allowed_now]
