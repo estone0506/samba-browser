@@ -780,8 +780,10 @@ class BuyerAgent(AgentBase):
         except AgentFailure as e:
             self.note('쿠폰 받기', mask_text(f'{account}: 못 함({e.reason[:80]})'))
             return
+        issued = [str(x) for x in (out.get('issued') or [])]  # type: ignore[union-attr]
+        self._issued = {**getattr(self, '_issued', {}), account: issued}
         if out.get('clicked'):
-            self.note('쿠폰 받기', f'{account}: 받음 {out.get("issued") or []}')
+            self.note('쿠폰 받기', f'{account}: 받음 {issued}')
 
     def _apply_normal_price(self, a: Assignment, account: str, snap: dict[str, object]) -> None:
         """소싱처 정가(`<key>_normal_price`)를 스냅샷에 싣는다. 못 읽으면 None 으로 두고 근거만 남긴다."""
@@ -804,6 +806,21 @@ class BuyerAgent(AgentBase):
             snap['normal_price'] = price
             self.note('정가', f'{price:,.0f}원')
 
+    def _prep_problem(self, account: str, o: dict[str, object]) -> str | None:
+        """주문서 정돈 결과 검사. 다시 확인 중인 계정은 받은 쿠폰이 실제로 적용됐는지도 본다."""
+        if not (o.get('ok') and _as_float(o.get('total')) > 0):
+            return f'정돈 실패(ok={o.get("ok")}, total={o.get("total")}, note={o.get("note")})'
+        target = getattr(self, '_expect_cost', {}).get(account)
+        cost = _as_float(o.get('total')) + _as_float(o.get('points_used'))
+        if target and cost > target:
+            return (
+                f'이 계정은 쿠폰을 받았는데 비교액(결제+사용 적립금) {cost:,.0f}원이 '
+                f'다른 계정 {target:,.0f}원보다 높다 — '
+                '주문서 쿠폰 선택(쿠폰 사용·쿠폰 변경)에서 받은 쿠폰을 적용하고 적용액을 coupon 으로 돌려줘라. '
+                '정말 적용 불가면 화면 근거를 남겨라'
+            )
+        return None
+
     def _order_prep(self, account: str, snap: dict[str, object]) -> None:
         """주문서 정돈(`<key>_order_prep`): 적립금 규칙(5만 미만 0원·이상 최대)·선할인. 규칙대로 못 맞추면 사람에게."""
         self.step(f'{self.spec.name}: 주문서 정돈({account})')
@@ -815,11 +832,7 @@ class BuyerAgent(AgentBase):
                 '이상이면 최대 사용(사용 제한 상품은 0원), 선할인이 가능하면 켠 뒤 총 결제 금액(total)을 돌려준다. '
                 '규칙대로 맞췄으면 ok:true.'
             ),
-            check=lambda o: (
-                None
-                if o.get('ok') and _as_float(o.get('total')) > 0
-                else f'정돈 실패(ok={o.get("ok")}, total={o.get("total")}, note={o.get("note")})'
-            ),
+            check=lambda o: self._prep_problem(account, o),
         )
         if not out.get('ok'):
             raise AgentFailure(
@@ -829,6 +842,10 @@ class BuyerAgent(AgentBase):
             )
         used = _as_float(out.get('points_used'))
         snap['points_used'] = used
+        # 계정 비교 검증(_audit_quotes)이 보는 값
+        snap['coupon_applied'] = _as_float(out.get('coupon')) + _as_float(out.get('cart_coupon'))
+        snap['points_balance'] = out.get('points_balance')
+        snap['coupons_issued'] = list(getattr(self, '_issued', {}).get(account, []))
         total = _as_float(out.get('total'))
         if total > 0:
             # 계정 비교·원가는 '결제액 + 사용 적립금'으로 — 원가 공식이 사용 적립금을 다시 더한다(플레이북 §6).
@@ -1031,6 +1048,95 @@ class BuyerAgent(AgentBase):
         cache[key] = result
         return result
 
+    def _audit_quotes(
+        self, a: Assignment, quotes: list[tuple[str, dict[str, object]]]
+    ) -> list[tuple[str, dict[str, object]]]:
+        """계정별 견적 숫자 검증 — 스크립트가 틀린 숫자를 성공처럼 돌려주면 비교가 틀린다(실기: 쿠폰 미적용).
+
+        1) 규칙: 쿠폰을 받았거나 다른 계정엔 쿠폰이 붙었는데 이 계정만 0원
+        2) AI: 계정별 수집값 전체를 보고 이상한 계정을 짚는다
+        걸린 계정은 한 번 다시 견적한다(주문서 정돈이 쿠폰을 못 붙이면 AI 수리). 그래도 이상하면 비교에서 뺀다.
+        """
+        if len(quotes) < 2:
+            return quotes
+        flagged = self._quote_flags(a, quotes)
+        if not flagged:
+            return quotes
+        self.note('견적 검증', mask_text(f'다시 확인: {flagged}'))
+        out: list[tuple[str, dict[str, object]]] = []
+        for account, snap in quotes:
+            if account not in flagged:
+                out.append((account, snap))
+                continue
+            low = min(_as_float(o.get('cost')) for acc, o in quotes if acc != account)
+            self._expect_cost = {**getattr(self, '_expect_cost', {}), account: low}
+            again = self._quote(a, account)
+            if again is None:
+                self.note('견적 검증', f'{account}: 다시 확인 실패 — 비교에서 뺀다')
+                continue
+            others = [q for q in quotes if q[0] != account]
+            still = self._quote_flags(a, [*others, (account, again)], use_ai=False)
+            if account in still:
+                self.note(
+                    '견적 검증',
+                    mask_text(f'{account}: 다시 봐도 이상({still[account]}) — 비교에서 뺀다'),
+                )
+                continue
+            self.note(
+                '견적 검증', f'{account}: 다시 확인 원가 {_as_float(again.get("cost")):,.0f}원'
+            )
+            out.append((account, again))
+        return out or quotes
+
+    def _quote_flags(
+        self, a: Assignment, quotes: list[tuple[str, dict[str, object]]], use_ai: bool = True
+    ) -> dict[str, str]:
+        """이상한 계정 → 사유. 규칙 검사 뒤 AI 가 한 번 더 본다(AI 판단 실패는 규칙 결과만 쓴다)."""
+        flags: dict[str, str] = {}
+        # 쿠폰을 받았는데 다른 계정 최저 비교액보다 비싸면 받은 쿠폰이 주문서에 안 붙은 것이다
+        # (실기: buyer01 114,630 vs 다른 계정 103,170). 쿠폰 적용액 칸은 믿지 않는다 — 자동 적용된 계정은
+        # 스크립트가 0·None 으로 돌려줬다
+        for account, q in quotes:
+            issued = q.get('coupons_issued') or []
+            others = [_as_float(o.get('cost')) for acc, o in quotes if acc != account]
+            low = min(others) if others else 0.0
+            cost = _as_float(q.get('cost'))
+            if issued and low and cost > low:
+                flags[account] = (
+                    f'쿠폰 {issued} 을 받았는데 비교액 {cost:,.0f} > 다른 계정 {low:,.0f}'
+                )
+        if not use_ai:
+            return flags
+        rows = [
+            {
+                'account': acc,
+                'selected': q.get('selected'),
+                'coupons_issued': q.get('coupons_issued'),
+                'coupon_applied': q.get('coupon_applied'),
+                'points_balance': q.get('points_balance'),
+                'points_used': q.get('points_used'),
+                'pay_amount': q.get('pay_amount'),
+                'compare_cost': q.get('cost'),
+            }
+            for acc, q in quotes
+        ]
+        try:
+            verdict = self.decide_once(
+                '같은 상품·같은 옵션을 무신사 계정 여러 개로 주문서까지 만들어 읽은 값이다. 계정마다 다를 수 있는 것은 '
+                '쿠폰(받은 쿠폰·적용액)과 등급 적립뿐이고, 비교액은 결제액+사용 적립금이다. 적립금 규칙: 보유 5만원 미만이면 '
+                '0원, 이상이면 최대 사용. 값이 말이 안 되는 계정(예: 쿠폰을 받았는데 적용 0원, 다른 계정과 옵션이 다름, '
+                '비교액이 혼자 크게 튐, 적립금 규칙 위반)을 choice 에 쉼표로 적고(없으면 "없음") reason 에 계정별 이유를 적어라.\n'
+                f'주문 옵션: {a.order.option}\n값: {json.dumps(rows, ensure_ascii=False)}',
+                Decision,
+            )
+            names = {x.strip() for x in str(getattr(verdict, 'choice', '')).split(',')}
+            for acc, _ in quotes:
+                if acc in names and acc not in flags:
+                    flags[acc] = f'AI: {str(getattr(verdict, "reason", ""))[:120]}'
+        except AgentFailure as e:
+            self.note('견적 검증', mask_text(f'AI 검토 실패 — 규칙 검사만 씀({e.reason[:60]})'))
+        return flags
+
     def _pick_cheapest(self, a: Assignment, accounts: list[str]) -> tuple[str, dict[str, object]]:
         """계정마다 견적을 내고 원가가 가장 낮은 계정(같으면 앞 계정)과 그 스냅샷을 고른다.
 
@@ -1062,6 +1168,7 @@ class BuyerAgent(AgentBase):
                 mask_text(f'모든 계정에서 살 수 없다(품절·실패): {", ".join(accounts)} — {why}'),
                 FailReason.OUT_OF_STOCK,
             )
+        quotes = self._audit_quotes(a, quotes)
         # min 은 같은 값이면 앞 것을 준다 — 동률이면 먼저 비교한 계정
         winner, snap = min(quotes, key=lambda q: _as_float(q[1].get('cost')))
         cost = _as_float(snap.get('cost'))

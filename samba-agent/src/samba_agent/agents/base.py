@@ -191,9 +191,11 @@ class AgentBase:
         tried = getattr(self, '_repair_tried', None)
         if tried is None:
             tried = self._repair_tried = {}
-        if name in tried:
+        # 계정(프로필)마다 따로 센다 — 한 계정에서 포기해도 다른 계정은 고칠 수 있다
+        key = f'{name}|{args.get("profile") or ""}'
+        if key in tried:
             return None
-        tried[name] = 'running'
+        tried[key] = 'running'
         current = self.script_source.get(name) if self.script_source is not None else None
         if self.script_history is not None:
             # 지난 수리 사례를 같이 준다 — 이번 상품만 맞추다 예전에 고친 경우를 깨지 않게(실기: 무신사 스냅샷 2회 수리)
@@ -221,7 +223,7 @@ class AgentBase:
             current=current,
             allow_pay_button=allow_pay_button,
         )
-        tried[name] = outcome.status
+        tried[key] = outcome.status
         log.info('스크립트 수리 결과: %s %s (시험 %d회)', name, outcome.status, outcome.tests)
         if outcome.status == 'genuine':
             self.note(

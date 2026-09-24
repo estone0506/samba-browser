@@ -348,3 +348,37 @@ def test_download_coupons_runs_script_per_account(buyer) -> None:
     assert body['name'] == 'musinsa_coupon_download'
     assert json.loads(body['args'])['profile'] == 'buyer01'
     assert any('11,940' in e.detail for e in buyer.evidence)
+
+
+def test_audit_requotes_account_whose_coupon_did_not_apply(buyer) -> None:
+    """buyer01 이 쿠폰을 받았는데 비교액이 다른 계정보다 높으면 다시 견적하고, 고쳐지면 그 값으로 비교한다."""
+    from samba_agent.agents.base import Decision
+    from samba_agent.agents.contracts import Assignment, OrderRef
+
+    buyer._decide = lambda p, m: Decision(choice='없음', reason='이상 없음')
+    order = OrderRef(order_no='A1', source='MUSINSA', seller='포이즌', sku='1', qty=1)
+    a = Assignment(order=order, allowed_tools=buyer.spec.tools, rules='', dry_run=False)
+    quotes = [
+        ('buyer01', {'cost': 114630, 'coupons_issued': ['11,940']}),
+        ('buyer02', {'cost': 103170, 'coupons_issued': []}),
+    ]
+    buyer._quote = lambda a, acc: {'cost': 103170, 'coupons_issued': ['11,940']}
+    out = dict(buyer._audit_quotes(a, quotes))
+    assert out['buyer01']['cost'] == 103170
+    assert buyer._expect_cost['buyer01'] == 103170
+
+
+def test_audit_drops_account_that_stays_expensive(buyer) -> None:
+    from samba_agent.agents.base import Decision
+    from samba_agent.agents.contracts import Assignment, OrderRef
+
+    buyer._decide = lambda p, m: Decision(choice='없음', reason='이상 없음')
+    order = OrderRef(order_no='A1', source='MUSINSA', seller='포이즌', sku='1', qty=1)
+    a = Assignment(order=order, allowed_tools=buyer.spec.tools, rules='', dry_run=False)
+    quotes = [
+        ('buyer01', {'cost': 114630, 'coupons_issued': ['11,940']}),
+        ('buyer02', {'cost': 103170, 'coupons_issued': []}),
+    ]
+    buyer._quote = lambda a, acc: {'cost': 114630, 'coupons_issued': ['11,940']}
+    out = dict(buyer._audit_quotes(a, quotes))
+    assert 'buyer01' not in out and 'buyer02' in out
