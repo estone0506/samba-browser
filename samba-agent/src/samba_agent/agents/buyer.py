@@ -883,6 +883,29 @@ class BuyerAgent(AgentBase):
             return None
         return parse_account_payments(raw, account)
 
+    def _pay_card_quote(self, account: str) -> list[dict[str, object]]:
+        """무신사페이 등록 기본 카드 견적 한 줄(`<key>_pay_card_quote`). 못 읽으면 빈 목록."""
+        try:
+            out = self.json_tool(
+                'run_script',
+                name=source_of(self.spec.name).pay_card_quote_script,
+                args=json.dumps({'profile': account}, ensure_ascii=False),
+            )
+        except AgentFailure as e:
+            self.note(
+                '결제수단 견적', mask_text(f'무신사페이 기본 카드 견적 못 읽음({e.reason[:60]})')
+            )
+            return []
+        rows = out.get('quotes')
+        if not out.get('ok') or not isinstance(rows, list):
+            self.note('결제수단 견적', mask_text(f'무신사페이 기본 카드 없음({out.get("note")})'))
+            return []
+        self.note(
+            '결제수단 견적',
+            f'무신사페이 등록 카드 {out.get("cards")} — 기본 {rows[0].get("card") if rows else "-"}',
+        )
+        return [r for r in rows if isinstance(r, dict)]
+
     def _apply_payment_quotes(self, a: Assignment, account: str, snap: dict[str, object]) -> None:
         """주문서의 결제수단별 견적(`<key>_payment_quotes`)에서 결제 가능한 가장 싼 조합을 스냅샷에 반영한다.
 
@@ -940,6 +963,11 @@ class BuyerAgent(AgentBase):
             self.note('결제수단 견적', mask_text(f'못 읽음({e.reason[:80]}) — 스냅샷 원가로 진행'))
             return
         raw_quotes = out.get('quotes')
+        if source_of(self.spec.name).pay_card_quote:
+            # 간편결제(무신사페이)의 등록 기본 카드 견적 — 결제는 카드 목록 맨 앞 카드로 된다. 롯데 ×0.98·현대 ×0.973
+            # 청구할인을 무신사머니와 같이 비교하려면 이 줄이 있어야 한다(실기: 무신사페이는 즉시할인 배너 카드로만 견적됐다)
+            extra = self._pay_card_quote(account)
+            raw_quotes = [*(raw_quotes if isinstance(raw_quotes, list) else []), *extra]
         if not isinstance(raw_quotes, list) or not raw_quotes:
             self.note('결제수단 견적', '견적 없음 — 스냅샷 원가로 진행')
             return

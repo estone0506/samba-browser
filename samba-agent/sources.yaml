@@ -8,6 +8,7 @@ sources:
     key: musinsa
     order_prep: true   # musinsa_order_prep — 적립금 5만 미만 0원·선할인(플레이북 §7)
     coupon_download: true   # musinsa_coupon_download — 상품 페이지 '쿠폰받기'로 안 받은 쿠폰을 먼저 받는다
+    pay_card_quote: true    # musinsa_pay_card_quote — 무신사페이 등록 기본 카드 견적(롯데·현대 청구할인 비교)
     # 사용자 2026-09-24: 무신사 4계정 비교 — 계정마다 다른 건 쿠폰뿐(쿠폰·장바구니 쿠폰·선할인 반영 총액 최저 계정)
     buy_accounts: [buyer01, buyer02, buyer03, buyer05]
     normal_price: true  # 2026-09-24 musinsa_normal_price(정가 → 직배/까대기 판정)
