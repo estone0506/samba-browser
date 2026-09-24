@@ -481,6 +481,12 @@ def snapshot_problem(
             return f'주문 옵션 "{option}" 과 맞는 선택지가 없다(읽은 선택지 {options[:8]}, note={out.get("note")})'
         if _as_float(out.get('cost')) <= 0:
             return f'원가(cost)를 못 읽음(note={out.get("note")})'
+        if not out.get('methods'):
+            # 결제수단을 안 읽으면 '허용 수단 없음'으로 멈춘다(실기: 29CM 주문서엔 무신사머니·무신사페이가 있는데 [] 로 읽음)
+            return (
+                '주문서의 결제수단 목록(methods)을 돌려주지 않았다 — 주문서 결제수단 영역에서 '
+                '무신사머니·무신사페이·토스페이·카카오페이·페이코 등 보이는 이름을 methods 로 돌려줘라'
+            )
         return None
 
     return check
