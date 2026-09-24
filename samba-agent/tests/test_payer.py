@@ -533,6 +533,8 @@ def test_결제창이_아직_없으면_한번_기다렸다_다시_본다(reg):
             list_tabs_page(None),
             list_tabs_page(TOSS_POPUP_URL),
             list_tabs_page(TOSS_POPUP_URL),
+            list_tabs_page(None),  # 결제 뒤 주문번호용 탭 목록
+            list_tabs_page(None),
         ]
     )
     pay = respx.post(f'{URL}/tool/phone_approve_payment').mock(return_value=page('ok'))
@@ -924,3 +926,12 @@ def test_결제_전_검사는_결제창_일반_문구로_멈추지_않는다():
     assert not looks_already_paid('[]', '무신사페이 결제 완료 시 최대 5% 적립 approved')
     assert looks_already_paid('[{"url":"https://www.musinsa.com/order/result/123"}]', '')
     assert looks_already_paid('[]', '주문이 완료되었습니다 주문번호 202609241546330001')
+
+
+def test_주문번호는_완료_탭_주소에서도_읽는다():
+    from samba_agent.agents.payer import _source_order_no
+
+    tabs = '[{"url":"https://www.musinsa.com/order/result/202609241804480002"}]'
+    assert _source_order_no('결제가 완료되었습니다', tabs) == '202609241804480002'
+    assert _source_order_no('주문번호 A12345', '') == 'A12345'
+    assert _source_order_no('결제가 완료되었습니다', '[]') is None

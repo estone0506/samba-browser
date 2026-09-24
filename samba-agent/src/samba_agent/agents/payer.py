@@ -234,9 +234,19 @@ def _amount_krw(value: object) -> int | None:
     return amount if amount > 0 else None
 
 
-def _source_order_no(page: str) -> str | None:
-    """결제 성공 화면에서 소싱처 주문번호를 뽑는다. 못 찾으면 None(기록이 사람에게 넘어간다)."""
+# 주문 완료 주소 속 주문번호(무신사 …/order/result/202609241804480002)
+RESULT_URL_ORDER_NO_RE = re.compile(r'order/(?:result|complete)/([A-Za-z0-9-]{6,32})')
+
+
+def _source_order_no(page: str, tabs: str = '') -> str | None:
+    """결제 성공 화면(없으면 주문 완료 탭 주소)에서 소싱처 주문번호를 뽑는다. 못 찾으면 None.
+
+    실기: 무신사페이 완료 화면 글자에 '주문번호' 표기가 없어 기록이 멈췄다 — 완료 탭 주소에는 번호가 있다.
+    """
     m = SOURCE_ORDER_NO_RE.search(page)
+    if m:
+        return m.group(1)
+    m = RESULT_URL_ORDER_NO_RE.search(tabs)
     return m.group(1) if m else None
 
 
@@ -640,7 +650,11 @@ class PayerAgent(AgentBase):
             'paid_by': 'agent',
             'card': card,
         }
-        source_order_no = _source_order_no(page)
+        try:
+            tabs_now = self.tool('list_tabs')
+        except AgentFailure:
+            tabs_now = ''
+        source_order_no = _source_order_no(page, tabs_now)
         if source_order_no is not None:
             payload['source_order_no'] = source_order_no
             self.note('소싱 주문번호', source_order_no)
