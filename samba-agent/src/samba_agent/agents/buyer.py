@@ -198,7 +198,7 @@ OFFICE_SHIPPING: dict[str, object] = {
 }
 # 결제창(토스페이·네이버페이) 안에서 고를 수 있는 카드사(사용자 2026-09-24: 현대·KB·롯데·신한·농협). 주문서 단계의
 # '카드 직접 결제'는 쓰지 않는다 — 카드는 간편결제 창 안에서만 고른다. 결제 에이전트가 카드를 고를 때 이 표를 쓴다
-ALLOWED_CARD_ISSUERS = ('현대', 'KB', '국민', '롯데', '신한', '농협', 'NH')
+ALLOWED_CARD_ISSUERS = ('현대', 'KB', '국민', '롯데', '신한', '농협', 'NH', '하나')
 
 
 def decide_order_type(
@@ -913,13 +913,38 @@ class BuyerAgent(AgentBase):
         if self.order_type_of(a.order, snap) == 'kkadaegi':
             if self._keep_default_shipping(snap):
                 return
-            # 기본 배송지가 사무실이 아니다(또는 없다) — 사무실 주소를 이번 주문의 배송지로 넣는다.
-            # 기본 배송지 자체는 바꾸지 않는다(poizon-sourcing 스킬 "사무실 배송")
-            self.note('배송지', '기본 배송지가 사무실이 아니라 사무실 주소를 주문 배송지로 넣는다')
+            # 기본 배송지가 사무실이 아니다(또는 없다) — 목록에 사무실 배송지가 있으면 그것을 고르고,
+            # 없을 때만 사무실 주소를 새로 넣는다. 기본 배송지 자체는 바꾸지 않는다(poizon-sourcing 스킬 "사무실 배송")
+            if self._select_existing_shipping(dict(OFFICE_SHIPPING), account):
+                return
+            self.note('배송지', '목록에 사무실 배송지가 없어 사무실 주소를 새로 넣는다')
             self._apply_shipping(a, dict(OFFICE_SHIPPING), account)
             return
 
         self._apply_shipping(a, self._fetch_shipping(a, snap), account)
+
+    def _select_existing_shipping(self, shipping: dict[str, object], account: str) -> bool:
+        """배송지 목록에서 이미 있는 항목(이름·주소)을 골라 주문서에 반영한다(`<key>_select_shipping`).
+
+        스크립트가 없거나 목록에 없으면 False — 호출부가 신규 입력으로 넘어간다. 실기: 사무실 주소가 이미 있는데
+        새 배송지를 만들고 나서 기존 것을 고르던 낭비(사용자 지적 2026-09-24).
+        """
+        source = source_of(self.spec.name)
+        args = {'name': shipping.get('name'), 'address': shipping.get('address')}
+        if account:
+            args['profile'] = account
+        try:
+            out = self.json_tool(
+                'run_script', name=f'{source.key}_select_shipping', args=json.dumps(args, ensure_ascii=False)
+            )
+        except AgentFailure as e:
+            self.note('배송지', mask_text(f'기존 항목 선택 불가({e.reason[:60]}) — 신규 입력으로'))
+            return False
+        if not out.get('ok') or not shipping_matches(shipping, out):
+            self.note('배송지', mask_text(f'기존 항목 선택 실패({str(out.get("note") or "")[:60]}) — 신규 입력으로'))
+            return False
+        self.note('배송지', '목록의 사무실 배송지를 골라 주문서에 반영')
+        return True
 
     def _apply_shipping(self, a: Assignment, shipping: dict[str, object], account: str) -> None:
         """이름·주소를 배송지 스크립트로 넣고 되읽어 대조한다. 원문은 이 함수 밖으로 나가지 않는다."""

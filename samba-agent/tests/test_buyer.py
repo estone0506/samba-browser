@@ -84,6 +84,8 @@ def route_run_script(responses: dict[str, object]) -> object:
             return page('{"quotes": []}')
         if name not in responses and str(name).endswith('_normal_price'):
             return page('{"normal_price": 150000}')  # 정가 표본
+        if name not in responses and str(name).endswith('_select_shipping'):
+            return page('{"ok": false, "found": false, "note": "목록에 맞는 배송지 없음"}')
         if name not in responses:
             raise AssertionError(f'예상치 못한 run_script 호출: {name}')
         return page(json.dumps(responses[name], ensure_ascii=False))
@@ -460,6 +462,8 @@ def _recording_handler(snapshot_name, applied, echo_extra=None, snapshot=None):
             return page('{"quotes": []}')  # 견적 없음 — 스냅샷 원가로 진행
         if body['args']['name'].endswith('_normal_price'):
             return page('{"normal_price": 150000}')
+        if body['args']['name'].endswith('_select_shipping'):
+            return page('{"ok": false, "found": false, "note": "목록에 맞는 배송지 없음"}')
         args = json.loads(body['args']['args'])
         if body['args']['name'].endswith('_confirm_shipping'):
             # 확정 스크립트 — 폼을 저장한 뒤 주문서에서 되읽은 값을 그대로 메아리친다
@@ -679,7 +683,7 @@ def test_까대기_주문서에_기본_배송지가_없으면_사무실_주소�
     out = abc(_abc_assignment(reg, spec))
     assert out.status == 'ok', out.reason
     assert applied['name'] == '김가명' and '사무실길 58' in str(applied['address'])
-    assert any('사무실 주소를 주문 배송지로' in e.detail for e in out.evidence)
+    assert any('사무실 주소를 새로 넣는다' in e.detail for e in out.evidence)
 
 
 @pytest.mark.parametrize(
@@ -826,6 +830,8 @@ def _per_account_snapshots(by_account: dict[str, object], calls: list[str]):
             return page('{"quotes": []}')
         if name.endswith('_normal_price'):
             return page('{"normal_price": 150000}')  # 정가도 calls 에 남기지 않는다
+        if name.endswith('_select_shipping'):
+            return page('{"ok": false, "found": false, "note": "목록에 맞는 배송지 없음"}')
         calls.append(f'{name}:{args.get("profile")}')
         return page(json.dumps(SHIPPING_ECHO, ensure_ascii=False))
 
@@ -1186,3 +1192,34 @@ def test_payable_methods_는_결제_가능한_수단_이름만_남긴다():
     assert payable_methods(methods, {'site', 'toss'}) == ['무신사머니', '토스페이']
     assert payable_methods(methods, {'card', 'kakao'}) == ['카카오페이']  # '카드'는 절대 안 들어간다
     assert payable_methods(methods, set()) == []
+
+
+@respx.mock
+def test_까대기_사무실_배송지가_목록에_있으면_골라서_쓴다(reg):
+    """신규 입력(set_shipping) 없이 `<key>_select_shipping` 으로 기존 사무실 항목을 고른다."""
+    abc, spec = _abc_agent(reg)
+    snap = {**SNAPSHOT_OK, 'shipping': {'name': '', 'address': ''}}
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        name = body['args']['name']
+        calls.append(name)
+        if name == 'abc_product_snapshot':
+            return page(json.dumps(snap, ensure_ascii=False))
+        if name.endswith('_select_shipping'):
+            args = json.loads(body['args']['args'])
+            return page(json.dumps({'ok': True, 'found': True, **args}, ensure_ascii=False))
+        if name.endswith('_payment_quotes'):
+            return page('{"quotes": []}')
+        if name.endswith('_normal_price'):
+            return page('{"normal_price": 150000}')
+        raise AssertionError(f'예상치 못한 run_script 호출: {name}')
+
+    respx.post(f'{URL}/tool/run_script').mock(side_effect=handler)
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
+    out = abc(_abc_assignment(reg, spec))
+    assert out.status == 'ok', out.reason
+    assert 'abc_select_shipping' in calls and 'abc_set_shipping' not in calls
+    assert any('목록의 사무실 배송지' in e.detail for e in out.evidence)
