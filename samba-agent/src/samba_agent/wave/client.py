@@ -205,6 +205,28 @@ class WaveClient:
         items = body.get('items') if isinstance(body, dict) else None
         return [WaveOrder.model_validate(i) for i in items or []]
 
+    def sourcing_account_id(self, source_site: str, username: str) -> str | None:
+        """(소싱처, 로그인 아이디) → 삼바웨이브 소싱 계정 id. 못 찾으면 None.
+
+        실제로 산 계정으로 주문계정을 기록하려고 쓴다(주문에 미리 잡힌 계정과 다를 수 있다).
+        """
+        try:
+            body = self._request('GET', '/sourcing-accounts', params={'source_site': source_site})
+        except WaveError:
+            return None
+        items = body.get('items') if isinstance(body, dict) else body
+        if not isinstance(items, list):
+            return None
+        want = username.strip().lower()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get('username') or '').strip().lower() == want and (
+                str(item.get('source_site') or source_site).lower() == source_site.lower()
+            ):
+                return str(item.get('id') or '') or None
+        return None
+
     def get_order(self, order_no: str, order_type: OrderType | None = None) -> WaveOrderDetail:
         """주문 1건 상세. 배송지가 실려 온다 — 호출부는 즉시 쓰고 버린다.
 

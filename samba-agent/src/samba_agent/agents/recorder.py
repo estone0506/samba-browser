@@ -21,6 +21,14 @@ READ_SCRIPT = 'samba_read_order'
 NUMERIC_FIELDS = ('real_price', 'shipping_fee')
 
 
+def _source_site(source: str) -> str:
+    """주문의 소싱처 표기('무신사'·'MUSINSA') → 삼바웨이브 source_site(sources.yaml id)."""
+    from samba_agent.sources import default_sources
+
+    src = default_sources().by_id(source)
+    return src.id if src is not None else source
+
+
 def _order_type_value(raw: object) -> str | None:
     """구매 에이전트가 판정한 배송 종류만 삼바웨이브에 보낸다(direct/kkadaegi/gift). 그 밖의 값·빈 값은 보내지 않는다."""
     value = str(raw or '').strip()
@@ -169,6 +177,17 @@ class RecorderAgent(AgentBase):
             evidence=tuple(self.evidence),
         )
 
+    def _bought_account_id(self, a: Assignment) -> str | None:
+        """구매 에이전트가 쓴 계정(handoff account)의 삼바웨이브 id. 주문 계정과 같거나 못 찾으면 주문 값."""
+        bought = str(a.handoff.get('account') or '').strip()
+        if bought and bought != (a.order.account or '') and self._wave is not None:
+            found = self._wave.sourcing_account_id(_source_site(a.order.source), bought)
+            if found:
+                self.note('주문계정', f'실제 구매 계정 {bought} 로 기록')
+                return found
+            self.note('주문계정', f'실제 구매 계정 {bought} 의 삼바 id 를 찾지 못해 주문 값으로 둔다')
+        return a.order.account_id or (str(a.handoff.get('sourcing_account_id') or '') or None)
+
     def _record_via_wave(
         self, a: Assignment, values: dict[str, object], memo_reason: str
     ) -> AgentResult:
@@ -187,9 +206,9 @@ class RecorderAgent(AgentBase):
                 sourcing_order_number=sourcing_no,
                 cost=float(values.get('real_price') or 0),
                 shipping_fee=float(values.get('shipping_fee') or 0),
-                # 소싱 계정 id 는 주문이 들고 온 값이 정답이다(인계값은 예전 배선의 잔재)
-                sourcing_account_id=a.order.account_id
-                or (str(a.handoff.get('sourcing_account_id') or '') or None),
+                # 주문계정은 실제로 산 계정이다 — 주문에 미리 잡힌 계정과 다를 수 있다(실기: buyer05 주문을
+                # 플레이북대로 buyer01 으로 삼). 못 찾으면 주문이 들고 온 값
+                sourcing_account_id=self._bought_account_id(a),
                 # 간단메모는 정해진 한 줄(계정·수단·실결제·원가) — LLM 문장을 싣지 않는다
                 notes=wave_notes(a, values),
                 order_type=_order_type_value(a.expected.get('order_type')),

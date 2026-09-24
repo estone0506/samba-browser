@@ -236,3 +236,18 @@ def test_record_sourcing_은_판정한_배송_종류를_함께_보낸다():
     # 판정이 없으면 필드를 아예 보내지 않는다
     client().record_sourcing('A1', sourcing_order_number='M-777', cost=1)
     assert 'order_type' not in json.loads(route.calls.last.request.content)
+
+
+@respx.mock
+def test_소싱_계정_id_를_소싱처와_아이디로_찾는다():
+    respx.get(f'{API}/sourcing-accounts').mock(
+        return_value=httpx.Response(
+            200,
+            json={'items': [
+                {'id': 'sa_1', 'source_site': 'MUSINSA', 'username': 'buyer02'},
+                {'id': 'sa_2', 'source_site': 'MUSINSA', 'username': 'buyer01'},
+            ]},
+        )
+    )
+    assert client().sourcing_account_id('MUSINSA', 'buyer01') == 'sa_2'
+    assert client().sourcing_account_id('MUSINSA', 'nobody') is None
