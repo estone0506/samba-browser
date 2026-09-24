@@ -215,6 +215,9 @@ def main() -> None:
             max_new=settings.intake_max_new,
             sources=frozenset(x.strip() for x in settings.intake_sources.split(',') if x.strip()),
             poison_only=settings.intake_poison_only,
+            all_sellers_sources=frozenset(
+                x.strip() for x in settings.intake_all_sellers_sources.split(',') if x.strip()
+            ),
         )
         bot.intake = intake
 

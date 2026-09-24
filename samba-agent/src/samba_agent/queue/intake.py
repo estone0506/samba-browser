@@ -83,6 +83,7 @@ class Intake:
         max_new: int = 5,
         sources: frozenset[str] = frozenset(),
         poison_only: bool = False,
+        all_sellers_sources: frozenset[str] = frozenset(),
     ) -> None:
         self._wave = wave
         self._queue = queue
@@ -96,6 +97,8 @@ class Intake:
         # 수집 범위 — 비어 있으면 전부. 소싱처 id(대문자)로 비교한다
         self._sources = frozenset(x.upper() for x in sources)
         self._poison_only = poison_only
+        # 포이즌 제한의 예외 — 이 소싱처는 판매처와 무관하게 모두 이행(사용자 2026-09-24: 무신사)
+        self._all_sellers = frozenset(x.upper() for x in all_sellers_sources)
         # 슬랙 `수집 중지` 가 세우는 깃발. 세워져 있으면 run_once 는 아무것도 하지 않는다
         self.paused = False
 
@@ -158,7 +161,7 @@ class Intake:
         """수집 범위 안인가 — 소싱처 목록·포이즌 판매만(사용자 설정)."""
         if self._sources and str(order.source_site or '').upper() not in self._sources:
             return False
-        if self._poison_only:
+        if self._poison_only and str(order.source_site or '').upper() not in self._all_sellers:
             from samba_agent.supervisor.policy import is_poison_seller
 
             if not is_poison_seller(order.seller):

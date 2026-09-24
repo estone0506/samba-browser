@@ -227,6 +227,7 @@ def test_수집_범위는_소싱처와_포이즌_판매만():
     it = Intake.__new__(Intake)
     it._sources = frozenset({'MUSINSA', '29CM'})
     it._poison_only = True
+    it._all_sellers = frozenset()
 
     def o(site, seller):
         return WaveOrder.model_validate({'order_number': 'X', 'source_site': site, 'seller': seller})
@@ -235,3 +236,21 @@ def test_수집_범위는_소싱처와_포이즌_판매만():
     assert it._in_scope(o('29CM', '포이즌'))
     assert not it._in_scope(o('ABCmart', 'poison'))
     assert not it._in_scope(o('MUSINSA', '쿠팡(seller02)'))
+
+
+def test_무신사는_판매처와_무관하게_이행한다():
+    from samba_agent.queue.intake import Intake
+    from samba_agent.wave.client import WaveOrder
+
+    it = Intake.__new__(Intake)
+    it._sources = frozenset({'MUSINSA', '29CM'})
+    it._poison_only = True
+    it._all_sellers = frozenset()
+    it._all_sellers = frozenset({'MUSINSA'})
+
+    def o(site, seller):
+        return WaveOrder.model_validate({'order_number': 'X', 'source_site': site, 'seller': seller})
+
+    assert it._in_scope(o('MUSINSA', '쿠팡(seller02)'))
+    assert it._in_scope(o('29CM', 'poison'))
+    assert not it._in_scope(o('29CM', '롯데홈쇼핑'))

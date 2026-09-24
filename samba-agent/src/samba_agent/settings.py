@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     # 자동 수집 대상 소싱처(쉼표, 비우면 전부)와 판매처 제한(포이즌만)
     intake_sources: str = Field(default='', alias='SAMBA_INTAKE_SOURCES')
     intake_poison_only: bool = Field(default=False, alias='SAMBA_INTAKE_POISON_ONLY')
+    # 포이즌 제한을 두지 않는(모든 판매처를 이행하는) 소싱처(쉼표). 예: MUSINSA
+    intake_all_sellers_sources: str = Field(default='', alias='SAMBA_INTAKE_ALL_SELLERS_SOURCES')
     # 결제에 쓸 수 있는 결제 제공자(쉼표, 비우면 키마스터에 있는 것 전부). 예: site,musinsapay
     allowed_pay_providers: str = Field(default='', alias='SAMBA_ALLOWED_PAY_PROVIDERS')
     # True 면 결제 승인 요청을 사람 대신 즉시 승인한다(사용자가 자동 이행을 켠 경우만)
