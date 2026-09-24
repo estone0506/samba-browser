@@ -215,6 +215,8 @@ def main() -> None:
         root=settings.root,
         version=version_fn,
         report_dir=settings.report_dir,
+        # 슬랙이 없을 때 사람이 승인을 넣는 경로(POST /approve) — 슬랙 버튼과 같은 worker.resume
+        approve=worker.resume,
     )
 
     # 이벤트 하나로 통일한다(리뷰 지적 — Minor) — SIGINT/SIGTERM 이 이걸 세우면

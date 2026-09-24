@@ -184,3 +184,36 @@ def test_releases_는_다른_스레드에서_읽어도_된다(tmp_path):
     t.start()
     t.join()
     assert out == [None]
+
+
+def test_승인은_대기_중인_주문만_깨운다(tmp_path):
+    """POST /approve — 슬랙 없이 사람이 승인/거절을 넣는 경로. 대기 중이 아니면 409, 본문이 틀리면 400."""
+    calls = []
+
+    def approve(order_no, approved, by, stage):
+        calls.append((order_no, approved, by, stage))
+        return None if order_no == 'NOPE' else type('J', (), {'state': 'running'})()
+
+    root = tmp_path / 'root'
+    shutil.copytree(DEFAULT_ROOT / 'rules', root / 'rules')
+    shutil.copy(DEFAULT_ROOT / 'registry.yaml', root / 'registry.yaml')
+    shutil.copy(DEFAULT_ROOT / 'sources.yaml', root / 'sources.yaml')
+    app = build_app(
+        reg=Registry.load(root),
+        queue=JobQueue(tmp_path / 'j.sqlite'),
+        releases=ReleaseStore(tmp_path / 'r.sqlite'),
+        root=root,
+        version=lambda: 'vtest',
+        approve=approve,
+    )
+    c = Client(app)
+    r = c.post('/approve', data=json.dumps({'order_no': 'A1', 'approved': True, 'by': 'me', 'stage': 'pay'}))
+    assert r.status_code == 200 and r.get_json()['state'] == 'running'
+    assert calls[-1] == ('A1', True, 'me', 'pay')
+    assert c.post('/approve', data=json.dumps({'order_no': 'NOPE', 'approved': False, 'by': 'me'})).status_code == 409
+    assert c.post('/approve', data=json.dumps({'order_no': 'A1', 'approved': 'yes', 'by': 'me'})).status_code == 400
+    assert c.post('/approve', data='{').status_code == 400
+
+
+def test_승인_경로가_배선되지_않으면_503(client):
+    assert client.post('/approve', data=json.dumps({'order_no': 'A1', 'approved': True, 'by': 'me'})).status_code == 503
