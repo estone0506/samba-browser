@@ -172,6 +172,7 @@ def main() -> None:
             approval_report=_approval_report,
             dry_run=settings.dry_run,
             dry_run_digits=settings.dry_run_digits,
+            keep_tabs=settings.keep_tabs,
             # 관측 배선 — 실행 1건이 LangSmith span + 로컬 이벤트로 남는다(리뷰 지적 — I3)
             events=events,
             env=settings.harness_env,

@@ -192,6 +192,13 @@ def cheapest_quotes(
 KKADAEGI_SHIPPING_FEE = 2300
 # 사무실 주소 표식 — 까대기의 기본 배송지가 이 주소여야 한다(경북 가상시 사무실길 58)
 OFFICE_ADDRESS_HINT = '사무실길 58'
+# 까대기 주문 배송지(사무실). 기본 배송지가 사무실이 아닐 때 이번 주문에만 넣는다 — poizon-sourcing 스킬 "사무실 배송"
+OFFICE_SHIPPING: dict[str, object] = {
+    'name': '김가명',
+    'address': '경북 가상시 사무실길 58',
+    'address_detail': '1층 102호',
+    'postal_code': '38069',
+}
 # 카드 직접 결제에서 비교·구매를 허용하는 카드사(poizon-sourcing 스킬 규칙). 그 밖의 카드사 견적은 후보에서 뺀다
 ALLOWED_CARD_ISSUERS = ('현대', '삼성', '롯데')
 
@@ -259,6 +266,10 @@ def matching_options(options: list[str], wanted: str | None) -> list[str]:
             nt = _norm(tok)
             if len(nt) < 2:
                 continue
+            # 경계 일치가 먼저 — "XL" 은 "Black-XL" 에만 맞고 "Black-XXL"·"Black-XLT" 에는 안 맞는다
+            by_piece = [o for o in live if nt in [_norm(x) for x in re.split(r'[-\s/]+', o)]]
+            if by_piece:
+                return by_piece
             by_tok = [o for o in live if nt in _norm(o)]
             if by_tok:
                 return by_tok
@@ -892,10 +903,18 @@ class BuyerAgent(AgentBase):
         원문은 이 함수 밖으로 나가지 않는다 — self.note 에는 마스킹된 요약만 남긴다.
         """
         if self.order_type_of(a.order, snap) == 'kkadaegi':
-            self._keep_default_shipping(snap)
+            if self._keep_default_shipping(snap):
+                return
+            # 기본 배송지가 사무실이 아니다(또는 없다) — 사무실 주소를 이번 주문의 배송지로 넣는다.
+            # 기본 배송지 자체는 바꾸지 않는다(poizon-sourcing 스킬 "사무실 배송")
+            self.note('배송지', '기본 배송지가 사무실이 아니라 사무실 주소를 주문 배송지로 넣는다')
+            self._apply_shipping(a, dict(OFFICE_SHIPPING), account)
             return
 
-        shipping = self._fetch_shipping(a, snap)
+        self._apply_shipping(a, self._fetch_shipping(a, snap), account)
+
+    def _apply_shipping(self, a: Assignment, shipping: dict[str, object], account: str) -> None:
+        """이름·주소를 배송지 스크립트로 넣고 되읽어 대조한다. 원문은 이 함수 밖으로 나가지 않는다."""
         # 이름·주소만 넘긴다 — phone 키는 출처가 어디든 버린다
         args: dict[str, object] = {
             f: shipping[f] for f in SHIPPING_ARG_FIELDS if shipping.get(f) is not None
@@ -943,11 +962,12 @@ class BuyerAgent(AgentBase):
             )
         self.note('배송지 확정', '폼 저장 후 주문서 되읽기 일치')
 
-    def _keep_default_shipping(self, snap: dict[str, object]) -> None:
-        """까대기 — 계정 기본 배송지(사무실)를 유지하고 수정하지 않는다(플레이북 §4-2).
+    def _keep_default_shipping(self, snap: dict[str, object]) -> bool:
+        """까대기 — 계정 기본 배송지가 사무실이면 그대로 두고 True(플레이북 §4-2).
 
         배송지 스크립트를 부르지 않고 주문서에 수령인·주소가 비어 있지 않은지만 본다.
         스냅샷이 주문서 배송지를 실어 주면 그것으로, 아니면 화면(get_page)으로 확인한다.
+        비어 있거나 사무실이 아니면 False — 호출부가 사무실 주소를 주문 배송지로 넣는다.
         """
         embedded = snap.get('shipping')
         if isinstance(embedded, dict) and embedded:
@@ -959,20 +979,10 @@ class BuyerAgent(AgentBase):
                 m in page for m in EMPTY_SHIPPING_MARKERS
             )
             office = OFFICE_ADDRESS_HINT in page
-        if filled and not office:
-            # 기본 배송지가 사무실이 아니면 까대기로 보내면 안 된다 — 사람이 계정 기본 배송지를 사무실로 바꿔야 한다
-            raise AgentFailure(
-                'needs_human',
-                f'까대기인데 계정 기본 배송지가 사무실({OFFICE_ADDRESS_HINT})이 아니다',
-                FailReason.UNKNOWN,
-            )
-        if not filled:
-            raise AgentFailure(
-                'needs_human',
-                '기본 배송지 없음 — 계정의 기본 배송지(사무실)를 사람이 등록해야 한다',
-                FailReason.UNKNOWN,
-            )
+        if not (filled and office):
+            return False
         self.note('배송지', '사무실 수령(기본 배송지 유지)')
+        return True
 
     def _fill_phone(self, applied: dict[str, object]) -> None:
         """배송 연락처 — 스크립트가 비워 둔 전화 칸을 앱이 키마스터 신원정보로 채운다.

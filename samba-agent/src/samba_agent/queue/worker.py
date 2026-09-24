@@ -59,6 +59,9 @@ class WorkerDeps:
     # 작업이 연 브라우저 탭을 끝날 때 닫는다(실기: 옛 주문서 탭을 다음 작업이 읽어 원가 오독).
     # 없으면 닫지 않는다(테스트)
     tabs: TabJanitor | None = None
+    # True 면 작업이 끝나도 탭을 바로 닫지 않고 **다음 작업이 시작할 때** 닫는다 — 사용자가 결과 화면(주문서·
+    # 실패 화면)을 눈으로 확인할 수 있어야 한다(사용자 지시 2026-09-24). 옛 주문서 오독은 다음 작업 시작 전 정리로 막는다
+    keep_tabs: bool = False
     # 브릿지가 지금 일을 받을 수 있는가(앱 채팅이 도는 동안은 409 busy). 거짓이면 큐를 집지 않고
     # 다음 주기를 기다린다 — 실기: 사용자가 앱에서 채팅을 돌리는 동안 5건이 전부 bridge_down 으로 사람에게 넘어갔다
     ready: Callable[[], bool] | None = None
@@ -77,6 +80,8 @@ class Worker:
         self._last_prune: float | None = None
         # 작업 id → 시작 시점 탭 목록. 승인 대기로 멈춘 작업은 재개 뒤 닫으려고 남겨 둔다
         self._tab_marks: dict[int, frozenset[str]] = {}
+        # keep_tabs 일 때 아직 안 닫은 지난 작업의 시작 시점 탭 목록(가장 오래된 것 하나면 충분하다)
+        self._deferred_mark: frozenset[str] | None = None
 
     def tick(self) -> Job | None:
         """queued 1건을 집어 끝까지(또는 승인 대기까지) 돌린다. 없으면 None."""
@@ -98,6 +103,7 @@ class Worker:
             return self.d.queue.get(job.order_no)
         self._reset_finished_thread(job.id)
         if self.d.tabs is not None:
+            self._close_deferred(job)
             self._tab_marks[job.id] = self.d.tabs.snapshot()
         state = {
             'order': order,
@@ -108,6 +114,19 @@ class Worker:
         }
         return self._cleanup_tabs(self._invoke(job, state))
 
+    def _close_deferred(self, job: Job) -> None:
+        """keep_tabs 로 남겨 둔 지난 작업의 탭을 새 작업 시작 직전에 닫는다(옛 주문서 오독 방지)."""
+        if self._deferred_mark is None or self.d.tabs is None:
+            return
+        mark, self._deferred_mark = self._deferred_mark, None
+        try:
+            closed = self.d.tabs.close_new(mark)
+        except Exception:  # noqa: BLE001 — 정리 실패가 새 작업을 막으면 안 된다
+            _log.exception('지난 작업 탭 정리 실패 — 그대로 둔다: %s', job.order_no)
+            return
+        if closed:
+            _log.info('%s 시작 전 지난 작업 탭 %d개 닫음', job.order_no, closed)
+
     def _cleanup_tabs(self, job: Job | None) -> Job | None:
         """작업이 끝났으면(승인 대기가 아니면) 그 작업이 연 탭을 닫는다."""
         if job is None or self.d.tabs is None:
@@ -116,6 +135,12 @@ class Worker:
             return job  # 결제 직전 주문서가 살아 있어야 한다
         before = self._tab_marks.pop(job.id, None)
         if before is None:
+            return job
+        if self.d.keep_tabs:
+            # 화면을 남긴다 — 다음 작업 시작 때 닫는다(가장 오래된 표식을 유지해야 그 뒤 탭이 전부 닫힌다)
+            if self._deferred_mark is None:
+                self._deferred_mark = before
+            _log.info('%s 작업이 연 탭을 남겨 둔다(다음 작업 시작 때 정리)', job.order_no)
             return job
         try:
             closed = self.d.tabs.close_new(before)

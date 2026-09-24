@@ -665,20 +665,25 @@ def test_ABC마트는_항상_까대기로_기본_배송지를_유지한다(reg):
 
 
 @respx.mock
-def test_까대기_주문서에_기본_배송지가_없으면_사람에게_넘긴다(reg):
+def test_까대기_주문서에_기본_배송지가_없으면_사무실_주소를_넣는다(reg):
+    # poizon-sourcing 스킬: 사무실 주소가 등록돼 있지 않을 때만 사무실 주소를 주문 배송지로 쓴다(기본 배송지는 안 바꿈)
     abc, spec = _abc_agent(reg)
     snap = {**SNAPSHOT_OK, 'shipping': {'name': '', 'address': ''}}
+    applied: dict[str, object] = {}
     respx.post(f'{URL}/tool/run_script').mock(
-        side_effect=route_run_script({'abc_product_snapshot': snap})
+        side_effect=_recording_handler('abc_product_snapshot', applied, snapshot=snap)
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     mock_accounts()
+    mock_fill_secret()
     out = abc(_abc_assignment(reg, spec))
-    assert out.status == 'needs_human' and '기본 배송지 없음' in out.reason
+    assert out.status == 'ok', out.reason
+    assert applied['name'] == '김가명' and '사무실길 58' in str(applied['address'])
+    assert any('사무실 주소를 주문 배송지로' in e.detail for e in out.evidence)
 
 
 @pytest.mark.parametrize(
-    ('page_text', 'ok'),
+    ('page_text', 'keeps_default'),
     [
         ('배송지 받는 분 삼바 사무실 경북 가상시 사무실길 58 1층', True),
         ('배송지 등록된 배송지가 없습니다 배송지를 추가해 주세요', False),
@@ -686,17 +691,21 @@ def test_까대기_주문서에_기본_배송지가_없으면_사람에게_넘�
     ],
 )
 @respx.mock
-def test_스냅샷에_배송지가_없으면_주문서_화면으로_확인한다(reg, page_text, ok):
+def test_스냅샷에_배송지가_없으면_주문서_화면으로_확인한다(reg, page_text, keeps_default):
+    """화면의 기본 배송지가 사무실이면 그대로, 아니면(없음 포함) 사무실 주소를 넣는다."""
     abc, spec = _abc_agent(reg)
     snap = {k: v for k, v in SNAPSHOT_OK.items() if k != 'shipping'}
+    applied: dict[str, object] = {}
     respx.post(f'{URL}/tool/run_script').mock(
-        side_effect=route_run_script({'abc_product_snapshot': snap})
+        side_effect=_recording_handler('abc_product_snapshot', applied, snapshot=snap)
     )
     respx.post(f'{URL}/tool/get_page').mock(return_value=page(page_text))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     mock_accounts()
+    mock_fill_secret()
     out = abc(_abc_assignment(reg, spec))
-    assert (out.status == 'ok') is ok
+    assert out.status == 'ok', out.reason
+    assert (applied == {}) is keeps_default
 
 
 @respx.mock
@@ -1164,3 +1173,11 @@ def test_cheapest_quotes_카드는_허용_카드사만():
     ]
     got = cheapest_quotes(quotes, None, {'card', 'site'})
     assert [(q['card'], q['cost']) for q in got] == [('현대카드', 28000), (None, 29000)]
+
+
+def test_matching_options_토큰_경계_일치가_우선():
+    from samba_agent.agents.buyer import matching_options
+
+    opts = ['Black-XS (품절)', 'Black-XL', 'Black-XLT (품절)', 'Black-XXL', 'Black-3XL']
+    assert matching_options(opts, '블랙 XL') == ['Black-XL']
+    assert matching_options(opts, '블랙 3XL') == ['Black-3XL']

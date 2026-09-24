@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     # dry-run 에서 결제 비밀번호를 몇 자리까지 눌러 보고 취소할지(0 이면 결제창까지만).
     # 실기에서 키패드 자동 입력이 되는지만 보는 값이라 앱 스키마와 같은 1~3 자리를 쓴다
     dry_run_digits: int = Field(default=0, ge=0, le=3, alias='SAMBA_DRY_RUN_DIGITS')
+    # 작업이 끝나도 브라우저 탭을 남긴다(다음 작업 시작 때 정리) — 사람이 과정을 눈으로 확인하려고
+    keep_tabs: bool = Field(default=False, alias='SAMBA_KEEP_TABS')
 
     @field_validator('slack_allowed_users', mode='before')
     @classmethod
