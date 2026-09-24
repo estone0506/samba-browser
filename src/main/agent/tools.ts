@@ -557,8 +557,8 @@ async function clickLoginLink(tab: Tab): Promise<boolean> {
 // 알려진 로그인 URL 로 옮긴 뒤 폼이 나타날 때까지 다시 보는 횟수·간격
 const LOGIN_FIELDS_POLL_MAX = 6
 const LOGIN_FIELDS_POLL_MS = 700
-// 로그인 링크를 따라가는 최대 횟수(로그인 링크 → 로그인 방법 선택 화면 → 입력 화면)
-const LOGIN_LINK_HOPS = 2
+// 로그인 링크를 따라가는 최대 횟수(29CM: LOGIN → 로그인 방법 선택 → 무신사 통합 로그인 "로그인" → 입력칸)
+const LOGIN_LINK_HOPS = 3
 
 export async function findLoginFieldsWithFallback(
   tabs: TabManager,
@@ -593,7 +593,8 @@ export async function findLoginFieldsWithFallback(
     for (let hop = 0; hop < LOGIN_LINK_HOPS; hop += 1) {
       if (!(await clickLoginLink(tab))) break
       fields = await pageBridge.findLoginFields(tab)
-      for (let attempt = 0; fields.stage === 'none' && attempt < LOGIN_FIELDS_POLL_MAX; attempt += 1) {
+      // 통합 로그인은 다른 도메인을 거쳐 오느라 늦게 뜬다(실기: 29CM → member.one.musinsa.com) — 두 배로 기다린다
+      for (let attempt = 0; fields.stage === 'none' && attempt < LOGIN_FIELDS_POLL_MAX * 2; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, LOGIN_FIELDS_POLL_MS))
         fields = await pageBridge.findLoginFields(tab)
       }
@@ -2067,13 +2068,12 @@ overlays left: ${after.length}${kept}`
           // 라벨을 안 주면 탭 프로필과 같은 라벨의 계정을 자동으로 고른다(계정 순회 지원)
           const account =
             resolveAccount(available.listAccounts(loginHost), accountLabel, tab.profile) ??
-            (loginHost !== host
-              ? movedHostAccount(
-                  available.listAccounts(host),
-                  available.listAccounts(loginHost),
-                  accountLabel ?? tab.profile
-                )
-              : null)
+            // 앞 호출에서 이미 통합 로그인 화면으로 넘어와 있어도(host === loginHost) 라벨 @ 앞부분으로 짝을 찾는다
+            movedHostAccount(
+              loginHost !== host ? available.listAccounts(host) : [],
+              available.listAccounts(loginHost),
+              accountLabel ?? tab.profile
+            )
           if (!account) return ACCOUNT_NOT_FOUND
           const gate = await applyPolicy(
             available,

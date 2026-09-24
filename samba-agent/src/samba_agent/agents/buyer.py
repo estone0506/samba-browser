@@ -100,6 +100,13 @@ def shipping_matches(expected: dict[str, object], applied: dict[str, object]) ->
     """
     if _norm(str(expected.get('name', ''))) != _norm(str(applied.get('name', ''))):
         return False
+    # 호수 — 되읽은 주소에 'NNN호'가 보이면 넣으려던 호수와 같아야 한다(실기 29CM: 1층 101호 / 1층 102호가 함께 있다)
+    want_ho = re.findall(r'(\d+)\s*호', str(expected.get('address_detail') or ''))
+    got_ho = re.findall(
+        r'(\d+)\s*호', f"{applied.get('address') or ''} {applied.get('address_detail') or ''}"
+    )
+    if want_ho and got_ho and want_ho[-1] not in got_ho:
+        return False
     # 우편번호가 양쪽에 있고 같으면 같은 곳이다 — 지번(41-11)을 도로명(14번길 11)으로 되읽는 사이트(실기: 롯데온)는
     # 숫자 토큰이 달라진다
     zip_exp = re.sub(r'\D', '', str(expected.get('postal_code') or ''))
@@ -1705,7 +1712,11 @@ class BuyerAgent(AgentBase):
         새 배송지를 만들고 나서 기존 것을 고르던 낭비(사용자 지적 2026-09-24).
         """
         source = source_of(self.spec.name)
-        args = {'name': shipping.get('name'), 'address': shipping.get('address')}
+        args = {
+            'name': shipping.get('name'),
+            'address': shipping.get('address'),
+            'address_detail': shipping.get('address_detail'),
+        }
         if account:
             args['profile'] = account
         try:
