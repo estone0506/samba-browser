@@ -481,15 +481,37 @@ class PayerAgent(AgentBase):
             )
         else:
             # 결제 앱이 없다 — 사이트 결제창의 웹 키패드다. 요소 번호는 스키마가 요구해서 찾는다
-            found = self.tool('find_elements', query=KEYPAD_QUERY)
-            # 주문 계정을 라벨로 넘긴다 — 기본 프로필 탭에서 연 결제창은 프로필 단서가 없어 앱이 계정을 못 고른다(실기 7차)
-            out = self.tool(
-                'fill_secret',
-                elementId=_element_id(found) or 0,
-                itemType='password',
-                dryRunDigits=digits,
-                **({'accountLabel': a.order.account} if a.order.account else {}),
-            )
+            # 키패드는 결제하기 뒤 늦게·다른 팝업에 뜬다 — 실결제 경로(_web_pay)처럼 최근 팝업부터 다시 본다
+            # (실기: 29CM 무신사페이 시험 입력이 키패드 전에 눌려 'target is not a secret input')
+            label = a.handoff.get('account') or a.order.account
+            out = ''
+            for attempt in range(KEYPAD_POLL_TRIES):
+                popups, _active = self._list_tabs_popups()
+                for tab_id in [str(p['id']) for p in reversed(popups) if p.get('id')] or ['']:
+                    if tab_id:
+                        self.tool('switch_tab', id=tab_id)
+                    found = self.tool('find_elements', query=KEYPAD_QUERY)
+                    try:
+                        out = self.tool(
+                            'fill_secret',
+                            elementId=_element_id(found) or 0,
+                            itemType='password',
+                            dryRunDigits=digits,
+                            **(
+                                {'provider': web_pay_provider(card)}
+                                if web_pay_provider(card)
+                                else {}
+                            ),
+                            **({'accountLabel': label} if label else {}),
+                        )
+                    except AgentFailure as e:
+                        out = e.reason
+                    if not _keypad_not_ready(out):
+                        break
+                if not _keypad_not_ready(out):
+                    break
+                if attempt + 1 < KEYPAD_POLL_TRIES:
+                    self.tool('wait', ms=KEYPAD_POLL_WAIT_MS)
         self.note('시험 입력', mask_text(out[:200]))
         if not any(m in out.lower() for m in DRY_RUN_MARKERS):
             # 시험 입력이라고 했는데 시험 입력 응답이 아니다 — 결제가 진행됐을 수 있다

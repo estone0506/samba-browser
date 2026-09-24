@@ -938,6 +938,14 @@ class BuyerAgent(AgentBase):
         if payable is not None and allowed is not None:
             # 사용자가 허용한 결제수단만(예: 무신사머니·무신사페이, ABC마트·그랜드스테이지는 네이버페이만)
             payable = payable & allowed
+        if payable is None and allowed is not None:
+            # 키마스터 조회가 안 되면(활성 탭 사이트가 달라 거절 — 29CM 는 무신사 통합계정 비밀번호를 쓴다)
+            # 허용된 결제수단 안에서 견적한다. 비밀번호가 없으면 결제 단계가 멈춘다
+            payable = set(allowed)
+            self.note(
+                '결제수단 견적',
+                f'키마스터 결제 항목 조회 실패 — 허용 수단 {sorted(payable)} 로 견적',
+            )
         if payable is None:
             # 결제 가능 여부를 모르면 견적으로 수단을 바꾸지 않는다 — 계좌이체처럼 낼 수 없는 수단을 고를 수 있다
             self.note(
