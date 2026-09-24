@@ -901,10 +901,22 @@ class BuyerAgent(AgentBase):
     def _pay_card_quote(self, account: str) -> list[dict[str, object]]:
         """무신사페이 등록 기본 카드 견적 한 줄(`<key>_pay_card_quote`). 못 읽으면 빈 목록."""
         try:
-            out = self.json_tool(
-                'run_script',
-                name=source_of(self.spec.name).pay_card_quote_script,
-                args=json.dumps({'profile': account}, ensure_ascii=False),
+            # 없거나 틀리면 AI 가 만든다(29CM 도 무신사페이 등록 카드로 결제한다)
+            out = self.script_json(
+                source_of(self.spec.name).pay_card_quote_script,
+                {'profile': account},
+                goal=(
+                    '열린 주문서(계정 profile)에서 무신사페이를 골라 등록된 카드 목록(카드사 이름 (번호) 신용카드/체크카드) 중 '
+                    '맨 앞 기본 카드와, 그때의 총 결제 금액·후기 제외 적립·사용 적립금을 '
+                    '{ok:true, quotes:[{method:"무신사페이", card, cost, reward, points_used, registered:true, allowed:true, '
+                    'available:true}], cards:[등록 카드 이름들]} 로 돌려준다. "혜택 받기"가 붙은 카드는 등록 카드가 아니다. '
+                    '결제하기는 누르지 않는다.'
+                ),
+                check=lambda o: (
+                    None
+                    if o.get('ok') and isinstance(o.get('quotes'), list) and o.get('quotes')
+                    else f'무신사페이 기본 카드 견적 없음(note={o.get("note")})'
+                ),
             )
         except AgentFailure as e:
             self.note(
@@ -974,7 +986,8 @@ class BuyerAgent(AgentBase):
                 source_of(self.spec.name).payment_quotes_script,
                 {'profile': account, 'methods': methods},
                 goal=(
-                    f'주문서에서 결제수단 {methods} 을 하나씩 골라 각 수단의 할인 반영 결제 금액(cost)을 읽어 '
+                    f'주문서에서 결제수단 {methods} 을 하나씩 골라(무신사머니가 있으면 무신사머니 줄은 반드시 포함) '
+                    '각 수단의 할인 반영 결제 금액(cost)을 읽어 '
                     'quotes 목록(원래 키 그대로)으로 돌려준다. 줄마다 reward 에는 후기 적립을 뺀 적립 합계(머니 결제 적립·'
                     '등급 적립·네이버페이 적립 포인트 등)를, card 에는 결제에 쓸 카드사 이름(간편결제 안 카드 포함, 예: 현대카드)을, '
                     'points_used 에는 사용한 적립금·포인트를 넣는다 — 원가 = cost × 카드 청구할인 − reward + points_used. '
