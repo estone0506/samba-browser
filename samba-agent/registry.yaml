@@ -26,7 +26,7 @@ agents:
   - name: verifier
     kind: verifier
     match: {}
-    tools: [get_page, find_elements, ocr, navigate, run_js, run_script, switch_tab,
+    tools: [get_page, find_elements, ocr, navigate, run_js, run_script, save_script, switch_tab,
             list_tabs, progress]
     rules: rules/verifier.md
     prompts: samba/verifier

@@ -138,9 +138,9 @@ export function formatFillValue(value: string, format?: FillFormat): string | nu
 const SECRET_TARGET_ITEM_TYPES: VaultItemType[] = ['login', 'password']
 // 대상 요소가 비밀 입력칸이 아닐 때 돌려주는 문자열
 const NOT_A_SECRET_FIELD = 'refused: target is not a secret input'
-// run_js safety:no_pay 에서 누르지 않는 결제 확정 버튼 글자(요소 자신 + 감싸는 버튼·링크 글자로 판정)
+// run_js safety:no_pay 에서 누르지 않는 결제 확정·주문 취소/반품/교환 버튼 글자(요소 자신 + 감싸는 버튼·링크 글자로 판정)
 export const PAY_CLICK_RE =
-  /결제\s*하기|입력\s*완료|구매\s*확정|결제\s*승인|주문\s*확정|place\s*order|pay\s*now/i
+  /결제\s*하기|입력\s*완료|구매\s*확정|결제\s*승인|주문\s*확정|취소\s*요청|주문\s*취소|반품\s*요청|교환\s*요청|place\s*order|pay\s*now/i
 export const RUN_JS_SAFETY_PROBE = 'safety: no_pay supported'
 const PAY_CLICK_REFUSAL = 'refused: safety no_pay — payment confirm buttons cannot be clicked here'
 // 접근 정책이 never 일 때 돌려주는 문자열
