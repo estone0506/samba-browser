@@ -449,6 +449,39 @@ def shipping_set_problem(shipping: dict[str, object]) -> Callable[[dict[str, obj
     return check
 
 
+def quotes_problem(
+    out: dict[str, object], offered: list[str], allowed: set[str] | None
+) -> str | None:
+    """결제수단 견적 검사 — 허용 수단으로 실제 낼 수 있는 줄이 있어야 하고, 주문서에 무신사머니가 있으면 그 줄도 있어야 한다.
+
+    실기: 29CM 견적이 무신사 삼성카드 즉시할인 줄뿐이라 결제 가능한 수단이 없었다(빈 목록만 보던 검사가 통과시켰다).
+    """
+    rows = out.get('quotes')
+    if not isinstance(rows, list) or not rows:
+        return f'견적 목록(quotes)이 비었다: note={out.get("note")}'
+    if any('머니' in m for m in offered) and not any(
+        isinstance(r, dict)
+        and '머니' in str(r.get('method') or '')
+        and _as_float(r.get('cost')) > 0
+        for r in rows
+    ):
+        return '주문서에 무신사머니가 있는데 무신사머니 줄(method 무신사머니, cost)이 없다 — 무신사머니를 골라 금액·적립을 읽어라'
+    if not cheapest_quotes(rows, None, allowed):
+        return f'허용 수단({sorted(allowed or [])})으로 낼 수 있는 견적 줄이 없다 — 가능한 수단마다 cost 를 읽어라'
+    return None
+
+
+def pay_card_quote_problem(out: dict[str, object]) -> str | None:
+    """무신사페이 기본 카드 견적 검사 — 카드 이름과 금액이 있어야 한다(실기: 카드 [] 인데 통과)."""
+    rows = out.get('quotes')
+    if not out.get('ok') or not isinstance(rows, list) or not rows:
+        return f'무신사페이 기본 카드 견적 없음(note={out.get("note")})'
+    first = rows[0] if isinstance(rows[0], dict) else {}
+    if not str(first.get('card') or '').strip() or _as_float(first.get('cost')) <= 0:
+        return '무신사페이 등록 기본 카드 이름(card)이나 결제 금액(cost)을 못 읽었다 — 무신사페이 선택 후 카드 목록 맨 앞 카드를 읽어라'
+    return None
+
+
 def snapshot_problem(
     option: str | None, selected_ok: Callable[[str], bool] | None = None
 ) -> Callable[[dict[str, object]], str | None]:
@@ -912,11 +945,7 @@ class BuyerAgent(AgentBase):
                     'available:true}], cards:[등록 카드 이름들]} 로 돌려준다. "혜택 받기"가 붙은 카드는 등록 카드가 아니다. '
                     '결제하기는 누르지 않는다.'
                 ),
-                check=lambda o: (
-                    None
-                    if o.get('ok') and isinstance(o.get('quotes'), list) and o.get('quotes')
-                    else f'무신사페이 기본 카드 견적 없음(note={o.get("note")})'
-                ),
+                check=pay_card_quote_problem,
             )
         except AgentFailure as e:
             self.note(
@@ -993,11 +1022,7 @@ class BuyerAgent(AgentBase):
                     'points_used 에는 사용한 적립금·포인트를 넣는다 — 원가 = cost × 카드 청구할인 − reward + points_used. '
                     '결제하기는 누르지 않는다.'
                 ),
-                check=lambda o: (
-                    None
-                    if isinstance(o.get('quotes'), list) and o.get('quotes')
-                    else f'견적 목록(quotes)이 비었다: note={o.get("note")}'
-                ),
+                check=lambda o: quotes_problem(o, offered, allowed),
             )
         except AgentFailure as e:
             self.note('결제수단 견적', mask_text(f'못 읽음({e.reason[:80]}) — 스냅샷 원가로 진행'))
