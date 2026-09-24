@@ -30,7 +30,8 @@ BridgeCall = Callable[[str, dict[str, object]], str]
 # 결과 JSON → 문제 문장(None 이면 통과)
 Validate = Callable[[dict[str, object]], str | None]
 
-DEFAULT_REPAIR_MODEL = 'claude-opus-5-5'
+# SDK 내장 CLI 가 아는 모델이어야 한다(실기: claude-opus-5-5 는 'does not support this model')
+DEFAULT_REPAIR_MODEL = 'claude-opus-5'
 DEFAULT_MAX_TURNS = 40
 DEFAULT_TIMEOUT_S = 900.0
 # 앱 run_js·저장 스크립트 코드 상한(RUN_JS_MAX_CODE)
@@ -96,6 +97,20 @@ def parse_output(raw: str) -> tuple[dict[str, object] | None, str]:
 def args_prefix(args: dict[str, object]) -> str:
     """시험 실행 때 코드 앞에 붙이는 줄 — 샌드박스의 args 는 전역 속성이라 대입으로 이번 주문 인자를 넣는다."""
     return f'args={json.dumps(args, ensure_ascii=False)};\n'
+
+
+def hardcoded_amounts(code: str, output: dict[str, object]) -> list[str]:
+    """결과의 금액(1,000 이상 숫자)이 코드에 그대로 박혀 있으면 그 값들 — 화면을 읽지 않고 검증만 통과하는 꼼수다."""
+    found: list[str] = []
+    for value in output.values():
+        if isinstance(value, bool) or not isinstance(value, int | float) or value < 1000:
+            continue
+        n = int(value)
+        for text in (str(n), f'{n:,}'):
+            if re.search(rf'(?<![\d,]){re.escape(text)}(?![\d,])', code):
+                found.append(text)
+                break
+    return found
 
 
 def check_candidate(code: str) -> str | None:
@@ -215,6 +230,9 @@ class ScriptRepairer:
             parsed, problem = parse_output(raw)
             if parsed is not None:
                 problem = validate(parsed) or ''
+                baked = hardcoded_amounts(code, parsed)
+                if not problem and baked:
+                    problem = f'금액 {baked} 을 코드에 박았다 — 화면에서 읽어라'
             if problem:
                 state.last_problem = problem[:200]
                 return text(f'FAIL: {problem}\n--- 결과 ---\n{raw[:4000]}')
@@ -288,6 +306,7 @@ SYSTEM_PROMPT = """너는 SAMBA 브라우저의 저장 스크립트 수리공이
 1. run_js 로 지금 탭·화면을 살펴 왜 실패했는지 찾는다(탭 목록, 옵션 드롭다운, 버튼 글자, 금액 위치).
 2. 원래 코드의 반환 형식(키 이름)을 그대로 지키면서 고친 전체 코드를 만든다.
    - 입력은 전역 args 에서만 읽는다. 주문번호·금액·요소 번호를 코드에 박지 않는다(요소는 글자로 찾는다).
+     금액·옵션 결과는 반드시 화면에서 읽는다 — 이번 값을 코드에 적으면 다음 주문에서 틀린 값을 낸다.
    - 4000자 이하. 사이트가 조금 바뀌어도 버티게 여러 표기(예: 컬러/색상, 사이즈 표기 차이)를 받아 준다.
 3. test_script 로 이번 주문 인자 그대로 돌려 본다. FAIL 이면 사유를 보고 고쳐 다시 시험한다. PASS 가 나오면 끝낸다.
 4. 스크립트 문제가 아니라 진짜로 불가능하면(주문 옵션이 실제 품절, 사무실 배송지가 실제로 없음 등) 화면 근거를 들어

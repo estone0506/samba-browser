@@ -11,7 +11,7 @@ from samba_agent.agents.registry import Registry
 from samba_agent.bridge.client import BridgeClient
 from samba_agent.failures import FailReason
 from samba_agent.repair import FileScriptSource, RepairOutcome, ScriptHistory, ScriptRepairer
-from samba_agent.repair.agent import check_candidate, parse_output
+from samba_agent.repair.agent import check_candidate, hardcoded_amounts, parse_output
 from samba_agent.settings import DEFAULT_ROOT
 
 URL = 'http://127.0.0.1:47811'
@@ -55,7 +55,15 @@ def buyer(tmp_path):
     scripts = tmp_path / 'site-scripts.json'
     scripts.write_text(
         json.dumps(
-            [{'name': 'x_snap', 'host': 'x.com', 'description': 'd', 'params': ['sku'], 'code': 'return 1'}]
+            [
+                {
+                    'name': 'x_snap',
+                    'host': 'x.com',
+                    'description': 'd',
+                    'params': ['sku'],
+                    'code': 'return 1',
+                }
+            ]
         ),
         encoding='utf-8',
     )
@@ -170,7 +178,7 @@ def test_repairer_loop_uses_only_validated_code(monkeypatch) -> None:
     captured: dict[str, object] = {}
     real_server = claude_agent_sdk.create_sdk_mcp_server
 
-    def spy_server(name, version='1.0.0', tools=None):  # noqa: ANN001, ANN202
+    def spy_server(name, version='1.0.0', tools=None):
         captured['tools'] = {t.name: t for t in tools or []}
         return real_server(name, version, tools)
 
@@ -182,7 +190,7 @@ def test_repairer_loop_uses_only_validated_code(monkeypatch) -> None:
         ran.append(code)
         return '{"cost": 0}' if 'bad' in code else '{"cost": 900}'
 
-    async def fake_query(prompt, options):  # noqa: ANN001, ANN202
+    async def fake_query(prompt, options):
         tools = captured['tools']
         r1 = await tools['test_script'].handler({'code': 'return "bad"'})  # type: ignore[attr-defined]
         assert 'FAIL' in r1['content'][0]['text']
@@ -210,3 +218,11 @@ def test_repairer_loop_uses_only_validated_code(monkeypatch) -> None:
     # 시험 실행에는 이번 주문 인자가 앞에 붙고, 금지 코드는 브릿지로 나가지도 않는다
     assert ran[0].startswith('args={"sku": "1"};')
     assert all('결제하기' not in c for c in ran)
+
+
+def test_hardcoded_amounts_are_caught() -> None:
+    assert hardcoded_amounts('return {cost: 46370}', {'cost': 46370}) == ['46370']
+    assert hardcoded_amounts("const t='46,370원'", {'cost': 46370}) == ['46,370']
+    assert hardcoded_amounts('return {cost: num(m[1])}', {'cost': 46370}) == []
+    # 작은 수(수량·대기 ms)는 보지 않는다
+    assert hardcoded_amounts('await sleep(700)', {'qty': 700}) == []
