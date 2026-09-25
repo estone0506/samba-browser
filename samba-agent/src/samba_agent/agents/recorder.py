@@ -268,7 +268,16 @@ class RecorderAgent(AgentBase):
         # 주문 상세의 '적립금 사용'은 보유 적립금 + 적립금 선할인 합계다. 선할인은 결제액을 이미 깎고 구매 적립도
         # 사라지므로 원가에 다시 더하지 않는다(사용자 2026-09-25) — 결제 직전 주문서에서 읽은 보유 적립금 사용액을 쓴다
         box = a.handoff.get('points_used')
-        if isinstance(box, int | float) and not isinstance(box, bool) and box >= 0:
+        detail_box = detail.get('points_box')
+        if isinstance(detail_box, int | float) and not isinstance(detail_box, bool):
+            # 주문 상세를 펼쳐 읽은 보유 적립금 사용액이 있으면 그것을 쓰고, 결제 전 주문서 값과 대조한다
+            detail = {**detail, 'points_used': float(detail_box)}
+            if isinstance(box, int | float) and not isinstance(box, bool) and abs(float(box) - float(detail_box)) > 1:
+                self.note(
+                    '적립금 대조',
+                    f'결제 전 주문서 보유 적립금 {float(box):,.0f}원 ≠ 주문 상세 {float(detail_box):,.0f}원 — 상세 값으로 기록',
+                )
+        elif isinstance(box, int | float) and not isinstance(box, bool) and box >= 0:
             detail = {**detail, 'points_used': min(float(box), float(detail.get('points_used') or 0) or float(box))}
         cost = actual_cost(detail)
         if cost is None:
