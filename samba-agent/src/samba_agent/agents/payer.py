@@ -35,7 +35,7 @@ _PAYCO_AGREE_PAY_JS = (
     "const cb = tr.match(/\\[(\\d+)\\] checkbox[^\\n]*/)\n"
     "if (cb && !/checked/.test(cb[0])) { await page.click(parseInt(cb[1])); await sleep(500) }\n"
     "tr = (await page.get({ interactive: true })).tree\n"
-    "const pay = tr.match(/\\[(\\d+)\\] link \"결제\"/)\n"
+    "const pay = tr.match(/\\[(\\d+)\\] (?:link|clickable|button) \"결제\"/)\n"
     "if (!pay) return JSON.stringify({ clicked: false, note: 'no pay link' })\n"
     "await page.click(parseInt(pay[1])); await sleep(1500)\n"
     "return JSON.stringify({ clicked: true, agreed: !!cb })"
