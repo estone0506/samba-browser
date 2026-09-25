@@ -292,8 +292,8 @@ export function registerIpc(
     settings,
     playbooks
   })
-  // 페이지 JS 대화상자는 AI 작업이 도는 동안에만 자동 처리한다
-  tabs.setAgentRunningProvider(() => agent.isRunning())
+  // 페이지 JS 대화상자는 AI 작업이나 하네스(브릿지) 자동화가 도는 동안에만 자동 처리한다
+  tabs.setAgentRunningProvider(() => agent.isRunning() || bridge.recentlyActive())
   // guard 모드에서 confirm/beforeunload 는 사용자 확인 카드를 거쳐야 '예' 가 된다
   tabs.setDialogPolicy({
     mode: () => settings.get().permissionMode,

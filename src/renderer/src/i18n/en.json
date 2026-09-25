@@ -776,7 +776,7 @@
       "cvc": "CVC",
       "cardPassword": "Payment password",
       "paymentPhone": "Phone for payment alerts (Toss Pay etc., optional)",
-      "paymentBirth": "Birth date, 6 digits (Toss Pay etc., optional)",
+      "paymentBirth": "Birth date, 8 digits (e.g. 19910101 — Toss Pay, PAYCO etc., optional)",
       "name": "Name",
       "birth": "Date of birth",
       "address": "Address",

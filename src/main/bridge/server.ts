@@ -24,14 +24,29 @@ const DEFAULT_TOOL_TIMEOUT_MS = 90_000
 const DEFAULT_HANG_GRACE_MS = 60_000
 const MAX_BODY_BYTES = 1024 * 1024
 
+/** 마지막 브릿지 호출 뒤 이 시간 안이면 자동화가 도는 중으로 본다(페이지 대화상자 자동 처리) */
+export const BRIDGE_ACTIVE_WINDOW_MS = 2 * 60_000
+
 export class BridgeServer {
   private server: Server | null = null
   /** 지금 도구를 돌리는 중인가 — 한 손발이라 동시에 하나만 */
   private busy = false
   /** 지금 도는 레인들 — 레인이 다르면 동시에 돈다(하네스 계정 동시 처리) */
   private busyLanes = new Set<string>()
+  /** 마지막으로 도구 호출이 시작·끝난 시각(ms) — 호출 사이 틈에 뜬 페이지 대화상자도 자동화 중으로 본다 */
+  private lastActivityAt = 0
 
   constructor(private readonly deps: BridgeDeps) {}
+
+  /**
+   * 하네스가 브릿지로 자동화를 돌리고 있는가. 호출 중이거나 마지막 호출 뒤 windowMs 안이면 true.
+   * 페이지 대화상자 자동 처리 조건에 쓴다 — 실기 2026-09-25: 하네스가 도는 동안 무신사 "옵션을 선택해 주세요"
+   * alert 20개가 닫히지 않고 쌓였다(AI 채팅 작업일 때만 자동 처리하고 있었다)
+   */
+  recentlyActive(windowMs = BRIDGE_ACTIVE_WINDOW_MS, now = Date.now()): boolean {
+    if (this.busy || this.busyLanes.size > 0) return true
+    return this.lastActivityAt > 0 && now - this.lastActivityAt < windowMs
+  }
 
   listening(): boolean {
     return this.server?.listening === true
@@ -144,10 +159,12 @@ export class BridgeServer {
       return json(res, 404, { error: `unknown tool: ${name}` })
     }
     const hold = (): void => {
+      this.lastActivityAt = Date.now()
       if (lane) this.busyLanes.add(lane)
       else this.busy = true
     }
     const free = (): void => {
+      this.lastActivityAt = Date.now()
       if (lane) this.busyLanes.delete(lane)
       else this.busy = false
     }
