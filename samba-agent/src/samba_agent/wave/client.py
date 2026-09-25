@@ -339,13 +339,15 @@ class WaveClient:
         )
         return body if isinstance(body, dict) else {}
 
-    def set_cancel_requested(self, order_no: str, reason: str) -> bool:
-        """이행하지 못한 발주 전 주문을 취소요청으로 바꾼다. 바뀌었으면 True, 이미 취소요청이면 False."""
-        body = self._request(
-            'PUT',
-            f'/orders/{order_no}/status',
-            json={'status': 'cancel_requested', 'reason': reason},
-        )
+    def set_cancel_requested(self, order_no: str, reason: str, flag: str | None = None) -> bool:
+        """이행하지 못한 발주 전 주문을 취소요청으로 바꾼다(flag 를 주면 가격X·재고X 태그도 붙인다).
+
+        바뀌었으면 True, 이미 취소요청이면 False.
+        """
+        payload: dict[str, object] = {'status': 'cancel_requested', 'reason': reason}
+        if flag:
+            payload['flag'] = flag
+        body = self._request('PUT', f'/orders/{order_no}/status', json=payload)
         return bool(body.get('changed')) if isinstance(body, dict) else False
 
     def close(self) -> None:

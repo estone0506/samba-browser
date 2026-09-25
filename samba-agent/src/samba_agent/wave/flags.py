@@ -7,7 +7,6 @@
 읽어 이미 붙어 있으면 누르지 않고, 누른 뒤에는 다시 읽어 붙었는지 확인한다.
 """
 
-import json
 import logging
 from collections.abc import Callable
 
@@ -31,50 +30,32 @@ def flag_for(error: str | None) -> tuple[str, str] | None:
 
 
 class FlagMarker:
-    """주문 행의 가격X·재고X 버튼을 누른다. run_script 는 앱 저장 스크립트를 부르는 함수다."""
+    """이행 불가 주문에 표시(가격X·재고X)를 붙이고 취소요청으로 바꾼다.
 
-    def __init__(self, wave: WaveClient, run_script: Callable[[str, dict[str, object]], str]) -> None:
+    표시는 삼바웨이브 내부 API 로 action_tag 에 붙인다 — 주문 행 버튼이 하는 일과 같다. 화면 검색은 쓰지 않는다
+    (실기 2026-09-25: 주문번호에 ':' 이 든 주문을 화면 검색이 못 찾아 가격X 가 빠졌다). run_script 는 옛 배선
+    호환용으로만 받는다.
+    """
+
+    def __init__(
+        self, wave: WaveClient, run_script: Callable[[str, dict[str, object]], str] | None = None
+    ) -> None:
         self._wave = wave
         self._run = run_script
-
-    def _has(self, order_no: str, token: str) -> bool:
-        return token in self._wave.get_order(order_no).flags
 
     def mark(self, order_no: str, error: str | None) -> str | None:
         """표시 + 취소요청. 결과 한 줄(해당 없으면 None). 실패해도 예외를 내지 않는다(작업 결과는 이미 정해졌다)."""
         flag = flag_for(error)
         if flag is None:
             return None
-        return f'{self._flag(order_no, flag)} · {self._cancel(order_no, str(error))}'
-
-    def _cancel(self, order_no: str, reason: str) -> str:
-        """삼바웨이브 주문 상태를 취소요청으로(발주 전 주문만 — 삼바웨이브가 막는다)."""
-        try:
-            changed = self._wave.set_cancel_requested(order_no, reason)
-        except WaveError as e:
-            return f'취소요청 실패: {e}'
-        except Exception as e:  # 연결 오류 등 — 작업 결과에는 영향이 없다
-            log.exception('취소요청 실패')
-            return f'취소요청 실패: {type(e).__name__}'
-        return '취소요청으로 바꿈' if changed else '이미 취소요청'
-
-    def _flag(self, order_no: str, flag: tuple[str, str]) -> str:
         token, label = flag
         try:
-            if self._has(order_no, token):
-                return f'{label} 이미 표시됨'
-            raw = self._run(FLAG_SCRIPT, {'orderNo': order_no, 'label': label})
-            try:
-                out = json.loads(raw)
-            except ValueError:
-                out = {'ok': False, 'note': raw[:120]}
-            if not out.get('ok'):
-                return f'{label} 표시 실패: {out.get("note")}'
-            if not self._has(order_no, token):
-                return f'{label} 눌렀지만 삼바웨이브 태그에 없다 — 확인 필요'
-            return f'{label} 표시함'
+            changed = self._wave.set_cancel_requested(order_no, str(error), flag=token)
+            tagged = token in self._wave.get_order(order_no).flags
         except WaveError as e:
-            return f'{label} 표시 실패(삼바웨이브 조회): {e}'
-        except Exception as e:  # 앱 꺼짐·브릿지 오류 — 작업 결과에는 영향이 없다
-            log.exception('가격X·재고X 표시 실패')
-            return f'{label} 표시 실패: {type(e).__name__}'
+            return f'{label}·취소요청 실패: {e}'
+        except Exception as e:  # 연결 오류 등 — 작업 결과에는 영향이 없다
+            log.exception('가격X·재고X·취소요청 실패')
+            return f'{label}·취소요청 실패: {type(e).__name__}'
+        status = '취소요청으로 바꿈' if changed else '이미 취소요청'
+        return f'{label} 표시함 · {status}' if tagged else f'{label} 태그 확인 안 됨 · {status}'
