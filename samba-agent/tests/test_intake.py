@@ -230,7 +230,9 @@ def test_수집_범위는_소싱처와_포이즌_판매만():
     it._all_sellers = frozenset()
 
     def o(site, seller):
-        return WaveOrder.model_validate({'order_number': 'X', 'source_site': site, 'seller': seller})
+        return WaveOrder.model_validate(
+            {'order_number': 'X', 'source_site': site, 'seller': seller}
+        )
 
     assert it._in_scope(o('MUSINSA', 'poison(a@b.com)'))
     assert it._in_scope(o('29CM', '포이즌'))
@@ -249,7 +251,9 @@ def test_무신사는_판매처와_무관하게_이행한다():
     it._all_sellers = frozenset({'MUSINSA'})
 
     def o(site, seller):
-        return WaveOrder.model_validate({'order_number': 'X', 'source_site': site, 'seller': seller})
+        return WaveOrder.model_validate(
+            {'order_number': 'X', 'source_site': site, 'seller': seller}
+        )
 
     assert it._in_scope(o('MUSINSA', '쿠팡(seller02)'))
     assert it._in_scope(o('29CM', 'poison'))
@@ -264,7 +268,9 @@ class _LinkWave(_FakeWave):
         self.link_status = link_status
         self.linked: list[tuple[str, str]] = []
 
-    def link_product(self, order_no: str, site_product_id: str) -> dict[str, object]:
+    def link_product(
+        self, order_no: str, site_product_id: str, source_site: str = 'MUSINSA'
+    ) -> dict[str, object]:
         self.linked.append((order_no, site_product_id))
         if self.link_status is not None:
             raise WaveError(FailReason.UNKNOWN, '삼바웨이브 404: 없음', self.link_status)
@@ -275,7 +281,9 @@ def test_소싱처_미등록_주문은_추정한_무신사_상품에_연결하�
     reg = Registry.load(DEFAULT_ROOT)
     q = JobQueue(tmp_path / 'jobs.sqlite')
     slack = _Slack()
-    order = wave_order('G1', source='', product_name='르무통 메이트 오렌지 3347853', product_option='230mm')
+    order = wave_order(
+        'G1', source='', product_name='르무통 메이트 오렌지 3347853', product_option='230mm'
+    )
     wave = _LinkWave([order])
     report = Intake(wave, q, reg, slack.post_new, slack.post_line, days=7).run_once()
     assert report.enqueued == 1
@@ -290,7 +298,9 @@ def test_무신사에서_사라진_상품은_재고X_로_마감한다(tmp_path):
     q = JobQueue(tmp_path / 'jobs.sqlite')
     slack = _Slack()
     marked: list[tuple[str, str]] = []
-    order = wave_order('G2', source='', product_name='남자데님팬츠 05415547 와이드 쿨 데님 415547 3colo')
+    order = wave_order(
+        'G2', source='', product_name='남자데님팬츠 05415547 와이드 쿨 데님 415547 3colo'
+    )
     intake = Intake(
         _LinkWave([order], link_status=404),
         q,
@@ -298,7 +308,9 @@ def test_무신사에서_사라진_상품은_재고X_로_마감한다(tmp_path):
         slack.post_new,
         slack.post_line,
         days=7,
-        on_unfulfillable=lambda no, why: marked.append((no, why)) or '재고X 표시함 · 취소요청으로 바꿈',
+        on_unfulfillable=lambda no, why: (
+            marked.append((no, why)) or '재고X 표시함 · 취소요청으로 바꿈'
+        ),
     )
     report = intake.run_once()
     assert report.enqueued == 0
@@ -307,3 +319,28 @@ def test_무신사에서_사라진_상품은_재고X_로_마감한다(tmp_path):
     assert job.error == 'out_of_stock'
     assert marked == [('G2', 'out_of_stock')]
     assert any('재고X' in t for _, t in slack.lines)
+
+
+def test_범위_밖_소싱처의_미등록_주문은_연결만_하고_접수하지_않는다(tmp_path):
+    """ABC마트(10자리) — 이행 범위는 무신사·29CM 지만 상품관리 연결은 해 둔다(사용자 2026-09-25)."""
+    reg = Registry.load(DEFAULT_ROOT)
+    q = JobQueue(tmp_path / 'jobs.sqlite')
+    slack = _Slack()
+    order = wave_order(
+        'B1', source='', product_name='나이키 코트 버로우 로우 1010109335', product_option='230'
+    )
+    wave = _LinkWave([order])
+    intake = Intake(
+        wave,
+        q,
+        reg,
+        slack.post_new,
+        slack.post_line,
+        days=7,
+        sources=frozenset({'MUSINSA', '29CM'}),
+    )
+    assert intake.run_once().enqueued == 0
+    assert wave.linked == [('B1', '1010109335')]
+    assert q.get('B1') is None
+    intake.run_once()
+    assert wave.linked == [('B1', '1010109335')]  # 같은 프로세스에서 되풀이하지 않는다

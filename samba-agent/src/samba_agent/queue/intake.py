@@ -103,6 +103,8 @@ class Intake:
         self._all_sellers = frozenset(x.upper() for x in all_sellers_sources)
         # 이행 불가 주문 처리(가격X·재고X 표시 + 취소요청) — (주문번호, 실패 사유)
         self._on_unfulfillable = on_unfulfillable
+        # 범위 밖 소싱처 미등록 주문 중 이미 연결을 시도한 주문(주기마다 되풀이하지 않는다)
+        self._linked_only: set[str] = set()
         # 슬랙 `수집 중지` 가 세우는 깃발. 세워져 있으면 run_once 는 아무것도 하지 않는다
         self.paused = False
 
@@ -128,6 +130,11 @@ class Intake:
             seen += 1
             order = wave_order.to_order_ref()
             if not self._in_scope(wave_order):
+                # 이행 범위 밖이라도 소싱처 미등록 주문은 상품관리 상품에 연결만 해 둔다(사용자 2026-09-25 — ABC마트).
+                # 연결되면 소싱처가 채워져 다음 주기부터는 추정 주문이 아니다
+                if wave_order.source_inferred and order.order_no not in self._linked_only:
+                    self._linked_only.add(order.order_no)
+                    self._link_inferred(wave_order, None, None)
                 continue
             if order.order_no in handled or self._already_queued(order.order_no):
                 skipped_live += 1
@@ -150,18 +157,22 @@ class Intake:
             seen=seen, enqueued=enqueued, skipped_live=skipped_live, unsupported=unsupported
         )
 
-    def _link_inferred(self, wave_order: WaveOrder, job_id: int, ts: str | None) -> bool:
-        """소싱처 미등록 주문(상품명 숫자로 무신사 추정)을 수집상품에 연결한다. 이행을 이어 가면 True.
+    def _link_inferred(self, wave_order: WaveOrder, job_id: int | None, ts: str | None) -> bool:
+        """소싱처 미등록 주문(상품명 숫자로 무신사·ABC마트 추정)을 수집상품에 연결한다. 이행을 이어 가면 True.
 
-        무신사에서 상품이 사라졌으면(삼바웨이브 404) 재고X 로 마감한다. 그 밖의 연결 실패는 근거만 남기고
-        구매는 이어 간다 — 추정한 상품 URL 로 살 수는 있다.
+        소싱처에서 상품이 사라졌으면(삼바웨이브 404) 재고X·취소요청으로 마감한다. 그 밖의 연결 실패는 근거만
+        남기고 구매는 이어 간다 — 추정한 상품 URL 로 살 수는 있다. job_id 가 없으면 연결만 한다(범위 밖).
         """
-        product_id = (wave_order.source_url or '').rstrip('/').rsplit('/', 1)[-1]
+        site = wave_order.source_site or 'MUSINSA'
+        product_id = wave_order.inferred_product_id or ''
+        label = f'{site} {product_id}'
         try:
-            out = self._wave.link_product(wave_order.order_number, product_id)
+            out = self._wave.link_product(wave_order.order_number, product_id, site)
         except WaveError as e:
+            log.info('소싱처 미등록 주문 연결 실패 %s %s: %s', wave_order.order_number, label, e)
             if e.status == 404:
-                self._queue.finish(job_id, 'needs_human', error=str(FailReason.OUT_OF_STOCK))
+                if job_id is not None:
+                    self._queue.finish(job_id, 'needs_human', error=str(FailReason.OUT_OF_STOCK))
                 done = (
                     self._on_unfulfillable(wave_order.order_number, str(FailReason.OUT_OF_STOCK))
                     if self._on_unfulfillable
@@ -169,16 +180,14 @@ class Intake:
                 )
                 self._post_line(
                     ts,
-                    f'소싱처 상품 없음(무신사 {product_id}) — 재고X'
-                    + (f' · {done}' if done else ''),
+                    f'소싱처 상품 없음({label}) — 재고X' + (f' · {done}' if done else ''),
                 )
                 return False
-            self._post_line(ts, f'수집상품 연결 실패(무신사 {product_id}): {e} — 구매는 이어 간다')
+            self._post_line(ts, f'수집상품 연결 실패({label}): {e} — 구매는 이어 간다')
             return True
         how = '새로 수집해 연결' if out.get('collected') else '상품관리 상품에 연결'
-        self._post_line(
-            ts, f'소싱처 미등록 → 무신사 {product_id} {how}(주문 {out.get("linked_orders", 1)}건)'
-        )
+        log.info('소싱처 미등록 주문 연결 %s → %s %s', wave_order.order_number, label, how)
+        self._post_line(ts, f'소싱처 미등록 → {label} {how}(주문 {out.get("linked_orders", 1)}건)')
         return True
 
     def run_forever(self, stop: Callable[[], bool], interval_s: float) -> None:

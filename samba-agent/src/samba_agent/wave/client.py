@@ -90,16 +90,39 @@ class WaveShipping(BaseModel):
         }
 
 
-# 상품명 속 무신사 상품번호 — 따로 떨어진 5~8자리 숫자 중 마지막 것.
-# 예: '르무통 LEMOUTON 5009530519 메이트 오렌지 3347853' → 3347853(10자리 품번은 제외),
-#     '남자데님팬츠 05415547 와이드 쿨 데님 415547 3colo' → 415547
-_MUSINSA_ID_IN_NAME = re.compile(r'(?<![\d\w])(\d{5,8})(?![\d\w])')
+# 소싱처 미등록 상품명 속 소싱처 상품번호 — 따로 떨어진 번호 중 마지막 것(사용자 2026-09-25).
+#   LE+10자리 → 롯데온 상품번호 예: '노스페이스 … 레귤러핏 LE1215528857'
+#   10자리    → ABC마트 prdtNo  예: '나이키 DV5456 300 코트 버로우 로우 … 1010109335'
+#   5~8자리   → 무신사 상품번호  예: '르무통 LEMOUTON 5009530519 메이트 오렌지 3347853' → 3347853,
+#               '남자데님팬츠 05415547 와이드 쿨 데님 415547 3colo' → 415547
+_PRODUCT_NO_IN_NAME = re.compile(r'(?<!\w)(LE\d{10}|\d{5,10})(?!\w)')
+_INFER_URL = {
+    'MUSINSA': 'https://www.musinsa.com/products/{}',
+    'ABCmart': 'https://abcmart.a-rt.com/product/new?prdtNo={}',
+    'LOTTEON': 'https://www.lotteon.com/p/product/{}',
+}
+
+
+def infer_source(product_name: str | None) -> tuple[str, str] | None:
+    """소싱처 미등록 상품명에서 (소싱처 id, 상품번호)를 추정한다. 못 하면 None."""
+    found = _PRODUCT_NO_IN_NAME.findall(product_name or '')
+    if not found:
+        return None
+    last = found[-1]
+    if last.startswith('LE'):
+        return 'LOTTEON', last
+    if len(last) == 10:
+        return 'ABCmart', last
+    if len(last) <= 8:
+        product_id = last.lstrip('0')
+        return ('MUSINSA', product_id) if product_id else None
+    return None
 
 
 def infer_musinsa_product_id(product_name: str | None) -> str | None:
-    """소싱처 미등록 상품명에서 무신사 상품번호를 추정한다. 없으면 None."""
-    found = _MUSINSA_ID_IN_NAME.findall(product_name or '')
-    return found[-1].lstrip('0') or None if found else None
+    """무신사로 추정되면 그 상품번호, 아니면 None."""
+    found = infer_source(product_name)
+    return found[1] if found and found[0] == 'MUSINSA' else None
 
 
 class WaveOrder(BaseModel):
@@ -131,19 +154,22 @@ class WaveOrder(BaseModel):
     shipping_fee: float | None = None
     # 주문 종류 — 목록 응답에는 없어 기본 direct 다. 상세 응답이 실제 값을 준다
     order_type: OrderType = 'direct'
-    # 소싱처가 비어 있어 상품명 끝 숫자로 무신사 상품번호를 추정했는가(infer_musinsa_source)
+    # 소싱처가 비어 있어 상품명 끝 숫자로 소싱처·상품번호를 추정했는가(infer_source)
     source_inferred: bool = False
+    inferred_product_id: str | None = None
 
     @model_validator(mode='after')
     def _infer_source(self) -> Self:
-        """소싱처 미등록 주문 — 상품명 뒤쪽 숫자를 무신사 상품번호로 본다(사용자 2026-09-25)."""
+        """소싱처 미등록 주문 — 상품명 뒤쪽 번호로 무신사·ABC마트·롯데온 상품을 찾는다(사용자 2026-09-25)."""
         if (self.source_site or '').strip():
             return self
-        product_id = infer_musinsa_product_id(self.product_name)
-        if product_id:
-            self.source_site = 'MUSINSA'
-            self.source_url = f'https://www.musinsa.com/products/{product_id}'
+        found = infer_source(self.product_name)
+        if found:
+            site, product_id = found
+            self.source_site = site
+            self.source_url = _INFER_URL[site].format(product_id)
             self.source_inferred = True
+            self.inferred_product_id = product_id
         return self
 
     @property
@@ -299,15 +325,17 @@ class WaveClient:
             raise WaveError(FailReason.UNKNOWN, f'소싱 기입 응답에 order 가 없다: {order_no}')
         return WaveOrder.model_validate(order)
 
-    def link_product(self, order_no: str, site_product_id: str) -> dict[str, object]:
-        """소싱처 미등록 주문을 무신사 수집상품에 연결한다(상품관리에 없으면 삼바웨이브가 수집해 저장).
+    def link_product(
+        self, order_no: str, site_product_id: str, source_site: str = 'MUSINSA'
+    ) -> dict[str, object]:
+        """소싱처 미등록 주문을 수집상품에 연결한다(상품관리에 없으면 삼바웨이브가 수집해 저장).
 
         소싱처에서 상품이 사라졌으면(삭제) 삼바웨이브가 404 를 준다 — WaveError.status 로 구분한다.
         """
         body = self._request(
             'POST',
             f'/orders/{order_no}/link-product',
-            json={'source_site': 'MUSINSA', 'site_product_id': site_product_id},
+            json={'source_site': source_site, 'site_product_id': site_product_id},
         )
         return body if isinstance(body, dict) else {}
 
