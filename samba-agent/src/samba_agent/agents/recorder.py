@@ -286,6 +286,16 @@ class RecorderAgent(AgentBase):
                 )
         elif isinstance(box, int | float) and not isinstance(box, bool) and box >= 0:
             detail = {**detail, 'points_used': min(float(box), float(detail.get('points_used') or 0) or float(box))}
+        quoted_reward = a.handoff.get('reward')
+        if (
+            not detail.get('reward')
+            and isinstance(quoted_reward, int | float)
+            and not isinstance(quoted_reward, bool)
+            and quoted_reward > 0
+        ):
+            # 주문 상세에 적립이 안 나온다(ABC·그랜드스테이지: 구매확정 뒤 지급) — 결제 전 견적의 적립으로 원가를 낸다
+            # (실기 2026-09-25 HQ2414: 적립 1,640원이 빠져 원가 59,200 기록, 맞는 값 57,560)
+            detail = {**detail, 'reward': float(quoted_reward)}
         cost = actual_cost(detail)
         if cost is None:
             self.note('실제 원가', '결제액을 못 읽어 견적 원가로 기록')

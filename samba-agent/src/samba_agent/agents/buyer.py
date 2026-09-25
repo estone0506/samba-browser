@@ -1085,6 +1085,7 @@ class BuyerAgent(AgentBase):
         if total == 0 and used > 0:
             # 포인트로 전액 결제(ABC 포인트 최대 사용) — 결제창이 없다. 원가 = 사용 포인트 − 사이트 적립
             snap['points_only'] = True
+            snap['reward'] = _as_float(out.get('reward'))
             snap['cost'] = used - _as_float(out.get('reward'))
             snap['pay_amount'] = 0.0
         elif total > 0:
@@ -1261,6 +1262,9 @@ class BuyerAgent(AgentBase):
         snap['pay_amount'] = best['paid']
         snap['pay_method'] = best['method']
         snap['pay_card'] = best['card']
+        # 견적의 적립(사이트 적립예정 + 네이버페이 기본 1%) — 주문 상세에 적립이 안 나오는 사이트(ABC: 구매확정 뒤 지급)는
+        # 기록 단계가 이 값으로 원가를 낸다
+        snap['reward'] = best['reward']
         label = f'{best["method"]}/{best["card"]}' if best['card'] else best['method']
         payable_note = '' if payable is None else f', 결제 가능 {sorted(payable)}'
         self.note(
@@ -1844,6 +1848,7 @@ class BuyerAgent(AgentBase):
                 'margin_pct': margin,
                 **({'paid': paid} if paid > 0 else {}),
                 **({'points_used': snap.get('points_used')} if snap.get('points_used') is not None else {}),
+                **({'reward': snap.get('reward')} if snap.get('reward') is not None else {}),
             },
             evidence=tuple(self.evidence),
         )

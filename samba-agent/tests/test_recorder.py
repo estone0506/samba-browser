@@ -404,6 +404,24 @@ def test_결제_뒤_주문_상세로_원가를_다시_계산해_기록한다(reg
 
 
 @respx.mock
+def test_주문_상세에_적립이_없으면_견적의_적립으로_원가를_낸다(reg):
+    """ABC 는 적립이 구매확정 뒤 지급돼 상세에 없다 — 견적 적립 1,640 을 빼 57,560(실기 HQ2414)."""
+    put = respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
+    )
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(200, json=WAVE_ORDER))
+    detail = {'source_order_no': 'M-777', 'paid': 45000, 'points_used': 14200, 'reward': 0, 'card': '네이버페이'}
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(detail))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    a = agent(reg)
+    a.set_wave(wave_client())
+    a.mark_status = False
+    out = a(assignment(reg, dry_run=False, handoff={'reward': 1640, 'points_used': 14200}))
+    assert out.status == 'ok'
+    assert json.loads(put.calls[0].request.content)['cost'] == 57560
+
+
+@respx.mock
 def test_이행하면_주문상태를_배송대기중으로_바꾸고_확인한다(reg):
     """주문접수로 남으면 다시 주문된다 — 상태 스크립트를 부르고 내부 API 로 wait_ship 을 확인한다."""
     respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
