@@ -9,7 +9,7 @@
 
 import json
 
-from samba_agent.agents.base import AgentBase, AgentFailure, Decision, run_agent
+from samba_agent.agents.base import AgentBase, AgentFailure, Decision, run_agent, split_page_dialogs
 from samba_agent.agents.contracts import AgentResult, Assignment
 from samba_agent.agents.source_detail import (
     actual_cost,
@@ -27,6 +27,9 @@ SAVE_SCRIPT = 'samba_save_order'
 READ_SCRIPT = 'samba_read_order'
 # 이행한 주문을 배송대기중으로 바꾸는 앱 저장 스크립트(재주문 방지)
 STATUS_SCRIPT = 'samba_set_status'
+
+# 이행 뒤 삼바웨이브 주문 행의 "업데이트"(소싱처 가격·재고 갱신 → 마켓 판매가 수정)를 누르는 앱 저장 스크립트
+WAVE_UPDATE_SCRIPT = 'samba_update_order'
 
 # 결제 전 견적 원가와 결제 뒤 실제 원가가 이만큼(원) 넘게 다르면 견적 오차로 올린다
 ESTIMATE_GAP_WON = 500
@@ -305,6 +308,23 @@ class RecorderAgent(AgentBase):
             f' · {detail.get("card") or ""} → 원가 {cost:,.0f}원(견적 {quoted})',
         )
 
+    def _refresh_wave_listing(self, a: Assignment) -> None:
+        """삼바웨이브 주문 행의 '업데이트'를 누르고 결과 문구만 근거에 남긴다. 실패해도 기록 결과는 바꾸지 않는다."""
+        try:
+            out = self.tool(
+                'run_script',
+                name=WAVE_UPDATE_SCRIPT,
+                args=json.dumps({'orderNo': a.order.order_no}, ensure_ascii=False),
+            )
+        except AgentFailure as e:
+            self.note('판매가 업데이트', mask_text(f'못 함({e.reason[:80]})'))
+            return
+        try:
+            result = str(json.loads(split_page_dialogs(out)[0]).get('result') or '')
+        except (ValueError, AttributeError):
+            result = out.strip()
+        self.note('판매가 업데이트', mask_text(result[:120]))
+
     def _record_via_wave(
         self, a: Assignment, values: dict[str, object], memo_reason: str
     ) -> AgentResult:
@@ -360,6 +380,8 @@ class RecorderAgent(AgentBase):
         )
         if self.mark_status:
             self._mark_waiting_ship(a, sourcing_no)
+            # 이행이 끝난 뒤 판매가를 갱신한다(사용자 2026-09-25: 주문 이행 후 업데이트)
+            self._refresh_wave_listing(a)
         gap = getattr(self, '_estimate_gap', None)
         if gap is not None:
             # 기록·배송대기중은 끝났다 — 견적이 틀렸다는 사실만 사람에게 올린다(재결제·취소는 사람이 정한다)
