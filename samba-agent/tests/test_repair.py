@@ -498,12 +498,11 @@ def test_size_letter_options_matches_asia_size_prefix() -> None:
     assert size_letter_options(['A/S 품절', 'A/M'], '블랙 S') == []
 
 
-def test_buyer02_pays_with_musinsa_money_only(buyer) -> None:
-    """buyer02 는 무신사머니(site)만 — 무신사페이 카드 견적이 싸도 고르지 않는다(사용자 지시 2026-09-25)."""
-    buyer.allowed_pay_providers = {'site', 'musinsapay'}
-    assert buyer._allowed_providers('buyer02') == {'site'}
-    assert buyer._allowed_providers('buyer02@naver.com') == {'site'}
-    assert buyer._allowed_providers('buyer01') == {'site', 'musinsapay'}
+def test_buyer02_uses_all_allowed_providers(buyer) -> None:
+    """buyer02 도 무신사머니·무신사페이·페이코 모두 쓴다(사용자 2026-09-25 저녁 — 무신사머니 전용 해제)."""
+    buyer.allowed_pay_providers = {'site', 'musinsapay', 'payco'}
+    assert buyer._allowed_providers('buyer02') == {'site', 'musinsapay', 'payco'}
+    assert buyer._allowed_providers('buyer02@naver.com') == {'site', 'musinsapay', 'payco'}
 
 
 

@@ -267,8 +267,9 @@ OFFICE_ADDRESS_HINT = '사무실길 58'
 OFFICE_NAME = '김사무'
 # 까대기 주문 배송지(사무실). 기본 배송지가 사무실이 아닐 때 이번 주문에만 넣는다 — poizon-sourcing 스킬 "사무실 배송"
 OFFICE_DETAIL = '1층 102호'
-# 계정별 결제수단 제한 — buyer02 는 무신사머니(site)만 쓴다(사용자 지시 2026-09-25: 롯데카드로 결제된 모자 주문 취소)
-ACCOUNT_PAY_ONLY: dict[str, frozenset[str]] = {'buyer02': frozenset({'site'})}
+# 계정별 결제수단 제한 — 비어 있으면 모든 계정이 허용 수단(SAMBA_ALLOWED_PAY_PROVIDERS) 전부로 비교한다.
+# buyer02 는 한때 무신사머니만 썼으나 무신사머니·무신사페이·페이코 모두 허용으로 바뀌었다(사용자 2026-09-25 저녁)
+ACCOUNT_PAY_ONLY: dict[str, frozenset[str]] = {}
 OFFICE_SHIPPING: dict[str, object] = {
     'name': OFFICE_NAME,
     'address': '경북 가상시 사무실길 58',
