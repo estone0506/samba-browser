@@ -460,3 +460,10 @@ def test_배송대기중으로_못_바꾸면_사람에게_넘긴다(reg):
     out = a(assignment(reg, dry_run=False))
     assert out.status == 'needs_human'
     assert '재주문 위험' in out.reason
+
+
+def test_포인트_전액_결제는_현금_0원이라도_원가를_사용_포인트_빼기_적립으로_낸다():
+    from samba_agent.agents.source_detail import actual_cost
+
+    assert actual_cost({'paid': 0, 'points_used': 66000, 'reward': 1320}) == 64680
+    assert actual_cost({'paid': 0, 'points_used': 0}) is None

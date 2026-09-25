@@ -68,7 +68,14 @@ def actual_cost(detail: dict[str, object]) -> float | None:
     except (TypeError, ValueError):
         return None
     if paid <= 0:
-        return None
+        # 포인트로 전액 결제(ABC·그랜드스테이지) — 현금 0원이 맞다. 원가 = 사용 포인트 − 적립.
+        # 0원을 '못 읽음'으로 보면 검사가 실패해 AI 수리가 상세 스크립트를 틀리게 고쳤다(실기 2026-09-26: 포인트 이중 계산 재발)
+        try:
+            used = float(detail.get('points_used') or 0)  # type: ignore[arg-type]
+            reward = float(detail.get('reward') or 0)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        return used - reward if used > 0 else None
     return float(
         effective_cost(
             {
