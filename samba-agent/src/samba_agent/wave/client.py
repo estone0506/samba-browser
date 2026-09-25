@@ -218,10 +218,13 @@ class WaveClient:
         if not isinstance(items, list):
             return None
         want = username.strip().lower()
+        # 29CM 키마스터 라벨은 'buyer01@naver.com', 삼바웨이브 29CM 계정 아이디는 'buyer01' 처럼 @ 앞만일 수 있다
+        wants = {want, want.split('@')[0]}
         for item in items:
             if not isinstance(item, dict):
                 continue
-            if str(item.get('username') or '').strip().lower() == want and (
+            got = str(item.get('username') or '').strip().lower()
+            if (got in wants or got.split('@')[0] in wants) and (
                 str(item.get('source_site') or source_site).lower() == source_site.lower()
             ):
                 return str(item.get('id') or '') or None
