@@ -660,12 +660,13 @@ export class TabManager {
       if (typeof iconUrl !== 'string') return
       const service = getFaviconService()
       if (!service) return
-      // 해당 탭의 세션으로 받아야 쿠키·프록시 설정이 페이지와 같아진다
+      // 파비콘은 Node fetch 로 받는다. 탭 세션의 ses.fetch 는 확장(webRequest)이 켜져 있으면 앱을 죽인다
+      // (Electron 39 ExtensionApiFrameIdMap::GetDocumentLifecycle null — 크래시 덤프 3건 실측 2026-09-25)
       void service
         .storeFromPage(
           wc.getURL(),
           iconUrl,
-          (url, init) => ses.fetch(url, init) as unknown as Promise<FaviconResponse>
+          (url, init) => globalThis.fetch(url, init) as unknown as Promise<FaviconResponse>
         )
         .catch((e: unknown) => {
           console.warn('파비콘 저장 실패', e instanceof Error ? e.message : String(e))

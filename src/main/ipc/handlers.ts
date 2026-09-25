@@ -5,7 +5,6 @@ import {
   app,
   dialog,
   ipcMain,
-  net,
   safeStorage,
   session,
   shell,
@@ -201,7 +200,7 @@ export function registerIpc(
   // (작업 완료·실패, 확인 카드, 사람에게 넘김 — 폰 결제 비밀번호 키패드 포함)
   const notifier = createAgentNotifier({
     settings: () => settings.get(),
-    fetchImpl: (url, init) => net.fetch(url, init)
+    fetchImpl: (url, init) => globalThis.fetch(url, init)
   })
   // 활동 기록. 파일은 이 PC 의 userData 안에만 있고 동기화 대상이 아니다.
   // 기록 여부는 설정 한 칸(activityRecording)으로 매번 다시 읽는다 — 끄면 곧바로 멈춘다
@@ -1245,7 +1244,7 @@ export function registerIpc(
     extensionsRoot: join(app.getPath('userData'), 'extensions'),
     localAppData: process.env.LOCALAPPDATA ?? '',
     chromiumVersion: process.versions.chrome ?? '120.0.0.0',
-    fetchImpl: (url, init) => net.fetch(url, init)
+    fetchImpl: (url, init) => globalThis.fetch(url, init)
   })
   handleFromRenderer(IPC.extImportSources, () => extensionInstaller.importSources())
   handleFromRenderer(IPC.extImportFrom, (ids: string[]) => extensionInstaller.importFrom(ids))
@@ -1334,7 +1333,7 @@ export function registerIpc(
   handleFromRenderer(IPC.phoneInstallTools, () =>
     installPhoneTools({
       root: phoneToolsRoot,
-      fetchImpl: (url, init) => net.fetch(url, init),
+      fetchImpl: (url, init) => globalThis.fetch(url, init),
       settings,
       onProgress: (p) => send(IPC.phoneInstallProgress, p)
     })
