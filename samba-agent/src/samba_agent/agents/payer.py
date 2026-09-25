@@ -6,8 +6,8 @@
 """
 
 import json
-from datetime import datetime
 import re
+from datetime import datetime
 from urllib.parse import urlparse, urlsplit
 
 from samba_agent.agents.base import AgentBase, AgentFailure, run_agent, split_page_dialogs
