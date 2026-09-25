@@ -533,6 +533,9 @@ def pay_card_quote_problem(out: dict[str, object]) -> str | None:
     return None
 
 
+# 삼바웨이브 주문 행의 "업데이트"(소싱처 가격·재고 갱신 → 마켓 판매가 수정)를 누르는 앱 저장 스크립트
+WAVE_UPDATE_SCRIPT = 'samba_update_order'
+
 # 주문서·결제 탭(과 그 팝업)만 닫는다
 _CLOSE_ORDER_TABS_JS = (
     "for (const t of await tabs.list()) { if (/order\\/order-form|order\\/checkout|order\\/orderform/.test(t.url || '')) "
@@ -934,6 +937,27 @@ class BuyerAgent(AgentBase):
         if source_of(self.spec.name).normal_price and snap.get('normal_price') is None:
             self._apply_normal_price(a, account, snap)
         return snap
+
+    def _refresh_wave_listing(self, a: Assignment) -> None:
+        """삼바웨이브 주문 행의 '업데이트'(소싱처 가격·재고 갱신 → 마켓 판매가 수정)를 먼저 누른다(사용자 2026-09-25).
+
+        결과 문구만 근거에 남기고, 실패해도 구매는 이어 간다(포이즌 등 마켓 상품이 이미 삭제된 건은 늘 실패한다).
+        """
+        try:
+            out = self.tool(
+                'run_script',
+                name=WAVE_UPDATE_SCRIPT,
+                args=json.dumps({'orderNo': a.order.order_no}, ensure_ascii=False),
+            )
+        except AgentFailure as e:
+            self.note('판매가 업데이트', mask_text(f'못 함({e.reason[:80]})'))
+            return
+        body, _ = split_page_dialogs(out)
+        try:
+            result = str(json.loads(body).get('result') or '')
+        except (ValueError, AttributeError):
+            result = body.strip()
+        self.note('판매가 업데이트', mask_text(result[:120]))
 
     def _close_order_tabs(self, account: str) -> None:
         """열린 주문서·결제 탭을 닫는다(이 레인에서 보이는 것만). 못 닫아도 스냅샷은 이어 간다."""
@@ -1625,6 +1649,8 @@ class BuyerAgent(AgentBase):
         # 주문마다 비교 기준을 비운다 — 앞 주문의 계정 원가(예: 89,000)가 남아 다음 주문 검사를 잘못 걸었다(실기 2026-09-25)
         self._expect_cost = {}
         self._issued = {}
+        if not a.dry_run:
+            self._refresh_wave_listing(a)
         # 계정 비교(사용자 지시 2026-09-23) — 주문 지정 계정이 없으면 키마스터 계정마다 주문서까지
         # 만들어 원가를 비교하고 가장 싼 계정으로 산다
         accounts = self._candidate_accounts(a)
