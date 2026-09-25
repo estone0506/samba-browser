@@ -88,6 +88,14 @@ class VerifierAgent(AgentBase):
         )
         # 원가는 결제 뒤 실제 상세로 다시 계산해 기록한다(기록 에이전트) — 견적 원가 대신 그 값으로 대조한다
         expected = dict(a.expected)
+        # 원가의 사용 적립금은 보유 적립금만(선할인 제외) — 기록 단계와 같은 규칙. 상세를 펼쳐 읽은 보유분이 없으면
+        # 결제 전 주문서에서 읽은 값을 쓴다(실기 2026-09-25: 합계 12,370 을 넣어 111,320 으로 잘못 대조)
+        box = source.get('points_box')
+        handoff_box = a.handoff.get('points_used')
+        if isinstance(box, int | float) and not isinstance(box, bool):
+            source = {**source, 'points_used': float(box)}
+        elif isinstance(handoff_box, int | float) and not isinstance(handoff_box, bool):
+            source = {**source, 'points_used': float(handoff_box)}
         recomputed = actual_cost(source)
         if recomputed is not None and 'real_price' in expected:
             expected['real_price'] = recomputed
