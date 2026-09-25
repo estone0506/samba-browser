@@ -1,6 +1,7 @@
 // 사용자 조작(상세 화면의 '자동 채우기' 버튼, 페이지 내 피커)으로 시작하는 자동 채움.
 // AI 도구를 거치지 않고 메인이 직접 탭에 값을 넣는다 — 값은 IPC 로 나가지 않는다.
 
+import { markHuman } from '../browser/human-activity'
 import { pageBridge } from '../browser/page-bridge'
 import type { Tab } from '../browser/tab-manager'
 import type { VaultService } from './service'
@@ -51,6 +52,8 @@ export async function autofillAccount(
 ): Promise<AutofillResult> {
   const tab = target?.tab ?? deps.activeTab()
   if (!tab) return 'no-active-tab'
+  // 사용자가 누른 자동완성이다 — 이 탭은 잠시 자동화가 끼어들지 않는다(두 입력이 섞여 계정이 잠긴 실기 2026-09-25)
+  markHuman(tab.view.webContents)
   const url = tab.view.webContents.getURL()
   // 평문 페이지 판정을 먼저 본다(about: 등 호스트가 없는 주소도 'insecure-page' 로 알린다)
   if (!isSecurePageUrl(url)) return 'insecure-page'

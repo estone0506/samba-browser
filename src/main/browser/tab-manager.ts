@@ -25,6 +25,7 @@ import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emul
 import { installWebstoreNavigatorUserAgent, installWebstoreUserAgent } from './webstore-ua'
 import { installSessionCookieKeeper } from './session-cookies'
 import { installDialogHandler, isAutomationActive } from './dialogs'
+import { isHumanInputEvent, markHuman } from './human-activity'
 import { PopupRegistry, type PopupEntry } from './popups'
 import { buildTargets, pickAgentTargetId, type AgentTarget } from './targets'
 import { getFaviconService, type FaviconResponse } from '../favicon/service'
@@ -676,6 +677,10 @@ export class TabManager {
     // 웹스토어 페이지 JS 가 읽는 navigator.userAgent 도 헤더와 같은 크롬 UA 로 맞춘다.
     // 모바일 탭은 emulation.ts 가 UA 를 따로 관리하므로 건드리지 않는다
     tab.refreshWebstoreUa = installWebstoreNavigatorUserAgent(wc, () => tab.mobile)
+    // 사람의 키 입력을 기록한다 — 그 탭은 잠시 자동화가 입력·로그인하지 않는다(human-activity.ts)
+    wc.on('before-input-event', () => {
+      if (isHumanInputEvent(wc)) markHuman(wc)
+    })
     // 페이지 JS 대화상자(alert/confirm/prompt)는 작업 실행 중에만 자동으로 닫는다
     installDialogHandler(wc, {
       // SAMBA_E2E 환경변수는 개발 빌드에서만 인정한다(패키징된 앱에서 자동 처리 금지)
@@ -776,6 +781,10 @@ export class TabManager {
     // 팝업도 탭과 똑같이 막는다 — 결제창에서 file:// 로 넘어가면 로컬 DB 파일이
     // 그대로 읽힌다. 확장 문서는 팝업으로 열 일이 없으므로 허용하지 않는다
     guardNavigation(wc, false)
+    // 팝업(결제창·로그인 창)에서도 사람의 키 입력을 기록한다
+    wc.on('before-input-event', () => {
+      if (isHumanInputEvent(wc)) markHuman(wc)
+    })
     // 페이지 JS 대화상자도 탭과 같은 정책으로 처리한다(결제창의 alert 가 작업을 멈추지 않게)
     installDialogHandler(wc, {
       isAutomationActive: () =>

@@ -59,6 +59,7 @@ import {
   popupTargetsOf
 } from './target'
 import type { AgentTarget } from '../browser/targets'
+import { automationBlocked, runAsAutomation } from '../browser/human-activity'
 import type { AgentToolCall, SiteActionTool } from '../../shared/site-memory'
 import type { HandoffKind } from '../../shared/ipc'
 import { PLAYBOOK_INSTRUCTIONS_MAX, type PlaybookDto } from '../../shared/playbook'
@@ -519,6 +520,9 @@ const text = (t: string): { content: [{ type: 'text'; text: string }] } => ({
 
 // 지금 조작할 창. 팝업(결제창·주소 검색창)을 골라 둔 상태면 그 팝업, 아니면 활성 탭.
 // 대상이 없으면 null
+// 행동 도구(action)가 아니어도 탭에 입력하는 도구의 라벨 머리 — fill_secret('입력: …')·login('로그인…')·run_script
+const HUMAN_GATED_LABEL_RE = /^(입력|로그인|스크립트 실행)/
+
 function activeOr(ctx: ToolContext): Tab | null {
   return agentTargetOf(ctx.tabs)
 }
@@ -670,10 +674,20 @@ export function createSambaTools(
       }
       return text(over)
     }
+    // 사람이 지금 쓰고 있는 탭에는 입력·클릭·로그인·비밀값 채우기·페이지 스크립트를 하지 않는다
+    // (실기 2026-09-25: 사용자 자동로그인과 login 도구 입력이 섞여 네이버 계정이 잠겼다)
+    if (action || HUMAN_GATED_LABEL_RE.test(resolveLabel())) {
+      const busy = automationBlocked(activeOr(ctx)?.view.webContents)
+      if (busy) {
+        ctx.onStep(resolveLabel(), false)
+        return text(busy)
+      }
+    }
     try {
       // 페이지가 대화상자·무한 로딩으로 응답하지 않으면 실행 전체가 멈춘다(실기에서 14분 대기).
       // 도구 하나는 이 시간 안에 끝나야 하고, 넘기면 문구로 돌려줘 모델이 다른 길을 찾게 한다
-      const r = await withToolTimeout(fn(), TOOL_TIMEOUT_MS, () => humanWaits > 0)
+      // 자동화 흐름으로 표시해 아래 입력 함수들이 '사람이 쓰는 탭' 검사를 하게 한다
+      const r = await withToolTimeout(runAsAutomation(fn), TOOL_TIMEOUT_MS, () => humanWaits > 0)
       const raw = typeof r === 'string' ? r : JSON.stringify(r)
       const ok = isToolResultOk(raw, content)
       ctx.onStep(resolveLabel(), ok)

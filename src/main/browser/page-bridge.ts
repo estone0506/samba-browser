@@ -19,6 +19,11 @@ import {
   type FrameSnapshot
 } from './frame-id'
 import type { Tab } from './tab-manager'
+import {
+  automationBlocked,
+  isAutomation,
+  withAutomationInput
+} from './human-activity'
 
 // preload 가 실행되는 격리 월드 id. Electron 의 WorldId.ISOLATED_WORLD = 999
 export const ISOLATED_WORLD_ID = 999
@@ -536,6 +541,8 @@ export const pageBridge = {
   clickAt: (tab: Tab, x: number, y: number): boolean => {
     const wc = tab.view.webContents
     if (wc.isDestroyed()) return false
+    // 사람이 쓰는 탭에는 자동화가 클릭을 보내지 않는다(human-activity.ts)
+    if (automationBlocked(wc)) return false
     if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) return false
     const point = { x: Math.round(x), y: Math.round(y), button: 'left' as const, clickCount: 1 }
     try {
@@ -555,6 +562,16 @@ export const pageBridge = {
    * 값은 코드 문자열에 넣지 않는다(입력 이벤트로만 나간다)
    */
   typeLogin: async (tab: Tab, id: number, value: string): Promise<string> => {
+    const wc = tab.view.webContents
+    if (wc.isDestroyed()) return 'page is gone'
+    // 사람이 이 탭에서 입력 중이면 자동화는 치지 않는다 — 두 입력이 한 칸에 섞여 네이버 계정이 잠겼다(실기 2026-09-25)
+    const blocked = automationBlocked(wc)
+    if (blocked) return blocked
+    if (isAutomation()) return withAutomationInput(wc, () => pageBridge.typeLoginNow(tab, id, value))
+    return pageBridge.typeLoginNow(tab, id, value)
+  },
+  /** typeLogin 본문(가드 뒤) */
+  typeLoginNow: async (tab: Tab, id: number, value: string): Promise<string> => {
     const wc = tab.view.webContents
     if (wc.isDestroyed()) return 'page is gone'
     const point = await pageBridge.rectOf(tab, id).catch(() => null)
@@ -607,6 +624,14 @@ export const pageBridge = {
    * 이동·간격이 있어 점수형 봇 판정(reCAPTCHA Enterprise)에 사용자 신호를 남긴다. 좌표가 이상하면 false
    */
   clickHuman: async (tab: Tab, x: number, y: number): Promise<boolean> => {
+    const wc = tab.view.webContents
+    if (wc.isDestroyed()) return false
+    if (automationBlocked(wc)) return false
+    if (isAutomation()) return withAutomationInput(wc, () => pageBridge.clickHumanNow(tab, x, y))
+    return pageBridge.clickHumanNow(tab, x, y)
+  },
+  /** clickHuman 본문(가드 뒤) */
+  clickHumanNow: async (tab: Tab, x: number, y: number): Promise<boolean> => {
     const wc = tab.view.webContents
     if (wc.isDestroyed()) return false
     if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) return false
