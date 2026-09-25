@@ -1772,6 +1772,7 @@ class BuyerAgent(AgentBase):
                 'cost': cost,
                 'margin_pct': margin,
                 **({'paid': paid} if paid > 0 else {}),
+                **({'points_used': snap.get('points_used')} if snap.get('points_used') is not None else {}),
             },
             evidence=tuple(self.evidence),
         )

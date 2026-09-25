@@ -23,6 +23,8 @@ BUYER_HANDOFF_FIELDS = (
     'card_issuer',
     # 실제로 산 소싱처(교차 비교로 주문 소싱처와 다를 수 있다)
     'buy_source',
+    # 주문서에서 쓴 보유 적립금(선할인 제외) — 기록 단계 원가에 쓴다(주문 상세는 선할인까지 합친 값만 보여 준다)
+    'points_used',
 )
 
 

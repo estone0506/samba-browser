@@ -265,6 +265,11 @@ class RecorderAgent(AgentBase):
         except AgentFailure as e:
             self.note('실제 원가', mask_text(f'상세를 못 읽어 견적 원가로 기록({e.reason[:80]})'))
             return
+        # 주문 상세의 '적립금 사용'은 보유 적립금 + 적립금 선할인 합계다. 선할인은 결제액을 이미 깎고 구매 적립도
+        # 사라지므로 원가에 다시 더하지 않는다(사용자 2026-09-25) — 결제 직전 주문서에서 읽은 보유 적립금 사용액을 쓴다
+        box = a.handoff.get('points_used')
+        if isinstance(box, int | float) and not isinstance(box, bool) and box >= 0:
+            detail = {**detail, 'points_used': min(float(box), float(detail.get('points_used') or 0) or float(box))}
         cost = actual_cost(detail)
         if cost is None:
             self.note('실제 원가', '결제액을 못 읽어 견적 원가로 기록')
