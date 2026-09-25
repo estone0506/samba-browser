@@ -29,6 +29,18 @@ _ART_RECENT_ORDER_JS = (
 # 한국 시간(윈도에 tzdata 가 없어 고정 오프셋)
 _KST = timezone(timedelta(hours=9))
 
+# 페이코 PC 결제창: 정보제공동의 체크박스를 켜고 '결제' 링크를 누르는 run_js 본문(탭 전환 다음에 붙인다)
+_PAYCO_AGREE_PAY_JS = (
+    "let tr = (await page.get({ interactive: true })).tree\n"
+    "const cb = tr.match(/\\[(\\d+)\\] checkbox[^\\n]*/)\n"
+    "if (cb && !/checked/.test(cb[0])) { await page.click(parseInt(cb[1])); await sleep(500) }\n"
+    "tr = (await page.get({ interactive: true })).tree\n"
+    "const pay = tr.match(/\\[(\\d+)\\] link \"결제\"/)\n"
+    "if (!pay) return JSON.stringify({ clicked: false, note: 'no pay link' })\n"
+    "await page.click(parseInt(pay[1])); await sleep(1500)\n"
+    "return JSON.stringify({ clicked: true, agreed: !!cb })"
+)
+
 PAY_SUCCESS_MARKERS = ('결제 완료', '결제완료', '주문완료', '주문 완료', 'approved')
 # 결제 "전" 검사용 — 결제창·주문서에도 흔한 '결제 완료 시 적립' 같은 글자로 멈추지 않게 좁힌다
 # (실기: 무신사페이 결제창 문구에 걸려 결제 전 pay_interrupted). 주문 완료 주소의 탭이 있거나,
@@ -424,9 +436,12 @@ class PayerAgent(AgentBase):
                 if pay_btn is not None:
                     break
             self.tool('wait', ms=PAY_BUTTON_POLL_WAIT_MS)
+        if pay_btn is None and self._payco_agree_and_pay():
+            seen_popup = True
+            pay_btn = -1  # 페이코 창의 '결제'는 위에서 눌렀다
         if seen_popup and pay_btn is None:
             self.note('결제창', '결제하기 버튼이 뜨지 않음 — 키패드를 바로 찾는다')
-        if pay_btn is not None:
+        if pay_btn is not None and pay_btn >= 0:
             self.step('payer: 결제창 결제하기')
             self.tool('click', id=pay_btn, label='결제하기')
             self.tool('wait', ms=PAY_POPUP_WAIT_MS)
@@ -513,6 +528,29 @@ class PayerAgent(AgentBase):
             payload=payload,
             evidence=tuple(self.evidence),
         )
+
+    def _payco_agree_and_pay(self) -> bool:
+        """페이코 PC 결제창(bill.payco.com) — 버튼이 '결제하기'가 아니라 '결제' 링크이고 정보제공동의를 켜야 한다.
+
+        동의를 켜고 '결제'를 누르면 페이코 결제 비밀번호 키패드가 뜬다(비밀번호 없이는 결제되지 않는다).
+        실기 2026-09-25 르무통: '결제하기'만 찾다 못 찾아 키패드 없이 멈췄다. 페이코 창이 아니면 False.
+        """
+        popups, _active = self._list_tabs_popups()
+        payco = [
+            p
+            for p in popups
+            if p.get('id') and _host_of(str(p.get('url') or '')).endswith('bill.payco.com')
+        ]
+        if not payco:
+            return False
+        code = f'await tabs.switch({json.dumps(str(payco[-1]["id"]))})\n' + _PAYCO_AGREE_PAY_JS
+        try:
+            out = self.tool('run_js', code=code)
+        except AgentFailure as e:
+            self.note('페이코 결제', mask_text(f'동의·결제 누르기 실패({e.reason[:80]})'))
+            return False
+        self.note('페이코 결제', mask_text(out[:160]))
+        return '"clicked":true' in out.replace(' ', '')
 
     def _recent_art_order(self, a: Assignment) -> str | None:
         """a-rt.com(ABC마트·그랜드스테이지) 주문내역에서 10분 안에 생긴 결제완료 주문번호. 아니면 None."""
