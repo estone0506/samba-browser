@@ -31,15 +31,16 @@ _KST = timezone(timedelta(hours=9))
 
 # 페이코 PC 결제창: 정보제공동의 체크박스를 켜고 '결제' 링크를 누르는 run_js 본문(탭 전환 다음에 붙인다)
 _PAYCO_AGREE_PAY_JS = (
-    "let tr = (await page.get({ interactive: true })).tree\n"
-    # 체크박스는 숨어 있어 '전체 동의' 라벨을 눌러야 켜진다(실기 2026-09-25: 체크박스를 못 찾아 동의 없이 결제를 눌렀다)
-    "const cb = tr.match(/\\[(\\d+)\\] (?:label|clickable|checkbox) \"전체 동의\"/) || tr.match(/\\[(\\d+)\\] checkbox[^\\n]*/)\n"
-    "if (cb) { await page.click(parseInt(cb[1])); await sleep(500) }\n"
-    "tr = (await page.get({ interactive: true })).tree\n"
+    # 동의 체크박스는 숨어 있어 요소 목록에 없다 — 앱의 page.check 가 라벨 글자로 켠다(실기 2026-09-25).
+    # 동의가 켜진 게 확인될 때만 '결제'를 누른다
+    "const agreed = await page.check('전체 동의')\n"
+    "if (agreed !== 'checked' && agreed !== 'already') return JSON.stringify({ clicked: false, agreed })\n"
+    "await sleep(500)\n"
+    "const tr = (await page.get({ interactive: true })).tree\n"
     "const pay = tr.match(/\\[(\\d+)\\] (?:link|clickable|button) \"결제\"/)\n"
-    "if (!pay) return JSON.stringify({ clicked: false, note: 'no pay link' })\n"
+    "if (!pay) return JSON.stringify({ clicked: false, agreed, note: 'no pay link' })\n"
     "await page.click(parseInt(pay[1])); await sleep(1500)\n"
-    "return JSON.stringify({ clicked: true, agreed: !!cb })"
+    "return JSON.stringify({ clicked: true, agreed })"
 )
 
 PAY_SUCCESS_MARKERS = ('결제 완료', '결제완료', '주문완료', '주문 완료', 'approved')
