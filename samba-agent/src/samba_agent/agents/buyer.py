@@ -931,7 +931,10 @@ class BuyerAgent(AgentBase):
             goal=(
                 f'상품 {a.order.sku} 페이지에서 주문 옵션 "{a.order.option or "(없음)"}" 을 골라 주문서(구매하기)까지 가서 '
                 '원가(cost, 숫자)·선택지 목록(options, 고른 옵션 포함)·결제수단(methods)을 원래 키 그대로 돌려주고, '
-                '주문서에 실제로 담긴 상품 옵션 글자를 selected 로 돌려준다(고른 버튼 이름이 아니라 주문서에서 되읽은 값).'
+                '주문서에 실제로 담긴 상품 옵션 글자를 selected 로 돌려준다(고른 버튼 이름이 아니라 주문서에서 되읽은 값). '
+                '반드시 지킬 것: 옵션(사이즈·색상)을 실제로 고르지 못했으면 구매하기·바로구매 버튼을 절대 누르지 말고 '
+                'options 만 돌려준다 — 옵션 없이 누르면 "옵션을 선택해 주세요" 경고창이 계정 수만큼 쏟아진다. '
+                '구매 버튼은 옵션을 고른 뒤, 또는 옵션 선택창이 아예 없는 상품일 때만 누른다.'
             ),
             check=snapshot_problem(
                 a.order.option, lambda sel: self._selected_matches(sel, a.order.option)
