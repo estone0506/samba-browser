@@ -40,6 +40,7 @@ import {
   submitForm,
   isSecretField,
   keypadSignals,
+  checkByLabel,
   keypadLayout,
   keypadUnlabeled,
   pressOnce,
@@ -102,6 +103,8 @@ if (!isExtensionDocument) {
     isSecretField: (id: number) => isSecretField(id),
     // 결제 비밀번호 키패드 판정용 신호(값은 담기지 않는다)
     keypadSignals: () => keypadSignals(),
+    // 라벨 글자로 체크박스 켜기(숨은 동의 칸)
+    checkByLabel: (text: string) => checkByLabel(text),
     // 결제 키패드 숫자 버튼 배치(앱이 키마스터 값을 넣을 때). 값은 담기지 않는다
     keypadLayout: () => keypadLayout(),
     // 글자 없는 키패드 버튼들의 뷰포트 사각형(앱이 OCR 로 숫자를 읽는다). 값은 담기지 않는다

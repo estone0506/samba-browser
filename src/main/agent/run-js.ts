@@ -103,6 +103,8 @@ const BOOTSTRAP = `(() => {
     // 합성 클릭을 무시하는 요소(커스텀 드롭다운 등)를 요소 가운데 좌표로 진짜 마우스 클릭한다(실기: 렉스몬드 옵션)
     clickNative: (id) => invoke('page.clickNative', [id]),
     dismissOverlay: () => invoke('page.dismissOverlay', []),
+    // 라벨 글자로 체크박스를 켠다(숨은 동의 칸 포함) — checked·already·not-found·failed
+    check: (text) => invoke('page.check', [text]),
     url: () => invoke('page.url', []),
     title: () => invoke('page.title', []),
     // 고정 sleep 대신 쓴다 — 화면(요소 목록·본문)에 글자(또는 정규식)가 보이면 바로 true, ms 안에 안 보이면 false.

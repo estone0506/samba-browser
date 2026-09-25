@@ -352,6 +352,8 @@ function opToCode(op: AgentOp): string {
       return `__samba.pressOnce(${op.id})`
     case 'overlays':
       return '__samba.overlays()'
+    case 'checkByLabel':
+      return `__samba.checkByLabel(${encodeValue(op.text)})`
   }
 }
 
@@ -514,6 +516,15 @@ export const pageBridge = {
       }))
     }
     return null
+  },
+  /**
+   * 라벨 글자로 체크박스를 켠다 — 메인 프레임부터 하위 프레임까지 처음 찾은 곳에서. 결과 문구만 돌려준다
+   * (checked·already·not-found·failed)
+   */
+  checkByLabel: async (tab: Tab, text: string): Promise<string> => {
+    const { main, frames } = await callEveryFrame(tab, { op: 'checkByLabel', text }, resultSchema)
+    for (const r of [main, ...frames.map((f) => f.value)]) if (r !== 'not-found') return r
+    return 'not-found'
   },
   /** 키패드 버튼을 정확히 한 번 누른다(일반 click 의 재시도 폴백이 없다) */
   pressOnce: (tab: Tab, id: number): Promise<string> =>

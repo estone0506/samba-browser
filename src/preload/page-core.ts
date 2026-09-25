@@ -1507,6 +1507,30 @@ export function detectOverlays(): PageOverlay[] {
     .map((el) => describeOverlay(el, index))
 }
 
+// --- 라벨 글자로 체크박스 켜기 ---------------------------------------------
+
+/**
+ * 라벨 글자가 text 와 같은 체크박스를 켠다. 체크박스가 화면에 숨어 있고(커스텀 모양) 라벨만 눌러야 켜지는
+ * 동의 칸(페이코 PC 결제창 '전체 동의')을 위한 것이다 — 요소 목록에 안 잡혀 번호로 누를 수 없었다(실기 2026-09-25).
+ * 이미 켜져 있으면 누르지 않는다(누르면 꺼진다).
+ */
+export function checkByLabel(text: string): string {
+  const want = text.replace(/\s+/g, '')
+  if (!want) return 'not-found'
+  const labels = Array.from(document.querySelectorAll<HTMLLabelElement>('label'))
+  for (const label of labels) {
+    if ((label.textContent ?? '').replace(/\s+/g, '') !== want) continue
+    const target =
+      (label.htmlFor ? document.getElementById(label.htmlFor) : null) ??
+      label.querySelector('input')
+    if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') continue
+    if (target.checked) return 'already'
+    label.click()
+    return target.checked ? 'checked' : 'failed'
+  }
+  return 'not-found'
+}
+
 // --- 프레임 채널 동작 실행 -------------------------------------------------
 //
 // 메인 프로세스는 하위 프레임(iframe)의 격리 월드를 직접 실행할 수 없어서,
@@ -1566,6 +1590,8 @@ export function runAgentOp(raw: unknown): unknown {
       return pressOnce(id)
     case 'overlays':
       return detectOverlays()
+    case 'checkByLabel':
+      return checkByLabel(text)
     default:
       return null
   }

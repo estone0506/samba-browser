@@ -30,3 +30,5 @@ export type AgentOp =
   // 다시 눌러 같은 숫자가 두세 번 들어갈 수 있다(실기: 무신사페이 오답)
   | { op: 'pressOnce'; id: number }
   | { op: 'overlays' }
+  // 라벨 글자로 체크박스를 켠다(숨은 체크박스 포함 — 페이코 '전체 동의'). 결과는 checked·already·not-found·failed
+  | { op: 'checkByLabel'; text: string }

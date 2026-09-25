@@ -1734,6 +1734,12 @@ overlays left: ${after.length}${kept}`
         }
         case 'page.dismissOverlay':
           return doDismissOverlay()
+        case 'page.check': {
+          // 라벨 글자로 체크박스 켜기(동의 칸). 결제 확정 버튼이 아니라 no_pay 에서도 허용한다
+          const tab = activeOr(ctx)
+          if (!tab) return 'no active tab'
+          return await pageBridge.checkByLabel(tab, asText(args[0])).catch((e: unknown) => `failed: ${e instanceof Error ? e.message : String(e)}`)
+        }
         case 'page.url':
           return currentUrl()
         case 'page.title': {
