@@ -6,6 +6,7 @@
 """
 
 import json
+from datetime import datetime
 import re
 from urllib.parse import urlparse, urlsplit
 
@@ -17,6 +18,13 @@ from samba_agent.sources import default_sources
 from samba_agent.wave.client import WaveClient, WaveError
 
 # 결제 성공을 확인하는 문구. 이걸 보기 전에는 ok 를 내지 않는다(브리프 §완료조건)
+# a-rt.com 주문내역 첫 주문(번호·일시·금액)을 읽는 run_js 본문 — 탭 열기 다음에 붙인다
+_ART_RECENT_ORDER_JS = (
+    "await sleep(4000)\n"
+    "const t = ((await page.get({})).tree.split('PAGE TEXT:')[1] || '').replace(/\\s+/g, ' ')\n"
+    "const m = t.match(/주문번호 (\\d{10,}) 주문일시 (\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d) 총 결제금액 ([\\d,]+) 원/)\n"
+    "return JSON.stringify(m ? { no: m[1], at: m[2], amount: m[3] } : {})"
+)
 PAY_SUCCESS_MARKERS = ('결제 완료', '결제완료', '주문완료', '주문 완료', 'approved')
 # 결제 "전" 검사용 — 결제창·주문서에도 흔한 '결제 완료 시 적립' 같은 글자로 멈추지 않게 좁힌다
 # (실기: 무신사페이 결제창 문구에 걸려 결제 전 pay_interrupted). 주문 완료 주소의 탭이 있거나,
@@ -462,6 +470,34 @@ class PayerAgent(AgentBase):
             )
         self.tool('wait', ms=PAY_RESULT_WAIT_MS)
 
+    def _recent_art_order(self, a: Assignment) -> str | None:
+        """a-rt.com(ABC마트·그랜드스테이지) 주문내역에서 10분 안에 생긴 결제완료 주문번호. 아니면 None."""
+        source = str(a.handoff.get('buy_source') or a.order.source or '')
+        host = {'ABCmart': 'abcmart.a-rt.com', 'GrandStage': 'grandstage.a-rt.com'}.get(source)
+        account = str(a.handoff.get('account') or a.order.account or '')
+        if not host or not account:
+            return None
+        code = (
+            f"await tabs.open({{ url: 'https://{host}/mypage/claim/claim-order-main', "
+            f"profile: {json.dumps(account)} }})\n" + _ART_RECENT_ORDER_JS
+        )
+        try:
+            raw = self.tool('run_js', code=code, safety='no_pay')
+            found = json.loads(raw[raw.index('{'):]) if '{' in raw else {}
+        except (AgentFailure, ValueError):
+            return None
+        no, at = str(found.get('no') or ''), str(found.get('at') or '')
+        if not no or not at:
+            return None
+        try:
+            placed = datetime.strptime(at, '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            return None
+        if abs((datetime.now() - placed).total_seconds()) > 600:
+            return None
+        self.note('결제 확인(주문내역)', f'{no} {at} {found.get("amount")}원')
+        return no
+
     def _success_page(self) -> str:
         """결제 뒤 화면 — 주문 완료 탭(…/order/result/…)이 있으면 그 탭으로 옮겨 읽는다."""
         try:
@@ -688,6 +724,13 @@ class PayerAgent(AgentBase):
 
         self.step('payer: 성공 확인')
         page = self._success_page()
+        recent_no = None
+        if not any(m in page for m in PAY_SUCCESS_MARKERS):
+            # ABC마트·그랜드스테이지는 네이버페이 뒤 완료 화면을 못 잡는 일이 있다 — 주문내역에서 방금(10분 안) 생긴
+            # 결제완료 주문을 찾아 확인한다(실기 2026-09-25 반스: 결제됐는데 '확인되지 않는다'로 멈춤)
+            recent_no = self._recent_art_order(a)
+            if recent_no:
+                page = f'결제완료 주문번호 {recent_no}'
         if not any(m in page for m in PAY_SUCCESS_MARKERS):
             raise AgentFailure(
                 'needs_human',
@@ -706,7 +749,7 @@ class PayerAgent(AgentBase):
             tabs_now = self.tool('list_tabs')
         except AgentFailure:
             tabs_now = ''
-        source_order_no = _source_order_no(page, tabs_now)
+        source_order_no = recent_no or _source_order_no(page, tabs_now)
         if source_order_no is not None:
             payload['source_order_no'] = source_order_no
             self.note('소싱 주문번호', source_order_no)
