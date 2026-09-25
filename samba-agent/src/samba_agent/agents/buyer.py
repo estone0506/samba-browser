@@ -544,7 +544,7 @@ def pay_card_quote_problem(out: dict[str, object]) -> str | None:
     """무신사페이 기본 카드 견적 검사 — 카드 이름과 금액이 있어야 한다(실기: 카드 [] 인데 통과)."""
     rows = out.get('quotes')
     note = str(out.get('note') or '')
-    if not rows and (out.get('cards') == [] or re.search(r'no registered card|등록(된)? ?카드 ?없', note, re.I)):
+    if not rows and (out.get('cards') == [] or re.search(r'no registered card|등록(된)? ?카드 ?없', note, re.IGNORECASE)):
         # 무신사페이에 등록 카드가 없는 계정 — 실제로 그렇다(수리해도 genuine). 견적 줄 없이 넘어간다
         # (실기 2026-09-25: buyer05 에서 작업마다 수리를 돌렸다)
         return None
