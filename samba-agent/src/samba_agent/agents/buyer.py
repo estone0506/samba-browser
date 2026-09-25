@@ -1621,6 +1621,9 @@ class BuyerAgent(AgentBase):
 
     def _buy(self, a: Assignment) -> AgentResult:
         self.evidence = []
+        # 주문마다 비교 기준을 비운다 — 앞 주문의 계정 원가(예: 89,000)가 남아 다음 주문 검사를 잘못 걸었다(실기 2026-09-25)
+        self._expect_cost = {}
+        self._issued = {}
         # 계정 비교(사용자 지시 2026-09-23) — 주문 지정 계정이 없으면 키마스터 계정마다 주문서까지
         # 만들어 원가를 비교하고 가장 싼 계정으로 산다
         accounts = self._candidate_accounts(a)
