@@ -50,6 +50,12 @@ class WorkerDeps:
     events: EventLog | None = None
     env: str = 'dev'
     prompt_commit: str = '-'
+    # 이행하지 못한 주문 표시(가격X·재고X) — (주문번호, 실패 사유) → 결과 한 줄(붙일 게 없으면 None).
+    # dry-run 에서는 부르지 않는다
+    flag_order: Callable[[str, str | None], str | None] | None = None
+    # 처리할 소싱처 범위(대문자 id). 비어 있으면 거르지 않는다. 접수 뒤 삼바웨이브에서 소싱처가 바뀐 주문을
+    # 시작 직전에 한 번 더 거른다(실기 2026-09-25: 무신사로 접수된 주문이 롯데온으로 바뀌어 돌았다)
+    sources: frozenset[str] = frozenset()
     # 보관 기간 지난 이벤트 정리(EventLog.prune). 기동 시 1회 + 주기마다 부른다(리뷰 지적 — Minor)
     prune: Callable[[], int] | None = None
     prune_interval_s: float = 6 * 60 * 60
@@ -102,6 +108,11 @@ class Worker:
             msg = mask_text(str(e))[:300]
             self.d.queue.finish(job.id, 'needs_human', error=f'주문 조회 실패: {msg}')
             self.d.report(job, f'주문 조회 실패 — 사람 확인 필요: {msg}')
+            return self.d.queue.get(job.order_no)
+        if self.d.sources and order.source.upper() not in self.d.sources:
+            why = f'처리 범위 밖 소싱처: {order.source or "(없음)"} — 범위 {sorted(self.d.sources)}'
+            self.d.queue.finish(job.id, 'needs_human', error=why)
+            self.d.report(job, f'{job.order_no} 건너뜀 — {why}')
             return self.d.queue.get(job.order_no)
         self._reset_finished_thread(job.id)
         if self.d.tabs is not None:
@@ -314,4 +325,8 @@ class Worker:
             job,
             f'{job.order_no} {outcome}' + (f' — 사유 {fail}' if fail else ' — 완료'),
         )
+        if fail and outcome != 'done' and self.d.flag_order is not None and not self.d.dry_run:
+            flagged = self.d.flag_order(job.order_no, str(fail))
+            if flagged:
+                self.d.report(job, f'{job.order_no} {flagged}')
         return self.d.queue.get(job.order_no)  # type: ignore[return-value]

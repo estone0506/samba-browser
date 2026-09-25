@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Literal, Self
 
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from samba_agent.agents.contracts import OrderRef
 from samba_agent.failures import FailReason
@@ -90,6 +90,18 @@ class WaveShipping(BaseModel):
         }
 
 
+# 상품명 속 무신사 상품번호 — 따로 떨어진 5~8자리 숫자 중 마지막 것.
+# 예: '르무통 LEMOUTON 5009530519 메이트 오렌지 3347853' → 3347853(10자리 품번은 제외),
+#     '남자데님팬츠 05415547 와이드 쿨 데님 415547 3colo' → 415547
+_MUSINSA_ID_IN_NAME = re.compile(r'(?<![\d\w])(\d{5,8})(?![\d\w])')
+
+
+def infer_musinsa_product_id(product_name: str | None) -> str | None:
+    """소싱처 미등록 상품명에서 무신사 상품번호를 추정한다. 없으면 None."""
+    found = _MUSINSA_ID_IN_NAME.findall(product_name or '')
+    return found[-1].lstrip('0') or None if found else None
+
+
 class WaveOrder(BaseModel):
     """미이행 주문 1건(개인정보 없음). 모르는 필드가 늘어도 그냥 무시한다."""
 
@@ -119,6 +131,20 @@ class WaveOrder(BaseModel):
     shipping_fee: float | None = None
     # 주문 종류 — 목록 응답에는 없어 기본 direct 다. 상세 응답이 실제 값을 준다
     order_type: OrderType = 'direct'
+    # 소싱처가 비어 있어 상품명 끝 숫자로 무신사 상품번호를 추정했는가(infer_musinsa_source)
+    source_inferred: bool = False
+
+    @model_validator(mode='after')
+    def _infer_source(self) -> Self:
+        """소싱처 미등록 주문 — 상품명 뒤쪽 숫자를 무신사 상품번호로 본다(사용자 2026-09-25)."""
+        if (self.source_site or '').strip():
+            return self
+        product_id = infer_musinsa_product_id(self.product_name)
+        if product_id:
+            self.source_site = 'MUSINSA'
+            self.source_url = f'https://www.musinsa.com/products/{product_id}'
+            self.source_inferred = True
+        return self
 
     @property
     def flags(self) -> tuple[str, ...]:

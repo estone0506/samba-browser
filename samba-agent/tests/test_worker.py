@@ -486,3 +486,49 @@ def test_브릿지가_바쁘면_큐를_집지_않는다(setup):
     assert w.tick() is None and q.get('A1').state == 'queued' and log == []
     ready['v'] = True
     assert w.tick().state == 'done'
+
+
+def test_소싱처가_범위_밖으로_바뀐_주문은_돌리지_않는다(tmp_path):
+    """무신사로 접수됐다가 삼바웨이브에서 롯데온으로 바뀐 주문 — 시작 직전에 건너뛴다(실기 2026-09-25)."""
+    reg = Registry.load(DEFAULT_ROOT)
+    q = JobQueue(tmp_path / 'jobs.sqlite')
+    log: list[str] = []
+    sent: list[str] = []
+    graph = build_supervisor(reg, agents(log, None), checkpointer=MemorySaver(), gate=False)
+    w = Worker(
+        WorkerDeps(
+            queue=q,
+            graph=graph,
+            version='vtest',
+            report=lambda job, line: sent.append(line),
+            parse_order=lambda job: OrderRef(order_no=job.order_no, source='LOTTEON', seller='포이즌', sku='티셔츠', qty=1),
+            sources=frozenset({'MUSINSA', '29CM'}),
+        )
+    )
+    q.enqueue('L1', 'U1', {}, 'ts1')
+    job = w.tick()
+    assert job.state == 'needs_human'
+    assert log == []
+    assert '범위 밖' in (job.error or '')
+
+
+def test_마진_미달로_멈추면_가격X_표시를_부른다(setup):
+    q, log, sent, _make = setup
+    reg = Registry.load(DEFAULT_ROOT)
+    marked: list[tuple[str, str | None]] = []
+    graph = build_supervisor(reg, agents(log, None), checkpointer=MemorySaver(), gate=False)
+    w = Worker(
+        WorkerDeps(
+            queue=q,
+            graph=graph,
+            version='vtest',
+            report=lambda job, line: sent.append(line),
+            parse_order=order_of,
+            dry_run=False,
+            flag_order=lambda no, err: marked.append((no, err)) or '가격X 표시함',
+        )
+    )
+    job, _ = q.enqueue('A1', 'U1', {}, 'ts1')
+    w._apply(job, {'outcome': 'needs_human', 'fail_reason': 'margin'})
+    assert marked == [('A1', 'margin')]
+    assert any('가격X 표시함' in s for s in sent)

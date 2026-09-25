@@ -5,6 +5,7 @@
 """
 
 import functools
+import json
 import logging
 import signal
 import sqlite3
@@ -44,6 +45,7 @@ from samba_agent.settings import Settings, load_settings
 from samba_agent.supervisor.graph import build_supervisor
 from samba_agent.version import harness_version
 from samba_agent.wave.client import WaveClient
+from samba_agent.wave.flags import FlagMarker
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +121,19 @@ def main() -> None:
 
     # 모델명은 settings 에 없다 — llm.decide 의 상수(claude-sonnet-5) 를 그대로 쓴다
     decide = make_decide()
+
+    # 이행하지 못한 주문의 가격X·재고X 표시 — 삼바웨이브 API 로 태그를 읽고 앱 저장 스크립트로 버튼을 누른다
+    flag_bridge = bridge.scoped(['run_script'])
+    flagger = (
+        FlagMarker(
+            wave,
+            lambda name, args: flag_bridge.call(
+                'run_script', name=name, args=json.dumps(args, ensure_ascii=False)
+            ).result,
+        )
+        if wave is not None
+        else None
+    )
 
     # 조회 통로: 삼바웨이브 API 우선, 실패하면 앱 저장 스크립트
     _parse_order = parse_order_fn(wave, lookup_bridge)
@@ -225,6 +240,10 @@ def main() -> None:
             tabs=TabJanitor(bridge.scoped(list(TAB_TOOLS))),
             # 앱 채팅이 도는 동안(409 busy)·앱이 꺼진 동안은 큐를 집지 않는다
             ready=lambda: _bridge_ready(bridge),
+            flag_order=flagger.mark if flagger is not None else None,
+            sources=frozenset(
+                x.strip().upper() for x in settings.intake_sources.split(',') if x.strip()
+            ),
         )
     )
 
