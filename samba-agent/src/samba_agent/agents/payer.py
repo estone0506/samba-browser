@@ -7,10 +7,11 @@
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, urlsplit
 
 from samba_agent.agents.base import AgentBase, AgentFailure, run_agent, split_page_dialogs
+from samba_agent.agents.buyer import POINTS_ONLY_METHOD
 from samba_agent.agents.contracts import AgentResult, Assignment
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_text
@@ -25,6 +26,9 @@ _ART_RECENT_ORDER_JS = (
     "const m = t.match(/주문번호 (\\d{10,}) 주문일시 (\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d) 총 결제금액 ([\\d,]+) 원/)\n"
     "return JSON.stringify(m ? { no: m[1], at: m[2], amount: m[3] } : {})"
 )
+# 한국 시간(윈도에 tzdata 가 없어 고정 오프셋)
+_KST = timezone(timedelta(hours=9))
+
 PAY_SUCCESS_MARKERS = ('결제 완료', '결제완료', '주문완료', '주문 완료', 'approved')
 # 결제 "전" 검사용 — 결제창·주문서에도 흔한 '결제 완료 시 적립' 같은 글자로 멈추지 않게 좁힌다
 # (실기: 무신사페이 결제창 문구에 걸려 결제 전 pay_interrupted). 주문 완료 주소의 탭이 있거나,
@@ -470,6 +474,46 @@ class PayerAgent(AgentBase):
             )
         self.tool('wait', ms=PAY_RESULT_WAIT_MS)
 
+    def _confirm_paid(self, a: Assignment, card: str) -> AgentResult:
+        """결제 뒤 성공 확인 — 완료 화면 문구, 없으면(ABC·그랜드스테이지) 주문내역의 방금 생긴 주문으로."""
+        self.step('payer: 성공 확인')
+        page = self._success_page()
+        recent_no = None
+        if not any(m in page for m in PAY_SUCCESS_MARKERS):
+            # ABC마트·그랜드스테이지는 네이버페이 뒤 완료 화면을 못 잡는 일이 있다 — 주문내역에서 방금(10분 안) 생긴
+            # 결제완료 주문을 찾아 확인한다(실기 2026-09-25 반스: 결제됐는데 '확인되지 않는다'로 멈춤)
+            recent_no = self._recent_art_order(a)
+            if recent_no:
+                page = f'결제완료 주문번호 {recent_no}'
+        if not any(m in page for m in PAY_SUCCESS_MARKERS):
+            raise AgentFailure(
+                'needs_human',
+                '결제됐는지 화면에서 확인되지 않는다 — 사람이 봐야 한다(재결제 금지)',
+                FailReason.VERIFY_MISMATCH,
+            )
+        self.note('결제 성공', mask_text(page[:200]))
+        # 누가 결제했는지(플레이북 §5-4) — 이 경로는 에이전트가 결제를 끝낸 것이다
+        payload: dict[str, object] = {
+            'dry_run': False,
+            'paid': True,
+            'paid_by': 'agent',
+            'card': card,
+        }
+        try:
+            tabs_now = self.tool('list_tabs')
+        except AgentFailure:
+            tabs_now = ''
+        source_order_no = recent_no or _source_order_no(page, tabs_now)
+        if source_order_no is not None:
+            payload['source_order_no'] = source_order_no
+            self.note('소싱 주문번호', source_order_no)
+        return AgentResult(
+            status='ok',
+            reason=f'{card} 로 결제 완료를 화면에서 확인했다',
+            payload=payload,
+            evidence=tuple(self.evidence),
+        )
+
     def _recent_art_order(self, a: Assignment) -> str | None:
         """a-rt.com(ABC마트·그랜드스테이지) 주문내역에서 10분 안에 생긴 결제완료 주문번호. 아니면 None."""
         source = str(a.handoff.get('buy_source') or a.order.source or '')
@@ -490,10 +534,10 @@ class PayerAgent(AgentBase):
         if not no or not at:
             return None
         try:
-            placed = datetime.strptime(at, '%Y-%m-%d %H:%M:%S')
+            placed = datetime.strptime(at, '%Y-%m-%d %H:%M:%S').replace(tzinfo=_KST)
         except ValueError:
             return None
-        if abs((datetime.now() - placed).total_seconds()) > 600:
+        if abs((datetime.now(_KST) - placed).total_seconds()) > 600:
             return None
         self.note('결제 확인(주문내역)', f'{no} {at} {found.get("amount")}원')
         return no
@@ -599,6 +643,16 @@ class PayerAgent(AgentBase):
 
         self._recheck_wave(a)
 
+        if a.dry_run and card == POINTS_ONLY_METHOD:
+            # 포인트 전액 결제는 결제하기 한 번에 주문이 끝난다 — 시험에서는 결제창 진입 스크립트도 부르지 않는다
+            self.step('payer: dry-run — 포인트 전액 결제라 결제하기를 누르지 않고 끝낸다')
+            return AgentResult(
+                status='ok',
+                reason='dry-run: 포인트 전액 결제 — 결제하기를 누르지 않았다(결제 안 함)',
+                payload={'dry_run': True, 'paid': False, 'points_only': True},
+                evidence=tuple(self.evidence),
+            )
+
         self.step('payer: 결제창 진입')
         # 실제로 산 사이트(교차 비교) 기준으로 결제창에 들어간다
         script = checkout_script_for(str(a.handoff.get('buy_source') or a.order.source))
@@ -628,6 +682,12 @@ class PayerAgent(AgentBase):
                 f'결제창을 열지 못했다: {mask_text(str(entered.get("error") or entered.get("note"))[:80])}',
                 FailReason.UNKNOWN,
             )
+
+        if entered.get('points_only') and not a.dry_run:
+            # 포인트로 전액 결제 — 결제하기 한 번에 주문이 끝나 결제창·비밀번호가 없다(ABC 포인트 최대 사용, 사용자 2026-09-25).
+            # 이미 결제된 화면 검사를 거치면 방금 끝난 주문을 재진입으로 오판하므로 바로 성공 확인으로 간다
+            self.step('payer: 포인트 전액 결제 — 결제창 없음')
+            return self._confirm_paid(a, card)
 
         if a.dry_run and a.dry_run_digits > 0:
             # 키패드 시험 입력: 결제 비밀번호를 절반만 누르고 취소한다(결제는 하지 않는다)
@@ -722,40 +782,4 @@ class PayerAgent(AgentBase):
             self.step('payer: 결제 앱 없음 — 웹 결제창 경로')
             self._web_pay(a)
 
-        self.step('payer: 성공 확인')
-        page = self._success_page()
-        recent_no = None
-        if not any(m in page for m in PAY_SUCCESS_MARKERS):
-            # ABC마트·그랜드스테이지는 네이버페이 뒤 완료 화면을 못 잡는 일이 있다 — 주문내역에서 방금(10분 안) 생긴
-            # 결제완료 주문을 찾아 확인한다(실기 2026-09-25 반스: 결제됐는데 '확인되지 않는다'로 멈춤)
-            recent_no = self._recent_art_order(a)
-            if recent_no:
-                page = f'결제완료 주문번호 {recent_no}'
-        if not any(m in page for m in PAY_SUCCESS_MARKERS):
-            raise AgentFailure(
-                'needs_human',
-                '결제됐는지 화면에서 확인되지 않는다 — 사람이 봐야 한다(재결제 금지)',
-                FailReason.VERIFY_MISMATCH,
-            )
-        self.note('결제 성공', mask_text(page[:200]))
-        # 누가 결제했는지(플레이북 §5-4) — 이 경로는 에이전트가 결제를 끝낸 것이다
-        payload: dict[str, object] = {
-            'dry_run': False,
-            'paid': True,
-            'paid_by': 'agent',
-            'card': card,
-        }
-        try:
-            tabs_now = self.tool('list_tabs')
-        except AgentFailure:
-            tabs_now = ''
-        source_order_no = recent_no or _source_order_no(page, tabs_now)
-        if source_order_no is not None:
-            payload['source_order_no'] = source_order_no
-            self.note('소싱 주문번호', source_order_no)
-        return AgentResult(
-            status='ok',
-            reason=f'{card} 로 결제 완료를 화면에서 확인했다',
-            payload=payload,
-            evidence=tuple(self.evidence),
-        )
+        return self._confirm_paid(a, card)

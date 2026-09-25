@@ -932,3 +932,14 @@ def test_주문번호는_완료_탭_주소에서도_읽는다():
     assert _source_order_no('결제가 완료되었습니다', tabs) == '202609241804480002'
     assert _source_order_no('주문번호 A12345', '') == 'A12345'
     assert _source_order_no('결제가 완료되었습니다', '[]') is None
+
+
+@respx.mock
+def test_dry_run_포인트_전액이면_결제창_진입_스크립트도_부르지_않는다(reg):
+    # 포인트 전액 결제는 결제하기 한 번에 주문이 끝난다 — 시험에서 진입 스크립트를 부르면 실주문이 된다
+    enter = respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = agent(reg)(assignment(reg, dry_run=True, card='포인트전액'))
+    assert out.status == 'ok'
+    assert out.payload == {'dry_run': True, 'paid': False, 'points_only': True}
+    assert not enter.called
