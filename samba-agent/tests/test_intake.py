@@ -254,3 +254,56 @@ def test_무신사는_판매처와_무관하게_이행한다():
     assert it._in_scope(o('MUSINSA', '쿠팡(seller02)'))
     assert it._in_scope(o('29CM', 'poison'))
     assert not it._in_scope(o('29CM', '롯데홈쇼핑'))
+
+
+class _LinkWave(_FakeWave):
+    """연결 API 까지 흉내 — status 를 주면 그 상태로 실패한다."""
+
+    def __init__(self, orders, link_status: int | None = None) -> None:
+        super().__init__(orders)
+        self.link_status = link_status
+        self.linked: list[tuple[str, str]] = []
+
+    def link_product(self, order_no: str, site_product_id: str) -> dict[str, object]:
+        self.linked.append((order_no, site_product_id))
+        if self.link_status is not None:
+            raise WaveError(FailReason.UNKNOWN, '삼바웨이브 404: 없음', self.link_status)
+        return {'collected': False, 'linked_orders': 1}
+
+
+def test_소싱처_미등록_주문은_추정한_무신사_상품에_연결하고_접수한다(tmp_path):
+    reg = Registry.load(DEFAULT_ROOT)
+    q = JobQueue(tmp_path / 'jobs.sqlite')
+    slack = _Slack()
+    order = wave_order('G1', source='', product_name='르무통 메이트 오렌지 3347853', product_option='230mm')
+    wave = _LinkWave([order])
+    report = Intake(wave, q, reg, slack.post_new, slack.post_line, days=7).run_once()
+    assert report.enqueued == 1
+    assert wave.linked == [('G1', '3347853')]
+    assert q.get('G1').state == 'queued'
+    assert any('상품관리 상품에 연결' in t for _, t in slack.lines)
+
+
+def test_무신사에서_사라진_상품은_재고X_로_마감한다(tmp_path):
+    """상품명 숫자로 찾은 상품이 삭제됐다(무신사 '유효하지 않은 상품') — 사지 않고 표시·취소요청."""
+    reg = Registry.load(DEFAULT_ROOT)
+    q = JobQueue(tmp_path / 'jobs.sqlite')
+    slack = _Slack()
+    marked: list[tuple[str, str]] = []
+    order = wave_order('G2', source='', product_name='남자데님팬츠 05415547 와이드 쿨 데님 415547 3colo')
+    intake = Intake(
+        _LinkWave([order], link_status=404),
+        q,
+        reg,
+        slack.post_new,
+        slack.post_line,
+        days=7,
+        on_unfulfillable=lambda no, why: marked.append((no, why)) or '재고X 표시함 · 취소요청으로 바꿈',
+    )
+    report = intake.run_once()
+    assert report.enqueued == 0
+    job = q.get('G2')
+    assert job.state == 'needs_human'
+    assert job.error == 'out_of_stock'
+    assert marked == [('G2', 'out_of_stock')]
+    assert any('재고X' in t for _, t in slack.lines)

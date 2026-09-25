@@ -273,6 +273,8 @@ def main() -> None:
             all_sellers_sources=frozenset(
                 x.strip() for x in settings.intake_all_sellers_sources.split(',') if x.strip()
             ),
+            # 이행 불가(소싱처 상품 삭제) — 재고X 표시 + 취소요청
+            on_unfulfillable=flagger.mark if flagger is not None else None,
         )
         bot.intake = intake
 

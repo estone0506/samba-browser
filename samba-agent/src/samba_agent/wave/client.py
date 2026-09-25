@@ -299,6 +299,27 @@ class WaveClient:
             raise WaveError(FailReason.UNKNOWN, f'소싱 기입 응답에 order 가 없다: {order_no}')
         return WaveOrder.model_validate(order)
 
+    def link_product(self, order_no: str, site_product_id: str) -> dict[str, object]:
+        """소싱처 미등록 주문을 무신사 수집상품에 연결한다(상품관리에 없으면 삼바웨이브가 수집해 저장).
+
+        소싱처에서 상품이 사라졌으면(삭제) 삼바웨이브가 404 를 준다 — WaveError.status 로 구분한다.
+        """
+        body = self._request(
+            'POST',
+            f'/orders/{order_no}/link-product',
+            json={'source_site': 'MUSINSA', 'site_product_id': site_product_id},
+        )
+        return body if isinstance(body, dict) else {}
+
+    def set_cancel_requested(self, order_no: str, reason: str) -> bool:
+        """이행하지 못한 발주 전 주문을 취소요청으로 바꾼다. 바뀌었으면 True, 이미 취소요청이면 False."""
+        body = self._request(
+            'PUT',
+            f'/orders/{order_no}/status',
+            json={'status': 'cancel_requested', 'reason': reason},
+        )
+        return bool(body.get('changed')) if isinstance(body, dict) else False
+
     def close(self) -> None:
         self._client.close()
 

@@ -1,4 +1,4 @@
-"""이행하지 못한 주문에 삼바웨이브 표시(가격X·재고X)를 붙인다 — 사용자 지시 2026-09-25.
+"""이행하지 못한 주문에 삼바웨이브 표시(가격X·재고X)를 붙이고 취소요청으로 바꾼다 — 사용자 지시 2026-09-25.
 
 - 마진 미달로 결제를 멈춘 주문 → 가격X
 - 품절·옵션 없음·삭제된 상품(무신사 '유효하지 않은 상품') → 재고X
@@ -41,10 +41,24 @@ class FlagMarker:
         return token in self._wave.get_order(order_no).flags
 
     def mark(self, order_no: str, error: str | None) -> str | None:
-        """붙였으면 결과 한 줄, 붙일 게 없으면 None. 실패해도 예외를 내지 않는다(작업 결과는 이미 정해졌다)."""
+        """표시 + 취소요청. 결과 한 줄(해당 없으면 None). 실패해도 예외를 내지 않는다(작업 결과는 이미 정해졌다)."""
         flag = flag_for(error)
         if flag is None:
             return None
+        return f'{self._flag(order_no, flag)} · {self._cancel(order_no, str(error))}'
+
+    def _cancel(self, order_no: str, reason: str) -> str:
+        """삼바웨이브 주문 상태를 취소요청으로(발주 전 주문만 — 삼바웨이브가 막는다)."""
+        try:
+            changed = self._wave.set_cancel_requested(order_no, reason)
+        except WaveError as e:
+            return f'취소요청 실패: {e}'
+        except Exception as e:  # 연결 오류 등 — 작업 결과에는 영향이 없다
+            log.exception('취소요청 실패')
+            return f'취소요청 실패: {type(e).__name__}'
+        return '취소요청으로 바꿈' if changed else '이미 취소요청'
+
+    def _flag(self, order_no: str, flag: tuple[str, str]) -> str:
         token, label = flag
         try:
             if self._has(order_no, token):

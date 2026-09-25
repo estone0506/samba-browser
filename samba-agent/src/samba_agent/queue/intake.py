@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from samba_agent.agents.contracts import OrderRef
+from samba_agent.failures import FailReason
 from samba_agent.queue.db import JobQueue
 from samba_agent.wave.client import WaveClient, WaveError, WaveOrder, flag_text
 
@@ -84,6 +85,7 @@ class Intake:
         sources: frozenset[str] = frozenset(),
         poison_only: bool = False,
         all_sellers_sources: frozenset[str] = frozenset(),
+        on_unfulfillable: Callable[[str, str], str | None] | None = None,
     ) -> None:
         self._wave = wave
         self._queue = queue
@@ -99,6 +101,8 @@ class Intake:
         self._poison_only = poison_only
         # 포이즌 제한의 예외 — 이 소싱처는 판매처와 무관하게 모두 이행(사용자 2026-09-24: 무신사)
         self._all_sellers = frozenset(x.upper() for x in all_sellers_sources)
+        # 이행 불가 주문 처리(가격X·재고X 표시 + 취소요청) — (주문번호, 실패 사유)
+        self._on_unfulfillable = on_unfulfillable
         # 슬랙 `수집 중지` 가 세우는 깃발. 세워져 있으면 run_once 는 아무것도 하지 않는다
         self.paused = False
 
@@ -134,6 +138,8 @@ class Intake:
             ts = self._post_new(intake_line(order))
             job, _created = self._queue.enqueue(order.order_no, self._requester, {}, thread_ts=ts)
             if self._supported(order):
+                if wave_order.source_inferred and not self._link_inferred(wave_order, job.id, ts):
+                    continue
                 enqueued += 1
                 continue
             # 맡을 구매 에이전트가 없다 — 큐에 흔적만 남기고 바로 사람에게 넘긴다
@@ -143,6 +149,37 @@ class Intake:
         return IntakeReport(
             seen=seen, enqueued=enqueued, skipped_live=skipped_live, unsupported=unsupported
         )
+
+    def _link_inferred(self, wave_order: WaveOrder, job_id: int, ts: str | None) -> bool:
+        """소싱처 미등록 주문(상품명 숫자로 무신사 추정)을 수집상품에 연결한다. 이행을 이어 가면 True.
+
+        무신사에서 상품이 사라졌으면(삼바웨이브 404) 재고X 로 마감한다. 그 밖의 연결 실패는 근거만 남기고
+        구매는 이어 간다 — 추정한 상품 URL 로 살 수는 있다.
+        """
+        product_id = (wave_order.source_url or '').rstrip('/').rsplit('/', 1)[-1]
+        try:
+            out = self._wave.link_product(wave_order.order_number, product_id)
+        except WaveError as e:
+            if e.status == 404:
+                self._queue.finish(job_id, 'needs_human', error=str(FailReason.OUT_OF_STOCK))
+                done = (
+                    self._on_unfulfillable(wave_order.order_number, str(FailReason.OUT_OF_STOCK))
+                    if self._on_unfulfillable
+                    else None
+                )
+                self._post_line(
+                    ts,
+                    f'소싱처 상품 없음(무신사 {product_id}) — 재고X'
+                    + (f' · {done}' if done else ''),
+                )
+                return False
+            self._post_line(ts, f'수집상품 연결 실패(무신사 {product_id}): {e} — 구매는 이어 간다')
+            return True
+        how = '새로 수집해 연결' if out.get('collected') else '상품관리 상품에 연결'
+        self._post_line(
+            ts, f'소싱처 미등록 → 무신사 {product_id} {how}(주문 {out.get("linked_orders", 1)}건)'
+        )
+        return True
 
     def run_forever(self, stop: Callable[[], bool], interval_s: float) -> None:
         """주기 실행. 멈춤 신호는 대기 중에도 `TICK_S` 마다 확인한다."""

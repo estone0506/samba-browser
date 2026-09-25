@@ -9,6 +9,11 @@ from samba_agent.wave.flags import FlagMarker, flag_for
 class _Wave:
     def __init__(self, tags: list[str]) -> None:
         self.tags = tags
+        self.cancelled: list[tuple[str, str]] = []
+
+    def set_cancel_requested(self, order_no: str, reason: str) -> bool:
+        self.cancelled.append((order_no, reason))
+        return True
 
     def get_order(self, order_no: str) -> WaveOrderDetail:
         return WaveOrderDetail(order_number=order_no, action_tag=','.join(self.tags))
@@ -31,7 +36,8 @@ def test_태그가_없으면_누르고_되읽어_확인한다():
         return json.dumps({'ok': True})
 
     out = FlagMarker(wave, run).mark('A1', 'margin')  # type: ignore[arg-type]
-    assert out == '가격X 표시함'
+    assert out == '가격X 표시함 · 취소요청으로 바꿈'
+    assert wave.cancelled == [('A1', 'margin')]
     assert calls == [('samba_set_flag', {'orderNo': 'A1', 'label': '가격X'})]
 
 
@@ -39,7 +45,7 @@ def test_이미_붙어_있으면_누르지_않는다():
     """토글이라 다시 누르면 꺼진다."""
     calls: list[str] = []
     marker = FlagMarker(_Wave(['no_stock']), lambda n, a: calls.append(n) or '{}')  # type: ignore[arg-type]
-    assert marker.mark('A1', 'out_of_stock') == '재고X 이미 표시됨'
+    assert marker.mark('A1', 'out_of_stock') == '재고X 이미 표시됨 · 취소요청으로 바꿈'
     assert calls == []
 
 
