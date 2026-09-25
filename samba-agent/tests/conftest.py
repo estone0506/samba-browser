@@ -36,6 +36,7 @@ def _no_coupon_download(request: pytest.FixtureRequest, monkeypatch: pytest.Monk
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line('markers', 'coupon_download: 구매의 쿠폰 받기 단계를 켠 채 시험한다')
+    config.addinivalue_line('markers', 'read_only_retry: 읽기 전용 스크립트 수리 전 재실행을 켠 채 시험한다')
 
 
 
@@ -45,3 +46,13 @@ def no_close_order_tabs(monkeypatch):
     from samba_agent.agents.buyer import BuyerAgent
 
     monkeypatch.setattr(BuyerAgent, '_close_order_tabs', lambda self, account: None)
+
+
+@pytest.fixture(autouse=True)
+def no_read_only_retry(request, monkeypatch):
+    """수리 전 재실행은 브릿지 목업의 호출 순서를 바꾼다 — 그 동작을 시험하는 테스트(read_only_retry 표시)만 켠다."""
+    if request.node.get_closest_marker('read_only_retry'):
+        return
+    from samba_agent.agents import base
+
+    monkeypatch.setattr(base, 'READ_ONLY_SCRIPT_SUFFIXES', ())

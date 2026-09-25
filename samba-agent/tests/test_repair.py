@@ -520,6 +520,7 @@ def test_selected_matches_number_size_with_letter_annotation(buyer, monkeypatch)
     assert not buyer._selected_matches('IVORY', '상아색 S')
 
 
+@pytest.mark.read_only_retry
 @respx.mock
 def test_read_only_script_is_retried_before_repair(buyer) -> None:
     """읽기 전용 스크립트는 첫 결과가 비면 한 번 더 돌린다 — 두 번째가 통과하면 AI 수리를 부르지 않는다."""
