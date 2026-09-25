@@ -78,6 +78,22 @@ class AgentFailure(Exception):
         self.fail_reason = fail_reason
 
 
+# 수리 전에 한 번 더 돌려 볼 읽기 전용 스크립트(이름 끝). 배송지 저장·주문서 정돈처럼 화면을 바꾸는 스크립트는
+# 두 번 돌리면 배송지가 두 번 생길 수 있어 넣지 않는다
+READ_ONLY_SCRIPT_SUFFIXES = (
+    '_product_snapshot',
+    '_payment_quotes',
+    '_pay_card_quote',
+    '_normal_price',
+    'source_order_detail',
+    '_order_detail',
+)
+
+
+def is_read_only_script(name: str) -> bool:
+    return name.endswith(READ_ONLY_SCRIPT_SUFFIXES)
+
+
 class AgentBase:
     """도구 호출과 LLM 판단의 공통 부분."""
 
@@ -184,6 +200,16 @@ class AgentBase:
         problem = check(out)
         if problem is None:
             return out
+        if is_read_only_script(name):
+            # 읽기 전용 스크립트는 한 번 더 돌려 본다 — 페이지가 덜 떠서 빈 결과가 나온 것을 스크립트 고장으로
+            # 보고 AI 수리를 돌리던 것이 '작업마다 수리 반복'의 주원인이었다(실기 2026-09-25: 같은 인자 두 번째는 정상)
+            try:
+                again = self.json_tool('run_script', name=name, args=raw_args)
+            except AgentFailure:
+                again = None
+            if again is not None and check(again) is None:
+                self.note('스크립트 재시도', f'{name}: 두 번째 실행에서 통과(수리 안 함)')
+                return again
         fixed = self._repair(
             name, args, goal, check, problem, json.dumps(out, ensure_ascii=False), allow_pay_button
         )

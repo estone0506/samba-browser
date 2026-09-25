@@ -518,3 +518,28 @@ def test_selected_matches_number_size_with_letter_annotation(buyer, monkeypatch)
     monkeypatch.setattr(type(buyer), '_match_options', lambda self, opts, wanted: opts)
     assert buyer._selected_matches('LIGHT BEIGE · 090', '라이트 베이지 090(S)')
     assert not buyer._selected_matches('IVORY', '상아색 S')
+
+
+@respx.mock
+def test_read_only_script_is_retried_before_repair(buyer) -> None:
+    """읽기 전용 스크립트는 첫 결과가 비면 한 번 더 돌린다 — 두 번째가 통과하면 AI 수리를 부르지 않는다."""
+    route = respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=[page('{"cost": 0}'), page('{"cost": 100}')]
+    )
+    fake = FakeRepairer(RepairOutcome('gave_up', 'x'))
+    buyer.repairer = fake
+    out = buyer.script_json('musinsa_product_snapshot', {'sku': '1'}, goal='g', check=ok_check)
+    assert out == {'cost': 100}
+    assert route.call_count == 2
+    assert fake.calls == []
+
+
+@respx.mock
+def test_writing_script_is_not_retried(buyer) -> None:
+    """배송지 저장 같은 스크립트는 두 번 돌리지 않는다(배송지 중복 생성 위험) — 바로 수리로 간다."""
+    route = respx.post(f'{URL}/tool/run_script').mock(return_value=page('{"cost": 0}'))
+    fake = FakeRepairer(RepairOutcome('gave_up', 'x'))
+    buyer.repairer = fake
+    buyer.script_json('musinsa_set_shipping', {'sku': '1'}, goal='g', check=ok_check)
+    assert route.call_count == 1
+    assert len(fake.calls) == 1
