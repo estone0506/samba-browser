@@ -30,7 +30,10 @@ export const PIN_URL_PATTERNS: readonly RegExp[] = [
   /payco.*pin/i,
   // 네이버페이 결제 비밀번호 창(pay.naver.com/authentication/pw/check). 숫자 버튼에 글자·이름이 없고
   // 입력칸도 없어(점 6개로만 표시) DOM 신호로는 못 잡는다(실기 2026-09-23)
-  /pay\.naver\.com\/authentication\/pw/i
+  /pay\.naver\.com\/authentication\/pw/i,
+  // 페이코 PC 결제 비밀번호 창(bill.payco.com/paymentPopup/password/confirm, 결제창 안 iframe). 숫자가 그림
+  // (스프라이트)이고 입력칸도 없어 DOM 신호로는 못 잡는다(실기 2026-09-25 르무통)
+  /bill\.payco\.com\/paymentPopup\/password/i
 ]
 
 /** 주소가 알려진 PIN 인증 경로인가 */

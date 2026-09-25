@@ -157,7 +157,9 @@ describe('PIN 인증 주소 정규식', () => {
     'https://pay.toss.im/web/pin',
     'https://alpha.payco.com/order/pin',
     // 네이버페이 결제 비밀번호 창 — 숫자 버튼에 글자가 없어 주소로만 잡힌다(실기)
-    'https://pay.naver.com/authentication/pw/check?token=abc'
+    'https://pay.naver.com/authentication/pw/check?token=abc',
+    // 페이코 PC 결제 비밀번호 창(iframe) — 숫자가 그림이라 주소로만 잡힌다(실기 2026-09-25)
+    'https://bill.payco.com/paymentPopup/password/confirm/202609253441874557?callback=x'
   ])('%s 는 PIN 인증 경로다', (url) => {
     expect(isPinAuthUrl(url)).toBe(true)
     expect(secretKeypadReason(signals({ url }))).toBe('pin-url')
