@@ -23,6 +23,7 @@ sources:
     key: cm29
     cross_with: MUSINSA   # 같은 상품을 무신사에서도 비교해 싼 쪽에서 산다
     pay_card_quote: true    # cm29_pay_card_quote — 29CM 주문서도 무신사페이 등록 기본 카드로 결제한다
+    money_in_pay: true    # 29CM 무신사머니는 무신사페이 안의 결제 항목이다(2026-09-25)
     normal_price: true  # 2026-09-25 cm29_normal_price(정가 → 포이즌 외 마켓 직배/까대기 판정)
     payment_quotes: true  # 2026-09-23 cm29_payment_quotes
     label: 29CM

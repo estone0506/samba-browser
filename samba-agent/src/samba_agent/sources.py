@@ -58,6 +58,9 @@ class Source(BaseModel):
     coupon_download: bool = False
     # True 면 결제수단 견적에 `<key>_pay_card_quote`(간편결제 등록 기본 카드 한 줄)를 더한다 — 카드 청구할인 비교용
     pay_card_quote: bool = False
+    # True 면 사이트 머니(무신사머니)가 간편결제(무신사페이) 안의 결제 항목으로 붙어 있다 — 주문서의 '무신사페이'가
+    # 곧 무신사머니 결제 창구다(29CM, 실기 2026-09-25: buyer02 가 '결제 가능한 수단 없음'으로 비교에서 빠졌다)
+    money_in_pay: bool = False
     # 같은 상품을 같이 비교할 다른 소싱처 id(예: 무신사 ↔ 29CM) — 더 싼 쪽에서 산다(사용자 2026-09-24)
     cross_with: str | None = None
     # 이 소싱처는 이 결제 제공자로만 결제한다(예: ABC마트·그랜드스테이지 = naver 네이버페이, 사용자 2026-09-24).

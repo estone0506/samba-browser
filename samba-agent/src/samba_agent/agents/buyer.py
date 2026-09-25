@@ -187,9 +187,20 @@ def parse_account_payments(raw: str, label: str) -> set[str] | None:
     return None
 
 
-def payable_methods(methods: list[str], payable: set[str]) -> list[str]:
+def method_providers(method: str, money_in_pay: bool = False) -> set[str]:
+    """주문서 결제수단 하나로 낼 수 있는 결제 제공자들. 사이트 머니가 간편결제 안에 있는 소싱처(29CM)면
+    '무신사페이' 는 무신사머니(site) 창구이기도 하다."""
+    provider = quote_provider(method)
+    if provider is None:
+        return set()
+    if money_in_pay and provider == 'musinsapay':
+        return {provider, 'site'}
+    return {provider}
+
+
+def payable_methods(methods: list[str], payable: set[str], money_in_pay: bool = False) -> list[str]:
     """주문서에 보이는 결제수단 이름 중 키마스터로 낼 수 있는 것만(사이트 표기 그대로). 순서는 화면 순서."""
-    return [m for m in methods if (quote_provider(m) or '') in payable]
+    return [m for m in methods if method_providers(m, money_in_pay) & payable]
 
 
 def cheapest_quotes(
@@ -1147,7 +1158,7 @@ class BuyerAgent(AgentBase):
                 f'{account} 에 허용 수단의 키마스터 결제 항목 없음 — 이 계정으로 못 산다',
             )
             return
-        methods = payable_methods(offered, payable)
+        methods = payable_methods(offered, payable, source_of(self.spec.name).money_in_pay)
         if not methods:
             snap['_unpayable'] = True
             self.note(
@@ -1705,7 +1716,8 @@ class BuyerAgent(AgentBase):
         allowed_now = self._allowed_providers(account)
         if allowed_now is not None:
             # 허용 결제수단만 후보(SAMBA_ALLOWED_PAY_PROVIDERS) — 견적이 없을 때도 이 밖은 고르지 않는다
-            methods = [m for m in methods if (quote_provider(m) or '') in allowed_now]
+            money_in_pay = source_of(self.spec.name).money_in_pay
+            methods = [m for m in methods if method_providers(m, money_in_pay) & allowed_now]
             if not methods:
                 raise AgentFailure(
                     'needs_human',
@@ -1731,6 +1743,15 @@ class BuyerAgent(AgentBase):
         elif card and card not in methods:
             raise AgentFailure(
                 'fail', f'지시받은 카드가 결제수단에 없다: {card}', FailReason.CARD_MISSING
+            )
+        only = ACCOUNT_PAY_ONLY.get(account.split('@')[0].lower())
+        if only and not quoted and not card and not any(quote_provider(m) in only for m in methods):
+            # 결제수단이 정해진 계정(buyer02 = 무신사머니)인데 견적이 없고 그 수단이 주문서에 따로 없다 —
+            # 모델에게 고르게 하면 간편결제 기본 카드로 결제될 수 있다(실기 2026-09-25 롯데카드 모자 주문)
+            raise AgentFailure(
+                'needs_human',
+                f'{account} 는 {sorted(only)} 로만 결제하는데 견적이 없어 수단을 확정하지 못했다',
+                FailReason.CARD_MISSING,
             )
         if quoted:
             pass

@@ -1302,3 +1302,17 @@ def test_결제_우선순위를_읽는다():
     raw = '[{"label":"buyer01","priority":1},{"label":"buyer02","priority":2},{"label":"x","priority":null}]'
     assert parse_account_priorities(raw) == {'buyer01': 1, 'buyer02': 2}
     assert parse_account_priorities('vault locked') == {}
+
+
+def test_29cm_무신사페이는_무신사머니_창구다():
+    """29CM 는 무신사머니가 무신사페이 안에 있다 — buyer02(무신사머니만)도 29CM 주문서에서 결제 수단을 찾는다
+    (실기 2026-09-25: '주문서 결제수단 중 결제 가능한 것 없음(가능 [site])' 로 비교에서 빠졌다)."""
+    from samba_agent.agents.buyer import method_providers, payable_methods, source_of
+
+    methods = ['무신사페이', '카드', '토스페이']
+    assert payable_methods(methods, {'site'}, money_in_pay=True) == ['무신사페이']
+    assert payable_methods(methods, {'site'}) == []  # 무신사: 무신사머니는 따로 있는 수단이다
+    assert method_providers('무신사페이', money_in_pay=True) == {'musinsapay', 'site'}
+    assert method_providers('카드', money_in_pay=True) == set()
+    assert source_of('buyer.cm29').money_in_pay is True
+    assert source_of('buyer.musinsa').money_in_pay is False
