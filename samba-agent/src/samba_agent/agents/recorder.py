@@ -105,10 +105,9 @@ class RecorderAgent(AgentBase):
         self.evidence = []
         margin = a.handoff.get('margin_pct')
         if isinstance(margin, int | float) and not isinstance(margin, bool) and margin <= 0:
-            # 마진 미달로 끝난 건은 기록하지 않는다 — 사람이 검토한다(감독자도 결제 전에 막는다)
-            raise AgentFailure(
-                'needs_human', f'마진 미달({margin}%) — 기록하지 않는다', FailReason.MARGIN
-            )
+            # 결제는 이미 끝났다 — 마진 판단은 결제 전(감독자, 포이즌 −3% 이상)이 한다. 여기서 기록을 거르면
+            # 산 주문이 주문접수로 남아 재주문된다(실기 2026-09-25: 포이즌 −0.7% 건을 기록하지 않았다). 근거만 남긴다
+            self.note('마진', f'{margin}% — 결제된 주문이라 기록한다')
         self.step('recorder: 저장할 값 정리')
         memo = self.decide_once(
             f'{a.rules}\n\n주문 {a.order.order_no}({a.order.source})의 메모 한 문장을 쓰라.',

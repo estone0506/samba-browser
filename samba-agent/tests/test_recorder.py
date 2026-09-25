@@ -360,13 +360,21 @@ def test_실결제액을_모르면_메모에_미확인으로_남긴다(reg):
 
 
 @respx.mock
-def test_마진_미달_건은_기록하지_않는다(reg):
-    put = respx.put(f'{WAVE_API}/orders/A1/sourcing')
-    script = respx.post(f'{URL}/tool/run_script')
+def test_마진이_낮아도_결제된_주문은_기록한다(reg):
+    """결제는 이미 끝났다 — 기록을 거르면 주문접수로 남아 재주문된다(실기 2026-09-25 포이즌 −0.7%)."""
+    put = respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
+    )
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(200, json=WAVE_ORDER))
+    detail = {'source_order_no': 'M-777', 'paid': 95950, 'points_used': 0, 'reward': 0, 'card': '무신사머니'}
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(detail))
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
-    out = recorder_with_wave(reg)(assignment(reg, dry_run=False, handoff={'margin_pct': -3.5}))
-    assert (out.status, out.fail_reason) == ('needs_human', FailReason.MARGIN)
-    assert not put.called and not script.called
+    a = agent(reg)
+    a.set_wave(wave_client())
+    a.mark_status = False
+    out = a(assignment(reg, dry_run=False, handoff={'margin_pct': -3.5}))
+    assert out.status == 'ok'
+    assert put.called
 
 
 @respx.mock
