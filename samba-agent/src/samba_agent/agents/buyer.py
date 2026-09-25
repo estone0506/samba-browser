@@ -103,7 +103,7 @@ def shipping_matches(expected: dict[str, object], applied: dict[str, object]) ->
     # 호수 — 되읽은 주소에 'NNN호'가 보이면 넣으려던 호수와 같아야 한다(실기 29CM: 1층 101호 / 1층 102호가 함께 있다)
     want_ho = re.findall(r'(\d+)\s*호', str(expected.get('address_detail') or ''))
     got_ho = re.findall(
-        r'(\d+)\s*호', f"{applied.get('address') or ''} {applied.get('address_detail') or ''}"
+        r'(\d+)\s*호', f'{applied.get("address") or ""} {applied.get("address_detail") or ""}'
     )
     if want_ho and got_ho and want_ho[-1] not in got_ho:
         return False
@@ -530,11 +530,13 @@ def pay_card_quote_problem(out: dict[str, object]) -> str | None:
 
 # 주문서·결제 탭(과 그 팝업)만 닫는다
 _CLOSE_ORDER_TABS_JS = (
-    'for (const t of await tabs.list()) { if (/order\\/order-form|order\\/checkout|order\\/orderform/.test(t.url || \'\')) '
+    "for (const t of await tabs.list()) { if (/order\\/order-form|order\\/checkout|order\\/orderform/.test(t.url || '')) "
     '{ try { await tabs.close(t.id) } catch (e) {} } } return "ok"'
 )
 # 레인 보기에서는 제 레인이 연 탭만 보인다 — 전부 닫으면 그 레인 탭만 닫힌다
-_CLOSE_LANE_TABS_JS = 'for (const t of await tabs.list()) { try { await tabs.close(t.id) } catch (e) {} } return "ok"'
+_CLOSE_LANE_TABS_JS = (
+    'for (const t of await tabs.list()) { try { await tabs.close(t.id) } catch (e) {} } return "ok"'
+)
 
 
 def snapshot_login_required(out: dict[str, object]) -> bool:
@@ -1096,18 +1098,19 @@ class BuyerAgent(AgentBase):
             )
             return
         if not payable:
-            # 이 계정엔 키마스터 결제 항목이 하나도 없다 — 견적을 돌리지 않고 스냅샷 기본 수단으로 간다.
-            # 실결제 때 결제 에이전트가 항목 없음으로 멈추고, 승인 카드 근거에 이 사실이 남는다
+            # 이 계정엔 허용 수단의 키마스터 결제 항목이 하나도 없다 — 이 계정으로는 살 수 없다
+            snap['_unpayable'] = True
             self.note(
                 '결제수단 견적',
-                f'{account} 에 키마스터 결제 항목 없음 — 견적 미실행, 스냅샷 원가로 진행',
+                f'{account} 에 허용 수단의 키마스터 결제 항목 없음 — 이 계정으로 못 산다',
             )
             return
         methods = payable_methods(offered, payable)
         if not methods:
+            snap['_unpayable'] = True
             self.note(
                 '결제수단 견적',
-                f'주문서 결제수단 중 결제 가능한 것 없음(가능 {sorted(payable)}) — 스냅샷 원가로 진행',
+                f'{account}: 주문서 결제수단 중 결제 가능한 것 없음(가능 {sorted(payable)}) — 이 계정으로 못 산다',
             )
             return
         self.step(f'{self.spec.name}: 결제수단 견적({account})')
@@ -1200,12 +1203,22 @@ class BuyerAgent(AgentBase):
             )
             self._quote_skips.append(f'{account}: 주문서 옵션 불일치({selected or "모름"})')
             return None
+        # 계정마다 그 계정이 실제로 낼 수 있는 수단(키마스터 결제 항목 ∩ 허용 수단)으로 견적한 금액으로 비교한다
+        # (사용자 지시 2026-09-25 — 쿠폰 총액만 비교해 결제 항목 없는 계정이 이겼고 엉뚱한 카드로 결제됐다)
+        if source_of(self.spec.name).payment_quotes and _as_float(snap.get('cost')) > 0:
+            self._apply_payment_quotes(a, account, snap)
+            snap['_quoted'] = True
+            if snap.get('_unpayable'):
+                self.note('계정 견적', mask_text(f'{account}: 불가(결제 가능한 수단 없음)'))
+                self._quote_skips.append(f'{account}: 결제 가능한 수단 없음')
+                return None
         cost = _as_float(snap.get('cost'))
         if cost <= 0:
             self.note('계정 견적', mask_text(f'{account}: 불가(원가를 읽지 못함)'))
             self._quote_skips.append(f'{account}: 원가 못 읽음({snap.get("note")})')
             return None
-        self.note('계정 견적', mask_text(f'{account}: 원가 {cost:,.0f}원'))
+        how = f' ({snap.get("pay_method")})' if snap.get('pay_method') else ''
+        self.note('계정 견적', mask_text(f'{account}: 원가 {cost:,.0f}원{how}'))
         return {**snap, 'cost': cost}
 
     def _selected_matches(self, selected: str, wanted: str | None) -> bool:
@@ -1232,7 +1245,10 @@ class BuyerAgent(AgentBase):
             return rule
         by_letter = size_letter_options(options, wanted)
         if by_letter:
-            self.note('옵션 선택', mask_text(f'[{wanted}] → {by_letter[0]} (사이즈 글자 일치, 선택지에 색 표기 없음)'))
+            self.note(
+                '옵션 선택',
+                mask_text(f'[{wanted}] → {by_letter[0]} (사이즈 글자 일치, 선택지에 색 표기 없음)'),
+            )
             return by_letter
         pool = numeric_overlap_options(options, wanted)
         if not pool:
@@ -1521,7 +1537,9 @@ class BuyerAgent(AgentBase):
             payable = self._payable_providers(account)
             allowed = self._allowed_providers(account)
             if payable is not None and not (payable & allowed if allowed is not None else payable):
-                self.note('계정 비교', f'{account}: 허용 결제수단의 키마스터 결제 항목 없음 — 비교에서 뺌')
+                self.note(
+                    '계정 비교', f'{account}: 허용 결제수단의 키마스터 결제 항목 없음 — 비교에서 뺌'
+                )
                 continue
             payable_quotes.append((account, q))
         if not payable_quotes:
@@ -1587,6 +1605,12 @@ class BuyerAgent(AgentBase):
             and not snap.get('existing_order_no')
         ):
             self._apply_payment_quotes(a, account, snap)
+        if snap.get('_unpayable'):
+            raise AgentFailure(
+                'needs_human',
+                f'{account}: 허용 결제수단으로 낼 수 없다(키마스터 결제 항목)',
+                FailReason.CARD_MISSING,
+            )
         # 같은 상품을 이미 산 흔적 — 옵션 선택 전에 끝낸다(규칙 파일 §3)
         if snap.get('already_ordered') or snap.get('existing_order_no'):
             raise AgentFailure(
@@ -1914,7 +1938,7 @@ class BuyerAgent(AgentBase):
         if isinstance(embedded, dict) and embedded:
             filled = all(str(embedded.get(f) or '').strip() for f in SHIPPING_FIELDS)
             # 주소만 사무실이고 수령인이 다르면(실기: 김가명) 사무실 배송지가 아니다 — 수령인까지 같아야 한다
-            addr = f"{embedded.get('address') or ''} {embedded.get('address_detail') or ''}"
+            addr = f'{embedded.get("address") or ""} {embedded.get("address_detail") or ""}'
             office = (
                 OFFICE_ADDRESS_HINT in addr
                 and _norm(OFFICE_DETAIL) in _norm(addr)

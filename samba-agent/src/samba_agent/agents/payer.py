@@ -85,10 +85,17 @@ def _keypad_not_ready(out: str) -> bool:
     return any(k in low for k in _KEYPAD_NOT_READY)
 
 
+# PC(웹) 결제창에서 비밀번호 키패드로 끝나는 간편결제 — 폰 승인을 쓰지 않는다(사용자 2026-09-25: 페이코는 PC 결제,
+# 폰 결제는 안정화 전까지 쓰지 않는다)
+PC_PAY_PROVIDERS = frozenset({'payco'})
+
+
 def web_pay_provider(card: str) -> str | None:
-    """웹 결제 비밀번호의 제공자 — 무신사페이는 musinsapay, 사이트 머니(무신사머니·SSG PAY…)는 site, 모르면 None."""
+    """웹 결제 비밀번호의 제공자 — 무신사페이는 musinsapay, 페이코는 payco, 사이트 머니(무신사머니·SSG PAY…)는 site, 모르면 None."""
     if '무신사페이' in card or 'musinsapay' in card.lower():
         return 'musinsapay'
+    if '페이코' in card or 'payco' in card.lower():
+        return 'payco'
     if any(k in card for k in ('머니', 'SSG PAY', 'L.pay', '스마일')):
         return 'site'
     return None
@@ -639,6 +646,9 @@ class PayerAgent(AgentBase):
         provider = _pay_provider(card)
         if provider is None:
             provider = self._provider_from_payment_popup()
+        if provider in PC_PAY_PROVIDERS:
+            # PC 결제창에서 비밀번호를 받는 결제(페이코) — 폰 승인이 아니라 웹 키패드 경로로 간다
+            provider = None
 
         if provider is not None:
             self.step('payer: 폰 승인')
