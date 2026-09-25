@@ -223,6 +223,10 @@ def cheapest_quotes(
         if cost <= 0 or not method:
             continue
         card = str(q.get('card') or '').strip() or None
+        if card is None and quote_provider(method) == 'payco':
+            # 페이코는 PC 결제창 안에서 현대카드로 낸다 — 특별할인이 없어도 청구할인 2.7%(×0.973)가 붙는다
+            # (사용자 2026-09-25). 견적 줄에 카드가 없으면 현대카드로 보고 원가를 낸다
+            card = PAYCO_CARD
         if q.get('available') is False or q.get('allowed') is False or q.get('registered') is False:
             # 낼 수 없는 수단(무신사머니 연결 계좌 없음·잔액 부족), 허용 안 된 조합(토스페이×계좌 등), 미등록 카드
             continue
@@ -271,6 +275,8 @@ OFFICE_SHIPPING: dict[str, object] = {
     'address_detail': OFFICE_DETAIL,
     'postal_code': '38069',
 }
+# 페이코 결제 카드(사용자 2026-09-25: 페이코 = 현대카드, 청구할인 2.7%)
+PAYCO_CARD = '현대카드'
 # 카드 청구할인(플레이북 §7): 결제창에 안 보이는 카드 대금 할인 — 원가 = 카드 결제액 × 계수 − 적립
 CARD_BILLING_FACTORS: tuple[tuple[tuple[str, ...], float], ...] = (
     (('현대',), 0.973),

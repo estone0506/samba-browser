@@ -1316,3 +1316,21 @@ def test_29cm_무신사페이는_무신사머니_창구다():
     assert method_providers('카드', money_in_pay=True) == set()
     assert source_of('buyer.cm29').money_in_pay is True
     assert source_of('buyer.musinsa').money_in_pay is False
+
+
+def test_페이코_견적은_현대카드_청구할인_2_7퍼센트():
+    """특별할인 없는 페이코도 현대카드 청구할인 ×0.973 로 원가를 낸다(사용자 2026-09-25)."""
+    from samba_agent.agents.buyer import cheapest_quotes
+
+    rows = cheapest_quotes(
+        [
+            {'method': '무신사머니', 'cost': 100000, 'reward': 2000},
+            {'method': '페이코', 'cost': 100000, 'reward': 0},
+        ],
+        None,
+        {'site', 'payco'},
+    )
+    payco = next(r for r in rows if r['method'] == '페이코')
+    assert payco['card'] == '현대카드'
+    assert payco['cost'] == 97300
+    assert rows[0]['method'] == '페이코'  # 97,300 < 98,000
