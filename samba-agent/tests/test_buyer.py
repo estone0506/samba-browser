@@ -1368,3 +1368,13 @@ def test_같은_원가면_페이코보다_무신사페이가_먼저다():
     ]
     rows = cheapest_quotes(raw, None)
     assert rows[0]['method'] == '무신사페이'
+
+
+def test_페이코_줄의_카드칸에_무신사페이_문구가_섞여도_페이코로_분류한다():
+    from samba_agent.agents.buyer import cheapest_quotes, clean_card, quote_provider
+
+    card = '적립 무신사페이 혜택 관리 현대카드'
+    assert quote_provider('페이코', card) == 'payco'
+    assert clean_card(card) == '현대카드'
+    rows = cheapest_quotes([{'method': '페이코', 'card': card, 'cost': 119710}], None, {'payco'})
+    assert rows and rows[0]['card'] == '현대카드'

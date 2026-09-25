@@ -139,11 +139,24 @@ QUOTE_PROVIDER_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 def quote_provider(method: str, card: str | None = None) -> str | None:
     """견적 한 줄의 결제수단(카드사 포함)이 어느 결제 제공자인지. 모르면 None(결제 불가로 본다)."""
-    text = f'{method} {card or ""}'.lower()
-    for provider, keywords in QUOTE_PROVIDER_KEYWORDS:
-        if any(k in text for k in keywords):
-            return provider
+    # 수단 이름을 먼저 본다 — 카드 칸에 옆 줄 문구가 섞일 수 있다(실기 2026-09-25 르무통: 페이코 줄의 카드가
+    # '적립 무신사페이 혜택 관리 현대카드'로 읽혀 무신사페이로 분류, 페이코만 되는 buyer03 이 결제 수단 없음)
+    for text in (method.lower(), f'{method} {card or ""}'.lower()):
+        for provider, keywords in QUOTE_PROVIDER_KEYWORDS:
+            if any(k in text for k in keywords):
+                return provider
     return None
+
+
+_CARD_ISSUER_RE = re.compile(r'(현대|KB국민|KB|국민|롯데|신한|농협|NH|삼성|하나|우리|BC|비씨|씨티)\s*카드')
+
+
+def clean_card(card: str | None) -> str | None:
+    """견적 줄 카드 칸에서 카드사 이름만 남긴다('적립 무신사페이 혜택 관리 현대카드' → '현대카드'). 못 찾으면 그대로."""
+    if not card:
+        return card
+    m = _CARD_ISSUER_RE.search(card)
+    return f'{m.group(1)}카드' if m and not re.search(r'무신사\s*삼성', card) else card
 
 
 def parse_account_priorities(raw: str) -> dict[str, int]:
@@ -222,7 +235,7 @@ def cheapest_quotes(
         method = str(q.get('method') or '').strip()
         if cost <= 0 or not method:
             continue
-        card = str(q.get('card') or '').strip() or None
+        card = clean_card(str(q.get('card') or '').strip() or None)
         if card is None and quote_provider(method) == 'payco':
             # 페이코는 PC 결제창 안에서 현대카드로 낸다 — 특별할인이 없어도 청구할인 2.7%(×0.973)가 붙는다
             # (사용자 2026-09-25). 견적 줄에 카드가 없으면 현대카드로 보고 원가를 낸다
