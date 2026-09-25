@@ -117,6 +117,27 @@ PAY_POPUP_WAIT_MS = 2000
 PAY_BUTTON_POLL_TRIES = 12
 PAY_BUTTON_POLL_WAIT_MS = 700
 
+# 무신사머니 잔액이 이 구간에 들면 인출하라고 알린다(사용자 지시 2026-09-25: 50~70만·100~120만·150~170만).
+# 인출(돈 옮기기)은 에이전트가 하지 않는다 — 근거·로그로 사람에게 알리기만 한다
+MONEY_WITHDRAW_BANDS: tuple[tuple[int, int], ...] = (
+    (500_000, 700_000),
+    (1_000_000, 1_200_000),
+    (1_500_000, 1_700_000),
+)
+
+
+def money_balance(page: str) -> int | None:
+    """무신사머니 결제창 글자에서 충전금 보유액. '상품권 충전금 사용 보유 1,959,010원'."""
+    m = re.search(r'충전금[^0-9]{0,20}보유\s*([\d,]+)\s*원', page)
+    return int(m.group(1).replace(',', '')) if m else None
+
+
+def withdraw_band(balance: int | None) -> tuple[int, int] | None:
+    """잔액이 인출 알림 구간에 들면 그 구간."""
+    if balance is None:
+        return None
+    return next((b for b in MONEY_WITHDRAW_BANDS if b[0] <= balance <= b[1]), None)
+
 # list_tabs 응답에서 팝업 kind 만 그물망으로 건질 때 쓰는 보조 정규식.
 # 정상 응답은 JSON 배열(id·kind·title·url·…)이지만, 형식이 바뀌어도 최소한
 # "kind":"popup" 옆의 url 값은 이걸로 건진다(문자열 형식 대비)
@@ -371,6 +392,19 @@ class PayerAgent(AgentBase):
             )
         return matches[-1][1]
 
+    def _note_money_balance(self) -> None:
+        """결제창의 무신사머니 잔액을 근거에 남기고, 인출 구간이면 알린다(인출은 사람이 한다)."""
+        try:
+            balance = money_balance(self.tool('get_page'))
+        except AgentFailure:
+            return
+        band = withdraw_band(balance)
+        if band:
+            self.note(
+                '무신사머니 인출 알림',
+                f'잔액 {balance:,}원 — {band[0] // 10_000}~{band[1] // 10_000}만원 구간이라 인출 필요(사람이 직접)',
+            )
+
     def _web_pay(self, a: Assignment) -> None:
         """사이트 결제창(팝업)의 '결제하기' → 웹 키패드에 fill_secret(password) — 플레이북 §7 무신사머니 흐름.
 
@@ -378,32 +412,34 @@ class PayerAgent(AgentBase):
         키패드는 앱이 배치를 읽어 누른다(fill_secret, provider 는 앱이 결제창으로 고른다). 결제창이 없으면
         지금 화면의 키패드를 바로 찾는다. 비밀번호 값은 어디서도 다루지 않는다.
         """
-        popups, _active = self._list_tabs_popups()
-        web_popup = next(
-            (
+        # 결제창은 중간 창(money.musinsapayments.com/bridge)이 닫히고 /payment 창이 새로 뜬다 — 그 사이엔
+        # '결제하기'가 없고, 처음 본 창은 사라진다. 매번 결제창 목록을 다시 읽어 가장 최근 창에서 버튼을 찾는다
+        # (실기 2026-09-25: 첫 창만 보다 버튼을 못 눌러 결제 미완료 3건)
+        pay_btn = None
+        seen_popup = False
+        for _ in range(PAY_BUTTON_POLL_TRIES):
+            popups, _active = self._list_tabs_popups()
+            web = [
                 p
                 for p in popups
-                if _host_of(str(p.get('url') or ''))
+                if p.get('id')
+                and _host_of(str(p.get('url') or ''))
                 and _pay_host_provider(str(p.get('url') or '')) is None
-            ),
-            None,
-        )
-        if web_popup is not None and web_popup.get('id'):
-            self.tool('switch_tab', id=str(web_popup['id']))
-            # 결제창은 중간 페이지(money.musinsapayments.com/bridge)를 거쳐 /payment 로 넘어간다 — 그 사이엔
-            # '결제하기'가 없다. 버튼이 뜰 때까지 기다린다(실기 2026-09-25: 못 누르고 넘어가 결제 미완료 2건)
-            pay_btn = None
-            for _ in range(PAY_BUTTON_POLL_TRIES):
+            ]
+            if web:
+                seen_popup = True
+                self.tool('switch_tab', id=str(web[-1]['id']))
                 pay_btn = _element_id(self.tool('find_elements', query='결제하기'))
                 if pay_btn is not None:
                     break
-                self.tool('wait', ms=PAY_BUTTON_POLL_WAIT_MS)
-            if pay_btn is None:
-                self.note('결제창', '결제하기 버튼이 뜨지 않음 — 키패드를 바로 찾는다')
-            if pay_btn is not None:
-                self.step('payer: 결제창 결제하기')
-                self.tool('click', id=pay_btn, label='결제하기')
-                self.tool('wait', ms=PAY_POPUP_WAIT_MS)
+            self.tool('wait', ms=PAY_BUTTON_POLL_WAIT_MS)
+        if seen_popup and pay_btn is None:
+            self.note('결제창', '결제하기 버튼이 뜨지 않음 — 키패드를 바로 찾는다')
+        if pay_btn is not None:
+            self._note_money_balance()
+            self.step('payer: 결제창 결제하기')
+            self.tool('click', id=pay_btn, label='결제하기')
+            self.tool('wait', ms=PAY_POPUP_WAIT_MS)
         # 결제 비밀번호 종류 — 무신사페이는 무신사머니와 비밀번호가 따로다(musinsapay), 사이트 머니는 'site'.
         # 계정에 비밀번호가 여럿이면 없을 때 모호하다(실기)
         card = str(a.handoff.get('card') or a.options.get('card') or '')
