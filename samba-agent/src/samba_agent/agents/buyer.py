@@ -543,6 +543,11 @@ def quotes_problem(
 def pay_card_quote_problem(out: dict[str, object]) -> str | None:
     """무신사페이 기본 카드 견적 검사 — 카드 이름과 금액이 있어야 한다(실기: 카드 [] 인데 통과)."""
     rows = out.get('quotes')
+    note = str(out.get('note') or '')
+    if not rows and (out.get('cards') == [] or re.search(r'no registered card|등록(된)? ?카드 ?없', note, re.I)):
+        # 무신사페이에 등록 카드가 없는 계정 — 실제로 그렇다(수리해도 genuine). 견적 줄 없이 넘어간다
+        # (실기 2026-09-25: buyer05 에서 작업마다 수리를 돌렸다)
+        return None
     if not out.get('ok') or not isinstance(rows, list) or not rows:
         return f'무신사페이 기본 카드 견적 없음(note={out.get("note")})'
     first = rows[0] if isinstance(rows[0], dict) else {}
@@ -1021,6 +1026,12 @@ class BuyerAgent(AgentBase):
         # (실기 2026-09-25: 계정마다 수리를 새로 돌려 주문 1건에 20분 넘게 걸렸다 — 결과는 매번 genuine)
         genuine = getattr(self, '_repair_genuine', set())
         if source_of(self.spec.name).order_prep_script in genuine:
+            return None
+        # 이 계정이 이번에 받은 쿠폰이 없거나, 받은 쿠폰 중 가장 큰 금액 이상이 이미 적용됐으면 비싼 건 실제 차이다
+        # — 수리하지 않는다(실기 2026-09-25: 쿠폰 없는 계정마다 수리를 돌려 결과는 늘 genuine, 작업당 수 분 낭비)
+        issued = [_as_float(str(x).replace(',', '')) for x in getattr(self, '_issued', {}).get(account, [])]
+        applied = _as_float(o.get('coupon')) + _as_float(o.get('cart_coupon'))
+        if not issued or applied >= max(issued):
             return None
         if target and cost > target:
             return (

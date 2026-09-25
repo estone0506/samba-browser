@@ -1334,3 +1334,12 @@ def test_페이코_견적은_현대카드_청구할인_2_7퍼센트():
     assert payco['card'] == '현대카드'
     assert payco['cost'] == 97300
     assert rows[0]['method'] == '페이코'  # 97,300 < 98,000
+
+
+def test_무신사페이_등록_카드가_없으면_수리하지_않는다():
+    """buyer05 처럼 무신사페이 카드가 없는 계정은 실제로 그렇다 — 실패로 보지 않는다(2026-09-25)."""
+    from samba_agent.agents.buyer import pay_card_quote_problem
+
+    assert pay_card_quote_problem({'ok': False, 'quotes': [], 'note': 'no registered card'}) is None
+    assert pay_card_quote_problem({'ok': True, 'quotes': [], 'cards': []}) is None
+    assert pay_card_quote_problem({'ok': False, 'quotes': [], 'note': '화면 못 읽음'}) is not None
