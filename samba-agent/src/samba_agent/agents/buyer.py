@@ -261,7 +261,11 @@ def cheapest_quotes(
                 'cost': effective_cost({**q, 'cost': cost, 'card': card, 'reward': reward}),
             }
         )
-    return sorted(rows, key=lambda r: float(r['cost']))
+    # 같은 원가면 페이코를 뒤로 — 무신사페이(같은 현대카드)가 결제창·로그인 없이 절차가 간편하다(사용자 2026-09-25)
+    return sorted(
+        rows,
+        key=lambda r: (float(r['cost']), quote_provider(str(r['method']), r['card']) == 'payco'),  # type: ignore[arg-type]
+    )
 
 
 # 포이즌 외 마켓의 까대기 건 배송비(삼바웨이브 기록, 원). 사무실 경유 재발송비 — poizon-sourcing 스킬 규칙

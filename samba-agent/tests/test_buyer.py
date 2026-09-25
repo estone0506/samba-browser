@@ -1357,3 +1357,14 @@ def test_네이버페이_견적은_사이트_적립과_네이버페이_1퍼센�
         [{'method': '네이버페이', 'cost': 64600, 'reward': 1300, 'points_used': 0}], None, {'naver'}
     )
     assert rows[0]['cost'] == 64600 - 1300 - 646
+
+
+def test_같은_원가면_페이코보다_무신사페이가_먼저다():
+    from samba_agent.agents.buyer import cheapest_quotes
+
+    raw = [
+        {'method': '페이코', 'card': '현대카드', 'cost': 100000},
+        {'method': '무신사페이', 'card': '현대카드', 'cost': 100000},
+    ]
+    rows = cheapest_quotes(raw, None)
+    assert rows[0]['method'] == '무신사페이'
