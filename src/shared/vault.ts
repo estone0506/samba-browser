@@ -68,10 +68,13 @@ export const PAYMENT_PROVIDER_FIELD_KEY = 'payment.provider'
  * 결제 수단이 "그 앱 계정"으로 결제되는 경우 그 계정이 사는 사이트(등록 도메인).
  * 네이버페이만 해당한다 — 어느 쇼핑몰에서 쓰든 네이버 계정으로 로그인해 결제하므로 결제 비밀번호는
  * **네이버 계정(naver.com)에만** 두고, 쇼핑몰 계정의 결제 비밀번호 항목은 어느 네이버 계정을 쓸지
- * (PAYMENT_ACCOUNT_FIELD_KEY)만 적는다. 토스·카카오·페이코는 전화번호로 결제하므로 예전처럼 쇼핑몰 계정에 둔다
+ * (PAYMENT_ACCOUNT_FIELD_KEY)만 적는다. 토스·카카오는 전화번호로 결제하므로 예전처럼 쇼핑몰 계정에 둔다.
+ * 페이코도 PC 결제창에서 페이코 계정(id.payco.com)으로 로그인한 뒤 결제 비밀번호를 받는다 — 네이버페이와 같은
+ * 방식으로 페이코 계정(payco.com)에 비밀번호를 두고 쇼핑몰 계정은 어느 페이코 계정인지만 적는다(사용자 2026-09-25)
  */
 export const PAYMENT_PROVIDER_ACCOUNT_HOST: Partial<Record<PaymentProvider, string>> = {
-  naver: 'naver.com'
+  naver: 'naver.com',
+  payco: 'payco.com'
 }
 
 /** 결제 비밀번호 항목에서 "이 앱 계정(아이디)의 비밀번호를 쓴다"를 담는 평문 필드 키 */

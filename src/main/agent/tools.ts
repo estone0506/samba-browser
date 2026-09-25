@@ -1,4 +1,4 @@
-import { payPriorityOf, visibleTags } from '../../shared/vault'
+import { PAYMENT_PROVIDER_ACCOUNT_HOST, payPriorityOf, visibleTags } from '../../shared/vault'
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import type { TabManager, Tab } from '../browser/tab-manager'
@@ -988,6 +988,34 @@ ${raw}`
     const shopHosts = hosts.slice(1)
     const fromShop = withItem.filter((a) => shopHosts.some((h) => sameRegistrableDomain(h, a.host)))
     return fromShop.length === 1 ? fromShop[0] : null
+  }
+
+  /**
+   * 결제창(팝업) 안의 결제 앱 로그인(네이버·페이코)에 쓸 계정. 결제창을 연 쇼핑몰 계정의 결제 비밀번호 항목이
+   * 연결해 둔 앱 계정 아이디(payment.account)와 같은 아이디의 앱 사이트 계정을 고른다 — 키마스터에서 무신사
+   * 계정마다 네이버페이·페이코 계정을 골라 두는 것과 같은 규칙이다. 결제창이 아니거나 연결이 없으면 null
+   */
+  const linkedAppAccount = (
+    available: VaultService,
+    tab: Tab,
+    loginHost: string,
+    accountLabel: string | undefined
+  ): AccountDto | null => {
+    const entry = (
+      Object.entries(PAYMENT_PROVIDER_ACCOUNT_HOST) as Array<[PaymentProvider, string]>
+    ).find(([, appHost]) => sameRegistrableDomain(loginHost, appHost))
+    if (!entry) return null
+    const [provider] = entry
+    const shopHosts = keypadAccountHosts(tab)
+      .slice(1)
+      .filter((h) => !sameRegistrableDomain(h, loginHost))
+    if (shopHosts.length === 0) return null
+    const shop = keypadAccount(available, shopHosts, accountLabel, tab.profile)
+    if (!shop) return null
+    const username = available.paymentAccountUsername(shop.id, provider)
+    if (!username) return null
+    const appAccounts = available.listAccounts(loginHost).filter((a) => a.username === username)
+    return appAccounts.find((a) => a.itemTypes.includes('login')) ?? appAccounts[0] ?? null
   }
 
   /**
@@ -2076,6 +2104,8 @@ overlays left: ${after.length}${kept}`
           if (wrongPasswordHosts.has(loginHost)) return LOGIN_WRONG_PASSWORD(loginHost)
           // 라벨을 안 주면 탭 프로필과 같은 라벨의 계정을 자동으로 고른다(계정 순회 지원)
           const account =
+            // 결제창 안의 네이버·페이코 로그인이면 결제창을 연 쇼핑몰 계정이 연결해 둔 앱 계정으로 로그인한다
+            linkedAppAccount(available, tab, loginHost, accountLabel) ??
             resolveAccount(available.listAccounts(loginHost), accountLabel, tab.profile) ??
             // 앞 호출에서 이미 통합 로그인 화면으로 넘어와 있어도(host === loginHost) 라벨 @ 앞부분으로 짝을 찾는다
             movedHostAccount(
