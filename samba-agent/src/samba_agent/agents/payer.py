@@ -665,8 +665,12 @@ class PayerAgent(AgentBase):
         raw_enter = self.tool(
             'run_script', name=script, args=json.dumps(payload, ensure_ascii=False)
         )
+        body_enter, enter_dialogs = split_page_dialogs(raw_enter)
+        if enter_dialogs:
+            # 결제하기 뒤 뜬 경고창 — 결제창이 안 뜬 이유인 경우가 많다(예전엔 버려서 원인을 몰랐다)
+            self.note('결제창 경고', mask_text(' | '.join(enter_dialogs)[:300]))
         try:
-            parsed_enter = json.loads(split_page_dialogs(raw_enter)[0])
+            parsed_enter = json.loads(body_enter)
         except ValueError:
             parsed_enter = None
         entered: dict[str, object] = (
@@ -679,7 +683,9 @@ class PayerAgent(AgentBase):
             # 결제하기를 못 눌렀다 — 비밀번호 단계로 가지 않는다(실기: 수단을 못 찾고도 키패드를 찾다 거절)
             raise AgentFailure(
                 'needs_human',
-                f'결제창을 열지 못했다: {mask_text(str(entered.get("error") or entered.get("note"))[:80])}',
+                f'결제창을 열지 못했다: {mask_text(str(entered.get("error") or entered.get("note"))[:80])}'
+                + (f' — 경고창: {mask_text(" | ".join(enter_dialogs)[:120])}' if enter_dialogs else '')
+                + (f' — 화면: {mask_text(str(entered.get("note"))[:160])}' if entered.get('error') and entered.get('note') else ''),
                 FailReason.UNKNOWN,
             )
 
