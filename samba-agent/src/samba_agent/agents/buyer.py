@@ -383,8 +383,13 @@ _SIZE_LETTER_RE = re.compile(
 
 
 def size_letters(text: str) -> set[str]:
-    """옵션 글자 속 사이즈 글자(S·M·L·XL·FREE·ONE …, 대문자 기준)."""
-    return set(_SIZE_LETTER_RE.findall(text.upper()))
+    """옵션 글자 속 사이즈 글자(S·M·L·XL·FREE·ONE …, 대문자 기준). 한글 '프리(사이즈)'·'원사이즈'도 FREE 로 본다.
+
+    실기 2026-09-25: 주문 '라이트 블루 프리 사이즈' ↔ 선택지 'FREE' 를 AI 가 계정마다 다르게 판단해
+    buyer01 이 품절로 빠지고 비싼 계정만 남아 마진 미달로 멈췄다.
+    """
+    upper = re.sub(r'프리\s*사이즈|프리(?=\s|$)|원\s*사이즈', ' FREE ', text.upper())
+    return set(_SIZE_LETTER_RE.findall(upper))
 
 
 def size_letter_options(options: list[str], wanted: str | None) -> list[str]:
@@ -537,6 +542,38 @@ _CLOSE_ORDER_TABS_JS = (
 _CLOSE_LANE_TABS_JS = (
     'for (const t of await tabs.list()) { try { await tabs.close(t.id) } catch (e) {} } return "ok"'
 )
+
+
+def prep_screen_mismatch(o: dict[str, object]) -> str | None:
+    """주문서 정돈 결과가 화면과 어긋나면 그 사유. 화면 값(discount·points_box)이 없으면 대조하지 않는다.
+
+    - 상품 쿠폰을 적용했다는데 쿠폰 버튼이 여전히 '쿠폰 사용'이거나, 보고한 쿠폰 합계가 화면 할인 금액보다 크다
+    - 보유 적립금 5만원 이상인데 '보유 적립금 사용'이 0원(규칙: 최대 사용)
+    """
+    coupon = _as_float(o.get('coupon'))
+    cart = o.get('cart_coupon')
+    cart_v = _as_float(cart) if not isinstance(cart, str) else 0.0
+    discount = o.get('discount')
+    if coupon > 0 and o.get('coupon_button') == '쿠폰 사용':
+        return (
+            f'상품 쿠폰 {coupon:,.0f}원을 적용했다고 했지만 주문서 쿠폰 버튼이 "쿠폰 사용" 그대로다 — '
+            '쿠폰 시트에서 쿠폰을 고른 뒤 "적용하기"(page.idOf 로 찾는다 — 전체 트리에 안 나올 수 있다)를 눌러 '
+            '버튼이 "쿠폰 적용 중"으로 바뀌는 것을 확인하라'
+        )
+    if discount is not None and coupon + cart_v > _as_float(discount) + 100:
+        return (
+            f'보고한 쿠폰 합계 {coupon + cart_v:,.0f}원이 화면 할인 금액 {_as_float(discount):,.0f}원보다 크다 — '
+            '쿠폰이 실제로 적용되지 않았다'
+        )
+    balance = _as_float(o.get('points_balance'))
+    box = o.get('points_box')
+    limit = _as_float(o.get('points_limit'))
+    if box is not None and balance >= 50000 and limit > 0 and _as_float(box) <= 0:
+        return (
+            f'보유 적립금 {balance:,.0f}원(5만원 이상)인데 보유 적립금 사용이 0원이다 — "최대 사용"을 눌러 '
+            f'한도({limit:,.0f}원)까지 써라'
+        )
+    return None
 
 
 def snapshot_login_required(out: dict[str, object]) -> bool:
@@ -952,6 +989,11 @@ class BuyerAgent(AgentBase):
         """주문서 정돈 결과 검사. 다시 확인 중인 계정은 받은 쿠폰이 실제로 적용됐는지도 본다."""
         if not (o.get('ok') and _as_float(o.get('total')) > 0):
             return f'정돈 실패(ok={o.get("ok")}, total={o.get("total")}, note={o.get("note")})'
+        # 스크립트가 돌려준 값을 화면 값과 대조한다 — "쿠폰 적용"이라 보고하고 실제로는 안 붙은 경우를 잡는다
+        # (실기 2026-09-25 로라로라: 쿠폰 13,110+4,580 적용 보고, 화면 할인 10,460 · 쿠폰 버튼 '쿠폰 사용' 그대로)
+        lie = prep_screen_mismatch(o)
+        if lie:
+            return lie
         target = getattr(self, '_expect_cost', {}).get(account)
         cost = _as_float(o.get('total')) + _as_float(o.get('points_used'))
         # 이 작업에서 이미 AI 가 '계정마다 쿠폰이 실제로 다르다(스크립트 문제 아님)'고 봤으면 다시 수리하지 않는다

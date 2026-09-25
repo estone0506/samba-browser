@@ -505,3 +505,10 @@ def test_buyer02_pays_with_musinsa_money_only(buyer) -> None:
     assert buyer._allowed_providers('buyer02@naver.com') == {'site'}
     assert buyer._allowed_providers('buyer01') == {'site', 'musinsapay'}
 
+
+
+def test_korean_free_size_matches_free() -> None:
+    from samba_agent.agents.buyer import size_letter_options, size_letters
+
+    assert size_letter_options(['FREE'], '라이트 블루 프리 사이즈') == ['FREE']
+    assert size_letters('프리미엄 블랙 S') == {'S'}
