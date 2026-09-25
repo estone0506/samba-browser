@@ -87,7 +87,10 @@ def _keypad_not_ready(out: str) -> bool:
 
 # PC(웹) 결제창에서 비밀번호 키패드로 끝나는 간편결제 — 폰 승인을 쓰지 않는다(사용자 2026-09-25: 페이코는 PC 결제,
 # 폰 결제는 안정화 전까지 쓰지 않는다)
-PC_PAY_PROVIDERS = frozenset({'payco'})
+# PC 결제창에서 비밀번호 키패드로 끝내는 결제 — 폰 승인으로 보내지 않는다(모바일 결제는 안정화 전까지 쓰지 않음, 사용자).
+# 네이버페이도 PC 결제창(pay.naver.com 비밀번호 키패드, 앱이 글자 인식으로 누름)으로 간다 — 폰 승인 도구로 보내면
+# 휴대폰 네이버 앱 경로라 폰이 없어 시간 초과로 끊겼다(실기 2026-09-25 ABC 반스)
+PC_PAY_PROVIDERS = frozenset({'payco', 'naverpay'})
 
 
 def web_pay_provider(card: str) -> str | None:
@@ -96,6 +99,8 @@ def web_pay_provider(card: str) -> str | None:
         return 'musinsapay'
     if '페이코' in card or 'payco' in card.lower():
         return 'payco'
+    if '네이버' in card or 'naver' in card.lower():
+        return 'naver'
     if any(k in card for k in ('머니', 'SSG PAY', 'L.pay', '스마일')):
         return 'site'
     return None
@@ -392,12 +397,13 @@ class PayerAgent(AgentBase):
         seen_popup = False
         for _ in range(PAY_BUTTON_POLL_TRIES):
             popups, _active = self._list_tabs_popups()
+            # 웹 결제창 — 사이트 결제창과 PC 에서 끝내는 간편결제 창(네이버페이·페이코)의 '결제하기'를 누른다
             web = [
                 p
                 for p in popups
                 if p.get('id')
                 and _host_of(str(p.get('url') or ''))
-                and _pay_host_provider(str(p.get('url') or '')) is None
+                and _pay_host_provider(str(p.get('url') or '')) in (None, *PC_PAY_PROVIDERS)
             ]
             if web:
                 seen_popup = True

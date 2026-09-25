@@ -412,21 +412,18 @@ def test_카드_브랜드는_결제앱_안에서_고를_카드로_넘긴다(reg)
 
 
 @respx.mock
-def test_카드_이름이_네이버페이면_결제창_없이_바로_정한다(reg):
-    # 결제수단 문자열에 이미 앱 이름이 있으면(네이버페이) 결제창을 보지 않고 그것을 우선한다.
-    # payAccount 관련 코드는 전부 제거했다(리뷰 지적 — Critical 1) — 앱이 쇼핑몰 계정에 연결된
-    # 네이버 계정으로 스스로 고른다. handoff 에 pay_account 값이 실려 와도(죽은 값) 절대
-    # phone_approve_payment 로 넘어가지 않는다(inert 방지 — 꺼져 있는 게 아니라 없는지 본다)
-    _fill, pay = _full_pay_mocks(popup_url=None)
+def test_카드_이름이_네이버페이면_폰_승인이_아니라_PC_결제창_키패드로_낸다(reg):
+    # 네이버페이는 PC 결제창(pay.naver.com 비밀번호 키패드)에서 낸다 — 폰 승인 도구로 보내면 휴대폰 네이버 앱 경로라
+    # 폰이 없어 시간 초과로 끊겼다(실기 2026-09-25 ABC). 모바일 결제는 안정화 전까지 쓰지 않는다(사용자)
+    fill, pay = _full_pay_mocks(popup_url=None)
     a = assignment(
         reg, dry_run=False, card='네이버페이', handoff={'cost': 89000, 'pay_account': 'acc-a'}
     )
     out = agent(reg)(a)
     assert out.status == 'ok'
-    args = _args(pay)
-    assert args['provider'] == 'naverpay'
-    assert 'payAccount' not in args
-
+    assert not pay.called
+    providers = [json.loads(c.request.content)['args'].get('provider') for c in fill.calls]
+    assert 'naver' in providers
 
 @respx.mock
 def test_토스여도_handoff에_pay_account가_있어도_넘기지_않는다(reg):
@@ -641,7 +638,7 @@ def test_매칭_팝업이_여러개면_활성_탭이_연_팝업을_우선한다(
             'id': 'p2',
             'kind': 'popup',
             'title': '결제2',
-            'url': 'https://pay.naver.com/checkout',
+            'url': 'https://online-pay.kakao.com/checkout',
             'openerId': 't2',
         },
     ]
@@ -656,7 +653,7 @@ def test_매칭_팝업이_여러개면_활성_탭이_연_팝업을_우선한다(
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg)(assignment(reg, dry_run=False, card='현대카드', handoff={'cost': 89000}))
     assert out.status == 'ok'
-    assert _args(pay)['provider'] == 'naverpay'  # p2 를 연 t2 가 활성 탭이다
+    assert _args(pay)['provider'] == 'kakaopay'  # p2 를 연 t2 가 활성 탭이다
 
 
 @respx.mock
