@@ -36,3 +36,12 @@ def _no_coupon_download(request: pytest.FixtureRequest, monkeypatch: pytest.Monk
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line('markers', 'coupon_download: 구매의 쿠폰 받기 단계를 켠 채 시험한다')
+
+
+
+@pytest.fixture(autouse=True)
+def no_close_order_tabs(monkeypatch):
+    """스냅샷 전 주문서 탭 정리(run_js)는 브릿지 목업에 없는 호출이다 — 테스트에서는 건너뛴다."""
+    from samba_agent.agents.buyer import BuyerAgent
+
+    monkeypatch.setattr(BuyerAgent, '_close_order_tabs', lambda self, account: None)

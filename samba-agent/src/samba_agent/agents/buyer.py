@@ -528,6 +528,11 @@ def pay_card_quote_problem(out: dict[str, object]) -> str | None:
     return None
 
 
+# 주문서·결제 탭(과 그 팝업)만 닫는다
+_CLOSE_ORDER_TABS_JS = (
+    'for (const t of await tabs.list()) { if (/order\\/order-form|order\\/checkout|order\\/orderform/.test(t.url || \'\')) '
+    '{ try { await tabs.close(t.id) } catch (e) {} } } return "ok"'
+)
 # 레인 보기에서는 제 레인이 연 탭만 보인다 — 전부 닫으면 그 레인 탭만 닫힌다
 _CLOSE_LANE_TABS_JS = 'for (const t of await tabs.list()) { try { await tabs.close(t.id) } catch (e) {} } return "ok"'
 
@@ -860,6 +865,9 @@ class BuyerAgent(AgentBase):
         if source_of(self.spec.name).coupon_download:
             self._download_coupons(a, account)
         self.step(f'{self.spec.name}: 상품 확인({account})')
+        # 저장 스크립트는 "열린 주문서 탭"이 있으면 계정을 따지지 않고 그것을 쓴다 — 먼저 닫아 이 계정 주문서를 새로 만든다
+        # (실기 2026-09-25: buyer03 견적 뒤 기본 세션(buyer01) 주문서로 결제됐다)
+        self._close_order_tabs(account)
         snap = self.script_json(
             source_of(self.spec.name).snapshot_script,
             json.loads(snapshot_args(self.spec.name, a.order, account=account)),
@@ -887,6 +895,13 @@ class BuyerAgent(AgentBase):
         if source_of(self.spec.name).normal_price and snap.get('normal_price') is None:
             self._apply_normal_price(a, account, snap)
         return snap
+
+    def _close_order_tabs(self, account: str) -> None:
+        """열린 주문서·결제 탭을 닫는다(이 레인에서 보이는 것만). 못 닫아도 스냅샷은 이어 간다."""
+        try:
+            self.tool('run_js', code=_CLOSE_ORDER_TABS_JS, safety='no_pay')
+        except AgentFailure as e:
+            self.note('주문서 정리', mask_text(f'{account}: 열린 주문서 못 닫음({e.reason[:60]})'))
 
     def _download_coupons(self, a: Assignment, account: str) -> None:
         """상품 페이지 '쿠폰받기'로 이 계정이 받을 수 있는 쿠폰을 먼저 받는다. 실패해도 구매는 이어 간다(근거만 남긴다)."""
@@ -1499,6 +1514,21 @@ class BuyerAgent(AgentBase):
                 FailReason.OUT_OF_STOCK,
             )
         quotes = self._audit_quotes(a, quotes)
+        # 키마스터에 결제 항목(비밀번호·카드)이 하나도 없는 계정은 살 수 없다 — 비교에서 뺀다
+        # (실기 2026-09-25: buyer03 이 최저로 뽑혀 견적 없이 진행, 엉뚱한 탭·카드로 결제됐다)
+        payable_quotes = []
+        for account, q in quotes:
+            payable = self._payable_providers(account)
+            allowed = self._allowed_providers(account)
+            if payable is not None and not (payable & allowed if allowed is not None else payable):
+                self.note('계정 비교', f'{account}: 허용 결제수단의 키마스터 결제 항목 없음 — 비교에서 뺌')
+                continue
+            payable_quotes.append((account, q))
+        if not payable_quotes:
+            raise AgentFailure(
+                'needs_human', '결제 항목이 있는 계정이 없다(키마스터)', FailReason.CARD_MISSING
+            )
+        quotes = payable_quotes
         # min 은 같은 값이면 앞 것을 준다 — 동률이면 먼저 비교한 계정
         winner, snap = min(quotes, key=lambda q: _as_float(q[1].get('cost')))
         cost = _as_float(snap.get('cost'))
@@ -1634,6 +1664,9 @@ class BuyerAgent(AgentBase):
             )
         if quoted:
             pass
+        elif not card and any(quote_provider(m) == 'site' for m in methods):
+            card = next(m for m in methods if quote_provider(m) == 'site')
+            self.note('수단 선택', f'{card} — 견적 없음, 사이트 머니 기본(무신사머니)')
         elif not card:
             chosen = self.decide_once(
                 f'{a.rules}\n\n결제수단 후보 {methods} 중 원가 규칙에 가장 맞는 것을 고르라.',

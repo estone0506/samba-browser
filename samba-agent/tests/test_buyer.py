@@ -117,7 +117,7 @@ def mock_accounts(*labels: str, locked: bool = False, login: str = 'already sign
     list_accounts 는 앱처럼 풀린 금고면 배열을, 잠겼으면 {vaultLocked, accounts} 를 돌려준다.
     """
     accounts = [
-        {'label': x, 'username': 'a***', 'types': ['login'], 'tags': []}
+        {'label': x, 'username': 'a***', 'types': ['login'], 'payments': ['site'], 'tags': []}
         for x in labels or ('acc1',)
     ]
     body = {'vaultLocked': True, 'accounts': accounts} if locked else accounts
