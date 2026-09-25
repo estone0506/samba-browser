@@ -478,12 +478,43 @@ export const pageBridge = {
     return null
   },
   /**
-   * 글자 없는 키패드 버튼들(네이버페이 결제 비밀번호 창)의 뷰포트 사각형. 메인 프레임만 본다 —
-   * 앱이 이 자리를 캡처해 OCR 로 숫자를 읽으므로 화면 좌표를 알 수 있는 메인 프레임이어야 한다.
-   * 보안 키패드 모양이 아니면 null
+   * 글자 없는 키패드 버튼들(네이버페이·페이코 결제 비밀번호 창)의 뷰포트 사각형. 메인 프레임을 먼저 보고,
+   * 없으면 하위 프레임을 본다 — 페이코 PC 키패드는 결제창 안 iframe 이다(실기 2026-09-25).
+   * 하위 프레임 칸은 그 iframe 의 화면 위치를 더해 탭 좌표로 바꾸고(앱이 이 자리를 캡처해 OCR),
+   * id 에는 프레임 번호를 얹는다(그대로 pressOnce 에 넘긴다). 보안 키패드 모양이 아니면 null
    */
-  keypadUnlabeled: (tab: Tab): Promise<KeypadCellDto[] | null> =>
-    call(tab.view.webContents, opToCode({ op: 'keypadUnlabeled' }), keypadUnlabeledSchema),
+  keypadUnlabeled: async (tab: Tab): Promise<KeypadCellDto[] | null> => {
+    const wc = tab.view.webContents
+    const main = await call(wc, opToCode({ op: 'keypadUnlabeled' }), keypadUnlabeledSchema)
+    if (main) return main
+    const subs = agentSubFrames(wc)
+    for (let i = 0; i < subs.length; i += 1) {
+      const frame = subs[i]
+      // 좌표를 더할 iframe 요소는 메인 문서에 있어야 한다 — 한 겹 아래 프레임만 다룬다
+      if (frame.parent !== wc.mainFrame) continue
+      let cells: KeypadCellDto[] | null = null
+      try {
+        cells = await callFrame(frame, { op: 'keypadUnlabeled' }, keypadUnlabeledSchema)
+      } catch {
+        continue
+      }
+      if (!cells) continue
+      const url = frameUrl(frame)
+      const offset = await call(
+        wc,
+        `(() => { const f = Array.from(document.querySelectorAll('iframe')).find((x) => x.src === ${JSON.stringify(url)}); if (!f) return null; const r = f.getBoundingClientRect(); return { x: r.left + f.clientLeft, y: r.top + f.clientTop } })()`,
+        z.object({ x: z.number(), y: z.number() }).nullable()
+      ).catch(() => null)
+      if (!offset) continue
+      return cells.map((c) => ({
+        ...c,
+        id: encodeFrameId(i + 1, c.id),
+        x: c.x + offset.x,
+        y: c.y + offset.y
+      }))
+    }
+    return null
+  },
   /** 키패드 버튼을 정확히 한 번 누른다(일반 click 의 재시도 폴백이 없다) */
   pressOnce: (tab: Tab, id: number): Promise<string> =>
     callById(tab, id, (n) => ({ op: 'pressOnce', id: n }), resultSchema),
