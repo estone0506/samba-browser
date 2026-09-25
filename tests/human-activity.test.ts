@@ -45,3 +45,13 @@ describe('human-activity', () => {
     expect(isHumanInputEvent(wc, Date.now() + 5000)).toBe(true)
   })
 })
+
+import { needsHumanTyping } from '../src/main/browser/page-bridge'
+
+describe('needsHumanTyping — 한 글자씩 키 입력은 GS샵만', () => {
+  it('GS샵만 진짜 키 입력, 네이버 등은 값을 직접 넣는다(실기 2026-09-25 네이버 계정 잠김)', () => {
+    expect(needsHumanTyping('www.gsshop.com')).toBe(true)
+    expect(needsHumanTyping('nid.naver.com')).toBe(false)
+    expect(needsHumanTyping('www.musinsa.com')).toBe(false)
+  })
+})

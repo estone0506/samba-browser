@@ -94,6 +94,14 @@ export async function autofillAccount(
   await new Promise((resolve) => setTimeout(resolve, 180))
   const filled = await pageBridge.typeLogin(tab, fields.password, password)
   if (filled !== 'ok') return 'fill-failed'
+  // 제출 전에 두 칸의 글자 수를 다시 본다 — 하나라도 다르면(다른 칸에 쳐졌거나 섞였으면) 로그인 버튼을 누르지 않는다.
+  // 틀린 값으로 자동 제출이 반복되면 계정이 잠긴다(실기 2026-09-25 네이버)
+  const lengthsOk =
+    (await pageBridge.valueLength(tab, fields.password)) === password.length &&
+    (fields.username === undefined ||
+      !account.username ||
+      (await pageBridge.valueLength(tab, fields.username)) === account.username.length)
+  if (!lengthsOk) return 'fill-failed'
   // 계정을 고르면 로그인 버튼까지 눌러 준다(아이디까지 채운 경우만 — 비밀번호만 채웠으면 사용자가 확인)
   if (usernameFilled && deps.autoSubmit?.()) {
     try {

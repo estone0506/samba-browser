@@ -355,6 +355,23 @@ function opToCode(op: AgentOp): string {
   }
 }
 
+// 진짜 키 입력(typeLogin)이 필요한 사이트 — 점수형 reCAPTCHA 가 합성 입력을 봇으로 보는 곳만(실기 GS샵)
+const HUMAN_TYPING_HOSTS = ['gsshop.com']
+
+function safeHost(wc: WebContents): string {
+  try {
+    const url =
+      typeof wc.getURL === 'function' ? wc.getURL() : ((wc as { mainFrame?: { url?: string } }).mainFrame?.url ?? '')
+    return new URL(url).hostname.toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
+export function needsHumanTyping(host: string): boolean {
+  return HUMAN_TYPING_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))
+}
+
 export const pageBridge = {
   // query 를 주면 라벨·name·href·placeholder 가 일치하는 요소만 나열한다(id 는 그대로)
   snapshot: async (tab: Tab, query?: string, selector?: string): Promise<PageSnapshot> => {
@@ -567,8 +584,20 @@ export const pageBridge = {
     // 사람이 이 탭에서 입력 중이면 자동화는 치지 않는다 — 두 입력이 한 칸에 섞여 네이버 계정이 잠겼다(실기 2026-09-25)
     const blocked = automationBlocked(wc)
     if (blocked) return blocked
+    // 한 글자씩 진짜 키를 보내는 입력은 그게 필요한 사이트(점수형 reCAPTCHA)만 쓴다. 다른 사이트는 값을 칸에 직접 넣는다 —
+    // 키 입력은 포커스가 다른 칸에 남으면 엉뚱한 칸에 쳐진다(실기 2026-09-25 네이버: 계정 목록이 비밀번호 칸을 가려
+    // 클릭이 막히자 비밀번호가 아이디 칸에 쳐져 'snnh6oj7n@4f!@o!rt' 로 섞였고, 자동 제출이 반복돼 계정이 잠겼다)
+    if (!needsHumanTyping(safeHost(wc))) return pageBridge.fillValue(tab, id, value)
     if (isAutomation()) return withAutomationInput(wc, () => pageBridge.typeLoginNow(tab, id, value))
     return pageBridge.typeLoginNow(tab, id, value)
+  },
+  /** 입력칸 값의 글자 수(값 자체는 돌려주지 않는다). 못 읽으면 -1 */
+  valueLength: async (tab: Tab, id: number): Promise<number> => {
+    const wc = tab.view.webContents
+    if (wc.isDestroyed()) return -1
+    const { frameIndex, id: localId } = decodeFrameId(id)
+    if (frameIndex !== 0) return -1
+    return call(wc, opToCode({ op: 'valueLength', id: localId }), z.number()).catch(() => -1)
   },
   /** typeLogin 본문(가드 뒤) */
   typeLoginNow: async (tab: Tab, id: number, value: string): Promise<string> => {

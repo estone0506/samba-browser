@@ -6,7 +6,9 @@ import type { Tab } from '../src/main/browser/tab-manager'
 import type { VaultService } from '../src/main/vault/service'
 import type { AccountDto } from '../src/shared/vault'
 
-const { pageBridge } = vi.hoisted(() => ({
+const { pageBridge, filledLengths } = vi.hoisted(() => ({
+  // 칸 id → 채운 글자 수(제출 전 길이 확인용)
+  filledLengths: new Map<number, number>(),
   pageBridge: {
     findLoginFields: vi.fn(
       async (): Promise<{
@@ -15,7 +17,11 @@ const { pageBridge } = vi.hoisted(() => ({
         submit: number | undefined
       }> => ({ username: 1, password: 2, submit: 3 })
     ),
-    fillValue: vi.fn(async (): Promise<string> => 'ok'),
+    fillValue: vi.fn(async (_tab: unknown, id: number, value: string): Promise<string> => {
+      filledLengths.set(id, value.length)
+      return 'ok'
+    }),
+    valueLength: vi.fn(async (_tab: unknown, id: number): Promise<number> => filledLengths.get(id) ?? -1),
     // 로그인 칸 진짜 키 입력 — 테스트에서는 fillValue 와 같은 목으로 흘려 기존 기대를 그대로 둔다
     typeLogin: vi.fn(async (tab: unknown, id: number, value: string) =>
       pageBridge.fillValue(tab, id, value)
