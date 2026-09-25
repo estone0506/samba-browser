@@ -532,3 +532,28 @@ def test_마진_미달로_멈추면_가격X_표시를_부른다(setup):
     w._apply(job, {'outcome': 'needs_human', 'fail_reason': 'margin'})
     assert marked == [('A1', 'margin')]
     assert any('가격X 표시함' in s for s in sent)
+
+
+def test_검증_전_결제수단은_자동_승인하지_않는다(tmp_path):
+    """페이코처럼 실결제 검증 전 수단이 뽑히면 사람 승인을 기다린다(2026-09-25)."""
+    reg = Registry.load(DEFAULT_ROOT)
+    q = JobQueue(tmp_path / 'jobs.sqlite')
+    log: list[str] = []
+    sent: list[str] = []
+    graph = build_supervisor(reg, agents(log, None), checkpointer=MemorySaver(), gate=True)
+    w = Worker(
+        WorkerDeps(
+            queue=q,
+            graph=graph,
+            version='vtest',
+            report=lambda job, line: sent.append(line),
+            parse_order=order_of,
+            auto_approve=True,
+            manual_approve_methods=('현대',),
+        )
+    )
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    job = w.tick()
+    assert job.state == 'needs_human'
+    assert 'pay' not in log
+    assert any('수동 승인 필요' in s for s in sent)

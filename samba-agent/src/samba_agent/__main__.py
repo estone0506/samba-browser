@@ -231,6 +231,9 @@ def main() -> None:
             dry_run_digits=settings.dry_run_digits,
             keep_tabs=settings.keep_tabs,
             auto_approve=settings.auto_approve,
+            manual_approve_methods=tuple(
+                x.strip() for x in settings.manual_approve_methods.split(',') if x.strip()
+            ),
             # 관측 배선 — 실행 1건이 LangSmith span + 로컬 이벤트로 남는다(리뷰 지적 — I3)
             events=events,
             env=settings.harness_env,

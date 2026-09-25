@@ -56,6 +56,8 @@ class WorkerDeps:
     # 처리할 소싱처 범위(대문자 id). 비어 있으면 거르지 않는다. 접수 뒤 삼바웨이브에서 소싱처가 바뀐 주문을
     # 시작 직전에 한 번 더 거른다(실기 2026-09-25: 무신사로 접수된 주문이 롯데온으로 바뀌어 돌았다)
     sources: frozenset[str] = frozenset()
+    # 자동 승인에서 빼는 결제수단 표시 이름(승인 요약의 '카드:' 에 들어 있으면 사람 승인을 기다린다)
+    manual_approve_methods: tuple[str, ...] = ()
     # 보관 기간 지난 이벤트 정리(EventLog.prune). 기동 시 1회 + 주기마다 부른다(리뷰 지적 — Minor)
     prune: Callable[[], int] | None = None
     prune_interval_s: float = 6 * 60 * 60
@@ -311,7 +313,13 @@ class Worker:
             else:
                 # 버튼을 달 통로가 없을 때의 폴백 — 사람이 `@삼바` 명령으로 이어가야 한다
                 self.d.report(job, f'승인 요청\n{summary}')
-            if self.d.auto_approve:
+            manual = next(
+                (m for m in self.d.manual_approve_methods if m and m.lower() in summary.lower()),
+                None,
+            )
+            if manual and stage == 'pay':
+                self.d.report(job, f'수동 승인 필요: {order_no} — 검증 전 결제수단({manual})')
+            if self.d.auto_approve and not (manual and stage == 'pay'):
                 # 사용자가 자동 이행을 켰다 — 요약을 남긴 채 곧바로 승인해 이어 간다
                 self.d.report(job, f'자동 승인: {order_no} {stage}')
                 resumed = self.resume(order_no, True, 'auto-approve', stage)

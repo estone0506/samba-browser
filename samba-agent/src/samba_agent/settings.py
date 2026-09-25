@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     allowed_pay_providers: str = Field(default='', alias='SAMBA_ALLOWED_PAY_PROVIDERS')
     # True 면 결제 승인 요청을 사람 대신 즉시 승인한다(사용자가 자동 이행을 켠 경우만)
     auto_approve: bool = Field(default=False, alias='SAMBA_AUTO_APPROVE')
+    # 자동 승인하지 않고 사람 승인을 받을 결제수단(쉼표, 표시 이름 일부) — 실결제 검증 전 수단(페이코 2026-09-25)
+    manual_approve_methods: str = Field(default='', alias='SAMBA_MANUAL_APPROVE_METHODS')
     # 주문 계정이 지정되지 않은 구매에서 원가를 비교할 소싱 계정 수 상한(계정마다 로그인·주문서를 만든다)
     compare_accounts_max: int = Field(default=5, ge=1, alias='SAMBA_COMPARE_ACCOUNTS_MAX')
     root: Path = Field(default=DEFAULT_ROOT, alias='SAMBA_AGENT_ROOT')
