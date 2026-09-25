@@ -28,6 +28,9 @@ READ_SCRIPT = 'samba_read_order'
 # 이행한 주문을 배송대기중으로 바꾸는 앱 저장 스크립트(재주문 방지)
 STATUS_SCRIPT = 'samba_set_status'
 
+# 결제 전 견적 원가와 결제 뒤 실제 원가가 이만큼(원) 넘게 다르면 견적 오차로 올린다
+ESTIMATE_GAP_WON = 500
+
 # 되읽어 숫자로 비교할 필드 — 문자열 "89000" 과 숫자 89000 을 같은 값으로 본다
 NUMERIC_FIELDS = ('real_price', 'shipping_fee')
 
@@ -99,6 +102,7 @@ class RecorderAgent(AgentBase):
 
     def __call__(self, assignment: Assignment) -> AgentResult:
         self.reset_repairs()
+        self._estimate_gap = None
         return run_agent(lambda: self._record(assignment), lambda: self.evidence)
 
     def _record(self, a: Assignment) -> AgentResult:
@@ -284,6 +288,14 @@ class RecorderAgent(AgentBase):
             self.note('실제 원가', '결제액을 못 읽어 견적 원가로 기록')
             return
         quoted = values.get('real_price')
+        # 결제 뒤 검토: 결제 전 견적 원가와 실제 원가를 비교한다(견적 스크립트 오류를 결제 뒤에라도 잡는다 —
+        # 실기 2026-09-25 노스페이스: 무신사머니 적립을 0으로 읽어 견적이 1만원 높았다, 로라로라: 선할인 중복)
+        est = a.handoff.get('cost')
+        if isinstance(est, int | float) and not isinstance(est, bool) and est > 0:
+            gap = cost - float(est)
+            if abs(gap) > ESTIMATE_GAP_WON:
+                self._estimate_gap = gap
+                self.note('⚠ 견적 오차', f'견적 {float(est):,.0f}원 · 실제 {cost:,.0f}원 · 차이 {gap:+,.0f}원 — 견적 스크립트 점검 필요')
         values['real_price'] = cost
         values['paid'] = detail.get('paid')
         values['card'] = detail.get('card')
@@ -348,6 +360,16 @@ class RecorderAgent(AgentBase):
         )
         if self.mark_status:
             self._mark_waiting_ship(a, sourcing_no)
+        gap = getattr(self, '_estimate_gap', None)
+        if gap is not None:
+            # 기록·배송대기중은 끝났다 — 견적이 틀렸다는 사실만 사람에게 올린다(재결제·취소는 사람이 정한다)
+            return AgentResult(
+                status='needs_human',
+                reason=f'⚠ 견적 오차 {gap:+,.0f}원 — 기록·배송대기중은 완료(소싱주문번호 {sourcing_no})',
+                fail_reason=FailReason.VERIFY_MISMATCH,
+                payload={'dry_run': False, 'saved': True, 'values': values, 'via': 'wave', 'estimate_gap': gap},
+                evidence=tuple(self.evidence),
+            )
         return AgentResult(
             status='ok',
             reason=f'삼바웨이브에 소싱주문번호 {sourcing_no} 를 기입하고 되읽어 확인했다({memo_reason})',
