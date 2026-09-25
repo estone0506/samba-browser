@@ -1255,6 +1255,9 @@ def test_까대기_사무실_배송지가_목록에_있으면_골라서_쓴다(r
             return page('{"quotes": []}')
         if name.endswith('_normal_price'):
             return page('{"normal_price": 150000}')
+        if name == 'abc_order_prep':
+            # ABC 도 결제 전 쿠폰 적용 단계를 거친다(2026-09-25)
+            return page('{"ok": true, "coupon": 0, "cart_coupon": 0, "total": 89000, "points_used": 0}')
         raise AssertionError(f'예상치 못한 run_script 호출: {name}')
 
     respx.post(f'{URL}/tool/run_script').mock(side_effect=handler)
@@ -1262,6 +1265,7 @@ def test_까대기_사무실_배송지가_목록에_있으면_골라서_쓴다(r
     mock_accounts()
     out = abc(_abc_assignment(reg, spec))
     assert out.status == 'ok', out.reason
+    assert 'abc_order_prep' in calls
     assert 'abc_select_shipping' in calls and 'abc_set_shipping' not in calls
     assert any('목록의 사무실 배송지' in e.detail for e in out.evidence)
 

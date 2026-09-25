@@ -42,6 +42,7 @@ sources:
     status: active
     order_type: kkadaegi   # ABC마트 구매는 전부 사무실 배송(까대기) — 사용자 지시 2026-09-23
     pay_provider: naver   # ABC마트는 무조건 네이버페이 — 사용자 지시 2026-09-24
+    order_prep: true   # abc_order_prep — 쿠폰적용 창에서 일반·플러스 쿠폰 최대 적용(2026-09-25, 없어서 쿠폰을 놓쳤다)
     # 키마스터의 ABC(a-rt.com) 계정만 비교한다 — 삼바 주문계정(buyer05 등)이 키마스터에 없는데 그 계정으로 로그인했다(2026-09-25)
     buy_accounts: [buyer01, buyer02, buyer03]
   - id: LOTTEON
@@ -62,6 +63,7 @@ sources:
   # Task E 에서 저장 스크립트를 만든다(확장앱 content-purchase-*.js 의 셀렉터를 옮겨 쓴다)
     order_type: kkadaegi   # ABC마트 흐름 공유 — 사무실 배송
     pay_provider: naver   # 그랜드스테이지도 무조건 네이버페이 — 사용자 지시 2026-09-24
+    order_prep: true   # abc_order_prep — 쿠폰적용 창에서 일반·플러스 쿠폰 최대 적용(2026-09-25, 없어서 쿠폰을 놓쳤다)
     # 키마스터의 ABC(a-rt.com) 계정만 비교한다 — 삼바 주문계정(buyer05 등)이 키마스터에 없는데 그 계정으로 로그인했다(2026-09-25)
     buy_accounts: [buyer01, buyer02, buyer03]
 
