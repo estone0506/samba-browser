@@ -96,6 +96,16 @@ class VerifierAgent(AgentBase):
             source = {**source, 'points_used': float(box)}
         elif isinstance(handoff_box, int | float) and not isinstance(handoff_box, bool):
             source = {**source, 'points_used': float(handoff_box)}
+        # 주문 상세에 적립이 안 나오는 사이트(ABC·그랜드스테이지)는 결제 전 견적의 적립으로 — 기록 단계와 같은 규칙
+        # (실기 2026-09-26: 적립 없이 재계산해 결제액 39,900 과 기록 원가 38,701 이 어긋난다고 오탐)
+        quoted_reward = a.handoff.get('reward')
+        if (
+            not source.get('reward')
+            and isinstance(quoted_reward, int | float)
+            and not isinstance(quoted_reward, bool)
+            and quoted_reward > 0
+        ):
+            source = {**source, 'reward': float(quoted_reward)}
         recomputed = actual_cost(source)
         if recomputed is not None and 'real_price' in expected:
             expected['real_price'] = recomputed
