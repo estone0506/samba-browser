@@ -1272,7 +1272,8 @@ class BuyerAgent(AgentBase):
             return False
         # 사이즈 글자(S·M·L·XL·FREE…)도 꼭 맞아야 한다(실기: '상아색 S' 주문에 색만 담긴 'IVORY' 가 통과)
         letters = size_letters(wanted)
-        if letters and not (size_letters(selected) & letters):
+        # 사이즈 숫자가 이미 맞았으면 괄호 속 글자 사이즈는 보조 표기다(실기: '090(S)' 주문에 'LIGHT BEIGE · 090')
+        if letters and not sizes and not (size_letters(selected) & letters):
             return False
         return bool(self._match_options([selected], wanted))
 

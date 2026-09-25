@@ -512,3 +512,10 @@ def test_korean_free_size_matches_free() -> None:
 
     assert size_letter_options(['FREE'], '라이트 블루 프리 사이즈') == ['FREE']
     assert size_letters('프리미엄 블랙 S') == {'S'}
+
+
+def test_selected_matches_number_size_with_letter_annotation(buyer, monkeypatch) -> None:
+    """'090(S)' 주문은 숫자 090 이 맞으면 통과 — 숫자 없는 '상아색 S' 는 여전히 글자까지 맞아야 한다."""
+    monkeypatch.setattr(type(buyer), '_match_options', lambda self, opts, wanted: opts)
+    assert buyer._selected_matches('LIGHT BEIGE · 090', '라이트 베이지 090(S)')
+    assert not buyer._selected_matches('IVORY', '상아색 S')
