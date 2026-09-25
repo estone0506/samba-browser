@@ -48,10 +48,14 @@ describe('human-activity', () => {
 
 import { needsHumanTyping } from '../src/main/browser/page-bridge'
 
-describe('needsHumanTyping — 한 글자씩 키 입력은 GS샵만', () => {
+describe('needsHumanTyping — 한 글자씩 키 입력은 GS샵·페이코만', () => {
   it('GS샵만 진짜 키 입력, 네이버 등은 값을 직접 넣는다(실기 2026-09-25 네이버 계정 잠김)', () => {
     expect(needsHumanTyping('www.gsshop.com')).toBe(true)
     expect(needsHumanTyping('nid.naver.com')).toBe(false)
     expect(needsHumanTyping('www.musinsa.com')).toBe(false)
+  })
+  it('페이코 로그인은 진짜 키 입력(값만 넣으면 로그인 버튼이 먹지 않음, 실기 2026-09-25)', () => {
+    expect(needsHumanTyping('id.payco.com')).toBe(true)
+    expect(needsHumanTyping('notpayco.com')).toBe(false)
   })
 })
