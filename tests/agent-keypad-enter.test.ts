@@ -622,6 +622,31 @@ describe('fill_secret — 글자 없는 키패드(네이버페이)는 OCR 로 �
     expect(b.steps).toContainEqual({ label: '네이버페이 창 계정 확인: buyer01', ok: true })
   })
 
+  it('라벨(buyer02)을 줘도 네이버페이 창이면 창에 로그인된 네이버 계정에 연결된 항목으로 넣는다(실기 2026-09-25 V36)', async () => {
+    ocrDigitInRegion.mockImplementation(async (_tab, rect) => digitOfCell(rect))
+    pageBridge.snapshot.mockResolvedValue({
+      url: NAVER,
+      title: '네이버페이',
+      text: '네이버페이 인증 김사무 ( ) buyer01 님의 비밀번호 입력 비밀번호는 6자리 입니다.',
+      elements: [],
+      total: 0
+    })
+    const linked: Record<number, string> = { 5: 'buyer02', 6: 'buyer01' }
+    const b = build({
+      tabUrl: NAVER,
+      openerUrl: 'https://abcmart.a-rt.com/order',
+      tabProfile: 'buyer02',
+      paymentAccountUsername: (id) => linked[id] ?? null,
+      accounts: [
+        account({ id: 5, host: 'a-rt.com', label: 'buyer02', isDefault: false }),
+        account({ id: 6, host: 'a-rt.com', label: 'buyer01', isDefault: false })
+      ]
+    })
+    const r = await fill(b, { dryRunDigits: 3, accountLabel: 'buyer02' })
+    expect(r).toContain('typed 3 digits')
+    expect(b.getPaymentSecretForFill).toHaveBeenCalledWith(expect.objectContaining({ accountId: 6 }))
+  })
+
   it('0~9 중 하나라도 못 읽으면(9개만 읽힘) 누르지 않고 사람에게 넘긴다', async () => {
     ocrDigitInRegion.mockImplementation(async (_tab, rect) =>
       rect.x === 0 ? null : digitOfCell(rect)

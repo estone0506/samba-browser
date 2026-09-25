@@ -1051,7 +1051,13 @@ ${raw}`
     const available = vaultAvailable()
     if (typeof available === 'string') return await keypadHandoff(tab)
     const hosts = keypadAccountHosts(tab)
+    // 네이버페이 창이면 창에 로그인된 네이버 계정에 연결된 항목을 먼저 고른다 — 비밀번호는 그 네이버 계정의 것이다.
+    // 라벨(쇼핑몰 계정)을 먼저 보면 연결이 다른 항목을 골라 거절됐다(실기 2026-09-25 ABC V36: buyer02 ≠ 창 buyer01)
+    const byWindow = isNaverPayHost(currentHost(tab))
+      ? await keypadAccountByNaverWindow(available, hosts, tab)
+      : null
     const account =
+      byWindow ??
       keypadAccount(available, hosts, accountLabel, tab.profile) ??
       (accountLabel ? null : await keypadAccountByNaverWindow(available, hosts, tab))
     if (!account) {
