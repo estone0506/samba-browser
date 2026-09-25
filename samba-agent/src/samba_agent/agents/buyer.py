@@ -531,6 +531,16 @@ def shipping_set_problem(shipping: dict[str, object]) -> Callable[[dict[str, obj
     return check
 
 
+def _quote_rows_brief(rows: list[object]) -> str:
+    """걸러진 견적 줄 요약(수단/카드/금액/가능 여부) — 왜 결제 가능한 수단이 없었는지 나중에 볼 수 있게 남긴다."""
+    out = []
+    for r in rows[:8]:
+        if isinstance(r, dict):
+            flags = ','.join(k for k in ('available', 'allowed', 'registered') if r.get(k) is False)
+            out.append(f"{r.get('method')}/{r.get('card')}/{r.get('cost')}{'/X:' + flags if flags else ''}")
+    return '; '.join(out)[:300]
+
+
 def quotes_problem(
     out: dict[str, object], offered: list[str], allowed: set[str] | None
 ) -> str | None:
@@ -1254,7 +1264,7 @@ class BuyerAgent(AgentBase):
             raise AgentFailure(
                 'needs_human',
                 f'결제 가능한 수단이 없다({account}): 키마스터 결제 항목 {sorted(payable) or "없음"}, '
-                f'주문서 결제수단 {offered}',
+                f'주문서 결제수단 {offered} — 견적 {_quote_rows_brief(raw_quotes)}',
                 FailReason.CARD_MISSING,
             )
         best = quotes[0]
