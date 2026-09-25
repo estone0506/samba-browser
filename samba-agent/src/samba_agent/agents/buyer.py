@@ -937,6 +937,11 @@ class BuyerAgent(AgentBase):
             return f'정돈 실패(ok={o.get("ok")}, total={o.get("total")}, note={o.get("note")})'
         target = getattr(self, '_expect_cost', {}).get(account)
         cost = _as_float(o.get('total')) + _as_float(o.get('points_used'))
+        # 이 작업에서 이미 AI 가 '계정마다 쿠폰이 실제로 다르다(스크립트 문제 아님)'고 봤으면 다시 수리하지 않는다
+        # (실기 2026-09-25: 계정마다 수리를 새로 돌려 주문 1건에 20분 넘게 걸렸다 — 결과는 매번 genuine)
+        genuine = getattr(self, '_repair_genuine', set())
+        if source_of(self.spec.name).order_prep_script in genuine:
+            return None
         if target and cost > target:
             return (
                 f'이 계정은 쿠폰을 받았는데 비교액(결제+사용 적립금) {cost:,.0f}원이 '

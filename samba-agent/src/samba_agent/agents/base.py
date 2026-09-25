@@ -148,6 +148,8 @@ class AgentBase:
         """작업 시작 때 부른다 — 수리 시도 기록을 비운다. 기록 사전은 계정 레인 사본들이 함께 쓴다."""
         self._repair_tried = {}
         self._repair_fixed: set[str] = set()
+        # 이 작업에서 AI 가 '스크립트 문제 아님'으로 판정한 스크립트 — 같은 사유로 다시 수리하지 않는다
+        self._repair_genuine: set[str] = set()
 
     def script_json(
         self,
@@ -273,6 +275,9 @@ class AgentBase:
             mask_text(str(outcome.reason))[:200],
         )
         if outcome.status == 'genuine':
+            genuine = getattr(self, '_repair_genuine', None)
+            if isinstance(genuine, set):
+                genuine.add(name)
             self.note(
                 '스크립트 수리', mask_text(f'{name}: 스크립트 문제 아님 — {outcome.reason[:160]}')
             )
