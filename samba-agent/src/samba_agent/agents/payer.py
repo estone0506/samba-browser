@@ -117,27 +117,6 @@ PAY_POPUP_WAIT_MS = 2000
 PAY_BUTTON_POLL_TRIES = 12
 PAY_BUTTON_POLL_WAIT_MS = 700
 
-# 무신사머니 잔액이 이 구간에 들면 인출하라고 알린다(사용자 지시 2026-09-25: 50~70만·100~120만·150~170만).
-# 인출(돈 옮기기)은 에이전트가 하지 않는다 — 근거·로그로 사람에게 알리기만 한다
-MONEY_WITHDRAW_BANDS: tuple[tuple[int, int], ...] = (
-    (500_000, 700_000),
-    (1_000_000, 1_200_000),
-    (1_500_000, 1_700_000),
-)
-
-
-def money_balance(page: str) -> int | None:
-    """무신사머니 결제창 글자에서 충전금 보유액. '상품권 충전금 사용 보유 1,959,010원'."""
-    m = re.search(r'충전금[^0-9]{0,20}보유\s*([\d,]+)\s*원', page)
-    return int(m.group(1).replace(',', '')) if m else None
-
-
-def withdraw_band(balance: int | None) -> tuple[int, int] | None:
-    """잔액이 인출 알림 구간에 들면 그 구간."""
-    if balance is None:
-        return None
-    return next((b for b in MONEY_WITHDRAW_BANDS if b[0] <= balance <= b[1]), None)
-
 # list_tabs 응답에서 팝업 kind 만 그물망으로 건질 때 쓰는 보조 정규식.
 # 정상 응답은 JSON 배열(id·kind·title·url·…)이지만, 형식이 바뀌어도 최소한
 # "kind":"popup" 옆의 url 값은 이걸로 건진다(문자열 형식 대비)
@@ -392,19 +371,6 @@ class PayerAgent(AgentBase):
             )
         return matches[-1][1]
 
-    def _note_money_balance(self) -> None:
-        """결제창의 무신사머니 잔액을 근거에 남기고, 인출 구간이면 알린다(인출은 사람이 한다)."""
-        try:
-            balance = money_balance(self.tool('get_page'))
-        except AgentFailure:
-            return
-        band = withdraw_band(balance)
-        if band:
-            self.note(
-                '무신사머니 인출 알림',
-                f'잔액 {balance:,}원 — {band[0] // 10_000}~{band[1] // 10_000}만원 구간이라 인출 필요(사람이 직접)',
-            )
-
     def _web_pay(self, a: Assignment) -> None:
         """사이트 결제창(팝업)의 '결제하기' → 웹 키패드에 fill_secret(password) — 플레이북 §7 무신사머니 흐름.
 
@@ -436,7 +402,6 @@ class PayerAgent(AgentBase):
         if seen_popup and pay_btn is None:
             self.note('결제창', '결제하기 버튼이 뜨지 않음 — 키패드를 바로 찾는다')
         if pay_btn is not None:
-            self._note_money_balance()
             self.step('payer: 결제창 결제하기')
             self.tool('click', id=pay_btn, label='결제하기')
             self.tool('wait', ms=PAY_POPUP_WAIT_MS)

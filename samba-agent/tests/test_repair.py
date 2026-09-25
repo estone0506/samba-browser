@@ -505,12 +505,3 @@ def test_buyer02_pays_with_musinsa_money_only(buyer) -> None:
     assert buyer._allowed_providers('buyer02@naver.com') == {'site'}
     assert buyer._allowed_providers('buyer01') == {'site', 'musinsapay'}
 
-
-def test_money_withdraw_band() -> None:
-    from samba_agent.agents.payer import money_balance, withdraw_band
-
-    assert money_balance('무신사머니 상품권 충전금 사용 보유 1,959,010원 · 상품권 등록') == 1_959_010
-    assert withdraw_band(650_000) == (500_000, 700_000)
-    assert withdraw_band(1_100_000) == (1_000_000, 1_200_000)
-    assert withdraw_band(1_959_010) is None
-    assert withdraw_band(None) is None
