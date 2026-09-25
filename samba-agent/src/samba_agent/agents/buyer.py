@@ -246,14 +246,19 @@ def cheapest_quotes(
             w = wanted_card.strip()
             if w not in method and (card is None or w not in card):
                 continue
+        reward = _as_float(q.get('reward'))
+        if quote_provider(method, card) == 'naver':
+            # 네이버페이 기본 적립(결제액 1%)은 사이트 적립(A-RT 포인트 등)과 따로 붙는다 — 원가에서 뺀다
+            # (사용자 2026-09-25: 사용 포인트는 더하고 적립 포인트·네이버 포인트는 뺀다. 실측 64,600 → 646)
+            reward += round(cost * NAVERPAY_POINT_RATE)
         rows.append(
             {
                 'method': method,
                 'card': card,
                 'paid': cost,
-                'reward': _as_float(q.get('reward')),
+                'reward': reward,
                 'points_used': _as_float(q.get('points_used')),
-                'cost': effective_cost({**q, 'cost': cost, 'card': card}),
+                'cost': effective_cost({**q, 'cost': cost, 'card': card, 'reward': reward}),
             }
         )
     return sorted(rows, key=lambda r: float(r['cost']))
@@ -276,6 +281,10 @@ OFFICE_SHIPPING: dict[str, object] = {
     'address_detail': OFFICE_DETAIL,
     'postal_code': '38069',
 }
+# 포인트로 전액 결제할 때의 결제수단 이름 — 결제 진입 스크립트가 이 이름을 보고 수단을 고르지 않고 결제하기만 누른다
+POINTS_ONLY_METHOD = '포인트전액'
+# 네이버페이 기본 적립률(결제액 기준) — 사이트 적립과 별개로 원가에서 뺀다(실측 2026-09-25 64,600원 → 646원)
+NAVERPAY_POINT_RATE = 0.01
 # 페이코 결제 카드(사용자 2026-09-25: 페이코 = 현대카드, 청구할인 2.7%)
 PAYCO_CARD = '현대카드'
 # 카드 청구할인(플레이북 §7): 결제창에 안 보이는 카드 대금 할인 — 원가 = 카드 결제액 × 계수 − 적립
@@ -1013,7 +1022,8 @@ class BuyerAgent(AgentBase):
 
     def _prep_problem(self, account: str, o: dict[str, object]) -> str | None:
         """주문서 정돈 결과 검사. 다시 확인 중인 계정은 받은 쿠폰이 실제로 적용됐는지도 본다."""
-        if not (o.get('ok') and _as_float(o.get('total')) > 0):
+        points_only = _as_float(o.get('total')) == 0 and _as_float(o.get('points_used')) > 0
+        if not (o.get('ok') and (_as_float(o.get('total')) > 0 or points_only)):
             return f'정돈 실패(ok={o.get("ok")}, total={o.get("total")}, note={o.get("note")})'
         # 스크립트가 돌려준 값을 화면 값과 대조한다 — "쿠폰 적용"이라 보고하고 실제로는 안 붙은 경우를 잡는다
         # (실기 2026-09-25 로라로라: 쿠폰 13,110+4,580 적용 보고, 화면 할인 10,460 · 쿠폰 버튼 '쿠폰 사용' 그대로)
@@ -1068,7 +1078,12 @@ class BuyerAgent(AgentBase):
         snap['points_balance'] = out.get('points_balance')
         snap['coupons_issued'] = list(getattr(self, '_issued', {}).get(account, []))
         total = _as_float(out.get('total'))
-        if total > 0:
+        if total == 0 and used > 0:
+            # 포인트로 전액 결제(ABC 포인트 최대 사용) — 결제창이 없다. 원가 = 사용 포인트 − 사이트 적립
+            snap['points_only'] = True
+            snap['cost'] = used - _as_float(out.get('reward'))
+            snap['pay_amount'] = 0.0
+        elif total > 0:
             # 계정 비교·원가는 '결제액 + 사용 적립금'으로 — 원가 공식이 사용 적립금을 다시 더한다(플레이북 §6).
             # 결제액만 비교하면 적립금 많은 계정(buyer02)이 늘 싸 보인다(사용자 지적 2026-09-24)
             snap['cost'] = total + used
@@ -1145,6 +1160,12 @@ class BuyerAgent(AgentBase):
         요청자가 카드를 지정했으면 그 수단·카드사만 후보다. 견적을 못 읽으면(스크립트 실패·빈 목록)
         스냅샷 원가 그대로 간다 — 견적은 더 싸게 사기 위한 것이지 구매 조건이 아니다.
         """
+        if snap.get('points_only'):
+            # 포인트로 전액 결제 — 결제수단이 필요 없다(결제하기 한 번에 주문 완료)
+            snap['pay_method'] = POINTS_ONLY_METHOD
+            snap['pay_card'] = None
+            self.note('결제수단 견적', f'포인트 전액 결제 — 원가 {_as_float(snap.get("cost")):,.0f}원(사용 포인트 − 적립)')
+            return
         # 주문서 결제수단 중 우리가 낼 수 있는 종류(간편결제·사이트 머니)가 하나도 없으면 견적할 것이 없다
         offered = [str(m) for m in (snap.get('methods') or [])]
         if not any(quote_provider(m) for m in offered):

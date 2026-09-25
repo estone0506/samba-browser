@@ -1347,3 +1347,13 @@ def test_무신사페이_등록_카드가_없으면_수리하지_않는다():
     assert pay_card_quote_problem({'ok': False, 'quotes': [], 'note': 'no registered card'}) is None
     assert pay_card_quote_problem({'ok': True, 'quotes': [], 'cards': []}) is None
     assert pay_card_quote_problem({'ok': False, 'quotes': [], 'note': '화면 못 읽음'}) is not None
+
+
+def test_네이버페이_견적은_사이트_적립과_네이버페이_1퍼센트를_모두_뺀다():
+    """ABC 원가 = 결제액 − A-RT 적립 − 네이버페이 적립(1%) + 사용 포인트(사용자 2026-09-25)."""
+    from samba_agent.agents.buyer import cheapest_quotes
+
+    rows = cheapest_quotes(
+        [{'method': '네이버페이', 'cost': 64600, 'reward': 1300, 'points_used': 0}], None, {'naver'}
+    )
+    assert rows[0]['cost'] == 64600 - 1300 - 646
