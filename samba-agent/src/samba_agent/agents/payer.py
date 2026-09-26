@@ -856,7 +856,10 @@ class PayerAgent(AgentBase):
         if a.dry_run:
             payload['dryRun'] = True
         payload['expect'] = {
-            'name': expect_name(a),
+            # 결제 진입 스크립트는 사이트 주문서 글자만 본다 — 삼바 상품명(모델코드·한글명)이 아니라 구매 스냅샷이
+            # 이 사이트에서 읽은 상품명으로 대조하게 한다(실기 2026-09-27: ABC 주문서엔 영문명만 있어 198 이 막힘).
+            # 삼바 상품명과의 연결은 바로 위 _check_order_form 이 따로 본다
+            'name': str(a.handoff.get('product_name') or '') or expect_name(a),
             'option': a.order.option or '',
             'selected': str(a.handoff.get('selected') or ''),
             # 구매가 스냅샷에서 읽은 번호 우선 — 교차 비교로 다른 사이트에서 사면 주문 URL 번호는 다른 사이트 것이다

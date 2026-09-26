@@ -232,11 +232,12 @@ def test_교차_구매_주문서에_산_상품명이_없으면_결제하지_않�
 
 
 @respx.mock
-def test_같은_사이트_구매면_상품명은_sku_번호는_인계값_우선(reg):
+def test_같은_사이트_구매도_결제_진입엔_사이트_상품명_번호는_인계값_우선(reg):
+    # 2026-09-27 변경: 결제 진입 스크립트는 사이트 주문서 글자만 보므로 사이트 상품명으로 대조한다
     a = assignment(reg, dry_run=True, handoff={'buy_source': '무신사', 'product_no': '5901754', 'product_name': '다른 이름'})
     a = a.model_copy(update={'order': ORDER.model_copy(update={'product_url': 'https://www.musinsa.com/products/5901754'})})
     exp = _enter_expect(reg, a)
-    assert (exp['product_no'], exp['name']) == ('5901754', 'S1')
+    assert (exp['product_no'], exp['name']) == ('5901754', '다른 이름')
 
 
 @respx.mock
@@ -1146,3 +1147,11 @@ def test_이미_결제_판정은_이번_사이트의_주문_완료_탭만_본다
     assert not looks_already_paid(tabs, '', 'musinsa.com')
     assert looks_already_paid(tabs, '', 'a-rt.com')
     assert looks_already_paid(tabs, '')
+
+
+@respx.mock
+def test_같은_사이트_구매도_결제_진입_expect_name_은_사이트_상품명이다(reg):
+    # 실기 2026-09-27: ABC 주문서엔 영문명만 있어 삼바 상품명(모델코드 3XM02475H) 대조로 198 이 막혔다
+    a = assignment(reg, dry_run=True, handoff={'product_name': '데이즈 런 키즈 DAZE RUN KD'})
+    exp = _enter_expect(reg, a, '주문서 휠라 DAZE RUN KD 210/ 1 개')
+    assert exp['name'] == '데이즈 런 키즈 DAZE RUN KD'
