@@ -8,6 +8,7 @@ import {
   type WebContents
 } from 'electron'
 import { join } from 'path'
+import { installExtensionCookiesBridge } from '../extensions/cookies-bridge'
 import { randomUUID } from 'crypto'
 import { IPC, type Layout, type TabInfo } from '../../shared/ipc'
 import type { ClosedTabRecord } from './gestures'
@@ -107,6 +108,9 @@ function hardenSession(ses: Session, partition: string): void {
   // 팝업(결제창 등) webContents 에는 적용되지 않아 계정 선택기·AI 스냅샷이 빠졌었다.
   // 모든 프레임에서 돌지만 page.ts 가 최상위 문서에서만 설치한다
   ses.registerPreloadScript({ type: 'frame', filePath: join(__dirname, '../preload/page.js') })
+  // 확장 백그라운드(서비스워커)에 없는 chrome.cookies 를 보충한다 — 없으면 삼바웨이브·ADPICK 백그라운드가 죽었다
+  ses.registerPreloadScript({ type: 'service-worker', filePath: join(__dirname, '../preload/extension-sw.js') })
+  installExtensionCookiesBridge(ses)
   ses.setPermissionRequestHandler((_wc, permission, callback) => {
     console.warn(`권한 요청 거부: ${permission}`)
     callback(false)

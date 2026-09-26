@@ -19,7 +19,9 @@ export default defineConfig({
       rollupOptions: {
         input: {
           renderer: resolve('src/preload/renderer.ts'),
-          page: resolve('src/preload/page.ts')
+          page: resolve('src/preload/page.ts'),
+          // 확장 서비스워커 보충(chrome.cookies)
+          'extension-sw': resolve('src/preload/extension-sw.ts')
         }
       }
     }
