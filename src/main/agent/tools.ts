@@ -107,7 +107,9 @@ export const FILL_FORMATS = [
   // 전화번호를 칸 셋(010 / 1234 / 5678)에 나눠 넣는 폼 — 앞·가운데·끝
   'phone-first',
   'phone-mid',
-  'phone-last'
+  'phone-last',
+  // 앞자리는 고르는 칸(010 선택)이고 나머지 8자리를 한 칸에 넣는 폼(슈마커 ReceiveHP23) — 가운데+끝
+  'phone-rest'
 ] as const
 export type FillFormat = (typeof FILL_FORMATS)[number]
 
@@ -128,6 +130,7 @@ export function formatFillValue(value: string, format?: FillFormat): string | nu
     const first = digits.startsWith('02') ? '02' : digits.slice(0, 3)
     const mid = digits.slice(first.length, -4)
     if (mid.length < 3) return null
+    if (format === 'phone-rest') return mid + last
     return format === 'phone-first' ? first : format === 'phone-mid' ? mid : last
   }
   if (digits.length === 8) return format === 'yymmdd' ? digits.slice(2) : digits
