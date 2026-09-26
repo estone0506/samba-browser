@@ -127,7 +127,7 @@ def web_pay_provider(card: str) -> str | None:
         return 'payco'
     if '네이버' in card or 'naver' in card.lower():
         return 'naver'
-    if any(k in card for k in ('머니', 'SSG PAY', 'L.pay', '스마일')):
+    if any(k in card for k in ('머니', 'SSG PAY', 'L.pay', '충전결제', '스마일')):
         return 'site'
     return None
 

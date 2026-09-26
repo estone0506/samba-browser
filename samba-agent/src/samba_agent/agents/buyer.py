@@ -132,7 +132,8 @@ QUOTE_PROVIDER_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ('samsung', ('삼성페이', 'samsung')),
     ('apple', ('애플', 'apple')),
     # 사이트 자체 결제(웹에서 끝나는 결제) — 무신사머니·SSG PAY·L.pay·스마일페이 등
-    ('site', ('머니', 'ssg pay', 'ssgpay', 'l.pay', 'lpay', '엘페이', '스마일', 'smile', '포인트')),
+    # 롯데온 '충전결제'는 L.pay(사이트 결제 비밀번호, 키마스터 site 항목)다(실기 2026-09-26)
+    ('site', ('머니', 'ssg pay', 'ssgpay', 'l.pay', 'lpay', '엘페이', '충전결제', '스마일', 'smile', '포인트')),
     # 주문서의 '카드'(직접 결제)는 쓰지 않는다 — 결제 가능 수단에 절대 들어가지 않게 표에서 뺀다
 )
 
