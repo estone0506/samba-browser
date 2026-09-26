@@ -24,6 +24,18 @@ FLAG_FOR_REASON: dict[str, tuple[str, str]] = {
 }
 
 
+# 재고X 를 붙여도 되는 품절 근거(실패 사유 글자) — 확인된 것만 표시한다(사용자 규칙).
+# 스크립트가 옵션·원가를 못 읽은 '품절·실패'는 품절이 아닐 수 있어 표시하지 않는다
+# (실기 2026-09-26: 상품코드를 옵션으로 읽거나 원가를 못 읽은 3건에 재고X·취소요청이 찍혔다)
+CONFIRMED_NO_STOCK_MARKERS = ('확정 품절', '유효하지 않은 상품', '판매 종료', '판매종료', '삭제된 상품')
+
+
+def confirmed_no_stock(reason: str | None) -> bool:
+    """실패 사유가 품절을 확인한 것인가."""
+    text = reason or ''
+    return any(m in text for m in CONFIRMED_NO_STOCK_MARKERS)
+
+
 def flag_for(error: str | None) -> tuple[str, str] | None:
     """작업 오류(실패 사유) → 붙일 표시. 해당 없으면 None."""
     return FLAG_FOR_REASON.get((error or '').strip())

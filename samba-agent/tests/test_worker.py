@@ -534,6 +534,40 @@ def test_마진_미달로_멈추면_가격X_표시를_부른다(setup):
     assert any('가격X 표시함' in s for s in sent)
 
 
+@pytest.mark.parametrize(
+    ('reason', 'flagged'),
+    [
+        ('확정 품절: buyer01 — buyer01: 주문 옵션 품절 표시 [...]', True),
+        ('판매 종료 및 중지된 상품', True),
+        ("모든 계정에서 살 수 없다(품절·실패): a — a: 옵션 불일치 ['65838704']", False),
+        ('모든 계정에서 살 수 없다(품절·실패): a — a: 원가 못 읽음(None)', False),
+    ],
+)
+def test_품절이_확인된_경우만_재고X_를_붙인다(setup, reason, flagged):
+    """스크립트가 옵션·원가를 못 읽은 실패에 재고X·취소요청을 찍지 않는다(실기 2026-09-26 3건)."""
+    q, log, sent, _make = setup
+    reg = Registry.load(DEFAULT_ROOT)
+    marked: list[tuple[str, str | None]] = []
+    graph = build_supervisor(reg, agents(log, None), checkpointer=MemorySaver(), gate=False)
+    w = Worker(
+        WorkerDeps(
+            queue=q,
+            graph=graph,
+            version='vtest',
+            report=lambda job, line: sent.append(line),
+            parse_order=order_of,
+            dry_run=False,
+            flag_order=lambda no, err: marked.append((no, err)) or '재고X 표시함',
+        )
+    )
+    job, _ = q.enqueue('S1', 'U1', {}, 'ts1')
+    result = AgentResult(status='fail', reason=reason, fail_reason=FailReason.OUT_OF_STOCK)
+    w._apply(job, {'outcome': 'needs_human', 'fail_reason': 'out_of_stock', 'results': {'buyer.musinsa': result}})
+    assert (marked == [('S1', 'out_of_stock')]) is flagged
+    if not flagged:
+        assert any('재고X 보류' in s for s in sent)
+
+
 def test_검증_전_결제수단은_자동_승인하지_않는다(tmp_path):
     """페이코처럼 실결제 검증 전 수단이 뽑히면 사람 승인을 기다린다(2026-09-25)."""
     reg = Registry.load(DEFAULT_ROOT)

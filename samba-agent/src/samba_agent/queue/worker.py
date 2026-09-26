@@ -16,6 +16,7 @@ from samba_agent.ops.masking import mask_text
 from samba_agent.ops.tracing import run_metadata, traced
 from samba_agent.queue.db import PAY_STARTED_STEP, Job, JobQueue
 from samba_agent.queue.tabs import TabJanitor
+from samba_agent.wave.flags import confirmed_no_stock
 from samba_agent.supervisor.approval import resume_command
 
 THREAD_PREFIX = 'job:'
@@ -334,7 +335,22 @@ class Worker:
             f'{job.order_no} {outcome}' + (f' — 사유 {fail}' if fail else ' — 완료'),
         )
         if fail and outcome != 'done' and self.d.flag_order is not None and not self.d.dry_run:
-            flagged = self.d.flag_order(job.order_no, str(fail))
-            if flagged:
-                self.d.report(job, f'{job.order_no} {flagged}')
+            reason = _failed_reason(out)
+            if str(fail) == str(FailReason.OUT_OF_STOCK) and not confirmed_no_stock(reason):
+                # 품절이 확인되지 않은 실패(옵션·원가를 못 읽음)는 재고X·취소요청을 하지 않는다 — 확인된 것만 표시
+                self.d.report(job, f'{job.order_no} 재고X 보류 — 품절 미확인({mask_text(reason)[:80]})')
+            else:
+                flagged = self.d.flag_order(job.order_no, str(fail))
+                if flagged:
+                    self.d.report(job, f'{job.order_no} {flagged}')
         return self.d.queue.get(job.order_no)  # type: ignore[return-value]
+
+
+def _failed_reason(out: dict) -> str:
+    """그래프 결과에서 실패한 에이전트의 사유 글자(없으면 빈 문자열)."""
+    for r in (out.get('results') or {}).values():
+        status = getattr(r, 'status', None) if not isinstance(r, dict) else r.get('status')
+        if status and status != 'ok':
+            reason = getattr(r, 'reason', None) if not isinstance(r, dict) else r.get('reason')
+            return str(reason or '')
+    return ''
