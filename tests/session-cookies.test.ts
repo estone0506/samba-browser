@@ -4,7 +4,9 @@ import { describe, it, expect, vi } from 'vitest'
 import type { Cookie, CookiesSetDetails } from 'electron'
 import {
   cookieUrl,
+  duplicatedHostCookie,
   keepSessionCookies,
+  mergeDuplicatedHostCookies,
   persistedCookie,
   SESSION_COOKIE_KEEP_DAYS
 } from '../src/main/browser/session-cookies'
@@ -39,6 +41,12 @@ describe('persistedCookie', () => {
       sameSite: 'no_restriction',
       expirationDate: Math.floor(now / 1000) + SESSION_COOKIE_KEEP_DAYS * 86400
     })
+  })
+
+  it('host-only 쿠키는 domain 을 빼고 되써서 같은 쿠키를 덮어쓴다(복제본을 만들지 않는다)', () => {
+    const d = persistedCookie(cookie({ domain: 'www.shoemarker.co.kr', hostOnly: true, name: 'CKMAIN' }))
+    expect(d).not.toHaveProperty('domain')
+    expect(d?.url).toBe('https://www.shoemarker.co.kr/')
   })
 
   it('만료가 있는 쿠키·도메인 없는 쿠키는 건드리지 않는다', () => {
@@ -95,5 +103,61 @@ describe('keepSessionCookies', () => {
     fire(cookie())
     await new Promise((r) => setTimeout(r, 0))
     expect(errors).toEqual(['app_atk'])
+  })
+})
+
+describe('복제본 정리', () => {
+  const host = (over: Partial<Cookie> = {}): Cookie =>
+    cookie({ name: 'CKMAIN', value: 'v1', domain: 'www.shoemarker.co.kr', hostOnly: true, ...over })
+  const copy = (over: Partial<Cookie> = {}): Cookie =>
+    cookie({
+      name: 'CKMAIN',
+      value: 'v1',
+      domain: '.www.shoemarker.co.kr',
+      hostOnly: false,
+      session: false,
+      expirationDate: 2_000_000_000,
+      ...over
+    })
+
+  it('같은 값의 host-only 쌍둥이가 있으면 복제본이다', () => {
+    const t = host()
+    expect(duplicatedHostCookie(copy(), [t, copy()])).toEqual({ twin: t })
+  })
+
+  it("쌍둥이가 없어도 '.www.' 도메인이면 복제본이다(사이트가 지운 1회용 토큰)", () => {
+    expect(duplicatedHostCookie(copy({ name: 'CKSUBPSIZELIST0' }), [])).toEqual({ twin: null })
+  })
+
+  it('사이트가 준 진짜 도메인 쿠키·세션 쿠키·host-only 는 건드리지 않는다', () => {
+    const real = copy({ domain: '.musinsa.com', name: 'app_atk' })
+    expect(duplicatedHostCookie(real, [real])).toBeNull()
+    expect(duplicatedHostCookie(real, [real, host({ domain: 'musinsa.com', name: 'app_atk', value: 'other' })])).toBeNull()
+    expect(duplicatedHostCookie(copy({ session: true, expirationDate: undefined }), [])).toBeNull()
+    expect(duplicatedHostCookie(host(), [])).toBeNull()
+  })
+
+  it('지운 뒤 host-only 영구 쿠키 한 벌로 다시 쓴다(쌍둥이 값 우선)', async () => {
+    const calls: string[] = []
+    const sets: CookiesSetDetails[] = []
+    const store = {
+      get: async () => [host({ value: 'fresh' }), copy({ value: 'fresh' }), copy({ name: 'CKSUBPSIZELIST0', value: 'old' })],
+      remove: async (url: string, name: string) => {
+        calls.push(`remove ${url} ${name}`)
+      },
+      set: async (d: CookiesSetDetails) => {
+        calls.push(`set ${d.name}`)
+        sets.push(d)
+      }
+    }
+    expect(await mergeDuplicatedHostCookies(store)).toBe(2)
+    expect(calls).toEqual([
+      'remove https://www.shoemarker.co.kr/ CKMAIN',
+      'set CKMAIN',
+      'remove https://www.shoemarker.co.kr/ CKSUBPSIZELIST0',
+      'set CKSUBPSIZELIST0'
+    ])
+    expect(sets.every((d) => d.domain === undefined && d.expirationDate === 2_000_000_000)).toBe(true)
+    expect(sets[0].value).toBe('fresh')
   })
 })
