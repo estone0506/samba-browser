@@ -13,6 +13,11 @@ type CookieOp = 'get' | 'getAll' | 'set' | 'remove'
 const invoke = (op: CookieOp, details: unknown): Promise<unknown> =>
   ipcRenderer.invoke(CHANNEL, op, details)
 
+// 탭·창 — 메인(extensions/tabs-bridge)이 앱 탭으로 처리한다
+const TABS_CHANNEL = 'samba-ext-tabs'
+const invokeTabs = (op: string, details: unknown): Promise<unknown> =>
+  ipcRenderer.invoke(TABS_CHANNEL, op, details)
+
 contextBridge.executeInMainWorld({
   func: (call: (op: string, details: unknown) => Promise<unknown>): void => {
     const g = globalThis as unknown as { chrome?: Record<string, unknown> }
@@ -42,4 +47,74 @@ contextBridge.executeInMainWorld({
     }
   },
   args: [invoke]
+})
+
+// Electron 서비스워커에 없는 tabs.create·remove, windows, notifications, identity 를 보충한다.
+// 삼바웨이브는 탭을 열고 닫는 일이 많고(tabs.create 32곳·remove 42곳), 애드픽은 설치 안내 탭을 연다
+contextBridge.executeInMainWorld({
+  func: (call: (op: string, details: unknown) => Promise<unknown>): void => {
+    type Cb = (v: unknown) => void
+    const g = globalThis as unknown as { chrome?: Record<string, unknown> }
+    const c = g.chrome
+    if (!c) return
+    const reply = (p: Promise<unknown>, cb: unknown): Promise<unknown> | undefined => {
+      if (typeof cb !== 'function') return p
+      p.then(
+        (v) => (cb as Cb)(v),
+        () => (cb as Cb)(undefined)
+      )
+      return undefined
+    }
+    const lastFn = (a: unknown[]): unknown => (typeof a[a.length - 1] === 'function' ? a[a.length - 1] : undefined)
+    const noEvent = { addListener: () => {}, removeListener: () => {}, hasListener: () => false }
+    const set = (o: Record<string, unknown>, k: string, v: unknown): void => {
+      try {
+        o[k] = v
+      } catch {
+        Object.defineProperty(o, k, { value: v, configurable: true })
+      }
+    }
+    const tabs = (c.tabs ?? {}) as Record<string, unknown>
+    if (typeof tabs.create !== 'function') set(tabs, 'create', (props: unknown, cb?: unknown) => reply(call('create', props ?? {}), cb))
+    if (typeof tabs.remove !== 'function') set(tabs, 'remove', (ids: unknown, cb?: unknown) => reply(call('remove', { tabIds: ids }), cb))
+    if (!c.tabs) set(c, 'tabs', tabs)
+    if (!c.windows) {
+      const win = (info: unknown, cb: unknown) => reply(call('windowGet', info ?? {}), cb)
+      set(c, 'windows', {
+        WINDOW_ID_NONE: -1,
+        WINDOW_ID_CURRENT: -2,
+        get: (...a: unknown[]) => win(typeof a[1] === 'object' ? a[1] : {}, lastFn(a)),
+        getCurrent: (...a: unknown[]) => win(typeof a[0] === 'object' ? a[0] : {}, lastFn(a)),
+        getLastFocused: (...a: unknown[]) => win(typeof a[0] === 'object' ? a[0] : {}, lastFn(a)),
+        getAll: (...a: unknown[]) => reply(call('windowGet', typeof a[0] === 'object' ? a[0] : {}).then((w) => [w]), lastFn(a)),
+        create: (d: unknown, cb?: unknown) => {
+          const url = (d as { url?: unknown } | undefined)?.url
+          const first = Array.isArray(url) ? url[0] : url
+          return reply(call('create', { url: typeof first === 'string' ? first : undefined }).then(() => call('windowGet', {})), cb)
+        },
+        update: (_id: unknown, _info: unknown, cb?: unknown) => win({}, cb),
+        remove: (_id: unknown, cb?: unknown) => reply(Promise.resolve(undefined), cb),
+        onCreated: noEvent,
+        onRemoved: noEvent,
+        onFocusChanged: noEvent
+      })
+    }
+    // 알림은 띄우지 않고 받기만 한다(앱에 확장 알림 표시가 없다) — 부르는 쪽이 죽지 않게
+    if (!c.notifications) {
+      set(c, 'notifications', {
+        create: (...a: unknown[]) => reply(Promise.resolve(typeof a[0] === 'string' ? a[0] : 'samba-note'), lastFn(a)),
+        clear: (_id: unknown, cb?: unknown) => reply(Promise.resolve(true), cb),
+        onClicked: noEvent,
+        onClosed: noEvent,
+        onButtonClicked: noEvent
+      })
+    }
+    // 크롬 프로필 계정 — 앱에는 없다. 빈 값을 준다
+    if (!c.identity) {
+      set(c, 'identity', {
+        getProfileUserInfo: (...a: unknown[]) => reply(Promise.resolve({ email: '', id: '' }), lastFn(a))
+      })
+    }
+  },
+  args: [invokeTabs]
 })

@@ -3,6 +3,8 @@ import { app, BrowserWindow, crashReporter } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { createMainWindow } from './window'
 import { TabManager } from './browser/tab-manager'
+import { setExtensionTabsProvider } from './extensions/tabs-bridge'
+import { installExtensionPageApi } from './extensions/page-api'
 import { markQuitting } from './browser/popups'
 import { registerInternalProtocol, registerInternalScheme } from './browser/internal-protocol'
 import { registerIpc } from './ipc/handlers'
@@ -108,6 +110,9 @@ app
     // 첫 탭의 page-favicon-updated 도 캐시에 들어간다
     registerFaviconIpc(win)
     const tabs = new TabManager(win)
+    // 확장 팝업·서비스워커의 탭·창 API(tabs.create·windows 등)를 이 창의 탭으로 처리한다
+    setExtensionTabsProvider(tabs.extensionTabsProvider())
+    installExtensionPageApi()
     db = await openDatabase(join(app.getPath('userData'), 'data.db'))
     const ipc = registerIpc(win, tabs, db)
     vault = ipc.vault

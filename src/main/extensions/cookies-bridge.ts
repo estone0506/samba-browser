@@ -3,8 +3,11 @@
 // 받아 주는 조건: 호출한 서비스워커가 확장(chrome-extension://<id>/)이고, 그 확장의 manifest 가
 // cookies 권한을 선언했을 때만. 그 밖의 서비스워커(일반 사이트)는 거절한다.
 import type { Cookie, CookiesSetDetails, Session } from 'electron'
+import { runTabsOp } from './tabs-bridge'
 
 export const EXT_COOKIES_CHANNEL = 'samba-ext-cookies'
+// 탭·창 보충(preload/extension-sw.ts 의 tabs.create·windows 등)
+export const EXT_TABS_CHANNEL = 'samba-ext-tabs'
 
 /** 크롬 확장 API 의 Cookie 모양 */
 export interface ChromeCookie {
@@ -135,6 +138,15 @@ export function installExtensionCookiesBridge(ses: Session): void {
         return await runCookieOp(ses, String(op), details)
       } catch (e: unknown) {
         console.warn('확장 쿠키 처리 실패', id, e instanceof Error ? e.message : String(e))
+        return null
+      }
+    })
+    // 탭·창은 확장이면 권한과 무관하게 받는다(크롬도 tabs.create 는 권한 없이 된다)
+    worker.ipc.handle(EXT_TABS_CHANNEL, (_e, op: unknown, details: unknown) => {
+      try {
+        return runTabsOp(String(op), details, ses, id)
+      } catch (e: unknown) {
+        console.warn('확장 탭 처리 실패', id, e instanceof Error ? e.message : String(e))
         return null
       }
     })

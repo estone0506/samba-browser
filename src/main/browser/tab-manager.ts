@@ -9,6 +9,7 @@ import {
 } from 'electron'
 import { join } from 'path'
 import { enableExtensionServiceWorkerSupport } from '../extensions/cookies-bridge'
+import type { ExtensionTabsProvider } from '../extensions/tabs-bridge'
 import { randomUUID } from 'crypto'
 import { IPC, type Layout, type TabInfo } from '../../shared/ipc'
 import type { ClosedTabRecord } from './gestures'
@@ -421,6 +422,41 @@ export class TabManager {
 
   get(id: string): Tab | null {
     return this.tabs.find((t) => t.id === id) ?? null
+  }
+
+  /** 이 세션을 쓰는 프로필 이름. 탭 파티션이 아니면(기본 세션) 'default' */
+  profileOfSession(ses: Session): string {
+    for (const [partition, s] of this.partitionSessions) {
+      if (s === ses && partition.startsWith(this.partitionPrefix)) return partition.slice(this.partitionPrefix.length)
+    }
+    return 'default'
+  }
+
+  /** 확장 탭·창 API 다리(extensions/tabs-bridge)에 줄 탭 관리 기능 */
+  extensionTabsProvider(): ExtensionTabsProvider {
+    const byWc = (wc: WebContents): Tab | undefined => this.tabs.find((t) => t.view.webContents === wc)
+    return {
+      tabs: () =>
+        this.tabs
+          .filter((t) => isTabAlive(t))
+          .map((t) => ({ wc: t.view.webContents, active: t.id === this.activeId, profile: t.profile })),
+      create: (url, profile, active) => {
+        const before = this.activeId
+        const info = this.create({ url, profile })
+        // 뒤에서 열기 — 크롬 tabs.create({active:false}) 처럼 보던 탭을 그대로 둔다
+        if (!active && before) this.activate(before)
+        return this.get(info.id)?.view.webContents ?? null
+      },
+      close: (wc) => {
+        const t = byWc(wc)
+        if (t) this.close(t.id)
+      },
+      activate: (wc) => {
+        const t = byWc(wc)
+        if (t) this.activate(t.id)
+      },
+      profileOf: (ses) => this.profileOfSession(ses)
+    }
   }
 
   // IPC 발신자가 실제로 관리 중인 탭의 webContents 인지 확인(위조 발신자 방지, vault:capture 검증용)

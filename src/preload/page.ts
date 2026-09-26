@@ -57,6 +57,7 @@ import { installRegionPicker, REGION_HINTS } from './page-capture'
 import { installWebstoreHook, isWebstoreHost, type WebstoreInstallResult } from './page-webstore'
 import type { NewTabInitDto } from '../shared/newtab'
 import { installPageTranslate, type ImageOverlayDto } from './page-translate'
+import { installExtensionPageApi } from './extension-page'
 
 // 이 preload 는 세션 단위(registerPreloadScript type:'frame')로 등록돼 모든 프레임에서 돈다.
 // 탭의 webPreferences.preload 로만 걸면 window.open 으로 열린 팝업(결제창 등)에는 붙지 않기 때문이다.
@@ -73,6 +74,9 @@ const isTopFrame = window.self === window.top
 // 크롬에서 확장 UI 는 브라우저 기능이 손대지 않는 자리이고, 제스처·번역·자동 채움이
 // 그 위에서 돌면 확장이 만든 화면을 우리가 바꿔 버리는 셈이 된다
 const isExtensionDocument = location.protocol === 'chrome-extension:'
+
+// 확장 팝업·옵션 문서에는 Electron 에 없는 chrome.windows·cookies·tabs 동작만 보충한다(최상위 문서)
+if (isExtensionDocument && isTopFrame) installExtensionPageApi()
 
 if (!isExtensionDocument) {
   // AI 실행기. contextIsolation 이 켜져 있으면 preload 는 격리 월드(WorldId 999)에서 실행되므로
