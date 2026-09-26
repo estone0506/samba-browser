@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Download, MoreHorizontal, Pin, Puzzle, Settings, Trash2 } from 'lucide-react'
+import { Download, MoreHorizontal, Pin, Puzzle, Settings, Store, Trash2 } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import { useExtensionStore } from '@renderer/stores/extensionStore'
 import { useOverlayStore } from '@renderer/stores/overlayStore'
@@ -9,6 +9,9 @@ import { useUiStore } from '@renderer/stores/uiStore'
 import { ExtensionImportDialog } from './ExtensionImportDialog'
 import { anchorOf } from './anchor'
 import { sortExtensions, sortWithPinned } from './extension-list'
+
+// 크롬처럼 퍼즐 메뉴에서 바로 가는 웹스토어 첫 화면
+const WEBSTORE_URL = 'https://chromewebstore.google.com/'
 
 // 주소창 오른쪽 퍼즐 아이콘 메뉴 — 크롬과 같은 자리, 같은 짜임새다.
 // 관리·가져오기 바로가기 아래에 설치된 확장을 늘어놓는다
@@ -63,6 +66,13 @@ export function ExtensionMenu(): React.JSX.Element {
     setView('extensions')
   }
 
+  // 크롬 웹스토어를 새 탭으로 연다(다른 브라우저의 퍼즐 메뉴와 같은 자리). 설치는 웹스토어의 '추가' 버튼이 이어받는다
+  const goWebstore = (): void => {
+    close()
+    setView('browser')
+    void window.samba.tabs.create({ url: WEBSTORE_URL })
+  }
+
   const shown = sortWithPinned(sortExtensions(items), pinned)
 
   return (
@@ -84,6 +94,7 @@ export function ExtensionMenu(): React.JSX.Element {
       {open && (
         <div className="absolute top-[34px] right-0 z-50 flex w-[288px] flex-col rounded-[12px] border border-[var(--line)] bg-white p-1.5 shadow-[0_8px_28px_rgba(0,0,0,.14)]">
           <MenuItem icon={Settings} label={t('extensions.manage')} onClick={goManage} />
+          <MenuItem icon={Store} label={t('extensions.openWebstore')} onClick={goWebstore} />
           <MenuItem
             icon={Download}
             label={t('extensions.importButton')}

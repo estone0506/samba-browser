@@ -1307,6 +1307,7 @@
     "disable": "끄기",
     "disabled": "꺼짐",
     "manage": "확장 프로그램 관리",
+    "openWebstore": "크롬 웹스토어",
     "installedTitle": "설치된 확장",
     "toolbarTitle": "확장 프로그램",
     "menuEmpty": "설치된 확장이 없어요",

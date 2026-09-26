@@ -1307,6 +1307,7 @@
     "disable": "Turn off",
     "disabled": "Off",
     "manage": "Manage extensions",
+    "openWebstore": "Chrome Web Store",
     "installedTitle": "Installed extensions",
     "toolbarTitle": "Extensions",
     "menuEmpty": "No extensions installed",
