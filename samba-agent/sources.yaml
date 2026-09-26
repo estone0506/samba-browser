@@ -123,6 +123,7 @@ sources:
     login_host: shoemarker.co.kr
     signed_in_check: true  # 2026-09-26 shoemaker_signed_in(로그인해도 상단 '로그인' 링크가 남는다)
     easy_pay_card: 현대카드  # 2026-09-26 슈마커 간편결제 = 현대카드(청구할인 ×0.973)
+    order_prep: true  # 2026-09-26 shoemaker_order_prep — 슈머니가·쿠폰·포인트 모두 사용(사용자: 포인트·슈머니 항상 사용)
     shipping_confirm: true
     status: active
   - id: GMARKET

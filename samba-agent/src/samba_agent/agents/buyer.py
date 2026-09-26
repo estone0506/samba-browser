@@ -753,6 +753,8 @@ SHIPPING_ARG_FIELDS = ('name', 'address', 'address_detail', 'postal_code')
 # 배송 연락처 — 앱 fill_secret 이 키마스터 신원정보의 이 필드로 전화 칸을 채운다
 PHONE_SECRET_ITEM = 'identity'
 PHONE_SECRET_FIELD = 'identity.phone'
+# 앱 fill_secret 이 아는 전화 형식(src/main/agent/tools.ts FILL_FORMATS)
+PHONE_FILL_FORMATS = ('phone-first', 'phone-mid', 'phone-last', 'phone-rest', 'digits')
 
 # 까대기 주문서에서 기본 배송지가 채워졌는지 get_page 로 볼 때 쓰는 표시.
 # 수령인 라벨이 있고 '배송지 없음' 류 문구가 없으면 채워진 것으로 본다
@@ -2161,6 +2163,15 @@ class BuyerAgent(AgentBase):
             2: ['phone-mid', 'phone-last'],
             3: ['phone-first', 'phone-mid', 'phone-last'],
         }[len(ids)]
+        # 칸 모양이 위 기본과 다르면 스크립트가 phone_formats 로 알린다(칸 수만큼, 앱이 아는 형식만).
+        # 슈마커: 010 은 고르는 칸이고 나머지 8자리가 한 칸 → ['phone-rest'](실기 2026-09-26)
+        declared = applied.get('phone_formats')
+        if (
+            isinstance(declared, list)
+            and len(declared) == len(ids)
+            and all(f is None or f in PHONE_FILL_FORMATS for f in declared)
+        ):
+            formats = [str(f) if f else None for f in declared]
         for field_id, fmt in zip(ids, formats, strict=True):
             try:
                 out = self.tool(

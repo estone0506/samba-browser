@@ -127,7 +127,8 @@ def web_pay_provider(card: str) -> str | None:
         return 'payco'
     if '네이버' in card or 'naver' in card.lower():
         return 'naver'
-    if any(k in card for k in ('머니', 'SSG PAY', 'L.pay', '충전결제', '스마일')):
+    # 슈마커 '간편결제'(슈마커PAY)는 사이트 결제 비밀번호다(키마스터 site 항목, 실기 2026-09-26)
+    if any(k in card for k in ('머니', 'SSG PAY', 'L.pay', '충전결제', '스마일', '간편결제')):
         return 'site'
     return None
 

@@ -878,6 +878,8 @@ def test_web_pay_provider_separates_musinsapay_from_site_money() -> None:
     assert web_pay_provider('무신사페이') == 'musinsapay'
     assert web_pay_provider('무신사머니') == 'site'
     assert web_pay_provider('토스페이') is None
+    # 슈마커 간편결제(슈마커PAY)는 사이트 결제 비밀번호
+    assert web_pay_provider('슈마커 간편결제') == 'site'
     # 키패드가 아직 안 뜬 화면의 거절은 기다렸다 다시 본다 — 한 번 누른 뒤의 거절은 다시 누르지 않는다
     assert _keypad_not_ready('refused: target is not a secret input')
     assert not _keypad_not_ready('ok: the app entered the payment password on the keypad.')

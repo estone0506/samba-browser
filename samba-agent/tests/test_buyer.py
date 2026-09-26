@@ -607,6 +607,50 @@ def test_고객_전화번호는_어디에도_입력하지_않는다(reg):
 
 
 @respx.mock
+def test_스크립트가_알린_전화_형식대로_채운다(reg):
+    # 슈마커: 010 은 고르는 칸, 나머지 8자리가 한 칸 — 스크립트가 phone_formats 로 알린다(2026-09-26)
+    _wave_direct()
+    applied: dict[str, object] = {}
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=_recording_handler(
+            'musinsa_product_snapshot',
+            applied,
+            echo_extra={'phone_field_ids': [9], 'phone_formats': ['phone-rest']},
+        )
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
+    fill = mock_fill_secret()
+    out = buyer_with_wave(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
+    assert out.status == 'ok'
+    assert json.loads(fill.calls[0].request.content)['args'] == {
+        'elementId': 9,
+        'itemType': 'identity',
+        'field': 'identity.phone',
+        'format': 'phone-rest',
+    }
+
+
+@respx.mock
+def test_모르는_전화_형식은_무시하고_기본대로_채운다(reg):
+    _wave_direct()
+    applied: dict[str, object] = {}
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=_recording_handler(
+            'musinsa_product_snapshot',
+            applied,
+            echo_extra={'phone_field_ids': [9], 'phone_formats': ['whatever']},
+        )
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
+    fill = mock_fill_secret()
+    out = buyer_with_wave(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
+    assert out.status == 'ok'
+    assert 'format' not in json.loads(fill.calls[0].request.content)['args']
+
+
+@respx.mock
 def test_스냅샷에_실린_전화번호도_배송지_스크립트에_넘기지_않는다(reg):
     applied: dict[str, object] = {}
     respx.post(f'{URL}/tool/run_script').mock(
