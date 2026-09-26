@@ -19,6 +19,8 @@ sources:
     login_host: musinsa.com
     shipping_confirm: true
     status: active
+    quick_compare: true  # 2026-09-26 musinsa_quick_price — 상품 페이지 '나의 할인가'·'최대 적립'으로 계정 하나만 고른다
+
   - id: 29CM
     key: cm29
     cross_with: MUSINSA   # 같은 상품을 무신사에서도 비교해 싼 쪽에서 산다

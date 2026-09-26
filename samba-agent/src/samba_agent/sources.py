@@ -56,6 +56,9 @@ class Source(BaseModel):
     signed_in_check: bool = False
     # 사이트 '간편결제'에 등록된 카드사 — 견적 줄에 카드가 없으면 이 카드로 보고 청구할인을 반영한다(슈마커 = 현대카드)
     easy_pay_card: str | None = None
+    # True 면 계정 비교를 `<key>_quick_price`(상품 페이지의 계정별 할인가·최대 적립)로 먼저 해 가장 싼 계정 하나만
+    # 주문서까지 간다(2026-09-26: 계정마다 주문서를 만들어 1건 수 분 — 사람은 쿠폰가만 보고 몇 초에 고른다)
+    quick_compare: bool = False
     # True 면 스냅샷(주문서 생성) 직후 `<key>_order_prep` 으로 주문서를 규칙대로 정돈한다 — 무신사 적립금(5만 미만 0원)·선할인(플레이북 §7)
     order_prep: bool = False
     # True 면 스냅샷 전에 `<key>_coupon_download` 로 상품 페이지의 '쿠폰받기'를 눌러 받을 수 있는 쿠폰을 먼저 받는다.
@@ -106,6 +109,10 @@ class Source(BaseModel):
     @property
     def order_prep_script(self) -> str:
         return f'{self.key}_order_prep'
+
+    @property
+    def quick_price_script(self) -> str:
+        return f'{self.key}_quick_price'
 
     @property
     def set_shipping_script(self) -> str:

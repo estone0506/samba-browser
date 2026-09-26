@@ -1709,6 +1709,50 @@ class BuyerAgent(AgentBase):
         self._issued = issued
         return quotes
 
+    def _quick_pick(self, a: Assignment, accounts: list[str]) -> list[str]:
+        """계정별 빠른 가격(상품 페이지 할인가 − 최대 적립)으로 가장 싼 계정 하나만 남긴다.
+
+        빠른 비교가 없는 소싱처, 계정이 하나, 모든 계정의 값을 못 읽음이면 그대로 돌려준다(주문서 비교로 간다).
+        같은 값이면 앞 계정(키마스터 결제 우선순위)이 이긴다.
+        """
+        source = source_of(self.spec.name)
+        if not source.quick_compare or len(accounts) < 2 or not a.order.product_url:
+            return accounts
+        import concurrent.futures
+
+        def run(account: str) -> tuple[str, float | None]:
+            bridge = self.bridge.with_lane(f'{source.key}-q-{account}') if self.parallel_accounts else self.bridge
+            try:
+                raw = bridge.call(
+                    'run_script',
+                    name=source.quick_price_script,
+                    args=json.dumps({'sku': a.order.product_url, 'profile': account}),
+                ).result
+                out = json.loads(split_page_dialogs(raw)[0])
+            except Exception:  # noqa: BLE001 — 빠른 비교 실패는 주문서 비교로 넘긴다
+                return account, None
+            if not isinstance(out, dict) or out.get('logged_in') is False:
+                return account, None
+            price = _as_float(out.get('my_price'))
+            if price <= 0:
+                return account, None
+            return account, price - _as_float(out.get('max_reward'))
+
+        self.step(f'{self.spec.name}: 계정 {len(accounts)}개 빠른 비교(할인가·최대 적립)')
+        workers = len(accounts) if self.parallel_accounts else 1
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            scores = list(pool.map(run, accounts))
+        valid = [(acc, v) for acc, v in scores if v is not None]
+        if not valid:
+            self.note('빠른 비교', '계정별 값을 못 읽음 — 주문서로 비교한다')
+            return accounts
+        best = min(valid, key=lambda x: x[1])  # min 은 같은 값이면 앞(우선순위 높은) 계정을 고른다
+        self.note(
+            '빠른 비교',
+            ' · '.join(f'{acc} {v:,.0f}' for acc, v in scores if v is not None) + f' → {best[0]}',
+        )
+        return [best[0]]
+
     def _pick_cheapest(self, a: Assignment, accounts: list[str]) -> tuple[str, dict[str, object]]:
         """계정마다 견적을 내고 원가가 가장 낮은 계정(같으면 앞 계정)과 그 스냅샷을 고른다.
 
@@ -1718,6 +1762,7 @@ class BuyerAgent(AgentBase):
         self._quote_errors = []
         self._quote_skips: list[str] = []
         quotes: list[tuple[str, dict[str, object]]] = []
+        accounts = self._quick_pick(a, accounts)
         parallel = self.parallel_accounts and len(accounts) > 1
         if parallel:
             quotes = self._quote_parallel(a, accounts)
