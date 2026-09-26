@@ -133,7 +133,8 @@ QUOTE_PROVIDER_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ('apple', ('애플', 'apple')),
     # 사이트 자체 결제(웹에서 끝나는 결제) — 무신사머니·SSG PAY·L.pay·스마일페이 등
     # 롯데온 '충전결제'는 L.pay(사이트 결제 비밀번호, 키마스터 site 항목)다(실기 2026-09-26)
-    ('site', ('머니', 'ssg pay', 'ssgpay', 'l.pay', 'lpay', '엘페이', '충전결제', '스마일', 'smile', '포인트')),
+    # 슈마커·롯데온 '간편결제'는 사이트에 등록한 카드로 사이트 결제 비밀번호(키마스터 site 항목)를 쓴다
+    ('site', ('머니', 'ssg pay', 'ssgpay', 'l.pay', 'lpay', '엘페이', '충전결제', '간편결제', '스마일', 'smile', '포인트')),
     # 주문서의 '카드'(직접 결제)는 쓰지 않는다 — 결제 가능 수단에 절대 들어가지 않게 표에서 뺀다
 )
 
@@ -218,7 +219,10 @@ def payable_methods(methods: list[str], payable: set[str], money_in_pay: bool = 
 
 
 def cheapest_quotes(
-    raw: object, wanted_card: str | None, payable: set[str] | None = None
+    raw: object,
+    wanted_card: str | None,
+    payable: set[str] | None = None,
+    easy_pay_card: str | None = None,
 ) -> list[dict[str, object]]:
     """결제수단 견적 목록을 싼 순으로 정리한다. 금액이 없거나 0 이하인 줄은 뺀다.
 
@@ -241,6 +245,9 @@ def cheapest_quotes(
             # 페이코는 PC 결제창 안에서 현대카드로 낸다 — 특별할인이 없어도 청구할인 2.7%(×0.973)가 붙는다
             # (사용자 2026-09-25). 견적 줄에 카드가 없으면 현대카드로 보고 원가를 낸다
             card = PAYCO_CARD
+        if card is None and easy_pay_card and '간편결제' in method:
+            # 사이트 간편결제에 등록된 카드(슈마커 = 현대카드, 사용자 2026-09-26) — 청구할인을 원가에 반영한다
+            card = easy_pay_card
         if q.get('available') is False or q.get('allowed') is False or q.get('registered') is False:
             # 낼 수 없는 수단(무신사머니 연결 계좌 없음·잔액 부족), 허용 안 된 조합(토스페이×계좌 등), 미등록 카드
             continue
@@ -1302,7 +1309,9 @@ class BuyerAgent(AgentBase):
             {**q, 'points_used': used} if isinstance(q, dict) and not q.get('points_used') else q
             for q in raw_quotes
         ]
-        quotes = cheapest_quotes(raw_quotes, a.options.get('card'), payable)
+        quotes = cheapest_quotes(
+            raw_quotes, a.options.get('card'), payable, source_of(self.spec.name).easy_pay_card
+        )
         if not quotes:
             # 결제 항목은 있는데 이 주문서의 수단과 겹치지 않는다 — 모델이 고르게 두면 실결제에서 어차피 막힌다
             offered = sorted({str(q.get('method')) for q in raw_quotes if isinstance(q, dict)})

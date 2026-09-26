@@ -54,6 +54,8 @@ class Source(BaseModel):
     # True 면 로그인 도구가 로그인 상태를 못 알아볼 때 `<key>_signed_in` 으로 다시 본다
     # (로그인해도 상단에 '로그인' 링크가 남는 슈마커 — 2026-09-26)
     signed_in_check: bool = False
+    # 사이트 '간편결제'에 등록된 카드사 — 견적 줄에 카드가 없으면 이 카드로 보고 청구할인을 반영한다(슈마커 = 현대카드)
+    easy_pay_card: str | None = None
     # True 면 스냅샷(주문서 생성) 직후 `<key>_order_prep` 으로 주문서를 규칙대로 정돈한다 — 무신사 적립금(5만 미만 0원)·선할인(플레이북 §7)
     order_prep: bool = False
     # True 면 스냅샷 전에 `<key>_coupon_download` 로 상품 페이지의 '쿠폰받기'를 눌러 받을 수 있는 쿠폰을 먼저 받는다.

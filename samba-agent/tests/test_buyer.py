@@ -1385,3 +1385,11 @@ def test_롯데온_충전결제는_견적_후보에서_뺀다():
 
     rows = cheapest_quotes([{'method': '충전결제', 'card': None, 'cost': 30000}], None, {'site'})
     assert rows == []
+
+
+def test_슈마커_간편결제는_등록_현대카드로_보고_청구할인을_반영한다():
+    from samba_agent.agents.buyer import cheapest_quotes
+
+    rows = cheapest_quotes([{'method': '간편결제', 'card': None, 'cost': 69300}], None, {'site'}, '현대카드')
+    assert rows[0]['card'] == '현대카드'
+    assert rows[0]['cost'] == round(69300 * 0.973)
