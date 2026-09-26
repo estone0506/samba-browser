@@ -1501,3 +1501,23 @@ def test_교차_비교_견적은_제_레인에서_해_이_사이트_주문서를
     assert closed_lanes == ['cm29-cross']
     # 실제 구매에 쓰는 29CM 에이전트의 브리지는 그대로(레인 밖)
     assert sib.bridge._lane is None
+
+
+def test_라자다_배대지_주문은_까대기다(reg):
+    # 사용자 2026-09-27: 받는 곳이 LAZADA 배대지면 정가와 무관하게 까대기(사무실), 포이즌 외라 배송비 2,300
+    from samba_agent.agents.buyer import decide_order_type, shipping_fee_for
+    from samba_agent.agents.contracts import OrderRef
+
+    o = OrderRef(order_no='L1', source='무신사', seller='신세계몰(x)', sku='S', sale_price=38800)
+    assert decide_order_type(o, 99000, None, forwarder=True)[0] == 'kkadaegi'
+    assert shipping_fee_for(o, 'kkadaegi') == 2300
+
+    a = agent(reg, lambda _p, _m: '{}')
+    a.set_shipping_provider(
+        lambda no, _t: {'name': '(G2L)0000', 'address': '인천 어딘가', 'address_detail': ' LAZADA(0000)'}
+        if no == 'L1'
+        else {'name': '홍길동', 'address': '서울', 'address_detail': '101호'}
+    )
+    assert a.order_type_of(o, {'normal_price': 99000}) == 'kkadaegi'
+    other = o.model_copy(update={'order_no': 'D1'})
+    assert a.order_type_of(other, {'normal_price': 99000}) == 'direct'

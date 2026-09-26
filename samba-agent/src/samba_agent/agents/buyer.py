@@ -354,7 +354,7 @@ ALLOWED_CARD_ISSUERS = ('현대', 'KB', '국민', '롯데', '신한', '농협', 
 
 
 def decide_order_type(
-    order: OrderRef, normal_price: float | None, forced: str | None = None
+    order: OrderRef, normal_price: float | None, forced: str | None = None, forwarder: bool = False
 ) -> tuple[str, str]:
     """이 주문을 직배/까대기 중 무엇으로 이행할지와 그 근거(poizon-sourcing 스킬 "대상과 처리 순서").
 
@@ -371,6 +371,9 @@ def decide_order_type(
         return 'gift', '선물 태그'
     if is_poison_seller(order.seller):
         return 'kkadaegi', '포이즌 판매건은 전부 까대기'
+    if forwarder:
+        # 받는 곳이 해외 판매 물류창고(LAZADA 배대지) — 사무실로 받아 보낸다(사용자 2026-09-27)
+        return 'kkadaegi', '라자다(해외 배대지) 주문은 까대기'
     if normal_price is None or normal_price <= 0:
         return '', '소싱처 정가를 읽지 못해 직배/까대기를 정할 수 없다'
     if order.sale_price <= 0:
@@ -876,6 +879,8 @@ class BuyerAgent(AgentBase):
     # (계정, 시각) — 같은 사이트에서 마지막으로 로그인한 계정
     _last_login: tuple[str, float] | None = None
     _order_type_noted: tuple[str, str] | None = None
+    # 주문번호 → 받는 곳이 라자다 배대지인가(삼바웨이브 배송지를 한 번만 본다)
+    _forwarder_seen: dict[str, bool] | None = None
 
     def __call__(self, assignment: Assignment) -> AgentResult:
         self._dry_run = assignment.dry_run
@@ -2153,11 +2158,12 @@ class BuyerAgent(AgentBase):
         """
         source = source_of(self.spec.name)
         forced = source.order_type
-        if not source.normal_price and not forced and not is_poison_seller(order.seller):
+        forwarder = not forced and self._is_forwarder(order)
+        if not source.normal_price and not forced and not is_poison_seller(order.seller) and not forwarder:
             # 정가 스크립트가 없는 소싱처는 아직 자동 판정을 못 한다 — 삼바웨이브 태그(order_type)를 따른다
             return order.order_type
         normal = _as_float(snap.get('normal_price')) if snap else 0.0
-        kind, why = decide_order_type(order, normal if normal > 0 else None, forced)
+        kind, why = decide_order_type(order, normal if normal > 0 else None, forced, forwarder)
         if not kind:
             raise AgentFailure('needs_human', f'직배/까대기 판정 불가 — {why}', FailReason.UNKNOWN)
         if self._order_type_noted != (order.order_no, kind):
@@ -2167,6 +2173,24 @@ class BuyerAgent(AgentBase):
                 f'{"까대기" if kind == "kkadaegi" else "선물" if kind == "gift" else "직배"} — {why}',
             )
         return kind
+
+    def _is_forwarder(self, order: OrderRef) -> bool:
+        """받는 곳이 라자다 해외 배대지인가(수취인·주소에 LAZADA). 포이즌·선물은 보지 않는다.
+
+        삼바웨이브 배송지를 주문당 한 번만 읽고 참/거짓만 남긴다(원문은 담지 않는다).
+        """
+        if self._shipping_fn is None or is_poison_seller(order.seller) or order.order_type == 'gift':
+            return False
+        seen = self._forwarder_seen if self._forwarder_seen is not None else {}
+        self._forwarder_seen = seen
+        if order.order_no not in seen:
+            try:
+                shipping = self._shipping_fn(order.order_no, 'direct')
+            except (WaveError, AgentFailure):
+                return False  # 못 읽으면 기존 판정대로 — 직배 입력 단계에서 다시 멈춘다
+            text = ' '.join(str(shipping.get(k) or '') for k in ('name', 'address', 'address_detail'))
+            seen[order.order_no] = 'lazada' in text.lower()
+        return seen[order.order_no]
 
     def _fetch_shipping(self, a: Assignment, snap: dict[str, object]) -> dict[str, object]:
         """배송지 출처 — 삼바웨이브(공급자) > 스냅샷에 실려 온 값 > 전용 스크립트 순.
