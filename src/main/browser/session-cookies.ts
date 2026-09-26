@@ -81,62 +81,78 @@ export interface CookieStoreLike {
   remove(url: string, name: string): Promise<void>
 }
 
-/**
- * 예전 코드가 만든 '.호스트' 복제본인가(순수 함수). 도메인이 '.www.' 로 시작할 때만 복제본으로 본다
- * (사이트가 Domain=www.… 를 주는 일은 사실상 없다). 쌍둥이가 있으면 쌍둥이 값을, 없으면 복제본 값을 host-only 로 옮긴다.
- *
- * '같은 값의 host-only 쌍둥이가 있으면 복제본'이라는 규칙은 뺐다 — 사이트가 원래 Domain=.naver.com 으로 준
- * 로그인 쿠키(NID_AUT 등)까지 host-only 로 바꿔 nid·pay 하위 도메인에서 로그인이 풀렸다(실기 2026-09-26)
- */
-export function duplicatedHostCookie(
-  c: Cookie,
-  all: Cookie[]
-): { twin: Cookie | null } | null {
-  if (c.hostOnly || c.session || !c.domain?.startsWith('.')) return null
-  const host = c.domain.slice(1)
-  const twin =
-    all.find((t) => t.hostOnly && t.domain === host && t.name === c.name && t.path === c.path) ?? null
-  if (host.startsWith('www.')) return { twin }
-  return null
+// 두 단계 공개 접미사(이 아래 한 단계가 등록 도메인이다). 쓰는 사이트 기준으로만 둔다
+const TWO_LEVEL_SUFFIXES = new Set(['co.kr', 'or.kr', 'ne.kr', 'go.kr', 'ac.kr', 're.kr', 'pe.kr', 'com.cn', 'co.jp', 'com.tw', 'com.au', 'co.uk'])
+
+/** 등록 도메인(예: api.musinsapayments.com → musinsapayments.com, www.shoemarker.co.kr → shoemarker.co.kr) */
+export function registrableDomain(host: string): string {
+  const parts = host.toLowerCase().split('.').filter(Boolean)
+  if (parts.length <= 2) return parts.join('.')
+  const lastTwo = parts.slice(-2).join('.')
+  return parts.slice(TWO_LEVEL_SUFFIXES.has(lastTwo) ? -3 : -2).join('.')
 }
 
 /**
- * 예전 코드가 만든 복제본을 host-only 영구 쿠키 한 벌로 합친다.
- * remove(url, name) 은 그 주소에 붙는 같은 이름 쿠키를 둘 다 지우므로, 지운 뒤 한 벌만 다시 쓴다
+ * 예전 코드가 만든 '.하위호스트' 복제본인가(순수 함수). 도메인 쿠키인데 그 도메인이 등록 도메인이 아닌
+ * 하위 주소(api.·www.·fin-auth.…)면 복제본으로 본다 — 사이트가 Domain=api.example.com 처럼 하위 주소를
+ * 도메인으로 주는 일은 사실상 없다. 등록 도메인(.naver.com·.musinsa.com)은 사이트가 준 진짜 로그인 쿠키라 건드리지 않는다.
+ *
+ * 실기 2026-09-26: '.api.musinsapayments.com' JSESSIONID 복제본(옛 값)이 새 세션 쿠키와 함께 가서
+ * 무신사머니 결제창이 "로그인 세션을 찾을 수 없습니다"로 튕겼다. 슈마커 '.www.' 복제본과 같은 원인
  */
-export async function mergeDuplicatedHostCookies(
-  store: CookieStoreLike,
-  deps: { now?: () => number; keepDays?: number } = {}
-): Promise<number> {
-  const all = await store.get({})
-  const now = (deps.now ?? Date.now)()
-  const keep = deps.keepDays ?? SESSION_COOKIE_KEEP_DAYS
-  let merged = 0
-  for (const c of all) {
-    const dup = duplicatedHostCookie(c, all)
-    if (!dup) continue
-    const src = dup.twin ?? c
-    const url = cookieUrl({ domain: c.domain, path: c.path, secure: c.secure })
-    await store.remove(url, c.name)
-    await store.set({
-      url,
-      name: c.name,
-      value: src.value,
-      path: c.path ?? '/',
-      secure: c.secure ?? false,
-      httpOnly: c.httpOnly ?? false,
-      ...(c.sameSite ? { sameSite: c.sameSite } : {}),
-      expirationDate: c.expirationDate ?? Math.floor(now / 1000) + keep * 24 * 60 * 60
-    })
-    merged++
+export function isStaleHostCopy(c: Cookie): boolean {
+  if (c.hostOnly || c.session || !c.domain?.startsWith('.')) return false
+  const host = c.domain.slice(1)
+  return registrableDomain(host) !== host.toLowerCase()
+}
+
+/** 쿠키를 원래 모양대로 다시 쓰는 요청(host-only 는 domain 없이, 세션 쿠키는 만료 없이) */
+function restoreDetails(c: Cookie): CookiesSetDetails {
+  return {
+    url: cookieUrl(c),
+    name: c.name,
+    value: c.value,
+    path: c.path ?? '/',
+    ...(c.hostOnly ? {} : { domain: c.domain }),
+    secure: c.secure ?? false,
+    httpOnly: c.httpOnly ?? false,
+    ...(c.sameSite ? { sameSite: c.sameSite } : {}),
+    ...(c.session || c.expirationDate === undefined ? {} : { expirationDate: c.expirationDate })
   }
-  return merged
+}
+
+/** 그 주소·이름으로 remove 하면 같이 지워지는 쿠키인가(도메인·경로가 그 주소에 붙는 것) */
+function sentTo(c: Cookie, host: string, path: string, name: string): boolean {
+  if (c.name !== name || !c.domain) return false
+  const d = c.domain.toLowerCase()
+  const domainOk = c.hostOnly ? d === host : host === d.replace(/^\./, '') || host.endsWith(d.startsWith('.') ? d : `.${d}`)
+  const p = c.path ?? '/'
+  return domainOk && (path === p || path.startsWith(p.endsWith('/') ? p : `${p}/`))
+}
+
+/**
+ * 예전 코드가 만든 하위 주소 복제본을 지운다(원본·다른 쿠키는 그대로).
+ * remove(url, name) 은 그 주소에 붙는 같은 이름 쿠키를 모두 지우므로, 복제본이 아닌 것은 원래 모양대로 다시 쓴다
+ */
+export async function removeStaleHostCopies(store: CookieStoreLike): Promise<number> {
+  const all = await store.get({})
+  let removed = 0
+  for (const c of all) {
+    if (!isStaleHostCopy(c)) continue
+    const host = (c.domain ?? '').slice(1).toLowerCase()
+    const path = c.path ?? '/'
+    const keep = all.filter((o) => o !== c && sentTo(o, host, path, c.name) && !isStaleHostCopy(o))
+    await store.remove(cookieUrl(c), c.name)
+    for (const o of keep) await store.set(restoreDetails(o))
+    removed++
+  }
+  return removed
 }
 
 /** 앱의 파티션 세션에 붙인다 */
 export function installSessionCookieKeeper(ses: Session): void {
   // 예전 코드가 남긴 복제본부터 정리(실패해도 앱은 계속 — 이름·값은 남기지 않는다)
-  void mergeDuplicatedHostCookies(ses.cookies as unknown as CookieStoreLike)
+  void removeStaleHostCopies(ses.cookies as unknown as CookieStoreLike)
     .then((n) => {
       if (n) console.log(`세션 쿠키 복제본 ${n}개 정리`)
     })

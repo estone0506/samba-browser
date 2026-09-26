@@ -4,9 +4,10 @@ import { describe, it, expect, vi } from 'vitest'
 import type { Cookie, CookiesSetDetails } from 'electron'
 import {
   cookieUrl,
-  duplicatedHostCookie,
+  isStaleHostCopy,
+  registrableDomain,
+  removeStaleHostCopies,
   keepSessionCookies,
-  mergeDuplicatedHostCookies,
   persistedCookie,
   SESSION_COOKIE_KEEP_DAYS
 } from '../src/main/browser/session-cookies'
@@ -105,64 +106,43 @@ describe('keepSessionCookies', () => {
   })
 })
 
-describe('복제본 정리', () => {
-  const host = (over: Partial<Cookie> = {}): Cookie =>
-    cookie({ name: 'CKMAIN', value: 'v1', domain: 'www.shoemarker.co.kr', hostOnly: true, ...over })
-  const copy = (over: Partial<Cookie> = {}): Cookie =>
-    cookie({
-      name: 'CKMAIN',
-      value: 'v1',
-      domain: '.www.shoemarker.co.kr',
-      hostOnly: false,
-      session: false,
-      expirationDate: 2_000_000_000,
-      ...over
-    })
+describe('하위 주소 복제본 정리', () => {
+  const ck = (over: Partial<Cookie> = {}): Cookie =>
+    cookie({ name: 'JSESSIONID', value: 'fresh', domain: 'api.musinsapayments.com', path: '/money/api', hostOnly: true, session: true, expirationDate: undefined, ...over })
+  const stale = ck({ value: 'old', domain: '.api.musinsapayments.com', hostOnly: false, session: false, expirationDate: 2_000_000_000 })
 
-  it("'.www.' 복제본은 살아 있는 host-only 쌍둥이 값으로 합친다", () => {
-    const t = host()
-    expect(duplicatedHostCookie(copy(), [t, copy()])).toEqual({ twin: t })
+  it('registrableDomain 은 두 단계 접미사를 안다', () => {
+    expect(registrableDomain('api.musinsapayments.com')).toBe('musinsapayments.com')
+    expect(registrableDomain('www.shoemarker.co.kr')).toBe('shoemarker.co.kr')
+    expect(registrableDomain('naver.com')).toBe('naver.com')
   })
 
-  it('www 가 아닌 도메인 쿠키는 같은 값의 쌍둥이가 있어도 건드리지 않는다(네이버 로그인 쿠키)', () => {
-    const dom = copy({ name: 'NID_AUT', domain: '.naver.com' })
-    const twin = host({ name: 'NID_AUT', domain: 'naver.com' })
-    expect(duplicatedHostCookie(dom, [dom, twin])).toBeNull()
+  it('하위 주소 도메인 쿠키만 복제본이다(등록 도메인 쿠키·host-only·세션 쿠키는 아니다)', () => {
+    expect(isStaleHostCopy(stale)).toBe(true)
+    expect(isStaleHostCopy(ck({ domain: '.www.shoemarker.co.kr', hostOnly: false, session: false, expirationDate: 1 }))).toBe(true)
+    expect(isStaleHostCopy(ck({ name: 'NID_AUT', domain: '.naver.com', hostOnly: false, session: false, expirationDate: 1 }))).toBe(false)
+    expect(isStaleHostCopy(ck({ name: 'app_atk', domain: '.musinsa.com', hostOnly: false, session: false, expirationDate: 1 }))).toBe(false)
+    expect(isStaleHostCopy(ck())).toBe(false)
   })
 
-  it("쌍둥이가 없어도 '.www.' 도메인이면 복제본이다(사이트가 지운 1회용 토큰)", () => {
-    expect(duplicatedHostCookie(copy({ name: 'CKSUBPSIZELIST0' }), [])).toEqual({ twin: null })
-  })
-
-  it('사이트가 준 진짜 도메인 쿠키·세션 쿠키·host-only 는 건드리지 않는다', () => {
-    const real = copy({ domain: '.musinsa.com', name: 'app_atk' })
-    expect(duplicatedHostCookie(real, [real])).toBeNull()
-    expect(duplicatedHostCookie(real, [real, host({ domain: 'musinsa.com', name: 'app_atk', value: 'other' })])).toBeNull()
-    expect(duplicatedHostCookie(copy({ session: true, expirationDate: undefined }), [])).toBeNull()
-    expect(duplicatedHostCookie(host(), [])).toBeNull()
-  })
-
-  it('지운 뒤 host-only 영구 쿠키 한 벌로 다시 쓴다(쌍둥이 값 우선)', async () => {
+  it('복제본만 지우고 같이 지워진 원본은 원래 모양(host-only 세션)으로 되살린다', async () => {
+    const fresh = ck()
+    const parent = ck({ name: 'JSESSIONID', value: 'p', domain: '.musinsapayments.com', path: '/', hostOnly: false, session: false, expirationDate: 2_100_000_000 })
+    const other = ck({ name: 'OTHER', value: 'x' })
     const calls: string[] = []
     const sets: CookiesSetDetails[] = []
     const store = {
-      get: async () => [host({ value: 'fresh' }), copy({ value: 'fresh' }), copy({ name: 'CKSUBPSIZELIST0', value: 'old' })],
+      get: async () => [fresh, stale, parent, other],
       remove: async (url: string, name: string) => {
         calls.push(`remove ${url} ${name}`)
       },
       set: async (d: CookiesSetDetails) => {
-        calls.push(`set ${d.name}`)
         sets.push(d)
       }
     }
-    expect(await mergeDuplicatedHostCookies(store)).toBe(2)
-    expect(calls).toEqual([
-      'remove https://www.shoemarker.co.kr/ CKMAIN',
-      'set CKMAIN',
-      'remove https://www.shoemarker.co.kr/ CKSUBPSIZELIST0',
-      'set CKSUBPSIZELIST0'
-    ])
-    expect(sets.every((d) => d.domain === undefined && d.expirationDate === 2_000_000_000)).toBe(true)
-    expect(sets[0].value).toBe('fresh')
+    expect(await removeStaleHostCopies(store)).toBe(1)
+    expect(calls).toEqual(['remove https://api.musinsapayments.com/money/api JSESSIONID'])
+    const back = sets.map((d) => `${d.value}|${d.domain ?? 'host'}|${d.expirationDate ?? 'session'}`).sort()
+    expect(back).toEqual(['fresh|host|session', 'p|.musinsapayments.com|2100000000'])
   })
 })
