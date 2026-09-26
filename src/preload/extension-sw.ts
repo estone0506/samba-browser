@@ -109,6 +109,29 @@ contextBridge.executeInMainWorld({
         onButtonClicked: noEvent
       })
     }
+    // webNavigation — Electron 에 없다. 샵백 백그라운드가 시작하자마자 onBeforeNavigate 에 붙다가 죽었다(2026-09-26).
+    // 이벤트는 아직 보내 주지 않는다(등록만 받는다). 프레임 조회는 최상위 프레임 하나로 답한다
+    if (!c.webNavigation) {
+      const frames = (d: unknown) => {
+        const tabId = (d as { tabId?: unknown } | undefined)?.tabId
+        return call('get', { tabId }).then((t) =>
+          t ? [{ frameId: 0, parentFrameId: -1, processId: 0, url: (t as { url?: string }).url ?? '', errorOccurred: false }] : null
+        )
+      }
+      set(c, 'webNavigation', {
+        getAllFrames: (d: unknown, cb?: unknown) => reply(frames(d), cb),
+        getFrame: (d: unknown, cb?: unknown) => reply(frames(d).then((f) => (f ? f[0] : null)), cb),
+        onBeforeNavigate: noEvent,
+        onCommitted: noEvent,
+        onDOMContentLoaded: noEvent,
+        onCompleted: noEvent,
+        onErrorOccurred: noEvent,
+        onCreatedNavigationTarget: noEvent,
+        onReferenceFragmentUpdated: noEvent,
+        onHistoryStateUpdated: noEvent,
+        onTabReplaced: noEvent
+      })
+    }
     // 크롬 프로필 계정 — 앱에는 없다. 빈 값을 준다
     if (!c.identity) {
       set(c, 'identity', {
