@@ -5,6 +5,7 @@ import httpx
 import pytest
 import respx
 
+from samba_agent.agents.base import AgentFailure
 from samba_agent.agents.contracts import Assignment, OrderRef
 from samba_agent.agents.payer import PayerAgent
 from samba_agent.agents.registry import Registry
@@ -968,3 +969,29 @@ def test_상품번호를_주소에서_뽑는다() -> None:
     assert product_no_of('https://abcmart.a-rt.com/product/new?prdtNo=1020113253') == '1020113253'
     assert product_no_of('https://www.shoemarker.co.kr/ASP/Product/ProductDetail.asp?ProductCode=48761') == '48761'
     assert product_no_of(None) == ''
+
+
+@respx.mock
+def test_주문서_대조는_구매가_만든_주문서_탭으로_옮긴_뒤_한다(reg):
+    # 활성 탭이 다른 페이지면 엉뚱한 화면을 대조한다 — handoff.order_tab 으로 먼저 옮긴다
+    calls: list[str] = []
+
+    def rec(name):
+        def _(request):
+            calls.append(name)
+            return page('ok')
+
+        return _
+
+    switch = respx.post(f'{URL}/tool/switch_tab').mock(side_effect=rec('switch_tab'))
+    respx.post(f'{URL}/tool/get_page').mock(side_effect=rec('get_page'))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    a = agent(reg)
+    try:
+        asg = assignment(reg, dry_run=True, handoff={'order_tab': 42})
+        order = asg.order.model_copy(update={'sku': '아디다스 아디스타 컨트롤 KJ8365', 'option': '210'})
+        a._check_order_form(asg.model_copy(update={'order': order}))
+    except AgentFailure:
+        pass  # 'ok' 화면은 대조에 실패해도 된다 — 순서만 본다
+    assert calls[:2] == ['switch_tab', 'get_page']
+    assert json.loads(switch.calls[0].request.content)['args']['id'] == '42'

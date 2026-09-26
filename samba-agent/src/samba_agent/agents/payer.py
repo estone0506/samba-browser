@@ -468,6 +468,11 @@ class PayerAgent(AgentBase):
         name, option, selected = a.order.sku or '', a.order.option, str(a.handoff.get('selected') or '')
         if not order_form_keys(name, option, selected):
             return  # 대조할 단어·사이즈가 없다(시험 표본 등)
+        # 구매가 만든 주문서 탭을 먼저 앞으로 — 활성 탭이 다른 페이지면 엉뚱한 화면을 대조한다
+        # (결제 진입 스크립트도 같은 tab 을 받아 그 탭에서 따로 대조한다)
+        order_tab = a.handoff.get('order_tab')
+        if order_tab:
+            self.tool('switch_tab', id=str(order_tab))
         page = self.tool('get_page')
         problem = order_form_mismatch(page, name, option, selected)
         if problem:
