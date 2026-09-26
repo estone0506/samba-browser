@@ -31,6 +31,9 @@ def should_retry(spec: AgentSpec, result: AgentResult, attempts: int) -> bool:
         return False  # 결제 에이전트 — 재결제 위험
     if result.fail_reason in NO_RETRY_REASONS:
         return False
+    # 확정 품절(모든 계정에서 선택지는 읽혔는데 주문 사이즈가 없다)은 다시 돌려도 같다(실기: 재시도로 1건 10~20분)
+    if result.fail_reason is FailReason.OUT_OF_STOCK and result.reason.startswith('확정 품절'):
+        return False
     return attempts <= spec.retry
 
 

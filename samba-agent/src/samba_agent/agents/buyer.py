@@ -380,6 +380,16 @@ def shipping_fee_for(order: OrderRef, order_type: str) -> float:
     return 0.0
 
 
+_FREE_SIZE_TOKENS = frozenset({'free', 'f', 'one', 'onesize', 'os', 'fs', '프리', '프리사이즈', '단일', '단일사이즈', 'freesize'})
+
+
+def _is_free_size(text: str) -> bool:
+    """옵션 글자에 프리사이즈 표기(토큰)가 있는가 — 'BLACK FREE'·'ONE'·'ONE SIZE'·'BLACK · ONE'."""
+    toks = [t for t in re.split(r'[\s/·,()\-]+', text.lower()) if t]
+    joined = ''.join(toks)
+    return any(t in _FREE_SIZE_TOKENS for t in toks) or 'onesize' in joined or 'freesize' in joined
+
+
 def matching_options(options: list[str], wanted: str | None) -> list[str]:
     """주문 옵션과 맞는 후보들. 주문 옵션이 없으면 전부 후보다.
 
@@ -390,6 +400,12 @@ def matching_options(options: list[str], wanted: str | None) -> list[str]:
     live = [o for o in options if not _sold_out(o)]
     if not wanted:
         return live
+    # 프리사이즈 표기 차이(FREE·F·ONE·ONE SIZE·OS·단일) — 주문이 프리사이즈인데 후보가 프리사이즈 하나뿐이면 그것이다
+    # (실기 2026-09-26: 주문 "BLACK FREE" ↔ 무신사 선택지 ['ONE'] 을 품절로 봤다)
+    if _is_free_size(wanted):
+        free = [o for o in live if _is_free_size(o)]
+        if free:
+            return free
     w = wanted.strip()
     exact = [o for o in live if o.strip() == w]
     if exact:
@@ -399,7 +415,8 @@ def matching_options(options: list[str], wanted: str | None) -> list[str]:
         normed = [o for o in live if _norm(o) == nw]
         if normed:
             return normed
-        contains = [o for o in live if _norm(o) and (nw in _norm(o) or _norm(o) in nw)]
+        # 후보가 주문 옵션 안에 들어 있는 경우는 두 글자 이상만 — 'L' 이 'BLACK' 안에 있다고 L 을 고르면 안 된다
+        contains = [o for o in live if _norm(o) and (nw in _norm(o) or (len(_norm(o)) >= 2 and _norm(o) in nw))]
         if contains:
             return contains
         # 주문 옵션이 "카키 085(L) NP6KP12C" 처럼 여러 단계·품번이 섞인 경우 — 토큰 하나가 후보 안에 있으면 맞는 것으로
@@ -653,6 +670,27 @@ def snapshot_login_required(out: dict[str, object]) -> bool:
     )
 
 
+# 확정 품절(모든 계정에서 선택지는 읽혔는데 주문 사이즈가 없다) 실패 문구 머리 — 감독자가 재시도하지 않는다
+CONFIRMED_SOLD_OUT = '확정 품절'
+
+
+def sold_out_option_listed(options: list[str], wanted: str | None) -> bool:
+    """주문 옵션이 선택지에 '품절' 표시로 떠 있는가 — 스크립트가 목록을 제대로 읽었고 그 옵션만 품절이라는 확증."""
+    if not wanted:
+        return False
+    marked = [_SOLD_OUT_RE.sub('', o).strip() for o in options if _sold_out(o)]
+    return bool(marked) and bool(matching_options(marked, wanted))
+
+
+# 계정 견적 건너뜀 사유 중 확정 품절 표시(_quote 가 붙인다)
+SOLD_OUT_LISTED_SKIP = '주문 옵션 품절 표시'
+
+
+def is_confirmed_sold_out_skip(skip: str) -> bool:
+    """계정 견적 건너뜀 사유가 '주문 옵션이 품절 표시로 떠 있다'인가."""
+    return SOLD_OUT_LISTED_SKIP in skip
+
+
 def snapshot_problem(
     option: str | None, selected_ok: Callable[[str], bool] | None = None
 ) -> Callable[[dict[str, object]], str | None]:
@@ -667,6 +705,10 @@ def snapshot_problem(
             return None
         # 로그인 안 된 계정 — 스크립트 잘못이 아니다(고치게 두면 다른 세션으로 넘어가 견적한다). 호출부가 그 계정을 뺀다
         if snapshot_login_required(out):
+            return None
+        # 주문 옵션이 '품절' 표시로 떠 있다 = 품절이다. 사이즈를 못 골라 selected·원가가 비는 게 당연하다 —
+        # 스크립트 잘못이 아니니 고치지 않는다(실기 2026-09-26: 품절 주문마다 계정 4개가 AI 수리를 돌아 1건에 10~20분)
+        if option and sold_out_option_listed([str(o) for o in (out.get('options') or [])], option):  # type: ignore[union-attr]
             return None
         if option:
             sel = str(out.get('selected') or '').strip()
@@ -1362,7 +1404,10 @@ class BuyerAgent(AgentBase):
         options = [str(o) for o in (snap.get('options') or [])]
         if not self._match_options(options, a.order.option):
             self.note('계정 견적', mask_text(f'{account}: 불가(주문 옵션 품절)'))
-            self._quote_skips.append(f'{account}: 옵션 불일치 {options[:6]}')
+            if sold_out_option_listed(options, a.order.option):
+                self._quote_skips.append(f'{account}: {SOLD_OUT_LISTED_SKIP} {options[:6]}')
+            else:
+                self._quote_skips.append(f'{account}: 옵션 불일치 {options[:6]}')
             return None
         selected = str(snap.get('selected') or '').strip()
         if a.order.option and not (selected and self._selected_matches(selected, a.order.option)):
@@ -1688,6 +1733,15 @@ class BuyerAgent(AgentBase):
                 first = errors[0]
                 raise AgentFailure(
                     'needs_human', f'모든 계정 불가 — {first.reason}', first.fail_reason
+                )
+            # 모든 계정이 '선택지는 읽었는데 주문 사이즈가 없다'면 확정 품절 — 다시 돌려도 같다(재시도하지 않는다)
+            if not errors and self._quote_skips and all(
+                is_confirmed_sold_out_skip(x) for x in self._quote_skips
+            ):
+                raise AgentFailure(
+                    'fail',
+                    mask_text(f'{CONFIRMED_SOLD_OUT}: {", ".join(accounts)} — {self._quote_skips[0]}'),
+                    FailReason.OUT_OF_STOCK,
                 )
             # 계정별 사유를 함께 남긴다 — 진짜 품절인지 스크립트·로그인 실패인지 가려야 한다(실기: 3건 모두 원인 불명)
             why = (
