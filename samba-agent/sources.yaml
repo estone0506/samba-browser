@@ -121,6 +121,7 @@ sources:
     label: 슈마커
     home: https://www.shoemarker.co.kr/
     login_host: shoemarker.co.kr
+    signed_in_check: true  # 2026-09-26 shoemaker_signed_in(로그인해도 상단 '로그인' 링크가 남는다)
     shipping_confirm: true
     status: active
   - id: GMARKET

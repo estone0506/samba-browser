@@ -856,11 +856,31 @@ class BuyerAgent(AgentBase):
             if out.startswith(ALREADY_SIGNED_IN):
                 self.note('로그인', f'{account} 로 로그인 완료')
                 return
+        if source_of(self.spec.name).signed_in_check and self._site_signed_in(account):
+            self.note('로그인', f'{account} — 사이트 로그인 확인 스크립트로 로그인됨 확인')
+            return
         raise AgentFailure(
             'needs_human',
             f'로그인 실패({account}): {mask_text(out[:120])}',
             FailReason.PERMISSION_DENIED,
         )
+
+    def _site_signed_in(self, account: str) -> bool:
+        """사이트별 로그인 확인 스크립트(`<key>_signed_in`)가 있으면 그것으로 다시 본다.
+
+        로그인해도 상단에 '로그인' 링크가 남는 사이트(슈마커)는 앱의 공통 판정이 로그인 전으로 본다(실기 2026-09-26).
+        스크립트가 없거나 실패하면 False — 원래대로 로그인 실패로 넘긴다.
+        """
+        try:
+            raw = self.tool(
+                'run_script',
+                name=f'{source_of(self.spec.name).key}_signed_in',
+                args=json.dumps({'profile': account}, ensure_ascii=False),
+            )
+            out = json.loads(split_page_dialogs(raw)[0])
+        except (AgentFailure, ValueError):
+            return False
+        return isinstance(out, dict) and out.get('signed_in') is True
 
     def _candidate_accounts(self, a: Assignment) -> list[str]:
         """구매 후보 계정. 주문이 계정을 지정하면 그 계정 하나(비교하지 않는다).

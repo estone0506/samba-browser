@@ -51,6 +51,9 @@ class Source(BaseModel):
     # True 면 `<key>_normal_price` 로 소싱처 정가(세일 전 정상가)를 읽는다 — 포이즌 외 마켓의 직배/까대기 판정에 쓴다
     # (정가 < 고객 결제액 → 까대기, 정가 > 고객 결제액 → 직배; poizon-sourcing 스킬 규칙)
     normal_price: bool = False
+    # True 면 로그인 도구가 로그인 상태를 못 알아볼 때 `<key>_signed_in` 으로 다시 본다
+    # (로그인해도 상단에 '로그인' 링크가 남는 슈마커 — 2026-09-26)
+    signed_in_check: bool = False
     # True 면 스냅샷(주문서 생성) 직후 `<key>_order_prep` 으로 주문서를 규칙대로 정돈한다 — 무신사 적립금(5만 미만 0원)·선할인(플레이북 §7)
     order_prep: bool = False
     # True 면 스냅샷 전에 `<key>_coupon_download` 로 상품 페이지의 '쿠폰받기'를 눌러 받을 수 있는 쿠폰을 먼저 받는다.
