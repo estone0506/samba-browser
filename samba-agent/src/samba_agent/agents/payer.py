@@ -155,21 +155,70 @@ def order_form_keys(product_name: str, option: str | None, selected: str = '') -
     return bool(_name_words(product_name) or _sizes(option, selected))
 
 
-def order_form_mismatch(page: str, product_name: str, option: str | None, selected: str = '') -> str | None:
-    """주문서 글자에 이 주문의 옵션·상품명 고유 단어가 있는가. 다르면 그 사유, 같으면 None(순수 함수).
+def _found_ratio(words: list[str], hay: str) -> tuple[int, int]:
+    """고유 단어 중 hay 에 든 개수와 전체 개수(대소문자 무시)."""
+    low = hay.lower()
+    return sum(1 for w in words if w.lower() in low), len(words)
+
+
+def _mostly_found(words: list[str], hay: str) -> bool:
+    """고유 단어의 절반 이상(올림)이 hay 에 있는가. 한글·영문 단어를 따로 세어 한쪽이라도 넘으면 된다.
+
+    사이트 상품명은 한글·영문을 같이 쓰고(예: '데이즈 런 키즈 DAZE RUN KD') 주문서는 한쪽만 보여 주기도 해서
+    (ABC 주문서: '휠라 DAZE RUN KD') 문자 종류별로 본다.
+    """
+    groups = (
+        [w for w in words if re.search(r'[가-힣]', w)],
+        [w for w in words if not re.search(r'[가-힣]', w)],
+    )
+    for g in groups:
+        hit, total = _found_ratio(g, hay)
+        if total and hit * 2 >= total:
+            return True
+    return False
+
+
+def _has_number(text: str, number: str) -> bool:
+    return bool(re.search(rf'(?<!\d){re.escape(number)}(?!\d)', text))
+
+
+def order_form_mismatch(
+    page: str,
+    product_name: str,
+    option: str | None,
+    selected: str = '',
+    *,
+    site_name: str = '',
+    product_no: str = '',
+) -> str | None:
+    """주문서 글자에 이 주문의 옵션·상품이 맞는가. 다르면 그 사유, 같으면 None(순수 함수).
 
     - 옵션: 주문 옵션(또는 구매가 고른 selected)에 든 숫자 사이즈 하나라도 주문서에 있어야 한다(숫자가 없으면 건너뜀)
-    - 상품명: 흔한 말을 뺀 고유 단어(2자 이상, 순수 숫자 제외) 중 하나라도 주문서에 있어야 한다(고유 단어가 없으면 건너뜀)
+    - 상품: 아래 중 하나면 같은 상품이다
+      1) 상품번호(product_no, 6자리 이상)가 주문서 글자·탭 주소(get_page 의 URL 줄)에 있다
+      2) 주문 상품명의 고유 단어(흔한 말·순수 숫자 제외) 하나라도 주문서에 있다(고유 단어가 없으면 건너뜀)
+      3) 구매가 산 사이트 상품 페이지에서 읽은 상품명(site_name)이 주문 상품명과 같은 상품이고(주문 고유 단어 절반 이상이
+         site_name 에 있다) 주문서에 site_name 고유 단어가 절반 이상(한글·영문 따로) 있다 — 주문서가 영문명만 보이고
+         모델코드를 안 보이는 사이트(ABC: 삼바 '우먼스 에어 맥스 인비고' ↔ 주문서 'WMNS NIKE AIR MAX INVIGOR')
+    진짜 다른 상품(2026-09-26: 나이키 코르테즈 주문에 아디다스 아디스타 주문서)은 어느 쪽도 맞지 않아 막힌다.
     """
     text = re.sub(r'\s+', ' ', page or '')
     low = text.lower()
     sizes = _sizes(option, selected)
     if sizes and not any(re.search(rf'(?<![\d.]){re.escape(x)}(?![\d.])', text) for x in sizes):
         return f'옵션 {sorted(set(sizes))} 이 주문서에 없다'
+    pno = re.sub(r'\D', '', product_no or '')
+    if len(pno) >= 6 and _has_number(text, pno):
+        return None
     words = _name_words(product_name)
-    if words and not any(w.lower() in low for w in words):
-        return f'상품명 단어 {words[:6]} 가 주문서에 없다'
-    return None
+    if not words or any(w.lower() in low for w in words):
+        return None
+    site_words = _name_words(site_name)
+    if site_words and _mostly_found(words, site_name) and _mostly_found(site_words, text):
+        return None
+    return f'상품명 단어 {words[:6]} 가 주문서에 없다' + (
+        f'(사이트 상품명 {site_words[:6]} 로도 못 맞춤)' if site_words else ''
+    )
 
 
 def is_cross_buy(a: Assignment) -> bool:
@@ -491,7 +540,13 @@ class PayerAgent(AgentBase):
         if order_tab:
             self.tool('switch_tab', id=str(order_tab))
         page = self.tool('get_page')
-        problem = order_form_mismatch(page, name, option, selected)
+        # 사이트 상품명(구매 스냅샷이 상품 페이지에서 읽은 이름)·상품번호로도 본다 — 주문서가 영문명만 보이고
+        # 모델코드를 안 보이는 사이트에서 같은 상품을 막던 오탐(실기 2026-09-26 ABC job 198·204)
+        site_name = str(a.handoff.get('product_name') or '')
+        product_no = str(a.handoff.get('product_no') or '') or product_no_of(a.order.product_url)
+        problem = order_form_mismatch(
+            page, name, option, selected, site_name=site_name if site_name != name else '', product_no=product_no
+        )
         if problem:
             raise AgentFailure(
                 'needs_human', f'주문서가 이 주문과 다르다 — 결제하지 않음: {mask_text(problem)}', FailReason.VERIFY_MISMATCH

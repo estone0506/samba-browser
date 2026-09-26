@@ -1021,6 +1021,88 @@ def test_주문서가_다른_상품이면_결제하지_않는다() -> None:
     assert '상품명' in (order_form_mismatch('아디다스 아디스타 240 / 1개', '나이키 코르테즈 스웨이드', '240') or '')
 
 
+# 실기 2026-09-26 ABC 주문서(get_page PAGE TEXT 발췌) — 영문명만 보이고 모델코드·상품번호가 없다
+ABC_FORM_198 = 'URL: https://abcmart.a-rt.com/order 주문서작성/결제 A-RT 배송 상품 휠라 DAZE RUN KD 210/ 1 개 840P 89,000 원 41,800 원'
+ABC_FORM_204 = (
+    'URL: https://abcmart.a-rt.com/order 주문서작성/결제 A-RT 배송 상품 나이키 WMNS NIKE AIR MAX INVIGOR 290/ 1 개 '
+    '1,350P 119,000 원 67,400 원'
+)
+
+
+def test_ABC_주문서가_영문명만_보여도_사이트_상품명으로_같은_상품이면_통과한다() -> None:
+    """job 198·204: 삼바 상품명의 한글·모델코드가 ABC 주문서에 없어 결제 직전에 멈췄다(오탐)."""
+    from samba_agent.agents.payer import order_form_mismatch
+
+    sku198 = '휠라 3XM02475H 봄신발 가을신발 데이즈 런 키즈 1010113096 [210]'
+    sku204 = '나이키 749866 101 봄신발 가을신발 우먼스 에어 맥스 인비고 1010120521 [290]'
+    # 예전 규칙(삼바 상품명만)은 여전히 못 맞춘다 — 사유에 단어가 남는다
+    assert '3XM02475H' in (order_form_mismatch(ABC_FORM_198, sku198, '210', '210') or '')
+    assert '인비고' in (order_form_mismatch(ABC_FORM_204, sku204, '290', '290') or '')
+    # 구매 스냅샷이 상품 페이지에서 읽은 이름(한글+영문)으로 잇는다
+    assert order_form_mismatch(ABC_FORM_198, sku198, '210', '210', site_name='데이즈 런 키즈 DAZE RUN KD') is None
+    assert (
+        order_form_mismatch(
+            ABC_FORM_204, sku204, '290', '290', site_name='나이키 에어 맥스 인비고 WMNS NIKE AIR MAX INVIGOR'
+        )
+        is None
+    )
+    # 사이즈가 다르면 이름이 맞아도 막는다
+    assert '옵션' in (
+        order_form_mismatch(ABC_FORM_198, sku198, '220', '220', site_name='데이즈 런 키즈 DAZE RUN KD') or ''
+    )
+
+
+def test_사이트_상품명이_주문과_다른_상품이면_그것으로_통과시키지_않는다() -> None:
+    from samba_agent.agents.payer import order_form_mismatch
+
+    sku = '나이키 IB1857 201 봄신발 가을신발 코르테즈 스웨이드'
+    adidas_form = '주문서 아디다스 아디스타 컨트롤 5 EL 칠드런 240 / 1개 89,000원 70,900원'
+    # 2026-09-26 사고: 구매는 코르테즈를 봤는데 주문서는 앞 작업의 아디다스 — 사이트 상품명도 주문서에 없다
+    assert order_form_mismatch(adidas_form, sku, '240', '240', site_name='나이키 코르테즈 스웨이드 NIKE CORTEZ SUEDE')
+    # 스냅샷이 엉뚱한 상품(아디스타)을 열었어도 그 이름이 주문 상품명과 달라 잇지 않는다
+    assert order_form_mismatch(adidas_form, sku, '240', '240', site_name='아디다스 아디스타 컨트롤 5 EL 칠드런')
+    # 흔한 단어 하나('에어')만 겹치는 다른 모델도 잇지 않는다
+    assert order_form_mismatch(
+        'A-RT 배송 상품 나이키 AIR FORCE 1 07 290/ 1 개',
+        '나이키 우먼스 에어 맥스 인비고',
+        '290',
+        '290',
+        site_name='나이키 에어 포스 1 07 AIR FORCE',
+    )
+
+
+def test_상품번호가_주문서나_탭_주소에_있으면_같은_상품이다() -> None:
+    from samba_agent.agents.payer import order_form_mismatch
+
+    form = 'URL: https://www.musinsa.com/order/order-form?goodsNo=5111643 JANE BLACK 250 1개'
+    assert order_form_mismatch(form, '매장정품 JQ6445 삼바 제인', '250', '250', product_no='5111643') is None
+    # 번호 일부만 겹치는 건 아니다
+    assert order_form_mismatch(form.replace('5111643', '51116430'), '삼바 제인', '250', product_no='5111643')
+    # 번호가 맞아도 사이즈가 다르면 막는다
+    assert '옵션' in (order_form_mismatch(form, '삼바 제인', '260', product_no='5111643') or '')
+
+
+@respx.mock
+def test_결제_전_주문서_대조는_인계받은_사이트_상품명을_쓴다(reg):
+    """ABC job 204 재현: 삼바 상품명으론 못 맞추지만 구매 인계 product_name 으로 같은 상품임을 확인한다."""
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page(ABC_FORM_204))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    a = agent(reg)
+    asg = assignment(
+        reg,
+        dry_run=True,
+        handoff={'selected': '290', 'product_name': '나이키 에어 맥스 인비고 WMNS NIKE AIR MAX INVIGOR'},
+    )
+    order = asg.order.model_copy(
+        update={'sku': '나이키 749866 101 봄신발 가을신발 우먼스 에어 맥스 인비고 1010120521 [290]', 'option': '290'}
+    )
+    a._check_order_form(asg.model_copy(update={'order': order}))  # 막히지 않는다
+    with pytest.raises(AgentFailure):
+        a._check_order_form(
+            asg.model_copy(update={'order': order, 'handoff': {'selected': '290'}})
+        )  # 사이트 상품명이 없으면 예전처럼 막는다
+
+
 def test_상품번호를_주소에서_뽑는다() -> None:
     from samba_agent.agents.payer import product_no_of
 
