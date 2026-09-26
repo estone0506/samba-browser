@@ -1054,3 +1054,13 @@ def test_주문서_대조는_구매가_만든_주문서_탭으로_옮긴_뒤_한
         pass  # 'ok' 화면은 대조에 실패해도 된다 — 순서만 본다
     assert calls[:2] == ['switch_tab', 'get_page']
     assert json.loads(switch.calls[0].request.content)['args']['id'] == '42'
+
+
+def test_이미_결제_판정은_이번_사이트의_주문_완료_탭만_본다():
+    # 실기 2026-09-27: 남아 있던 ABC 주문 완료 탭 하나로 무신사 결제 5건이 모두 멈췄다
+    from samba_agent.agents.payer import looks_already_paid
+
+    tabs = '[{"id":"7","url":"https://abcmart.a-rt.com/order/complete?orderNo=2026092638789"}]'
+    assert not looks_already_paid(tabs, '', 'musinsa.com')
+    assert looks_already_paid(tabs, '', 'a-rt.com')
+    assert looks_already_paid(tabs, '')

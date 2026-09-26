@@ -53,9 +53,16 @@ _PAID_URL_RE = re.compile(
 _PAID_TEXT = ('주문이 완료', '주문완료', '주문 완료')
 
 
-def looks_already_paid(list_tabs_output: str, page: str) -> bool:
-    """재진입 때 이미 결제가 끝났는지(재결제 금지). 주문 완료 탭이 있거나 완료 문구+주문번호가 함께 보이면 True."""
-    if _PAID_URL_RE.search(list_tabs_output or ''):
+def looks_already_paid(list_tabs_output: str, page: str, host: str | None = None) -> bool:
+    """재진입 때 이미 결제가 끝났는지(재결제 금지). 주문 완료 탭이 있거나 완료 문구+주문번호가 함께 보이면 True.
+
+    host 가 있으면 그 사이트의 주문 완료 탭만 본다 — 다른 사이트의 지난 주문 완료 탭이 남아 있으면
+    모든 결제가 멈췄다(실기 2026-09-27: ABC 주문 완료 탭 하나로 무신사 5건 pay_interrupted).
+    """
+    urls = re.findall(r'https?://[^\s"<>]+', list_tabs_output or '')
+    if host:
+        urls = [u for u in urls if host in u.split('/')[2]]
+    if any(_PAID_URL_RE.search(u) for u in urls):
         return True
     return any(t in page for t in _PAID_TEXT) and '주문번호' in page
 
@@ -862,7 +869,8 @@ class PayerAgent(AgentBase):
             listed = self.tool('list_tabs')
         except AgentFailure:
             listed = ''
-        if looks_already_paid(listed, before):
+        buy_src = default_sources().by_id(str(a.handoff.get('buy_source') or a.order.source))
+        if looks_already_paid(listed, before, buy_src.login_host if buy_src else None):
             self.note('결제 전 확인', mask_text(before[:200]))
             raise AgentFailure(
                 'needs_human',
