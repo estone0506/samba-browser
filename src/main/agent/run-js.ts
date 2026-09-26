@@ -128,6 +128,10 @@ const BOOTSTRAP = `(() => {
     // 계정별 프로필 탭을 한 턴에 여러 개 열 때 쓴다(계정 비교를 로그아웃 없이 병렬로)
     open: (opts) => invoke('tabs.open', [opts])
   }
+  // 제휴 적립 링크 — 애드픽: 상품 주소 → {ok, trackinglink, percent, …}. 프로필의 애드픽 로그인으로 받는다(10초쯤 걸린다)
+  g.affiliate = {
+    adpick: (url, profile) => invoke('affiliate.adpick', [url, profile])
+  }
   // 전역 객체를 손에 쥐지 못하게 한다(마지막에 지운다 — 위에서는 g 로 썼다)
   delete g.globalThis
 })()`

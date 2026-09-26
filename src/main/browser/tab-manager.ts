@@ -424,6 +424,12 @@ export class TabManager {
     return this.tabs.find((t) => t.id === id) ?? null
   }
 
+  /** 프로필의 세션(탭과 같은 파티션). 아직 탭을 연 적 없는 프로필이어도 같은 저장소를 쓴다 */
+  sessionForProfile(profile: string): Session {
+    const partition = `${this.partitionPrefix}${profile}`
+    return this.partitionSessions.get(partition) ?? session.fromPartition(partition)
+  }
+
   /** 이 세션을 쓰는 프로필 이름. 탭 파티션이 아니면(기본 세션) 'default' */
   profileOfSession(ses: Session): string {
     for (const [partition, s] of this.partitionSessions) {

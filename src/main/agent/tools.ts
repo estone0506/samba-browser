@@ -2,6 +2,7 @@ import { PAYMENT_PROVIDER_ACCOUNT_HOST, payPriorityOf, visibleTags } from '../..
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import type { TabManager, Tab } from '../browser/tab-manager'
+import { adpickTrackingLink } from './affiliate'
 import { pageBridge } from '../browser/page-bridge'
 import type { KeypadLayout, LoginFieldsResult } from '../browser/page-bridge'
 import { serializeSnapshot } from '../../shared/snapshot'
@@ -1781,6 +1782,12 @@ overlays left: ${after.length}${kept}`
           const t = ctx.tabs.create({ url, ...(profile ? { profile } : {}) })
           return `ok: tab ${t.id}${profile ? ` (profile ${profile})` : ''}`
         }
+        case 'affiliate.adpick': {
+          // 프로필 세션의 애드픽 로그인으로 적립 링크를 받는다(값에 쿠키·계정 정보는 없다)
+          const url = typeof args[0] === 'string' ? args[0] : ''
+          const profile = typeof args[1] === 'string' && args[1] ? args[1] : 'default'
+          return JSON.stringify(await adpickTrackingLink(ctx.tabs.sessionForProfile(profile), url))
+        }
         default:
           return RUN_JS_NO_SECRET_TOOLS
       }
@@ -1795,7 +1802,7 @@ overlays left: ${after.length}${kept}`
       'page.type(id,text,submit), page.select(id,value), page.scroll(dir,id), page.text(id), ' +
       'page.find(query), page.idOf(text,nth) -> id or -1, page.clickText(text,nth), ' +
       'page.dismissOverlay(), page.url(), page.title(), page.waitFor(textOrRegex, ms) -> true/false (use instead of fixed sleep), ' +
-      'tabs.list()/switch(id)/close(id)/open({url, profile}), sleep(ms), log(...). ' +
+      'tabs.list()/switch(id)/close(id)/open({url, profile}), affiliate.adpick(productUrl, profile) -> JSON string {ok,trackinglink,percent}, sleep(ms), log(...). ' +
       'Use log() and return a value; both come back to you. ' +
       'fill_secret, login and the phone tools are NOT available here - call those tools directly.',
     {
