@@ -109,13 +109,44 @@ PAY_RESULT_WAIT_MS = 4000
 # 키패드가 뜰 때까지 팝업을 다시 보는 횟수·간격(최대 약 20초)
 KEYPAD_POLL_TRIES = 10
 KEYPAD_POLL_WAIT_MS = 2000
-# 아직 키패드·비밀번호 칸이 아닌 화면에서 앱이 돌려주는 거절 — 기다렸다 다시 본다
-_KEYPAD_NOT_READY = ('target is not a secret input', 'not found', 'no active tab')
+# fill_secret 을 부르는 총 횟수 상한(키패드 한 번 입력 기준) — 탭 여럿을 돌아도 이것을 넘지 않는다.
+# 실기 2026-09-27 ABC 214·218: 키패드가 아닌 창에 10회씩 불렀다(모두 거절, 입력 없음)
+KEYPAD_FILL_MAX_CALLS = 10
+# 아직 키패드·비밀번호 칸이 아닌 화면에서 앱이 돌려주는 거절 — 아무것도 누르지 않은 응답만 다시 본다
+_KEYPAD_NOT_READY = ('target is not a secret input', 'no active tab', 'element not found')
+# 'not found' 중에서도 계정·저장 비밀번호가 없다는 응답은 기다려도 바뀌지 않는다 — 다시 부르지 않는다
+_KEYPAD_NOT_FOUND_FINAL = ('password', 'account')
 
 
 def _keypad_not_ready(out: str) -> bool:
+    """키패드가 아직 없어 앱이 아무것도 누르지 않은 응답인가(이때만 다시 부른다).
+
+    그 밖의 응답(ok·handoff·이미 입력함·모르는 문구)은 앱이 숫자를 눌렀을 수 있으므로 다시 부르지 않는다 —
+    결과를 모른 채 다시 넣으면 이중결제·결제 수단 잠금 위험이다."""
     low = out.lower()
-    return any(k in low for k in _KEYPAD_NOT_READY)
+    if any(k in low for k in _KEYPAD_NOT_READY):
+        return True
+    return 'not found' in low and not any(k in low for k in _KEYPAD_NOT_FOUND_FINAL)
+
+
+# 결제창이 결제 대신 로그인 화면을 띄운 경우(네이버페이 창인데 프로필의 네이버 로그인이 풀림 — 실기 2026-09-27
+# ABC 214·218). 여기엔 결제 비밀번호를 넣지 않고 바로 사람에게 넘긴다
+_LOGIN_HOST_RE = re.compile(r'(^|\.)nid\.naver\.com$|(^|\.)id\.payco\.com$|(^|\.)accounts\.kakao\.com$')
+_LOGIN_PATH_RE = re.compile(r'login', re.IGNORECASE)
+
+
+def _is_login_url(url: str) -> bool:
+    """결제창 주소가 로그인 화면인가(네이버·페이코·카카오 로그인 호스트, 또는 경로에 login)."""
+    host = _host_of(url)
+    if not host:
+        return False
+    if _LOGIN_HOST_RE.search(host):
+        return True
+    try:
+        path = urlparse(url).path
+    except ValueError:
+        return False
+    return bool(_LOGIN_PATH_RE.search(path))
 
 
 # PC(웹) 결제창에서 비밀번호 키패드로 끝나는 간편결제 — 폰 승인을 쓰지 않는다(사용자 2026-09-25: 페이코는 PC 결제,
@@ -567,6 +598,7 @@ class PayerAgent(AgentBase):
         seen_popup = False
         for _ in range(PAY_BUTTON_POLL_TRIES):
             popups, _active = self._list_tabs_popups()
+            self._stop_if_login_popup(popups, a)
             # 웹 결제창 — 사이트 결제창과 PC 에서 끝내는 간편결제 창(네이버페이·페이코)의 '결제하기'를 누른다
             web = [
                 p
@@ -597,34 +629,7 @@ class PayerAgent(AgentBase):
         provider = web_pay_provider(card)
         account = str(a.handoff.get('account') or a.order.account or '')
         self.step('payer: 결제 비밀번호(앱 입력)')
-        # 키패드는 결제하기 뒤 늦게, 다른 팝업에 뜰 수 있다(실기: 무신사페이 — 활성 탭이 키패드가 아니라 거절).
-        # 앱은 키패드·비밀번호 칸이 실제로 있을 때만 누르고 아니면 아무것도 누르지 않고 거절하므로,
-        # 최근 팝업부터 돌며 뜰 때까지 기다렸다 다시 시도한다. 한 번 누른 키패드는 앱이 다시 누르지 않는다
-        out = ''
-        for attempt in range(KEYPAD_POLL_TRIES):
-            popups, _active = self._list_tabs_popups()
-            targets = [str(p['id']) for p in reversed(popups) if p.get('id')] or ['']
-            for tab_id in targets:
-                if tab_id:
-                    self.tool('switch_tab', id=tab_id)
-                found = self.tool('find_elements', query=KEYPAD_QUERY)
-                try:
-                    out = self.tool(
-                        'fill_secret',
-                        elementId=_element_id(found) or 0,
-                        itemType='password',
-                        **({'provider': provider} if provider else {}),
-                        **({'accountLabel': account} if account else {}),
-                    )
-                except AgentFailure as e:
-                    # 앱 거절은 예외로 온다 — 문구로 바꿔 '아직 키패드 아님'이면 다시 본다
-                    out = e.reason
-                if not _keypad_not_ready(out):
-                    break
-            if not _keypad_not_ready(out):
-                break
-            if attempt + 1 < KEYPAD_POLL_TRIES:
-                self.tool('wait', ms=KEYPAD_POLL_WAIT_MS)
+        out = self._press_keypad(a, provider, account)
         self.note('키패드 입력', mask_text(out[:200]))
         low = out.lower()
         if low.startswith('refused') or 'not found' in low or 'ambiguous' in low:
@@ -634,6 +639,76 @@ class PayerAgent(AgentBase):
                 FailReason.PERMISSION_DENIED,
             )
         self.tool('wait', ms=PAY_RESULT_WAIT_MS)
+
+    def _stop_if_login_popup(self, popups: list[dict[str, object]], a: Assignment) -> None:
+        """결제창이 로그인 화면이면 멈춘다 — 결제 비밀번호를 로그인 칸에 넣거나 헛되이 반복하지 않는다.
+
+        실기 2026-09-27 ABC 214·218: 프로필의 네이버 로그인이 풀려 네이버페이 창이 nid.naver.com 로그인으로 갔고,
+        payer 는 '결제하기'·키패드를 못 찾은 채 fill_secret 을 10회씩 부른 뒤 '결제 확인 안 됨'으로 멈췄다."""
+        for p in popups:
+            url = str(p.get('url') or '')
+            if _is_login_url(url):
+                profile = str(a.handoff.get('account') or a.order.account or '')
+                self.note('결제창', mask_text(f'로그인 화면: {_host_of(url)}'))
+                raise AgentFailure(
+                    'needs_human',
+                    f'결제창이 로그인 화면이다({_host_of(url)}) — 프로필 {profile or "-"} 에서 결제 앱(네이버 등)에 '
+                    '먼저 로그인해야 한다. 결제 비밀번호는 넣지 않았다(결제 안 됨)',
+                    FailReason.PERMISSION_DENIED,
+                )
+
+    def _press_keypad(
+        self, a: Assignment, provider: str | None, account: str, dry_run_digits: int | None = None
+    ) -> str:
+        """웹 결제 키패드에 앱이 결제 비밀번호를 넣게 한다(fill_secret). 앱 응답 문구를 돌려준다.
+
+        키패드는 결제하기 뒤 늦게, 다른 팝업에 뜰 수 있다 — 최근 팝업부터 돌며 뜰 때까지 기다렸다 다시 부른다.
+        다시 부르는 것은 앱이 '아직 키패드 아님'(아무것도 누르지 않음)으로 답한 때뿐이다. 그 밖의 응답이 한 번이라도
+        오면 결과가 무엇이든 다시 부르지 않는다(이중결제·결제 수단 잠금 방지). 부르는 총 횟수는
+        KEYPAD_FILL_MAX_CALLS 를 넘지 않고, 끝까지 키패드가 없으면 결제 확인으로 가지 않고 바로 멈춘다."""
+        out = ''
+        calls = 0
+        entered = False  # 앱이 '아직 아님'이 아닌 답을 한 번이라도 했다 — 이후 절대 다시 부르지 않는다
+        for attempt in range(KEYPAD_POLL_TRIES):
+            popups, _active = self._list_tabs_popups()
+            self._stop_if_login_popup(popups, a)
+            targets = [str(p['id']) for p in reversed(popups) if p.get('id')] or ['']
+            for tab_id in targets:
+                if calls >= KEYPAD_FILL_MAX_CALLS:
+                    break
+                if tab_id:
+                    self.tool('switch_tab', id=tab_id)
+                found = self.tool('find_elements', query=KEYPAD_QUERY)
+                calls += 1
+                try:
+                    out = self.tool(
+                        'fill_secret',
+                        elementId=_element_id(found) or 0,
+                        itemType='password',
+                        **({'dryRunDigits': dry_run_digits} if dry_run_digits else {}),
+                        **({'provider': provider} if provider else {}),
+                        **({'accountLabel': account} if account else {}),
+                    )
+                except AgentFailure as e:
+                    # 앱 거절은 예외로 온다 — 문구로 바꿔 '아직 키패드 아님'이면 다시 본다
+                    out = e.reason
+                if not _keypad_not_ready(out):
+                    entered = True
+                    break
+            if entered or calls >= KEYPAD_FILL_MAX_CALLS:
+                break
+            if attempt + 1 < KEYPAD_POLL_TRIES:
+                self.tool('wait', ms=KEYPAD_POLL_WAIT_MS)
+        if not entered:
+            # 키패드가 끝내 없었다 — 앱은 아무것도 누르지 않았다. 결제 확인으로 넘기면 '결제 여부 불명'으로 오판한다
+            self.note('키패드 입력', mask_text(f'키패드 없음({calls}회 확인): {out[:160]}'))
+            raise AgentFailure(
+                'needs_human',
+                f'결제 비밀번호 키패드가 뜨지 않았다({calls}회 확인) — 비밀번호를 넣지 않았다(결제 안 됨): '
+                f'{mask_text(out[:100])}',
+                FailReason.UNKNOWN,
+            )
+        return out
 
     def _confirm_paid(self, a: Assignment, card: str) -> AgentResult:
         """결제 뒤 성공 확인 — 완료 화면 문구, 없으면(ABC·그랜드스테이지) 주문내역의 방금 생긴 주문으로."""
@@ -772,35 +847,8 @@ class PayerAgent(AgentBase):
             # 결제 앱이 없다 — 사이트 결제창의 웹 키패드다. 요소 번호는 스키마가 요구해서 찾는다
             # 키패드는 결제하기 뒤 늦게·다른 팝업에 뜬다 — 실결제 경로(_web_pay)처럼 최근 팝업부터 다시 본다
             # (실기: 29CM 무신사페이 시험 입력이 키패드 전에 눌려 'target is not a secret input')
-            label = a.handoff.get('account') or a.order.account
-            out = ''
-            for attempt in range(KEYPAD_POLL_TRIES):
-                popups, _active = self._list_tabs_popups()
-                for tab_id in [str(p['id']) for p in reversed(popups) if p.get('id')] or ['']:
-                    if tab_id:
-                        self.tool('switch_tab', id=tab_id)
-                    found = self.tool('find_elements', query=KEYPAD_QUERY)
-                    try:
-                        out = self.tool(
-                            'fill_secret',
-                            elementId=_element_id(found) or 0,
-                            itemType='password',
-                            dryRunDigits=digits,
-                            **(
-                                {'provider': web_pay_provider(card)}
-                                if web_pay_provider(card)
-                                else {}
-                            ),
-                            **({'accountLabel': label} if label else {}),
-                        )
-                    except AgentFailure as e:
-                        out = e.reason
-                    if not _keypad_not_ready(out):
-                        break
-                if not _keypad_not_ready(out):
-                    break
-                if attempt + 1 < KEYPAD_POLL_TRIES:
-                    self.tool('wait', ms=KEYPAD_POLL_WAIT_MS)
+            label = str(a.handoff.get('account') or a.order.account or '')
+            out = self._press_keypad(a, web_pay_provider(card), label, dry_run_digits=digits)
         self.note('시험 입력', mask_text(out[:200]))
         if not any(m in out.lower() for m in DRY_RUN_MARKERS):
             # 시험 입력이라고 했는데 시험 입력 응답이 아니다 — 결제가 진행됐을 수 있다

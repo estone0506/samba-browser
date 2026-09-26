@@ -1155,3 +1155,105 @@ def test_같은_사이트_구매도_결제_진입_expect_name_은_사이트_상�
     a = assignment(reg, dry_run=True, handoff={'product_name': '데이즈 런 키즈 DAZE RUN KD'})
     exp = _enter_expect(reg, a, '주문서 휠라 DAZE RUN KD 210/ 1 개')
     assert exp['name'] == '데이즈 런 키즈 DAZE RUN KD'
+
+
+# 실기 2026-09-27 ABC 214·218 — 네이버페이 창이 네이버 로그인 화면으로 가 키패드가 없었다
+NAVER_LOGIN_POPUP = 'https://nid.naver.com/nidlogin.login?url=https%3A%2F%2Fm.pay.naver.com%2F'
+NAVER_KEYPAD_POPUP = 'https://m.pay.naver.com/instantPay/nfPayment/abc?isOnAuthorize=true'
+
+
+def _popups(*urls: str) -> httpx.Response:
+    targets: list[dict[str, object]] = [
+        {'id': 't1', 'kind': 'tab', 'title': 'ABC', 'url': 'https://abcmart.a-rt.com/order', 'active': True}
+    ]
+    for i, u in enumerate(urls):
+        targets.append({'id': f'p{i}', 'kind': 'popup', 'title': '네이버페이', 'url': u, 'openerId': 't1'})
+    return page(json.dumps(targets, ensure_ascii=False))
+
+
+def _web_pay_agent(reg, monkeypatch):
+    from samba_agent.agents import payer as payer_mod
+
+    monkeypatch.setattr(payer_mod, 'KEYPAD_POLL_WAIT_MS', 1)
+    monkeypatch.setattr(payer_mod, 'PAY_BUTTON_POLL_WAIT_MS', 1)
+    monkeypatch.setattr(payer_mod, 'PAY_POPUP_WAIT_MS', 1)
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/switch_tab').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/run_js').mock(return_value=page('{"clicked": false}'))
+    a = agent(reg)
+    a._dry_run = False
+    return a
+
+
+@respx.mock
+def test_결제창이_네이버_로그인_화면이면_비밀번호를_넣지_않고_바로_멈춘다(reg, monkeypatch):
+    a = _web_pay_agent(reg, monkeypatch)
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=_popups(NAVER_LOGIN_POPUP))
+    respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[4] link "비밀번호 찾기"'))
+    fill = respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('refused: target is not a secret input'))
+    get_page = respx.post(f'{URL}/tool/get_page').mock(return_value=page(''))
+    with pytest.raises(AgentFailure) as e:
+        a._web_pay(assignment(reg, dry_run=False, card='네이버페이', handoff={'account': 'buyer02'}))
+    assert e.value.status == 'needs_human'
+    assert '로그인' in e.value.reason and 'buyer02' in e.value.reason
+    assert not fill.called
+    assert not get_page.called
+
+
+@respx.mock
+def test_키패드가_끝내_없으면_상한까지만_부르고_결제확인으로_가지_않는다(reg, monkeypatch):
+    from samba_agent.agents.payer import KEYPAD_FILL_MAX_CALLS
+
+    a = _web_pay_agent(reg, monkeypatch)
+    # 결제창이 둘이어도 총 호출은 상한을 넘지 않는다
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=_popups(NAVER_KEYPAD_POPUP, NAVER_KEYPAD_POPUP))
+    respx.post(f'{URL}/tool/find_elements').mock(return_value=page(''))
+    fill = respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('refused: target is not a secret input'))
+    get_page = respx.post(f'{URL}/tool/get_page').mock(return_value=page(''))
+    with pytest.raises(AgentFailure) as e:
+        a._web_pay(assignment(reg, dry_run=False, card='네이버페이'))
+    assert e.value.status == 'needs_human'
+    assert '키패드가 뜨지 않았다' in e.value.reason and '결제 안 됨' in e.value.reason
+    assert fill.call_count == KEYPAD_FILL_MAX_CALLS
+    assert not get_page.called
+
+
+@pytest.mark.parametrize(
+    'answer',
+    [
+        'handoff: 결제 비밀번호는 직접 눌러 주세요',
+        'something unexpected from the app',
+        'not found: no payment password (naver) saved for this account',
+        'refused: the app already entered the payment password once in this window during this task.',
+    ],
+)
+@respx.mock
+def test_아직_키패드_아님_이외의_답이_한번이라도_오면_다시_부르지_않는다(reg, monkeypatch, answer):
+    a = _web_pay_agent(reg, monkeypatch)
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=_popups(NAVER_KEYPAD_POPUP, NAVER_KEYPAD_POPUP))
+    # '결제하기'는 없고(키패드 창) 비밀번호 검색에만 요소가 잡힌다
+    respx.post(f'{URL}/tool/find_elements').mock(
+        side_effect=lambda req: page('' if '결제하기' in req.content.decode('utf-8') else '[3] button "1"')
+    )
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page(''))
+    fill = respx.post(f'{URL}/tool/fill_secret').mock(return_value=page(answer))
+    try:
+        a._web_pay(assignment(reg, dry_run=False, card='네이버페이'))
+    except AgentFailure:
+        pass  # 멈추든 넘어가든 — 다시 누르지만 않으면 된다
+    assert fill.call_count == 1
+
+
+def test_키패드_아님_판정은_아무것도_누르지_않은_응답만이다() -> None:
+    from samba_agent.agents.payer import _is_login_url, _keypad_not_ready
+
+    assert _keypad_not_ready('fill_secret 거절: refused: target is not a secret input')
+    assert _keypad_not_ready('Error: element not found')
+    assert not _keypad_not_ready('not found: no payment password (naver) saved for this account')
+    assert not _keypad_not_ready('account not found: use list_accounts')
+    assert not _keypad_not_ready('handoff: 결제 비밀번호는 직접 눌러 주세요')
+    assert _is_login_url(NAVER_LOGIN_POPUP)
+    assert not _is_login_url(NAVER_KEYPAD_POPUP)
+    assert not _is_login_url('https://pay.naver.com/authentication/pw/check?token=abc')
+    assert not _is_login_url('')
