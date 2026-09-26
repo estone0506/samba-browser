@@ -726,6 +726,8 @@ ALREADY_SIGNED_IN = 'already signed in'
 LOGIN_SUBMITTED = 'submitted'
 # 페이지 이동·로그인 제출 뒤 화면이 안정되길 기다리는 시간
 _LOGIN_SETTLE_MS = 2500
+# 앱 로그인 도구가 로그인 상태도 입력칸도 못 찾았을 때의 응답 머리
+LOGIN_FIELDS_NOT_FOUND = 'fields not found'
 # 같은 소싱처에서 다른 계정으로 로그인을 이어 갈 때의 최소 간격(초). 연달아 바꾸면 사이트가 차단한다(실기: SSG)
 _ACCOUNT_SWITCH_GAP_S = 60.0
 
@@ -839,6 +841,12 @@ class BuyerAgent(AgentBase):
         self.tool('new_tab', url=home, profile=account)
         self.tool('wait', ms=_LOGIN_SETTLE_MS)
         out = self.tool('login', accountLabel=account).strip()
+        if out.startswith(LOGIN_FIELDS_NOT_FOUND):
+            # 계정 여럿을 동시에 돌려 앱이 바쁠 때 홈이 다 뜨기 전에 불리면 로그인 상태도 입력칸도 못 본다
+            # (실기 2026-09-26: 로그인된 계정 4개가 모두 'fields not found'). 홈을 다시 열고 한 번 더 본다
+            self.tool('new_tab', url=home, profile=account)
+            self.tool('wait', ms=_LOGIN_SETTLE_MS * 2)
+            out = self.tool('login', accountLabel=account).strip()
         if out.startswith(ALREADY_SIGNED_IN):
             self.note('로그인', '이미 로그인돼 있음')
             return
