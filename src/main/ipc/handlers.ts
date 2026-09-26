@@ -1,5 +1,6 @@
 import { isSupabaseAnonKey, isSupabaseProjectUrl, type AuthState } from '../../shared/sync'
 import type { SyncBackend } from '../sync/backend'
+import { enableExtensionServiceWorkerSupport } from '../extensions/cookies-bridge'
 import { ChatSessionStore } from '../agent/chat-session'
 import {
   app,
@@ -1160,12 +1161,15 @@ export function registerIpc(
   // === 확장(압축 해제된 크롬 확장 폴더) — 이 블록만 따로 추가한다 ======================
   // 기본 세션에 걸고, 작업공간 파티션 세션이 새로 생기면 같은 확장을 그 세션에도 건다.
   // 로드 실패는 항목별 오류 문자열로만 남고 앱을 멈추지 않는다
+  // 확장 서비스워커에 없는 chrome.cookies 보충을 확장 로드보다 먼저 건다(기본 세션)
+  enableExtensionServiceWorkerSupport(session.defaultSession, join(__dirname, '../preload/extension-sw.js'))
   const extensions = new ExtensionManager(
     createSessionExtensionHost(session.defaultSession),
     settings
   )
   void extensions.loadSaved().catch((e: unknown) => console.error('저장된 확장 로드 실패', e))
   tabs.setSessionHook((ses, partition) => {
+    enableExtensionServiceWorkerSupport(ses, join(__dirname, '../preload/extension-sw.js'))
     // 파티션 이름을 함께 넘긴다 — 같은 세션이 두 번 들어와도 한 번만 붙는다
     void extensions
       .attachHost(createSessionExtensionHost(ses), partition)

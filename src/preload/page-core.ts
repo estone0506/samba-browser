@@ -1526,6 +1526,14 @@ export function checkByLabel(text: string): string {
     if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') continue
     if (target.checked) return 'already'
     label.click()
+    // 커스텀 체크박스는 라벨 클릭을 자기 처리기로 되돌리기도 한다(실기: 페이코 '전체 동의'가 failed) —
+    // 안 켜졌으면 체크박스 자체를 누르고, 그래도 안 되면 값을 켜고 변경 알림을 보낸다
+    if (!target.checked) target.click()
+    if (!target.checked) {
+      target.checked = true
+      target.dispatchEvent(new Event('input', { bubbles: true }))
+      target.dispatchEvent(new Event('change', { bubbles: true }))
+    }
     return target.checked ? 'checked' : 'failed'
   }
   return 'not-found'

@@ -24,3 +24,13 @@ describe('checkByLabel', () => {
     expect(checkByLabel('개인정보 동의')).toBe('not-found')
   })
 })
+
+describe('checkByLabel — 라벨 클릭을 되돌리는 커스텀 체크박스', () => {
+  it('라벨 클릭이 먹지 않아도 체크박스를 켠다', () => {
+    document.body.innerHTML = `<input type="checkbox" id="c" style="display:none"><label for="c">전체 동의</label>`
+    // 페이지 처리기가 라벨 클릭을 막는다
+    document.querySelector('label')!.addEventListener('click', (e) => e.preventDefault())
+    expect(checkByLabel('전체 동의')).toBe('checked')
+    expect((document.getElementById('c') as HTMLInputElement).checked).toBe(true)
+  })
+})

@@ -102,6 +102,20 @@ export function declaresCookies(manifest: unknown): boolean {
   return Array.isArray(perms) && perms.includes('cookies')
 }
 
+// 이미 보충을 건 세션(같은 세션에 preload 를 두 번 등록하지 않는다)
+const enabledSessions = new WeakSet<object>()
+
+/**
+ * 세션에 확장 서비스워커 보충(preload + chrome.cookies 처리기)을 한 번만 건다.
+ * 확장을 로드하기 **전에** 불러야 한다 — 이미 뜬 서비스워커에는 preload 가 붙지 않는다(실기: 기본 세션에 없어 그대로 죽었다)
+ */
+export function enableExtensionServiceWorkerSupport(ses: Session, preloadPath: string): void {
+  if (enabledSessions.has(ses)) return
+  enabledSessions.add(ses)
+  ses.registerPreloadScript({ type: 'service-worker', filePath: preloadPath })
+  installExtensionCookiesBridge(ses)
+}
+
 // 이미 처리기를 건 서비스워커(같은 워커에 두 번 걸면 Electron 이 오류를 낸다)
 const wired = new WeakSet<object>()
 
