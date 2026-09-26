@@ -19,6 +19,7 @@ import { useUiStore } from '@renderer/stores/uiStore'
 import { cn } from '@renderer/lib/utils'
 import { TranslatePopover } from './TranslatePopover'
 import { CaptureMenu } from './CaptureMenu'
+import { BookmarkStar } from './BookmarkStar'
 
 // 이펙트에서 setState 하면 리렌더가 겹치므로, 렌더 도중 활성 탭 URL 변화를 감지해 상태를 맞춤
 function AddressBarButton({
@@ -90,6 +91,8 @@ export function AddressBar(): React.JSX.Element {
           placeholder={t('address.placeholder')}
           className="flex-1 bg-transparent text-[12.5px] outline-none"
         />
+        {/* 크롬처럼 주소창 안 오른쪽 별 — 지금 페이지 북마크 추가/해제 */}
+        <BookmarkStar url={activeTab?.url} title={activeTab?.title} />
       </form>
       <TranslatePopover />
       <CaptureMenu />

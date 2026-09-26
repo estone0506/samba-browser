@@ -264,7 +264,9 @@
     "pc": "PC",
     "mobile": "모바일",
     "profile": "프로필",
-    "home": "홈"
+    "home": "홈",
+    "bookmarkAdd": "이 페이지 북마크",
+    "bookmarkRemove": "북마크에서 삭제"
   },
   "tab": {
     "new": "새 탭",

@@ -264,7 +264,9 @@
     "pc": "PC",
     "mobile": "Mobile",
     "profile": "Profile",
-    "home": "Home"
+    "home": "Home",
+    "bookmarkAdd": "Bookmark this page",
+    "bookmarkRemove": "Remove bookmark"
   },
   "tab": {
     "new": "New Tab",
