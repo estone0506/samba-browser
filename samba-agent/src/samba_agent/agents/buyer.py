@@ -1990,7 +1990,10 @@ class BuyerAgent(AgentBase):
         cost = _as_float(snap.get('cost'))
         # 실제 결제액(적립·배송비 보정 전) — 스냅샷이 주면 기록 메모에 싣는다. 0 이면 모름
         paid = float(snap.get('pay_amount') or 0)
-        margin = self._margin(a.order, cost, float(snap.get('margin_pct') or 0))
+        # 마진은 삼바에 기록할 배송비(포이즌 외 까대기 2,300원)까지 넣고 본다 — 빼고 보면 −0.5% 적자 건이
+        # +1.3~1.6% 로 보여 결제됐다(실기 2026-09-26 174·181)
+        fee = shipping_fee_for(a.order, self.order_type_of(a.order, snap))
+        margin = self._margin(a.order, cost + fee, float(snap.get('margin_pct') or 0))
         self.step(f'{self.spec.name}: 결제 직전까지 준비 완료')
         return AgentResult(
             status='ok',

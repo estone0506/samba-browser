@@ -851,6 +851,20 @@ def test_정산금이_있으면_정산금_기준으로_마진을_계산한다(re
     assert not any('근사' in e.detail for e in out.evidence)
 
 
+def test_포이즌_외_까대기_마진은_배송비_2300원까지_넣고_본다(reg):
+    # 실기 2026-09-26 174·181: 배송비를 빼고 +1.3~1.6% 로 보고 결제했는데 실제 −0.5% 적자
+    from samba_agent.agents.buyer import shipping_fee_for
+
+    buyer = agent(reg, lambda p, m: m(choice='260', reason='일치'))
+    order = ORDER.model_copy(update={'sale_price': 100000, 'revenue': 81825, 'order_type': 'kkadaegi'})
+    fee = shipping_fee_for(order, 'kkadaegi')
+    assert fee == 2300
+    # (81,825 − 80,114 − 2,300) ÷ 100,000 = −0.6%
+    assert buyer._margin(order, 80114 + fee, 0) == -0.6
+    poison = order.model_copy(update={'seller': 'poison(x)'})
+    assert shipping_fee_for(poison, 'kkadaegi') == 0
+
+
 def test_주문_옵션과_맞는_후보만_남긴다():
     from samba_agent.agents.buyer import matching_options
 
