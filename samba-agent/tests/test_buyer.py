@@ -1451,3 +1451,53 @@ def test_슈마커_간편결제는_등록_현대카드로_보고_청구할인을
     rows = cheapest_quotes([{'method': '간편결제', 'card': None, 'cost': 69300}], None, {'site'}, '현대카드')
     assert rows[0]['card'] == '현대카드'
     assert rows[0]['cost'] == round(69300 * 0.973)
+
+
+@respx.mock
+def test_교차_비교_견적은_제_레인에서_해_이_사이트_주문서를_닫지_않는다(reg, monkeypatch):
+    """실기 2026-09-26 job 207: 29CM 1계정 견적의 '주문서 탭 닫기'가 레인 밖에서 돌아 무신사 주문서를 닫았다.
+
+    무신사가 더 싸 무신사로 살 때 배송지 스크립트가 주문서를 못 찾아 '배송지 입력 검증에 실패' 로 멈췄다.
+    """
+    mus = agent(reg, lambda p, m: m(choice='250', reason='일치'))
+    cm_spec = reg['buyer.cm29']
+    sib = BuyerAgent(
+        cm_spec,
+        BridgeClient(URL, 'a' * 64, allowed=cm_spec.tools, busy_wait_s=0.0),
+        lambda p, m: m(choice='250', reason='일치'),
+    )
+    mus.sibling = sib
+    mus.evidence = []
+    lanes: list[str | None] = []
+    closed_lanes: list[str | None] = []
+
+    def fake_find(self, a):
+        lanes.append(self.bridge._lane)
+        return 'https://www.29cm.co.kr/products/4014966'
+
+    def fake_pick(self, a, accounts):
+        lanes.append(self.bridge._lane)
+        return 'buyer01@naver.com', {'cost': 141541}
+
+    monkeypatch.setattr(BuyerAgent, '_find_same_product', fake_find)
+    monkeypatch.setattr(BuyerAgent, '_pick_cheapest', fake_pick)
+    monkeypatch.setattr(BuyerAgent, '_candidate_accounts', lambda self, a: ['buyer01@naver.com'])
+    monkeypatch.setattr(BuyerAgent, '_apply_payment_quotes', lambda self, a, acc, snap: None)
+
+    def on_js(request):
+        closed_lanes.append(request.headers.get('X-Samba-Lane'))
+        return page('ok')
+
+    respx.post(f'{URL}/tool/run_js').mock(side_effect=on_js)
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    a = assignment(reg).model_copy(
+        update={'order': ORDER.model_copy(update={'product_url': 'https://www.musinsa.com/products/5111643'})}
+    )
+    out = mus._cross_compare(a, 'buyer01', {'cost': 81900})
+    assert out is None  # 무신사가 더 싸다 — 이 사이트로 산다
+    # 다른 사이트 상품 찾기·견적은 레인 안에서만
+    assert lanes and all(x == 'cm29-cross' for x in lanes)
+    # 끝나면 그 레인 탭만 닫는다(레인 밖 '모든 탭 닫기'가 아니다)
+    assert closed_lanes == ['cm29-cross']
+    # 실제 구매에 쓰는 29CM 에이전트의 브리지는 그대로(레인 밖)
+    assert sib.bridge._lane is None

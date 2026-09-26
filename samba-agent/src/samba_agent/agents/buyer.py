@@ -4,6 +4,7 @@
 사이트 차이는 등록부의 저장 스크립트 이름과 rules/*.md 가 흡수한다.
 """
 
+import copy
 import json
 import re
 import time
@@ -1633,8 +1634,33 @@ class BuyerAgent(AgentBase):
         sib._quote_errors = []
         sib._option_ai = {}
         sib.reset_repairs()
+        # 다른 사이트 견적은 제 레인에서 한다 — 견적의 '열린 주문서 탭 닫기'가 레인 밖(모든 탭)에서 돌면 이 사이트가
+        # 만들어 둔 주문서까지 닫아, 이 사이트로 살 때 배송지 스크립트가 주문서를 못 찾는다
+        # (실기 2026-09-26 job 207: 29CM 1계정 견적이 무신사 주문서를 닫아 '배송지 입력 검증에 실패')
+        cmp = copy.copy(sib)
+        cmp.bridge = sib.bridge.with_lane(f'{sib_src.key}-cross')
+        cmp._last_login = None  # 새 레인 — 로그인 상태를 새로 본다
         try:
-            url = sib._find_same_product(a)
+            return self._cross_compare_in_lane(a, account, snap, sib, cmp)
+        finally:
+            # 견적 레인이 연 탭(다른 사이트 주문서)을 닫는다 — 뒤 단계 스크립트가 그 주문서를 집지 않게
+            try:
+                cmp.tool('run_js', code=_CLOSE_LANE_TABS_JS, safety='no_pay')
+            except AgentFailure as e:
+                self.note('교차 비교', mask_text(f'{sib_src.id} 레인 탭 정리 실패: {e.reason[:80]}'))
+
+    def _cross_compare_in_lane(
+        self,
+        a: Assignment,
+        account: str,
+        snap: dict[str, object],
+        sib: 'BuyerAgent',
+        cmp: 'BuyerAgent',
+    ) -> AgentResult | None:
+        """교차 비교 본문 — 다른 사이트 상품 찾기·견적은 cmp(견적 레인), 그쪽이 더 싸면 구매는 sib(레인 밖)."""
+        sib_src = source_of(sib.spec.name)
+        try:
+            url = cmp._find_same_product(a)
         except AgentFailure as e:
             self.note(
                 '교차 비교',
@@ -1653,9 +1679,9 @@ class BuyerAgent(AgentBase):
         )
         a2 = a.model_copy(update={'order': order2, 'options': {**a.options, 'no_cross': True}})
         try:
-            s_acc, s_snap = sib._pick_cheapest(a2, sib._candidate_accounts(a2))
+            s_acc, s_snap = cmp._pick_cheapest(a2, cmp._candidate_accounts(a2))
             if sib_src.payment_quotes and _as_float(s_snap.get('cost')) > 0:
-                sib._apply_payment_quotes(a2, s_acc, s_snap)
+                cmp._apply_payment_quotes(a2, s_acc, s_snap)
         except AgentFailure as e:
             self.note(
                 '교차 비교',
@@ -1679,7 +1705,6 @@ class BuyerAgent(AgentBase):
     ) -> list[tuple[str, dict[str, object]]]:
         """계정마다 레인을 붙여 동시에 견적한다. 근거·실패 사유·받은 쿠폰은 계정 순서대로 모은다."""
         import concurrent.futures
-        import copy
 
         key = source_of(self.spec.name).key
 
@@ -2196,7 +2221,13 @@ class BuyerAgent(AgentBase):
         )
         # 원문끼리 비교하지 않는다 — 마스킹한 값끼리만 비교해서 판단에도 개인정보를 안 남긴다
         if not shipping_matches(shipping, applied):
-            raise AgentFailure('needs_human', '배송지 입력 검증에 실패했다', FailReason.UNKNOWN)
+            # 스크립트가 남긴 사유(note)를 붙인다 — 예전엔 사유 없이 멈춰 비교 오탐인지 스크립트 실패인지 몰랐다(job 207)
+            note = str(applied.get('note') or '').strip()
+            raise AgentFailure(
+                'needs_human',
+                '배송지 입력 검증에 실패했다' + (f': {mask_text(note[:80])}' if note else ''),
+                FailReason.UNKNOWN,
+            )
         self._fill_phone(applied)
         self._confirm_shipping(shipping, args)
         # 마스킹 규칙이 이름을 가리려면 라벨이 앞에 있어야 한다(ops.masking) — 라벨을 붙여서 가린다
