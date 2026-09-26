@@ -1378,3 +1378,10 @@ def test_페이코_줄의_카드칸에_무신사페이_문구가_섞여도_페�
     assert clean_card(card) == '현대카드'
     rows = cheapest_quotes([{'method': '페이코', 'card': card, 'cost': 119710}], None, {'payco'})
     assert rows and rows[0]['card'] == '현대카드'
+
+
+def test_롯데온_충전결제는_견적_후보에서_뺀다():
+    from samba_agent.agents.buyer import cheapest_quotes
+
+    rows = cheapest_quotes([{'method': '충전결제', 'card': None, 'cost': 30000}], None, {'site'})
+    assert rows == []

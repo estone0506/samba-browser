@@ -248,6 +248,9 @@ def cheapest_quotes(
         # 그 카드 전용 즉시할인(-5,000)을 받을 수 있다고 견적하면 안 된다
         if card and ('무신사 삼성' in card or '무신사삼성' in card):
             continue
+        if '충전결제' in method:
+            # 롯데온 L.pay 충전결제는 현대카드 결제보다 항상 불리하다 — 후보에서 뺀다(사용자 2026-09-26)
+            continue
         if card and not any(n in card for n in ALLOWED_CARD_ISSUERS):
             # 허용 카드사(현대·KB·롯데·신한·농협) 밖 — 견적만 싸고 실제로는 기본 카드로 결제된다
             # (실기: 삼성카드 할인가 49,310 으로 골랐는데 롯데카드로 51,360 결제)
