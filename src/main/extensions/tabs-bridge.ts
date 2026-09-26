@@ -140,3 +140,12 @@ export function runTabsOp(op: string, raw: unknown, ses: Session, extensionId: s
       return null
   }
 }
+
+/**
+ * 확장 팝업이 연 새 창(로그인 페이지 등)을 그 세션 프로필의 새 탭으로 연다 — 크롬도 팝업에서 뜬 창은 탭으로 보낸다.
+ * 웹 주소만. 열었으면 true
+ */
+export function openTabFromExtension(url: string, ses: Session): boolean {
+  if (!provider || !/^https?:\/\//i.test(url)) return false
+  return provider.create(url, provider.profileOf(ses), true) !== null
+}

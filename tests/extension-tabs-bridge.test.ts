@@ -5,6 +5,7 @@ import type { Session, WebContents } from 'electron'
 import {
   allowedTabUrl,
   matchesQuery,
+  openTabFromExtension,
   runTabsOp,
   setExtensionTabsProvider,
   toChromeTab,
@@ -102,5 +103,17 @@ describe('보조 함수', () => {
     expect(allowedTabUrl('https://a.com', EXT)).toBe(true)
     expect(allowedTabUrl(`chrome-extension://${EXT}/index.html`, EXT)).toBe(true)
     expect(allowedTabUrl('javascript:alert(1)', EXT)).toBe(false)
+  })
+})
+
+describe('openTabFromExtension — 팝업이 연 새 창(로그인 페이지)을 새 탭으로', () => {
+  it('웹 주소는 그 세션 프로필의 새 탭으로 연다', () => {
+    expect(openTabFromExtension('https://www.shopback.co.kr/login', ses)).toBe(true)
+    expect(provider.create).toHaveBeenCalledWith('https://www.shopback.co.kr/login', 'buyer01', true)
+  })
+
+  it('웹 주소가 아니면 열지 않는다', () => {
+    expect(openTabFromExtension('file:///C:/x', ses)).toBe(false)
+    expect(provider.create).not.toHaveBeenCalled()
   })
 })

@@ -10,6 +10,7 @@
 
 import { WebContentsView, type BrowserWindow, type Session } from 'electron'
 import type { ExtensionAnchorDto } from '../../shared/extensions'
+import { openTabFromExtension } from './tabs-bridge'
 import {
   clampPopupSize,
   popupBounds,
@@ -128,10 +129,15 @@ export class ExtensionPopupHost {
     }
     wc.on('will-navigate', (e, url) => guard(e, url, '이동'))
     wc.on('will-redirect', (e, url) => guard(e, url, '리다이렉트'))
-    // 팝업이 여는 새 창은 만들지 않는다(크롬도 팝업에서 뜬 창은 탭으로 보낸다).
-    // 여기서 허용하면 가드 없는 창이 확장 세션으로 열린다
+    // 팝업이 여는 새 창은 만들지 않고 크롬처럼 새 탭으로 연다(샵백·애드픽 로그인 페이지).
+    // 여기서 창을 허용하면 가드 없는 창이 확장 세션으로 열린다. 막기만 하던 때는 로그인이 안 됐다(2026-09-26).
+    // 팝업 닫기는 이 처리기가 끝난 뒤에 한다 — 처리기 안에서 webContents 를 닫으면 네이티브 쪽이 위험하다
     wc.setWindowOpenHandler(({ url }) => {
-      console.warn(`확장 팝업 새 창 차단: ${url}`)
+      if (openTabFromExtension(url, input.session)) {
+        setImmediate(() => this.close())
+      } else {
+        console.warn(`확장 팝업 새 창 차단: ${url}`)
+      }
       return { action: 'deny' }
     })
     // 문서가 원하는 크기를 알려 오면 그 값으로 창을 맞춘다.
