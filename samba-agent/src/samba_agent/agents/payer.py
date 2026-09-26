@@ -119,6 +119,52 @@ def _keypad_not_ready(out: str) -> bool:
 PC_PAY_PROVIDERS = frozenset({'payco', 'naverpay'})
 
 
+# 상품명에서 대조에 쓰지 않는 흔한 말(브랜드·계절·분류) — 이것만 겹쳐서는 같은 상품이라고 보지 않는다
+_GENERIC_WORDS = frozenset(
+    '매장정품 정품 봄신발 가을신발 여름신발 겨울신발 신발 운동화 스니커즈 스니커 남성 여성 남녀공용 공용 커플 키즈 아동 '
+    '나이키 아디다스 뉴발란스 푸마 반스 컨버스 리복 아식스 휠라 스케쳐스 크록스 머렐 노스페이스 NIKE ADIDAS PUMA VANS '
+    'CONVERSE REEBOK ASICS FILA SKECHERS CROCS MERRELL 캐주얼화 스포츠화 조깅화 러닝화 슬리퍼 샌들 모자 가방 티셔츠 '
+    '블랙 화이트 그레이 네이비 BLACK WHITE GREY GRAY NAVY'.split()
+)
+
+
+def _name_words(product_name: str) -> list[str]:
+    """상품명 고유 단어 — 한글 2자 이상 또는 영숫자 4자 이상, 흔한 말·순수 숫자 제외."""
+    out = []
+    for w in re.split(r'[\s/()\[\],·_:-]+', product_name):
+        if w.isdigit() or w in _GENERIC_WORDS or w.upper() in _GENERIC_WORDS or w.startswith('옵션'):
+            continue
+        if (re.search(r'[가-힣]', w) and len(w) >= 2) or len(w) >= 4:
+            out.append(w)
+    return out
+
+
+def _sizes(option: str | None, selected: str) -> list[str]:
+    return re.findall(r'(?<![\d.])(\d{2,3}(?:\.5)?)(?![\d.])', f'{option or ""} {selected}')
+
+
+def order_form_keys(product_name: str, option: str | None, selected: str = '') -> bool:
+    """대조할 근거(고유 단어·사이즈)가 있는가."""
+    return bool(_name_words(product_name) or _sizes(option, selected))
+
+
+def order_form_mismatch(page: str, product_name: str, option: str | None, selected: str = '') -> str | None:
+    """주문서 글자에 이 주문의 옵션·상품명 고유 단어가 있는가. 다르면 그 사유, 같으면 None(순수 함수).
+
+    - 옵션: 주문 옵션(또는 구매가 고른 selected)에 든 숫자 사이즈 하나라도 주문서에 있어야 한다(숫자가 없으면 건너뜀)
+    - 상품명: 흔한 말을 뺀 고유 단어(2자 이상, 순수 숫자 제외) 중 하나라도 주문서에 있어야 한다(고유 단어가 없으면 건너뜀)
+    """
+    text = re.sub(r'\s+', ' ', page or '')
+    low = text.lower()
+    sizes = _sizes(option, selected)
+    if sizes and not any(re.search(rf'(?<![\d.]){re.escape(x)}(?![\d.])', text) for x in sizes):
+        return f'옵션 {sorted(set(sizes))} 이 주문서에 없다'
+    words = _name_words(product_name)
+    if words and not any(w.lower() in low for w in words):
+        return f'상품명 단어 {words[:6]} 가 주문서에 없다'
+    return None
+
+
 def web_pay_provider(card: str) -> str | None:
     """웹 결제 비밀번호의 제공자 — 무신사페이는 musinsapay, 페이코는 payco, 사이트 머니(무신사머니·SSG PAY…)는 site, 모르면 None."""
     if '무신사페이' in card or 'musinsapay' in card.lower():
@@ -410,6 +456,20 @@ class PayerAgent(AgentBase):
             )
         return matches[-1][1]
 
+    def _check_order_form(self, a: Assignment) -> None:
+        """지금 화면(주문서)에 이 주문의 옵션과 상품명 고유 단어가 있는지 본다. 없으면 결제하지 않고 멈춘다."""
+        # sku 는 삼바웨이브 상품명(+[옵션])이다(queue/orders._normalize)
+        name, option, selected = a.order.sku or '', a.order.option, str(a.handoff.get('selected') or '')
+        if not order_form_keys(name, option, selected):
+            return  # 대조할 단어·사이즈가 없다(시험 표본 등)
+        page = self.tool('get_page')
+        problem = order_form_mismatch(page, name, option, selected)
+        if problem:
+            raise AgentFailure(
+                'needs_human', f'주문서가 이 주문과 다르다 — 결제하지 않음: {mask_text(problem)}', FailReason.VERIFY_MISMATCH
+            )
+        self.note('주문서 대조', '상품·옵션 일치 확인')
+
     def _web_pay(self, a: Assignment) -> None:
         """사이트 결제창(팝업)의 '결제하기' → 웹 키패드에 fill_secret(password) — 플레이북 §7 무신사머니 흐름.
 
@@ -693,6 +753,10 @@ class PayerAgent(AgentBase):
                 payload={'dry_run': True, 'paid': False, 'points_only': True},
                 evidence=tuple(self.evidence),
             )
+
+        # 결제 직전 — 지금 주문서가 이 주문의 상품·옵션인가. 다른 작업이 남긴 주문서를 결제하면 안 된다
+        # (실기 2026-09-26: 197 이 앞 작업 196 의 아디다스 210 주문서를 결제했다)
+        self._check_order_form(a)
 
         self.step('payer: 결제창 진입')
         # 실제로 산 사이트(교차 비교) 기준으로 결제창에 들어간다
