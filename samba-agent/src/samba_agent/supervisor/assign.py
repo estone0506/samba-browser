@@ -27,6 +27,9 @@ BUYER_HANDOFF_FIELDS = (
     'points_used',
     # 견적의 적립(사이트 적립예정 + 네이버페이 1%) — 주문 상세에 적립이 안 나오는 ABC·그랜드스테이지 원가에 쓴다
     'reward',
+    # 결제 진입 대조·주문서 탭 지정(2026-09-26 재작성 계약)
+    'selected',
+    'order_tab',
 )
 
 

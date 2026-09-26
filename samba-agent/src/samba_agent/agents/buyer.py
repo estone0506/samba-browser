@@ -2017,6 +2017,9 @@ class BuyerAgent(AgentBase):
                 **({'paid': paid} if paid > 0 else {}),
                 **({'points_used': snap.get('points_used')} if snap.get('points_used') is not None else {}),
                 **({'reward': snap.get('reward')} if snap.get('reward') is not None else {}),
+                # 결제 진입이 주문서를 대조·지정하는 데 쓴다(주문서에 담긴 옵션 글자, 스냅샷이 만든 주문서 탭 id)
+                **({'selected': str(snap.get('selected'))} if snap.get('selected') else {}),
+                **({'order_tab': str(snap.get('order_tab'))} if snap.get('order_tab') else {}),
             },
             evidence=tuple(self.evidence),
         )

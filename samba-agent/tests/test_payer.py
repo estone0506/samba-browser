@@ -189,7 +189,10 @@ def test_결제창_진입_인자는_카드명에_따옴표가_있어도_유효�
     script_args = json.loads(
         body['args']['args']
     )  # 스크립트 args 자체도 유효 JSON 문자열이어야 한다
-    assert script_args == {'card': '현대"카드'}
+    assert script_args['card'] == '현대"카드'
+    # 재작성 계약: 시험 실행이면 dryRun, 주문 대조용 expect 를 같이 넘긴다
+    assert script_args['dryRun'] is True
+    assert set(script_args['expect']) == {'name', 'option', 'selected', 'product_no'}
 
 
 @respx.mock
@@ -956,3 +959,12 @@ def test_주문서가_다른_상품이면_결제하지_않는다() -> None:
     assert order_form_mismatch(adidas_form, '매장정품 아디다스 ADIDAS KJ8365 아디스타 컨트롤 5 EL 칠드런 신발', '옵션:210', '210') is None
     # 옵션은 같아도 상품명 고유 단어가 하나도 없으면 다른 상품이다
     assert '상품명' in (order_form_mismatch('아디다스 아디스타 240 / 1개', '나이키 코르테즈 스웨이드', '240') or '')
+
+
+def test_상품번호를_주소에서_뽑는다() -> None:
+    from samba_agent.agents.payer import product_no_of
+
+    assert product_no_of('https://www.musinsa.com/products/5901754') == '5901754'
+    assert product_no_of('https://abcmart.a-rt.com/product/new?prdtNo=1020113253') == '1020113253'
+    assert product_no_of('https://www.shoemarker.co.kr/ASP/Product/ProductDetail.asp?ProductCode=48761') == '48761'
+    assert product_no_of(None) == ''

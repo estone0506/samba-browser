@@ -165,6 +165,12 @@ def order_form_mismatch(page: str, product_name: str, option: str | None, select
     return None
 
 
+def product_no_of(url: str | None) -> str:
+    """상품 주소의 상품번호(무신사 /products/123, 29CM /products/123, a-rt prdtNo=, 슈마커 ProductCode=). 없으면 ''."""
+    m = re.search(r'(?:/products/|[?&]prdtNo=|[?&]ProductCode=|/catalog/)(\d+)', url or '')
+    return m.group(1) if m else ''
+
+
 def web_pay_provider(card: str) -> str | None:
     """웹 결제 비밀번호의 제공자 — 무신사페이는 musinsapay, 페이코는 payco, 사이트 머니(무신사머니·SSG PAY…)는 site, 모르면 None."""
     if '무신사페이' in card or 'musinsapay' in card.lower():
@@ -765,6 +771,24 @@ class PayerAgent(AgentBase):
         profile = a.handoff.get('account') or a.order.account
         if profile:
             payload['profile'] = profile  # 구매가 연 계정 프로필의 주문서에서 결제창을 연다
+        # 결제 진입 스크립트가 스스로 막게 넘긴다(2026-09-26 재작성 계약):
+        # - dryRun: 시험 실행이면 결제 버튼 직전에서 멈춘다(예전엔 dry-run 에서도 {card, profile} 만 넘겨 버튼이 눌렸다)
+        # - expect: 이 주문의 상품명·옵션·상품번호 — 주문서가 다르면 결제하지 않는다
+        # - amount: 주문서 총액(견적) — 결제창 금액이 이보다 크면 멈춘다
+        # - tab: 구매가 만든 주문서 탭 id(있으면 '가장 최근 탭' 대신 이것)
+        if a.dry_run:
+            payload['dryRun'] = True
+        payload['expect'] = {
+            'name': a.order.sku,
+            'option': a.order.option or '',
+            'selected': str(a.handoff.get('selected') or ''),
+            'product_no': product_no_of(a.order.product_url),
+        }
+        amount = a.handoff.get('paid')
+        if isinstance(amount, int | float) and not isinstance(amount, bool) and amount > 0:
+            payload['amount'] = amount
+        if a.handoff.get('order_tab'):
+            payload['tab'] = str(a.handoff.get('order_tab'))
         # 결제창 진입은 AI 수리 대상이 아니다 — 비밀번호 없는 간편결제(무신사페이 카드 등)는 '결제하기' 한 번에
         # 결제가 끝난다(실기 2026-09-24: 수리 시험 중 결제하기 클릭으로 실결제 발생). 실패하면 사람에게 넘긴다
         raw_enter = self.tool(
