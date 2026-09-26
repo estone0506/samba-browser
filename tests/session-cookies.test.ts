@@ -120,9 +120,15 @@ describe('복제본 정리', () => {
       ...over
     })
 
-  it('같은 값의 host-only 쌍둥이가 있으면 복제본이다', () => {
+  it("'.www.' 복제본은 살아 있는 host-only 쌍둥이 값으로 합친다", () => {
     const t = host()
     expect(duplicatedHostCookie(copy(), [t, copy()])).toEqual({ twin: t })
+  })
+
+  it('www 가 아닌 도메인 쿠키는 같은 값의 쌍둥이가 있어도 건드리지 않는다(네이버 로그인 쿠키)', () => {
+    const dom = copy({ name: 'NID_AUT', domain: '.naver.com' })
+    const twin = host({ name: 'NID_AUT', domain: 'naver.com' })
+    expect(duplicatedHostCookie(dom, [dom, twin])).toBeNull()
   })
 
   it("쌍둥이가 없어도 '.www.' 도메인이면 복제본이다(사이트가 지운 1회용 토큰)", () => {

@@ -79,10 +79,11 @@ export interface CookieStoreLike {
 }
 
 /**
- * 예전 코드가 만든 '.호스트' 복제본인가(순수 함수). 둘 중 하나면 복제본으로 본다:
- *  - 같은 이름·경로·값의 host-only 쌍둥이가 살아 있다
- *  - 도메인이 '.www.' 로 시작한다(사이트가 Domain=www.… 를 주는 일은 사실상 없다)
- * 쌍둥이가 있으면 쌍둥이 값을, 없으면 복제본 값을 host-only 로 옮긴다
+ * 예전 코드가 만든 '.호스트' 복제본인가(순수 함수). 도메인이 '.www.' 로 시작할 때만 복제본으로 본다
+ * (사이트가 Domain=www.… 를 주는 일은 사실상 없다). 쌍둥이가 있으면 쌍둥이 값을, 없으면 복제본 값을 host-only 로 옮긴다.
+ *
+ * '같은 값의 host-only 쌍둥이가 있으면 복제본'이라는 규칙은 뺐다 — 사이트가 원래 Domain=.naver.com 으로 준
+ * 로그인 쿠키(NID_AUT 등)까지 host-only 로 바꿔 nid·pay 하위 도메인에서 로그인이 풀렸다(실기 2026-09-26)
  */
 export function duplicatedHostCookie(
   c: Cookie,
@@ -92,7 +93,6 @@ export function duplicatedHostCookie(
   const host = c.domain.slice(1)
   const twin =
     all.find((t) => t.hostOnly && t.domain === host && t.name === c.name && t.path === c.path) ?? null
-  if (twin && twin.value === c.value) return { twin }
   if (host.startsWith('www.')) return { twin }
   return null
 }
