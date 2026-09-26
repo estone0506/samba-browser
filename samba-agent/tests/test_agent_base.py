@@ -197,5 +197,6 @@ def test_결과_앞의_페이지_대화상자_줄은_떼고_JSON_을_읽는다()
     )
     b = base(allowed=('run_script',))
     out = b.json_tool('run_script', name='abc_product_snapshot', args='{}')
-    assert out == {'options': [], 'cost': None}
+    # 알림 문구는 결과 객체에도 실린다 — 호출부가 사유(구매 한도 등)를 가를 수 있게
+    assert out == {'options': [], 'cost': None, '_page_dialogs': ['옵션을 선택해주세요.']}
     assert [e.label for e in b.evidence] == ['페이지 알림']

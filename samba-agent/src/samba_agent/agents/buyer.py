@@ -12,6 +12,7 @@ from collections.abc import Callable
 from urllib.parse import urlparse
 
 from samba_agent.agents.base import (
+    PAGE_DIALOGS_KEY,
     AgentBase,
     AgentFailure,
     Decision,
@@ -677,6 +678,30 @@ def snapshot_login_required(out: dict[str, object]) -> bool:
     )
 
 
+# 사이트가 이 계정의 구매 수량 한도를 알린 대화상자(실기 2026-09-27 무신사: 같은 가방을 7일에 3개 산 계정 —
+# '최대 구매수량을 이미 구매하셨으므로 더 이상 구매하실 수 없습니다 … 구매가능일 : 2026-10-01'). 주문서가 안 열려
+# selected 가 비어 '주문서 옵션 불일치(모름)' 으로 보였다
+_PURCHASE_LIMIT_RE = re.compile(r'최대 ?구매 ?수량|구매 ?한도|더 이상 구매하실 수 없')
+
+
+def snapshot_purchase_limit(out: dict[str, object]) -> str | None:
+    """스냅샷 중 사이트가 '이 계정은 구매 수량 한도에 걸렸다'고 알렸으면 그 요약, 아니면 None."""
+    dialogs = out.get(PAGE_DIALOGS_KEY)
+    for d in dialogs if isinstance(dialogs, list) else []:
+        text = str(d)
+        if not _PURCHASE_LIMIT_RE.search(text):
+            continue
+        rule = re.search(r'(\d+)\s*일\s*동안\s*최대\s*(\d+)\s*개', text)
+        until = re.search(r'구매\s*가능일\s*[:：]\s*([\d.-]+)', text)
+        parts = [
+            f'{rule.group(1)}일 최대 {rule.group(2)}개' if rule else '',
+            f'구매가능일 {until.group(1)}' if until else '',
+        ]
+        detail = ', '.join(p for p in parts if p)
+        return f'구매 수량 한도 초과({detail})' if detail else '구매 수량 한도 초과'
+    return None
+
+
 # 확정 품절(모든 계정에서 선택지는 읽혔는데 주문 사이즈가 없다) 실패 문구 머리 — 감독자가 재시도하지 않는다
 CONFIRMED_SOLD_OUT = '확정 품절'
 
@@ -712,6 +737,9 @@ def snapshot_problem(
             return None
         # 로그인 안 된 계정 — 스크립트 잘못이 아니다(고치게 두면 다른 세션으로 넘어가 견적한다). 호출부가 그 계정을 뺀다
         if snapshot_login_required(out):
+            return None
+        # 사이트가 구매 수량 한도를 알렸다 — 이 계정은 못 산다. 스크립트 잘못이 아니니 고치지 않는다
+        if snapshot_purchase_limit(out):
             return None
         # 주문 옵션이 '품절' 표시로 떠 있다 = 품절이다. 사이즈를 못 골라 selected·원가가 비는 게 당연하다 —
         # 스크립트 잘못이 아니니 고치지 않는다(실기 2026-09-26: 품절 주문마다 계정 4개가 AI 수리를 돌아 1건에 10~20분)
@@ -1071,8 +1099,14 @@ class BuyerAgent(AgentBase):
                 a.order.option, lambda sel: self._selected_matches(sel, a.order.option)
             ),
         )
+        if snap.get('product_tab'):
+            # 주문서가 안 열리면 스크립트는 사이트 알림(구매 한도 등)이 결과에 붙도록 상품 탭을 남긴다 — 여기서 닫는다
+            self._close_product_tabs(account, str(snap.get('product_url') or ''))
         if snap.get('already_ordered') or snap.get('existing_order_no'):
             return snap  # 중복 구매 흔적 — 정돈·견적 없이 호출부가 바로 거절한다
+        limit = snapshot_purchase_limit(snap)
+        if limit:
+            raise AgentFailure('fail', f'{account}: {limit}', FailReason.OUT_OF_STOCK)
         if snapshot_login_required(snap):
             # 이 계정은 견적에서 빠진다(다른 계정 세션으로 대신 견적하지 않는다 — 실기 2026-09-25)
             raise AgentFailure(
@@ -1093,6 +1127,20 @@ class BuyerAgent(AgentBase):
             self.tool('run_js', code=_CLOSE_ORDER_TABS_JS, safety='no_pay')
         except AgentFailure as e:
             self.note('주문서 정리', mask_text(f'{account}: 열린 주문서 못 닫음({e.reason[:60]})'))
+
+    def _close_product_tabs(self, account: str, product_url: str) -> None:
+        """이 레인에 남은 그 상품 탭을 닫는다(같은 스크립트를 재시도했으면 여럿일 수 있다). 못 닫아도 이어 간다."""
+        if not product_url.startswith('http'):
+            return
+        code = (
+            f'const u = {json.dumps(product_url)}; '
+            "for (const t of await tabs.list()) { if ((t.url || '').startsWith(u)) "
+            '{ try { await tabs.close(t.id) } catch (e) {} } } return "ok"'
+        )
+        try:
+            self.tool('run_js', code=code, safety='no_pay')
+        except AgentFailure as e:
+            self.note('상품 탭 정리', mask_text(f'{account}: 못 닫음({e.reason[:60]})'))
 
     def _download_coupons(self, a: Assignment, account: str) -> None:
         """상품 페이지 '쿠폰받기'로 이 계정이 받을 수 있는 쿠폰을 먼저 받는다. 실패해도 구매는 이어 간다(근거만 남긴다)."""
@@ -1418,11 +1466,15 @@ class BuyerAgent(AgentBase):
             return None
         selected = str(snap.get('selected') or '').strip()
         if a.order.option and not (selected and self._selected_matches(selected, a.order.option)):
-            # 주문서에 엉뚱한 옵션이 담긴 채 사면 안 된다(실기: 110 주문에 105 결제)
-            self.note(
-                '계정 견적', mask_text(f'{account}: 불가(주문서 옵션 불일치: {selected or "모름"})')
+            # 주문서에 엉뚱한 옵션이 담긴 채 사면 안 된다(실기: 110 주문에 105 결제).
+            # 주문서를 아예 못 읽었으면(주문서 안 열림 등) 그 사유를 남긴다 — '불일치(모름)' 은 원인을 가렸다
+            why = (
+                f'주문서 옵션 불일치({selected})'
+                if selected
+                else f'주문서 옵션 못 읽음({snap.get("note") or snap.get("error") or "모름"})'
             )
-            self._quote_skips.append(f'{account}: 주문서 옵션 불일치({selected or "모름"})')
+            self.note('계정 견적', mask_text(f'{account}: 불가({why})'))
+            self._quote_skips.append(f'{account}: {why}')
             return None
         # 계정마다 그 계정이 실제로 낼 수 있는 수단(키마스터 결제 항목 ∩ 허용 수단)으로 견적한 금액으로 비교한다
         # (사용자 지시 2026-09-25 — 쿠폰 총액만 비교해 결제 항목 없는 계정이 이겼고 엉뚱한 카드로 결제됐다)

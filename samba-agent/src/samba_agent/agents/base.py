@@ -149,6 +149,9 @@ class AgentBase:
             ) from e
         if not isinstance(parsed, dict):
             raise AgentFailure('fail', f'{name} 결과가 객체가 아니다', FailReason.UNKNOWN)
+        if dialogs and PAGE_DIALOGS_KEY not in parsed:
+            # 검증·호출부가 사이트 알림(예: 무신사 '최대 구매수량을 이미 구매') 으로 실패 사유를 가를 수 있게 싣는다
+            parsed[PAGE_DIALOGS_KEY] = dialogs
         return parsed
 
     # ---- 저장 스크립트 자가 수리(사용자 2026-09-24) ----
@@ -376,6 +379,9 @@ class AgentBase:
             self._steps += 1
             self.tool('progress', label=label, done=self._steps - 1, total=self._steps)
 
+
+# json_tool 이 결과 객체에 싣는 페이지 대화상자 문구 목록의 키
+PAGE_DIALOGS_KEY = '_page_dialogs'
 
 # 앱이 도구 결과 앞에 붙이는 대화상자 안내 줄(src/main/browser/dialogs.ts)
 _PAGE_DIALOG_RE = re.compile(r'^page dialog: "(.*)"\s*$')

@@ -544,3 +544,101 @@ def test_writing_script_is_not_retried(buyer) -> None:
     buyer.script_json('musinsa_set_shipping', {'sku': '1'}, goal='g', check=ok_check)
     assert route.call_count == 1
     assert len(fake.calls) == 1
+
+
+_LIMIT_DIALOG = (
+    '다음 상품의 최대 구매수량을 이미 구매하셨으므로 더 이상 구매하실 수 없습니다. '
+    '7일 동안 최대 3개까지 구매가능합니다. 구매가능일 : 2026-10-01 상품명 : 가방 BLACK'
+)
+
+
+def test_purchase_limit_dialog_is_not_a_script_problem() -> None:
+    """구매 수량 한도 알림으로 주문서가 안 열린 스냅샷은 수리 대상이 아니다(실기 2026-09-27 무신사)."""
+    from samba_agent.agents.base import PAGE_DIALOGS_KEY
+    from samba_agent.agents.buyer import snapshot_purchase_limit
+
+    out = {
+        'options': ['ONE'],
+        'selected': None,
+        'error': 'no_checkout',
+        PAGE_DIALOGS_KEY: [_LIMIT_DIALOG],
+    }
+    assert snapshot_purchase_limit(out) == '구매 수량 한도 초과(7일 최대 3개, 구매가능일 2026-10-01)'
+    assert snapshot_problem('BLACK ONE')(out) is None
+    # 다른 알림(옵션 선택 경고)은 한도가 아니다 — 여전히 수리 대상
+    other = {**out, PAGE_DIALOGS_KEY: ['옵션을 선택해 주세요']}
+    assert snapshot_purchase_limit(other) is None
+    assert snapshot_problem('BLACK ONE')(other)
+
+
+@respx.mock
+def test_json_tool_carries_page_dialogs(buyer) -> None:
+    """앱이 결과 앞에 붙인 페이지 알림은 결과 객체에 실린다 — 알림이 없으면 키도 없다."""
+    from samba_agent.agents.base import PAGE_DIALOGS_KEY
+
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=[page(f'page dialog: "{_LIMIT_DIALOG}"\n{{"cost": null}}'), page('{"cost": 1}')]
+    )
+    first = buyer.json_tool('run_script', name='x', args='{}')
+    assert first[PAGE_DIALOGS_KEY] == [_LIMIT_DIALOG]
+    assert PAGE_DIALOGS_KEY not in buyer.json_tool('run_script', name='x', args='{}')
+
+
+@respx.mock
+def test_snapshot_purchase_limit_skips_account_and_closes_product_tab(buyer, monkeypatch) -> None:
+    """주문서가 구매 한도로 안 열리면 그 계정은 '구매 수량 한도 초과'로 빠지고, 남긴 상품 탭을 닫는다."""
+    from samba_agent.agents.contracts import Assignment, OrderRef
+
+    monkeypatch.setattr(type(buyer), '_download_coupons', lambda self, a, acc: None)
+    monkeypatch.setattr(type(buyer), '_close_order_tabs', lambda self, acc: None)
+    snap = {
+        'options': ['ONE'],
+        'color': 'BLACK',
+        'selected': None,
+        'cost': None,
+        'product_url': 'https://www.musinsa.com/products/5628157',
+        'product_tab': 't1',
+        'error': 'no_checkout',
+        'note': 'order form not opened',
+    }
+    respx.post(f'{URL}/tool/run_script').mock(
+        return_value=page(f'page dialog: "{_LIMIT_DIALOG}"\n{json.dumps(snap)}')
+    )
+    close = respx.post(f'{URL}/tool/run_js').mock(return_value=page('ok'))
+    buyer.repairer = FakeRepairer(RepairOutcome('gave_up', 'x'))
+    order = OrderRef(
+        order_no='A1', source='MUSINSA', seller='포이즌', sku='5628157', qty=1, option='BLACK ONE'
+    )
+    a = Assignment(order=order, allowed_tools=buyer.spec.tools, rules='', dry_run=False)
+    with pytest.raises(AgentFailure) as e:
+        buyer._snapshot(a, 'buyer01')
+    assert '구매 수량 한도 초과' in e.value.reason and 'buyer01' in e.value.reason
+    assert buyer.repairer.calls == []
+    code = json.loads(close.calls[0].request.content)['args']['code']
+    assert 'products/5628157' in code and 'tabs.close' in code
+
+
+def test_quote_reports_unread_order_form_instead_of_unknown_mismatch(buyer, monkeypatch) -> None:
+    """주문서를 못 읽은 계정은 '주문서 옵션 불일치(모름)' 대신 스크립트가 남긴 사유를 남긴다."""
+    from samba_agent.agents.contracts import Assignment, OrderRef
+
+    monkeypatch.setattr(type(buyer), '_login_as', lambda self, acc: None)
+    monkeypatch.setattr(type(buyer), '_check_account', lambda self, acc, snap: None)
+    monkeypatch.setattr(
+        type(buyer),
+        '_snapshot',
+        lambda self, a, acc: {
+            'options': ['ONE'],
+            'selected': None,
+            'error': 'no_checkout',
+            'note': 'order form not opened',
+        },
+    )
+    buyer._quote_errors = []
+    buyer._quote_skips = []
+    order = OrderRef(
+        order_no='A1', source='MUSINSA', seller='포이즌', sku='1', qty=1, option='BLACK ONE'
+    )
+    a = Assignment(order=order, allowed_tools=buyer.spec.tools, rules='', dry_run=False)
+    assert buyer._quote(a, 'buyer01') is None
+    assert buyer._quote_skips == ['buyer01: 주문서 옵션 못 읽음(order form not opened)']
