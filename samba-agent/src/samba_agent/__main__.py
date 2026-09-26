@@ -95,7 +95,8 @@ def _bridge_ready(bridge: BridgeClient) -> bool:
 
 def main() -> None:
     settings = load_settings()
-    logging.basicConfig(level=logging.INFO)
+    # 시각을 붙인다 — 도구 호출 사이 간격으로 어느 단계가 느린지 잰다(2026-09-26 주문 1건 수 분 문제)
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s.%(msecs)03d %(levelname)s:%(name)s:%(message)s', datefmt='%H:%M:%S')
     configure_tracing(settings)
 
     reg = Registry.load(settings.root)
