@@ -218,6 +218,14 @@ describe('login — 첫 제출이 먹지 않으면 한 번 더 누른다(실기:
     expect(pageBridge.submitForm).toHaveBeenCalledTimes(2)
   })
 
+  it('다시 누를 때는 진짜 클릭 대신 DOM 클릭으로 누른다(숨김 탭엔 진짜 클릭이 닿지 않는다 — 실기: 슈마커)', async () => {
+    pageBridge.findLoginFields.mockResolvedValue(FULL_FORM)
+    const { tools } = build()
+    await run(tools.login)
+    expect(pageBridge.submitLogin).toHaveBeenCalledTimes(2)
+    expect(pageBridge.submitLogin.mock.calls[1][2]).toBe(false)
+  })
+
   it('제출 뒤 폼이 사라졌으면 다시 누르지 않는다', async () => {
     pageBridge.findLoginFields.mockResolvedValueOnce(FULL_FORM).mockResolvedValue(NO_FIELDS)
     const { tools } = build()

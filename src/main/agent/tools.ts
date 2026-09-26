@@ -2203,11 +2203,13 @@ overlays left: ${after.length}${kept}`
             return `${LOGIN_WRONG_PASSWORD(loginHost)} (${formatDialogNote(dialog)})`
           }
           // 첫 클릭이 먹지 않는 사이트(실기: 패션플러스 — 같은 화면에서 로그인 버튼을 한 번 더 누르면 로그인됨):
-          // 대화상자 없이 같은 폼(같은 비밀번호 칸)이 그대로 남아 있으면 제출을 한 번만 더 누른다
+          // 대화상자 없이 같은 폼(같은 비밀번호 칸)이 그대로 남아 있으면 제출을 한 번만 더 누른다.
+          // 두 번째는 DOM 클릭 — 숨김 탭(작업 레인)에는 진짜 마우스 클릭이 닿지 않아
+          // 버튼 onclick 로그인(슈마커 chk_Login)이 아예 불리지 않았다(실기 2026-09-26)
           if (!dialog && fields.submit !== undefined) {
             const again = await pageBridge.findLoginFields(tab)
             if (again.stage === fields.stage && again.password === fields.password) {
-              await pageBridge.submitLogin(tab, fields.submit, true)
+              await pageBridge.submitLogin(tab, fields.submit, false)
               await pageBridge.waitForLoad(tab)
             }
           }
