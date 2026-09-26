@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, urlsplit
 
 from samba_agent.agents.base import AgentBase, AgentFailure, run_agent, split_page_dialogs
-from samba_agent.agents.buyer import POINTS_ONLY_METHOD
+from samba_agent.agents.buyer import POINTS_ONLY_METHOD, product_no_of
 from samba_agent.agents.contracts import AgentResult, Assignment
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_text
@@ -165,10 +165,20 @@ def order_form_mismatch(page: str, product_name: str, option: str | None, select
     return None
 
 
-def product_no_of(url: str | None) -> str:
-    """상품 주소의 상품번호(무신사 /products/123, 29CM /products/123, a-rt prdtNo=, 슈마커 ProductCode=). 없으면 ''."""
-    m = re.search(r'(?:/products/|[?&]prdtNo=|[?&]ProductCode=|/catalog/)(\d+)', url or '')
-    return m.group(1) if m else ''
+def is_cross_buy(a: Assignment) -> bool:
+    """교차 비교로 주문 소싱처가 아닌 사이트에서 샀는가."""
+    bought = a.handoff.get('buy_source')
+    if not bought:
+        return False
+    src = default_sources()
+    return src.normalize(str(bought)) != src.normalize(str(a.order.source or ''))
+
+
+def expect_name(a: Assignment) -> str:
+    """주문서 대조에 쓸 상품명. 교차 구매면 산 사이트 상품명(스냅샷 product_name), 아니면 삼바웨이브 sku."""
+    if is_cross_buy(a) and a.handoff.get('product_name'):
+        return str(a.handoff.get('product_name'))
+    return a.order.sku or ''
 
 
 def web_pay_provider(card: str) -> str | None:
@@ -464,8 +474,8 @@ class PayerAgent(AgentBase):
 
     def _check_order_form(self, a: Assignment) -> None:
         """지금 화면(주문서)에 이 주문의 옵션과 상품명 고유 단어가 있는지 본다. 없으면 결제하지 않고 멈춘다."""
-        # sku 는 삼바웨이브 상품명(+[옵션])이다(queue/orders._normalize)
-        name, option, selected = a.order.sku or '', a.order.option, str(a.handoff.get('selected') or '')
+        # sku 는 삼바웨이브 상품명(+[옵션])이다(queue/orders._normalize). 교차 구매면 산 사이트의 상품명
+        name, option, selected = expect_name(a), a.order.option, str(a.handoff.get('selected') or '')
         if not order_form_keys(name, option, selected):
             return  # 대조할 단어·사이즈가 없다(시험 표본 등)
         # 구매가 만든 주문서 탭을 먼저 앞으로 — 활성 탭이 다른 페이지면 엉뚱한 화면을 대조한다
@@ -784,10 +794,11 @@ class PayerAgent(AgentBase):
         if a.dry_run:
             payload['dryRun'] = True
         payload['expect'] = {
-            'name': a.order.sku,
+            'name': expect_name(a),
             'option': a.order.option or '',
             'selected': str(a.handoff.get('selected') or ''),
-            'product_no': product_no_of(a.order.product_url),
+            # 구매가 스냅샷에서 읽은 번호 우선 — 교차 비교로 다른 사이트에서 사면 주문 URL 번호는 다른 사이트 것이다
+            'product_no': str(a.handoff.get('product_no') or '') or product_no_of(a.order.product_url),
         }
         amount = a.handoff.get('paid')
         if isinstance(amount, int | float) and not isinstance(amount, bool) and amount > 0:

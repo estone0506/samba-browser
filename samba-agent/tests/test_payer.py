@@ -196,6 +196,65 @@ def test_결제창_진입_인자는_카드명에_따옴표가_있어도_유효�
     assert set(script_args['expect']) == {'name', 'option', 'selected', 'product_no'}
 
 
+def _enter_expect(reg, a, form: str = '주문서') -> dict:
+    enter = respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page(form))
+    out = agent(reg)(a)
+    assert out.status == 'ok', out.reason
+    body = json.loads(enter.calls.last.request.content.decode('utf-8'))
+    return json.loads(body['args']['args'])['expect']
+
+
+@respx.mock
+def test_교차_구매면_expect_는_산_사이트의_상품번호와_상품명을_쓴다(reg):
+    """무신사 주문을 29CM 에서 샀다 — 주문 URL(무신사) 번호·삼바 상품명이 아니라 구매 인계값으로 대조한다."""
+    a = assignment(
+        reg,
+        dry_run=True,
+        handoff={'buy_source': '29CM', 'product_no': '3544786', 'product_name': '에어포스 1 로우 트리플'},
+    )
+    a = a.model_copy(update={'order': ORDER.model_copy(update={'product_url': 'https://www.musinsa.com/products/5901754'})})
+    # 결제 전 주문서 대조(_check_order_form)도 산 사이트 상품명으로 본다 — 삼바 상품명(S1)이 없어도 통과
+    exp = _enter_expect(reg, a, '주문서 에어포스 1 로우 트리플 250 1개')
+    assert exp['product_no'] == '3544786'
+    assert exp['name'] == '에어포스 1 로우 트리플'
+
+
+@respx.mock
+def test_교차_구매_주문서에_산_상품명이_없으면_결제하지_않는다(reg):
+    a = assignment(reg, dry_run=True, handoff={'buy_source': '29CM', 'product_no': '3544786', 'product_name': '에어포스 1 로우 트리플'})
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('주문서 후디 XS 1개'))
+    out = agent(reg)(a)
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.VERIFY_MISMATCH)
+
+
+@respx.mock
+def test_같은_사이트_구매면_상품명은_sku_번호는_인계값_우선(reg):
+    a = assignment(reg, dry_run=True, handoff={'buy_source': '무신사', 'product_no': '5901754', 'product_name': '다른 이름'})
+    a = a.model_copy(update={'order': ORDER.model_copy(update={'product_url': 'https://www.musinsa.com/products/5901754'})})
+    exp = _enter_expect(reg, a)
+    assert (exp['product_no'], exp['name']) == ('5901754', 'S1')
+
+
+@respx.mock
+def test_인계_상품번호가_없으면_주문_URL_번호를_쓴다(reg):
+    a = assignment(reg, dry_run=True)
+    a = a.model_copy(update={'order': ORDER.model_copy(update={'product_url': 'https://www.musinsa.com/products/5901754'})})
+    assert _enter_expect(reg, a)['product_no'] == '5901754'
+
+
+def test_구매_인계값에_상품번호와_상품명이_실린다():
+    from samba_agent.agents.contracts import AgentResult
+    from samba_agent.supervisor.assign import _handoff
+
+    r = AgentResult(status='ok', reason='ok', payload={'product_no': '3544786', 'product_name': '에어포스', 'buy_source': '29CM'})
+    out = _handoff({'results': {'buyer.cm29': r}})
+    assert (out['product_no'], out['product_name'], out['buy_source']) == ('3544786', '에어포스', '29CM')
+
+
 @respx.mock
 def test_카드_요구_거절은_카드_없음으로_분류한다(reg):
     respx.post(f'{URL}/tool/run_script').mock(return_value=page(ENTER_OK))

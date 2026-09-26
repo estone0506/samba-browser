@@ -30,6 +30,9 @@ BUYER_HANDOFF_FIELDS = (
     # 결제 진입 대조·주문서 탭 지정(2026-09-26 재작성 계약)
     'selected',
     'order_tab',
+    # 실제로 산 상품 번호·이름(교차 비교면 원래 주문과 다른 사이트 기준) — 결제 진입 대조용
+    'product_no',
+    'product_name',
 )
 
 

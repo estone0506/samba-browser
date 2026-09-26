@@ -322,6 +322,12 @@ CARD_BILLING_FACTORS: tuple[tuple[tuple[str, ...], float], ...] = (
 )
 
 
+def product_no_of(url: str | None) -> str:
+    """상품 주소의 상품번호(무신사 /products/123, 29CM /products/123, a-rt prdtNo=, 슈마커 ProductCode=). 없으면 ''."""
+    m = re.search(r'(?:/products/|[?&]prdtNo=|[?&]ProductCode=|/catalog/)(\d+)', url or '')
+    return m.group(1) if m else ''
+
+
 def billing_factor(card: str | None) -> float:
     """카드사 이름에 맞는 청구할인 계수. 없으면 1.0"""
     if not card:
@@ -1995,6 +2001,8 @@ class BuyerAgent(AgentBase):
         fee = shipping_fee_for(a.order, self.order_type_of(a.order, snap))
         margin = self._margin(a.order, cost + fee, float(snap.get('margin_pct') or 0))
         self.step(f'{self.spec.name}: 결제 직전까지 준비 완료')
+        # 실제로 산 상품 번호 — 스냅샷 값 우선, 없으면 이 사이트 상품 주소(교차 비교면 order2 의 이 사이트 주소)
+        pno = str(snap.get('product_no') or '') or product_no_of(a.order.product_url)
         return AgentResult(
             status='ok',
             reason=(
@@ -2020,6 +2028,10 @@ class BuyerAgent(AgentBase):
                 # 결제 진입이 주문서를 대조·지정하는 데 쓴다(주문서에 담긴 옵션 글자, 스냅샷이 만든 주문서 탭 id)
                 **({'selected': str(snap.get('selected'))} if snap.get('selected') else {}),
                 **({'order_tab': str(snap.get('order_tab'))} if snap.get('order_tab') else {}),
+                # 실제로 산 상품의 번호·이름 — 교차 비교로 다른 사이트에서 사면 원래 주문 URL·상품명과 다르다.
+                # 결제 진입 대조(expect.product_no·name)가 이걸 먼저 쓴다(2026-09-26 29CM 리뷰 차단2)
+                **({'product_no': pno} if pno else {}),
+                **({'product_name': str(snap.get('product_name'))} if snap.get('product_name') else {}),
             },
             evidence=tuple(self.evidence),
         )
