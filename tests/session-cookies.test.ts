@@ -43,10 +43,9 @@ describe('persistedCookie', () => {
     })
   })
 
-  it('host-only 쿠키는 domain 을 빼고 되써서 같은 쿠키를 덮어쓴다(복제본을 만들지 않는다)', () => {
-    const d = persistedCookie(cookie({ domain: 'www.shoemarker.co.kr', hostOnly: true, name: 'CKMAIN' }))
-    expect(d).not.toHaveProperty('domain')
-    expect(d?.url).toBe('https://www.shoemarker.co.kr/')
+  it('host-only 세션 쿠키는 건드리지 않는다(복제본도, 덮어쓰기 경쟁도 없게 — 무신사머니 결제 세션)', () => {
+    expect(persistedCookie(cookie({ domain: 'www.shoemarker.co.kr', hostOnly: true, name: 'CKMAIN' }))).toBeNull()
+    expect(persistedCookie(cookie({ domain: 'money.musinsapayments.com', hostOnly: true, name: 'SESSION' }))).toBeNull()
   })
 
   it('만료가 있는 쿠키·도메인 없는 쿠키는 건드리지 않는다', () => {

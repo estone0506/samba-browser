@@ -41,12 +41,15 @@ export function persistedCookie(
 ): CookiesSetDetails | null {
   if (!cookie.session) return null
   if (!cookie.domain) return null
+  // host-only 세션 쿠키는 건드리지 않는다. 같은 쿠키를 덮어쓰면 사이트가 곧바로 바꾼 새 값을 비동기 되쓰기가
+  // 옛 값으로 되돌린다 — 무신사머니 결제창이 "로그인 세션을 찾을 수 없습니다"로 튕겼다(실기 2026-09-26).
+  // 로그인 유지가 필요한 토큰(무신사 app_atk 등)은 도메인 쿠키라 그대로 남긴다
+  if (cookie.hostOnly) return null
   return {
     url: cookieUrl(cookie),
     name: cookie.name,
     value: cookie.value,
-    // host-only 는 domain 을 빼야 같은 쿠키를 덮어쓴다(넘기면 '.호스트' 복제본이 새로 생긴다)
-    ...(cookie.hostOnly ? {} : { domain: cookie.domain }),
+    domain: cookie.domain,
     path: cookie.path ?? '/',
     secure: cookie.secure ?? false,
     httpOnly: cookie.httpOnly ?? false,
