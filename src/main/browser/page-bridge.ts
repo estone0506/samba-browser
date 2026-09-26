@@ -359,7 +359,8 @@ function opToCode(op: AgentOp): string {
 
 // 진짜 키 입력(typeLogin)이 필요한 사이트 — 점수형 reCAPTCHA 가 합성 입력을 봇으로 보는 곳(실기 GS샵),
 // 값만 넣으면 로그인 버튼이 먹지 않는 곳(실기 2026-09-25 페이코: 값은 채워졌는데 로그인 화면 그대로)
-const HUMAN_TYPING_HOSTS = ['gsshop.com', 'payco.com']
+// 슈마커: 비밀번호 칸(NPwd)에 값만 넣으면 제출돼도 로그인되지 않았다(실기 2026-09-26)
+const HUMAN_TYPING_HOSTS = ['gsshop.com', 'payco.com', 'shoemarker.co.kr']
 
 function safeHost(wc: WebContents): string {
   try {

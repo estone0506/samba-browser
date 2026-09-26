@@ -57,5 +57,6 @@ describe('needsHumanTyping — 한 글자씩 키 입력은 GS샵·페이코만',
   it('페이코 로그인은 진짜 키 입력(값만 넣으면 로그인 버튼이 먹지 않음, 실기 2026-09-25)', () => {
     expect(needsHumanTyping('id.payco.com')).toBe(true)
     expect(needsHumanTyping('notpayco.com')).toBe(false)
+    expect(needsHumanTyping('www.shoemarker.co.kr')).toBe(true)
   })
 })
