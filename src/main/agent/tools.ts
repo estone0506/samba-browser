@@ -242,6 +242,21 @@ export function rememberSnapshot(
   return prev
 }
 
+// 세션을 넘는 키패드 입력 기록의 상한 — 오래된 것부터 버린다(창 id 는 매번 새로 생긴다)
+const KEYPAD_ENTERED_MAX = 200
+
+/** 키패드 입력을 한 결제창을 기록한다. 상한을 넘으면 가장 오래된 기록부터 지운다 */
+export function rememberKeypadEntered(set: Set<string> | undefined, key: string): void {
+  if (!set) return
+  set.delete(key)
+  set.add(key)
+  while (set.size > KEYPAD_ENTERED_MAX) {
+    const oldest = set.values().next().value
+    if (oldest === undefined) break
+    set.delete(oldest)
+  }
+}
+
 /** progress 도구 입력 검증. 문제가 없으면 null, 있으면 모델이 읽을 거부 문구 */
 export function validateProgress(done: number, total: number): string | null {
   if (!Number.isInteger(done) || !Number.isInteger(total)) return PROGRESS_INVALID
@@ -516,6 +531,9 @@ export interface ToolContext {
   phone?: PhoneToolContext
   // 결제 승인 문맥. 폰 도구와 따로 주입한다 — 결제만 금고를 보는 실행기를 갖는다
   pay?: PayToolContext
+  // 키패드 자동 입력을 이미 한 결제창(창 id|호스트) — 도구 세션을 넘어 공유한다. 브릿지는 요청마다 새
+  // 세션을 열어 세션 안의 1회 제한이 하네스의 반복 호출을 막지 못했다(실기 2026-09-27). 주입되지 않으면 세션 안만 본다
+  keypadEntered?: Set<string>
 }
 
 const text = (t: string): { content: [{ type: 'text'; text: string }] } => ({
@@ -1102,7 +1120,9 @@ ${raw}`
     // 한 실행에서 키패드 자동 입력은 결제창(호스트)마다 1회뿐이다. 틀린 값을 모델이 다시 부르면
     // 5회 오답으로 결제 수단이 잠긴다(실기: 3/5 까지 감). 두 번째부터는 앱이 거절하고 사람에게 맡긴다
     const attemptKey = currentHost(tab)
-    if (keypadAttempts.has(attemptKey)) return KEYPAD_ALREADY_TRIED
+    // 세션을 넘는 기록은 창(id)별이다 — 호스트만 보면 다음 주문의 새 결제창(같은 pay.naver.com)까지 막힌다
+    const windowKey = `${tab.id}|${attemptKey}`
+    if (keypadAttempts.has(attemptKey) || ctx.keypadEntered?.has(windowKey)) return KEYPAD_ALREADY_TRIED
     // 글자·이름으로 읽히는 키패드가 먼저다. 못 읽으면(네이버페이처럼 숫자를 이미지로 그린 키패드)
     // 빈 버튼들을 OCR 로 읽어 배치를 만든다 — 둘 다 안 되면 사람에게 넘긴다
     const labelled = await pageBridge.keypadLayout(tab).catch(() => null)
@@ -1111,7 +1131,10 @@ ${raw}`
     if (fromOcr) ctx.onStep('키패드 배치(OCR)', layout !== null)
     if (!layout) return await keypadHandoff(tab)
     // 시험 입력은 끝까지 누르지 않으므로 1회 제한을 쓰지 않는다 — 진짜 입력 기회를 남겨 둔다
-    if (dryRunDigits === undefined) keypadAttempts.add(attemptKey)
+    if (dryRunDigits === undefined) {
+      keypadAttempts.add(attemptKey)
+      rememberKeypadEntered(ctx.keypadEntered, windowKey)
+    }
     let typedDigits = dryRunDigits ?? 0
     const frameIndex = layout.frameIndex
     const result: WebKeypadResult = await enterWebPaymentPassword({

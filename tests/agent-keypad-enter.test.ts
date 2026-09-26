@@ -130,6 +130,10 @@ function build(
     openerId?: string
     /** 탭+팝업 전체 목록(opener 사슬 검사용) */
     targets?: AgentTarget[]
+    /** 도구 세션을 넘어 공유하는 키패드 입력 기록(브릿지) */
+    keypadEntered?: Set<string>
+    /** 키패드 창 id(기본 pay-1) */
+    tabId?: string
   } = {}
 ): Built {
   const confirm = vi.fn(async () => opts.confirmResult ?? true)
@@ -154,7 +158,7 @@ function build(
   } as unknown as VaultService
   const tabUrl = opts.tabUrl ?? SHOP
   const tab = {
-    id: 'pay-1',
+    id: opts.tabId ?? 'pay-1',
     view: { webContents: { getURL: () => tabUrl, isDestroyed: () => false } },
     profile: opts.tabProfile ?? 'default',
     mobile: false,
@@ -200,7 +204,8 @@ function build(
     ...(opts.withVault === false ? {} : { vault }),
     jobId: 'job-1',
     handoff,
-    vaultExcludedHosts: opts.vaultExcludedHosts
+    vaultExcludedHosts: opts.vaultExcludedHosts,
+    ...(opts.keypadEntered ? { keypadEntered: opts.keypadEntered } : {})
   }
   const server = createSambaTools(ctx) as unknown as { tools: ToolStub[] }
   return {
@@ -504,6 +509,18 @@ describe('fill_secret — 시험 입력(dry-run)', () => {
     expect(r).toBe(KEYPAD_DRY_RUN(2, 'cancel button clicked'))
     expect(pageBridge.click).toHaveBeenCalledWith(expect.anything(), 9)
     expect(b.closeTarget).not.toHaveBeenCalled()
+  })
+
+  it('브릿지처럼 요청마다 새 세션이어도 같은 결제창에는 두 번 넣지 않는다(새 창은 넣는다)', async () => {
+    // 실기 2026-09-27: 브릿지는 요청마다 도구 세션을 새로 열어 세션 안의 1회 제한이 반복 호출을 못 막았다
+    const shared = new Set<string>()
+    expect(await fill(build({ keypadEntered: shared }))).toBe(KEYPAD_ENTERED_NEXT)
+    const pressed = pageBridge.pressOnce.mock.calls.length
+    const again = await fill(build({ keypadEntered: shared }))
+    expect(again).toContain('already entered the payment password once')
+    expect(pageBridge.pressOnce.mock.calls.length).toBe(pressed)
+    // 다음 주문의 새 결제창(창 id 가 다르다)은 막지 않는다
+    expect(await fill(build({ keypadEntered: shared, tabId: 'pay-2' }))).toBe(KEYPAD_ENTERED_NEXT)
   })
 
   it('시험 입력은 키패드 1회 제한을 쓰지 않는다(뒤이은 진짜 입력이 통한다)', async () => {

@@ -160,6 +160,8 @@ export class AgentRunner {
   // 동시에 열린 레인 세션 수와 레인별 탭 보기 상태(하네스 계정 동시 처리)
   private laneSessions = 0
   private readonly lanes = new Map<string, LaneState>()
+  // 브릿지 세션들이 함께 보는 키패드 입력 기록(창 id|호스트) — 한 결제창에 결제 비밀번호를 두 번 넣지 않는다
+  private readonly bridgeKeypadEntered = new Set<string>()
 
   private laneStateOf(name: string): LaneState {
     let st = this.lanes.get(name)
@@ -935,8 +937,10 @@ ${CODEX_NO_IMAGE_NOTE}`
             : Promise.resolve({ ok: false, reason: 'declined' as const }),
         prompt: ''
       })
+    // 키패드 입력 기록은 브릿지 세션(요청 1건)을 넘어 공유한다 — 같은 결제창에 두 번 넣지 않는다
+    const bridgeCtx = { ...baseCtx, keypadEntered: this.bridgeKeypadEntered }
     const server = createSambaTools(
-      laneState ? { ...baseCtx, tabs: laneTabs(this.tabs, laneState) } : baseCtx
+      laneState ? { ...bridgeCtx, tabs: laneTabs(this.tabs, laneState) } : bridgeCtx
     )
     const tools = extractSdkTools(server).filter((t) => t.name !== 'done')
     // 브릿지 세션이 열려 있는 동안은 금고 자동 잠금을 보류한다(run() 과 같은 패턴). 두 번 풀려도 안전하다
