@@ -33,6 +33,11 @@ BUYER_HANDOFF_FIELDS = (
     # 실제로 산 상품 번호·이름(교차 비교면 원래 주문과 다른 사이트 기준) — 결제 진입 대조용
     'product_no',
     'product_name',
+    # 도착한 상품 주소(SSG 지정 몰 상품) — 결제 진입 대조(expect.product_url)
+    'product_url',
+    # 진입 경로(SSG 직접·애드픽)와 애드픽 적립(원) — 기록 단계 원가에 쓴다(주문 상세에 애드픽 적립이 안 나온다)
+    'route',
+    'adpick_reward',
 )
 
 

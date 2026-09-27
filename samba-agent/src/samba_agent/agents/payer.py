@@ -962,7 +962,16 @@ class PayerAgent(AgentBase):
             'selected': str(a.handoff.get('selected') or ''),
             # 구매가 스냅샷에서 읽은 번호 우선 — 교차 비교로 다른 사이트에서 사면 주문 URL 번호는 다른 사이트 것이다
             'product_no': str(a.handoff.get('product_no') or '') or product_no_of(a.order.product_url),
+            # 구매 스냅샷이 도착한 상품 주소(SSG 처럼 지정 몰 상품으로 바꿔 사는 소싱처만 준다)
+            **({'product_url': str(a.handoff.get('product_url'))} if a.handoff.get('product_url') else {}),
         }
+        # 결제수단 견적이 고른 카드사(SSGPAY 안의 '현대카드' 등) — 결제 진입 스크립트가 등록 카드를 고른다.
+        # 카드사를 모르면 스크립트가 추측하지 않고 멈춘다(checkout_enter_ssg)
+        if a.handoff.get('card_issuer'):
+            payload['issuer'] = str(a.handoff.get('card_issuer'))
+        bought = default_sources().by_id(str(a.handoff.get('buy_source') or a.order.source or ''))
+        if bought is not None and bought.allow_department:
+            payload['allow_department'] = True  # SSG: 신세계백화점(6009) 상품도 결제한다(사용자 2026-09-27)
         amount = a.handoff.get('paid')
         if isinstance(amount, int | float) and not isinstance(amount, bool) and amount > 0:
             payload['amount'] = amount
