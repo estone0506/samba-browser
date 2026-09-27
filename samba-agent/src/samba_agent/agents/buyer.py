@@ -328,6 +328,94 @@ CARD_BILLING_FACTORS: tuple[tuple[tuple[str, ...], float], ...] = (
 )
 
 
+# SSG 는 신세계몰(siteNo 6004) 상품만 산다(사용자 2026-09-27). 신세계백화점(6009)은 소싱처 allow_department 일 때만.
+# 이마트·트레이더스 등 그 밖의 몰은 금지 — 스냅샷 스크립트가 바로구매 전에 error:'not_shinsegaemall' 로 멈춘다
+NOT_MALL_ERROR = 'not_shinsegaemall'
+# 사이트 봇 차단(SSG PerimeterX 등) — 스크립트 잘못이 아니다. 재시도·AI 수리 없이 사람에게 넘긴다(돌릴수록 더 막힌다)
+BLOCKED_ERROR = 'blocked'
+_MALL_URL_RE = re.compile(r'shinsegaemall\.ssg\.com|[?&]siteNo=6004(?!\d)')
+_DEPARTMENT_URL_RE = re.compile(r'department\.ssg\.com|[?&]siteNo=6009(?!\d)')
+# 신세계몰 같은 상품 후보를 주문서까지 시험해 보는 최대 개수(싼 순서) — 후보마다 상품 페이지·주문서를 연다.
+# SSG 는 상품 페이지를 네 번쯤 열면 봇 차단에 다시 걸린다(2026-09-27) — 적게 돈다
+MALL_ITEM_TRIES = 2
+# 진입 경로 — 소싱처 routes 가 비었으면 애드픽 하나(주문서 금액은 경로와 무관함을 실측, 적립만 다르다 — 2026-09-27).
+# 애드픽 진입이 안 되면 직접 경로로 산다. 직접·다나와·에누리까지 비교하려면 routes 에 적는다(페이지 요청이 는다)
+ROUTES_DEFAULT = ('adpick',)
+DIRECT_ROUTE = 'direct'
+ADPICK_ROUTE = 'adpick'
+# 상품명 속 모델코드(HF5441-100·YUA24B06) — 스크립트 ssg_route_quotes 와 같은 규칙. 한글에 붙어 있어도 잡게 ASCII 경계
+_MODEL_CODE_RE = re.compile(r'\b([A-Z]{1,4}\d{3,6}[A-Z0-9]{0,4})(?:[ _-](\d{3}))?\b', re.ASCII)
+_LOOSE_MODEL_RE = re.compile(r'\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6,}\b', re.ASCII)
+
+
+def is_mall_url(url: str | None, allow_department: bool = False) -> bool:
+    """지정 몰(신세계몰, allow_department 면 신세계백화점까지) 상품 주소인가."""
+    u = url or ''
+    return bool(_MALL_URL_RE.search(u) or (allow_department and _DEPARTMENT_URL_RE.search(u)))
+
+
+def model_code_of(name: str | None) -> str:
+    """상품명의 모델코드(영문+숫자, 뒤 세 자리 색 코드는 '-' 로 잇는다). 없으면 ''.
+
+    나이키형(HF5441-100)이 먼저, 아니면 영문·숫자가 섞인 여섯 글자 이상 토큰(YUA24B06)."""
+    m = _MODEL_CODE_RE.search(name or '')
+    if m:
+        return f'{m.group(1)}-{m.group(2)}' if m.group(2) else m.group(1)
+    loose = _LOOSE_MODEL_RE.search(name or '')
+    return loose.group(0) if loose else ''
+
+
+def mall_candidates(raw: object) -> list[dict[str, object]]:
+    """신세계몰 같은 상품 후보 — 주소·상품번호가 있는 것만, 가격 싼 순(가격 모름은 뒤, 같으면 원래 순서)."""
+    items = [
+        x
+        for x in (raw if isinstance(raw, list) else [])
+        if isinstance(x, dict) and str(x.get('url') or '').startswith('https://') and x.get('item_id')
+    ]
+    return sorted(items, key=lambda x: _as_float(x.get('price')) or float('inf'))
+
+
+def usable_routes(raw: object, wanted: list[str]) -> list[dict[str, object]]:
+    """경로 견적 중 스냅샷으로 비교할 수 있는 것 — 진입 주소가 있고 지정 몰에 도착했고 품절이 아니며 같은 상품인 것."""
+    out: list[dict[str, object]] = []
+    for r in raw if isinstance(raw, list) else []:
+        if not isinstance(r, dict) or r.get('route') not in wanted:
+            continue
+        if not str(r.get('entry_url') or '').startswith('https://'):
+            continue
+        if r.get('mall_ok') is not True or r.get('sold_out') or r.get('same_item') is False:
+            continue
+        out.append(r)
+    return out
+
+
+def adpick_reward_of(snap: dict[str, object]) -> float:
+    """애드픽 경로 적립(원) — 스냅샷의 adpick_reward, 없으면 결제액 × adpick_rate(%). 애드픽이 아니면 0."""
+    reward = _as_float(snap.get('adpick_reward'))
+    if reward > 0:
+        return reward
+    rate = _as_float(snap.get('adpick_rate'))
+    paid = _as_float(snap.get('pay_amount')) or _as_float(snap.get('cost'))
+    return float(round(paid * rate / 100)) if rate > 0 else 0.0
+
+
+def blocked_failure(out: dict[str, object], what: str) -> AgentFailure | None:
+    """스크립트가 봇 차단(error:'blocked')을 알렸으면 사람에게 넘길 실패, 아니면 None."""
+    if out.get('error') != BLOCKED_ERROR:
+        return None
+    return AgentFailure(
+        'needs_human',
+        mask_text(f'사이트 봇 차단({what}) — 재시도하지 않는다: {str(out.get("note") or "")[:80]}'),
+        FailReason.CAPTCHA,
+    )
+
+
+def route_cost(snap: dict[str, object]) -> float:
+    """경로 비교 원가 = 결제액 − 애드픽 적립. 결제액을 모르면 0(비교에서 뺀다)."""
+    paid = _as_float(snap.get('pay_amount')) or _as_float(snap.get('cost'))
+    return paid - adpick_reward_of(snap) if paid > 0 else 0.0
+
+
 def product_no_of(url: str | None) -> str:
     """상품 주소의 상품번호(무신사 /products/123, 29CM /products/123, a-rt prdtNo=, 슈마커 ProductCode=,
     SSG itemId=). 없으면 ''."""
@@ -775,6 +863,10 @@ def snapshot_problem(
         # 사이트가 구매 수량 한도를 알렸다 — 이 계정은 못 산다. 스크립트 잘못이 아니니 고치지 않는다
         if snapshot_purchase_limit(out):
             return None
+        # 지정 몰(SSG 신세계몰)이 아닌 상품 — 스크립트가 규칙대로 멈췄다. 호출부가 그 몰의 같은 상품을 찾는다.
+        # 봇 차단도 스크립트 잘못이 아니다 — 호출부가 사람에게 넘긴다
+        if out.get('error') in (NOT_MALL_ERROR, BLOCKED_ERROR):
+            return None
         # 주문 옵션이 '품절' 표시로 떠 있다 = 품절이다. 사이즈를 못 골라 selected·원가가 비는 게 당연하다 —
         # 스크립트 잘못이 아니니 고치지 않는다(실기 2026-09-26: 품절 주문마다 계정 4개가 AI 수리를 돌아 1건에 10~20분)
         if option and sold_out_option_listed([str(o) for o in (out.get('options') or [])], option):  # type: ignore[union-attr]
@@ -806,6 +898,27 @@ def snapshot_problem(
                 '무신사머니·무신사페이·토스페이·카카오페이·페이코 등 보이는 이름을 methods 로 돌려줘라'
             )
         return None
+
+    return check
+
+
+def probe_snapshot_problem(
+    option: str | None, base: Callable[[dict[str, object]], str | None]
+) -> Callable[[dict[str, object]], str | None]:
+    """후보 시험(신세계몰 같은 상품 후보·진입 경로) 스냅샷 검사. 선택지는 읽었는데 주문 옵션이 없으면 통과시킨다 —
+    그 후보에 없는 옵션일 뿐 스크립트 잘못이 아니다(고치게 두면 후보마다 AI 수리가 돈다). 나머지는 base 그대로.
+    """
+
+    def check(out: dict[str, object]) -> str | None:
+        options = [str(o) for o in (out.get('options') or [])]  # type: ignore[union-attr]
+        if (
+            option
+            and options
+            and not matching_options(options, option)
+            and not numeric_overlap_options(options, option)
+        ):
+            return None
+        return base(out)
 
     return check
 
@@ -1111,18 +1224,40 @@ class BuyerAgent(AgentBase):
     def _snapshot(self, a: Assignment, account: str) -> dict[str, object]:
         """그 계정의 탭 프로필에서 상품 스냅샷(주문서까지)을 만든다.
 
-        소싱처가 payment_quotes 면 주문서에서 결제수단별 금액까지 읽어 가장 싼 수단을 스냅샷에 싣는다
-        (cost 를 그 금액으로 바꾸고 pay_method·pay_card 를 붙인다) — 계정 비교도 이 금액으로 한다.
+        지정 몰 상품(mall_item)·진입 경로 비교(route_compare)가 켜진 소싱처(SSG)는 그 흐름을 거친다.
         """
-        if source_of(self.spec.name).coupon_download:
+        source = source_of(self.spec.name)
+        if source.mall_item or source.route_compare:
+            return self._mall_route_snapshot(a, account)
+        return self._snapshot_once(a, account)
+
+    def _snapshot_once(
+        self,
+        a: Assignment,
+        account: str,
+        extra: dict[str, object] | None = None,
+        probe: bool = False,
+    ) -> dict[str, object]:
+        """상품 스냅샷 한 번. extra 는 스냅샷 인자에 더할 값(진입 경로 route·entry_url 등).
+
+        probe 면 후보 시험이다 — 선택지에 주문 옵션이 없어도 스크립트 수리를 돌리지 않는다.
+        결제수단 견적은 여기서 하지 않는다 — 계정을 고른 뒤 한 번만(_buy).
+        """
+        source = source_of(self.spec.name)
+        if source.coupon_download:
             self._download_coupons(a, account)
         self.step(f'{self.spec.name}: 상품 확인({account})')
         # 저장 스크립트는 "열린 주문서 탭"이 있으면 계정을 따지지 않고 그것을 쓴다 — 먼저 닫아 이 계정 주문서를 새로 만든다
         # (실기 2026-09-25: buyer03 견적 뒤 기본 세션(buyer01) 주문서로 결제됐다)
         self._close_order_tabs(account)
+        args: dict[str, object] = json.loads(snapshot_args(self.spec.name, a.order, account=account))
+        if source.allow_department:
+            args['allow_department'] = True  # SSG: 신세계백화점(6009) 상품도 산다(사용자 2026-09-27)
+        args.update(extra or {})
+        check = snapshot_problem(a.order.option, lambda sel: self._selected_matches(sel, a.order.option))
         snap = self.script_json(
-            source_of(self.spec.name).snapshot_script,
-            json.loads(snapshot_args(self.spec.name, a.order, account=account)),
+            source.snapshot_script,
+            args,
             goal=(
                 f'상품 {a.order.sku} 페이지에서 주문 옵션 "{a.order.option or "(없음)"}" 을 골라 주문서(구매하기)까지 가서 '
                 '원가(cost, 숫자)·선택지 목록(options, 고른 옵션 포함)·결제수단(methods)을 원래 키 그대로 돌려주고, '
@@ -1131,13 +1266,14 @@ class BuyerAgent(AgentBase):
                 'options 만 돌려준다 — 옵션 없이 누르면 "옵션을 선택해 주세요" 경고창이 계정 수만큼 쏟아진다. '
                 '구매 버튼은 옵션을 고른 뒤, 또는 옵션 선택창이 아예 없는 상품일 때만 누른다.'
             ),
-            check=snapshot_problem(
-                a.order.option, lambda sel: self._selected_matches(sel, a.order.option)
-            ),
+            check=probe_snapshot_problem(a.order.option, check) if probe else check,
         )
         if snap.get('product_tab'):
             # 주문서가 안 열리면 스크립트는 사이트 알림(구매 한도 등)이 결과에 붙도록 상품 탭을 남긴다 — 여기서 닫는다
             self._close_product_tabs(account, str(snap.get('product_url') or ''))
+        blocked = blocked_failure(snap, f'상품 확인 {account}')
+        if blocked:
+            raise blocked
         if snap.get('already_ordered') or snap.get('existing_order_no'):
             return snap  # 중복 구매 흔적 — 정돈·견적 없이 호출부가 바로 거절한다
         limit = snapshot_purchase_limit(snap)
@@ -1156,6 +1292,256 @@ class BuyerAgent(AgentBase):
         if source_of(self.spec.name).normal_price and snap.get('normal_price') is None:
             self._apply_normal_price(a, account, snap)
         return snap
+
+    def _mall_route_snapshot(self, a: Assignment, account: str) -> dict[str, object]:
+        """지정 몰 상품(mall_item)·진입 경로(route_compare) 스냅샷 — SSG(사용자 2026-09-27).
+
+        1) 주문 링크가 지정 몰(신세계몰, allow_department 면 신세계백화점까지)이면 그 상품으로 경로 스냅샷을 한다.
+        2) 아니면(또는 스크립트가 not_shinsegaemall 로 멈추면) 같은 모델의 신세계몰 상품을 찾아 싼 순서로 스냅샷해
+           주문 옵션이 맞는 첫 후보로 간다 — 상품번호·상품명은 그 후보 값이다. 그 뒤 경로 스냅샷(애드픽)을 한다.
+        봇 차단을 부르지 않게 SSG 페이지 요청을 줄인다 — 기본은 애드픽 경로 스냅샷 하나.
+        """
+        source = source_of(self.spec.name)
+        snap: dict[str, object] | None = None
+        if not source.mall_item or is_mall_url(a.order.product_url, source.allow_department):
+            snap = (
+                self._route_compare(a, account, None)
+                if source.route_compare
+                else self._snapshot_once(a, account)
+            )
+            if snap.get('error') == NOT_MALL_ERROR:
+                if not source.mall_item:
+                    raise AgentFailure(
+                        'needs_human',
+                        '지정 몰 상품이 아니다(신세계몰 아님) — 사람이 같은 상품을 찾는다',
+                        FailReason.UNKNOWN,
+                    )
+                self.note(
+                    '신세계몰 상품', '주문 링크가 신세계몰 상품이 아니다 — 같은 모델을 신세계몰에서 찾는다'
+                )
+                snap = None
+        picked: dict[str, object] | None = None
+        if snap is None:
+            extra: dict[str, object] | None = (
+                {'route': DIRECT_ROUTE} if source.route_compare else None
+            )
+            a, snap, picked = self._mall_item_snapshot(a, account, extra)
+            if source.route_compare:
+                snap = self._route_compare(a, account, snap)
+        if picked is not None:
+            snap['product_no'] = str(picked.get('item_id'))
+            snap['product_name'] = str(picked.get('name') or '') or snap.get('product_name')
+            snap['mall_item_url'] = str(picked.get('url'))
+        return snap
+
+    def _mall_item_snapshot(
+        self, a: Assignment, account: str, extra: dict[str, object] | None
+    ) -> tuple[Assignment, dict[str, object], dict[str, object]]:
+        """같은 모델의 신세계몰 상품(`<key>_find_mall_item`)을 싼 순서로 스냅샷해 주문 옵션이 맞는 첫 후보를 고른다.
+
+        (그 후보 상품 주소로 바꾼 작업, 스냅샷, 후보)를 돌려준다. 모델코드는 상품명(삼바 sku)에서 읽는다.
+        후보가 없거나 모두 안 맞으면 사람에게 — 신세계몰이 아닌 곳에서는 사지 않는다.
+        """
+        source = source_of(self.spec.name)
+        model = model_code_of(a.order.sku)
+        if not model:
+            raise AgentFailure(
+                'needs_human',
+                mask_text(f'주문 링크가 신세계몰 상품이 아닌데 상품명에서 모델코드를 못 찾았다: {a.order.sku[:60]}'),
+                FailReason.UNKNOWN,
+            )
+        self.step(f'{self.spec.name}: 신세계몰 같은 상품 찾기({model})')
+        out = self.script_json(
+            source.mall_item_script,
+            {'model': model, 'profile': account},
+            goal=(
+                f'신세계몰 검색에서 모델코드 {model} 상품을 모아 '
+                '{ok, model, items:[{item_id, url, name, price}]} 로 돌려준다(가격 오름차순). 결제·주문은 하지 않는다.'
+            ),
+            check=lambda o: (
+                None
+                if isinstance(o.get('items'), list) or o.get('error') == BLOCKED_ERROR
+                else f'후보 목록(items)이 없다: note={o.get("note")}'
+            ),
+        )
+        blocked = blocked_failure(out, '신세계몰 상품 찾기')
+        if blocked:
+            raise blocked
+        items = mall_candidates(out.get('items'))
+        if not items:
+            raise AgentFailure(
+                'needs_human', f'신세계몰에 같은 모델({model}) 상품이 없다 — 사람이 확인한다', FailReason.UNKNOWN
+            )
+        misses: list[str] = []
+        for item in items[:MALL_ITEM_TRIES]:
+            order = a.order.model_copy(update={'product_url': str(item['url'])})
+            cand = a.model_copy(update={'order': order})
+            snap = self._snapshot_once(cand, account, extra, probe=True)
+            if snap.get('already_ordered') or snap.get('existing_order_no'):
+                return cand, snap, item  # 중복 구매 흔적 — 호출부가 거절한다
+            why = self._unusable(cand, snap)
+            if why is None:
+                self.note(
+                    '신세계몰 상품',
+                    mask_text(f'{item["item_id"]} {str(item.get("name") or "")[:40]} — 주문 옵션 맞음(후보 {len(items)}개)'),
+                )
+                return cand, snap, item
+            misses.append(f'{item["item_id"]}: {why}')
+            self.note('신세계몰 상품', mask_text(f'{item["item_id"]}: 불가({why})'))
+        raise AgentFailure(
+            'needs_human',
+            mask_text(f'신세계몰 같은 모델({model}) 후보에 주문 옵션이 맞는 상품이 없다 — {"; ".join(misses)[:200]}'),
+            FailReason.UNKNOWN,
+        )
+
+    def _unusable(self, a: Assignment, snap: dict[str, object]) -> str | None:
+        """이 스냅샷으로 살 수 없는 사유(스크립트 오류·주문 옵션 없음·주문서 옵션 불일치·원가 없음). 살 수 있으면 None."""
+        if snap.get('error'):
+            return f'{snap.get("error")}: {str(snap.get("note") or "")[:60]}'
+        option = a.order.option
+        if option:
+            options = [str(o) for o in (snap.get('options') or [])]  # type: ignore[union-attr]
+            if not self._match_options(options, option):
+                return f'주문 옵션 없음·품절(선택지 {options[:6]})'
+            selected = str(snap.get('selected') or '').strip()
+            if not (selected and self._selected_matches(selected, option)):
+                return f'주문서 옵션 불일치({selected or "모름"})'
+        if _as_float(snap.get('cost')) <= 0:
+            return f'원가 못 읽음({snap.get("note")})'
+        return None
+
+    def _route_quotes(self, a: Assignment, account: str, wanted: list[str]) -> list[dict[str, object]]:
+        """진입 경로 견적(`<key>_route_quotes`) — 경로마다 진입 주소를 받는다. 못 읽으면 빈 목록(직접 경로로 산다)."""
+        source = source_of(self.spec.name)
+        args: dict[str, object] = {
+            'sku': a.order.product_url or '',
+            'name': a.order.sku,
+            'profile': account,
+            'routes': wanted,
+        }
+        if source.allow_department:
+            args['allow_department'] = True
+        self.step(f'{self.spec.name}: 진입 경로 견적({", ".join(wanted)})')
+        try:
+            out = self.script_json(
+                source.route_quotes_script,
+                args,
+                goal=(
+                    f'같은 상품(itemId)을 경로 {wanted} 로 열어 '
+                    '{ok, routes:[{route, entry_url, mall_ok, same_item, sold_out, percent}]} 로 돌려준다. '
+                    '결제·주문·로그인은 하지 않는다.'
+                ),
+                check=lambda o: (
+                    None
+                    if isinstance(o.get('routes'), list) or o.get('error') == BLOCKED_ERROR
+                    else f'경로 목록(routes)이 없다: note={o.get("note")}'
+                ),
+            )
+        except AgentFailure as e:
+            self.note('경로 비교', mask_text(f'경로 견적 실패({e.reason[:60]}) — 직접 경로로 산다'))
+            return []
+        blocked = blocked_failure(out, '진입 경로 견적')
+        if blocked:
+            raise blocked
+        routes = usable_routes(out.get('routes'), wanted)
+        raw = out.get('routes')
+        for r in raw if isinstance(raw, list) else []:
+            if isinstance(r, dict) and r not in routes:
+                self.note('경로 비교', mask_text(f'{r.get("route")}: 못 씀({str(r.get("note") or "진입 불가·몰 아님·품절")[:60]})'))
+        return routes
+
+    def _route_compare(
+        self, a: Assignment, account: str, first: dict[str, object] | None
+    ) -> dict[str, object]:
+        """진입 경로(기본 애드픽 하나)로 스냅샷해 주문서 원가(결제액 − 애드픽 적립)가 가장 싼 경로의 주문서를 남긴다.
+
+        first 는 이미 만든 직접 경로 주문서(신세계몰 후보 시험)다 — 있으면 비교에 넣는다. 경로를 하나도 못 쓰면
+        직접 경로로 산다. 같은 원가면 앞 경로(직접). 경로는 쿠키로 기록되고 마지막 진입이 덮어쓰므로
+        이긴 경로가 마지막으로 연 경로가 아니면 그 경로로 다시 들어가 주문서를 새로 만든다.
+        """
+        source = source_of(self.spec.name)
+        if first is not None and (
+            first.get('already_ordered') or first.get('existing_order_no') or self._unusable(a, first)
+        ):
+            return first  # 살 수 없는 상품이면 경로를 볼 것도 없다 — 호출부가 사유를 판단한다
+        wanted = list(source.routes or ROUTES_DEFAULT)
+        tried: list[tuple[str, dict[str, object], dict[str, object]]] = []
+        direct: dict[str, object] = {'route': DIRECT_ROUTE}
+        if first is not None:
+            tried.append((DIRECT_ROUTE, first, direct))
+        elif DIRECT_ROUTE in wanted:
+            first = self._snapshot_once(a, account, direct)
+            if first.get('error') or self._unusable(a, first):
+                return first
+            tried.append((DIRECT_ROUTE, first, direct))
+        # 경로 주문서는 받았는데 상품 사유(옵션 없음·품절)로 못 쓰면 그것을 돌려준다 — 직접 경로로 또 열지 않는다
+        product_miss: dict[str, object] | None = None
+        others = [r for r in wanted if r != DIRECT_ROUTE]
+        for r in self._route_quotes(a, account, others) if others else []:
+            route = str(r['route'])
+            extra: dict[str, object] = {'route': route, 'entry_url': str(r['entry_url'])}
+            percent = _as_float(r.get('percent'))
+            if percent > 0:
+                extra['adpick_percent'] = percent
+            try:
+                snap = self._snapshot_once(a, account, extra, probe=True)
+            except AgentFailure as e:
+                if e.fail_reason is FailReason.CAPTCHA:
+                    raise  # 봇 차단 — 다른 경로도 막힌다. 사람에게
+                self.note('경로 비교', mask_text(f'{route}: 불가({e.reason[:60]})'))
+                continue
+            if snap.get('error') == NOT_MALL_ERROR or snap.get('already_ordered') or snap.get('existing_order_no'):
+                return snap  # 지정 몰 아님(호출부가 같은 상품을 찾는다)·중복 구매 흔적(호출부가 거절한다)
+            why = self._unusable(a, snap)
+            if why:
+                self.note('경로 비교', mask_text(f'{route}: 불가({why})'))
+                if not snap.get('error') and product_miss is None:
+                    product_miss = snap
+                continue
+            if route == ADPICK_ROUTE and percent > 0 and not snap.get('adpick_rate'):
+                snap['adpick_rate'] = percent  # 스크립트와 같은 % 단위
+            tried.append((route, snap, extra))
+        if not tried:
+            if product_miss is not None:
+                return product_miss
+            self.note('경로 비교', '쓸 수 있는 경로가 없다 — 직접 경로로 산다')
+            first = self._snapshot_once(a, account, direct)
+            if first.get('error') or self._unusable(a, first):
+                return first
+            tried.append((DIRECT_ROUTE, first, direct))
+        costs = ' · '.join(f'{name} {route_cost(sn):,.0f}' for name, sn, _ in tried)
+        # min 은 같은 값이면 앞 것 — 직접 경로가 먼저다
+        route, snap, extra = min(tried, key=lambda t: route_cost(t[1]))
+        if snap is not tried[-1][1]:
+            again = self._snapshot_once(a, account, extra)
+            why = self._unusable(a, again)
+            if why:
+                raise AgentFailure(
+                    'needs_human',
+                    mask_text(f'이긴 경로({route})로 다시 들어가 주문서를 못 만들었다: {why}'),
+                    FailReason.UNKNOWN,
+                )
+            if not again.get('adpick_rate') and snap.get('adpick_rate'):
+                again['adpick_rate'] = snap['adpick_rate']
+            snap = again
+        self.note('경로 비교', f'{costs} → {route}')
+        snap['route'] = route
+        self._apply_adpick(snap)
+        return snap
+
+    def _apply_adpick(self, snap: dict[str, object]) -> None:
+        """애드픽 경로 적립을 원가에 한 번 넣는다 — cost = 결제액 − 적립, reward 에 적립 가산.
+
+        결제수단 견적(_apply_payment_quotes)이 cost·reward 를 견적 값으로 덮어쓰면 거기서 줄마다 다시 더한다.
+        """
+        reward = adpick_reward_of(snap)
+        if reward <= 0:
+            return
+        paid = _as_float(snap.get('pay_amount')) or _as_float(snap.get('cost'))
+        snap['adpick_reward'] = reward
+        snap['cost'] = paid - reward
+        snap['reward'] = _as_float(snap.get('reward')) + reward
+        self.note('애드픽 적립', f'{reward:,.0f}원 — 결제액 {paid:,.0f}원에서 뺀다')
 
     def _close_order_tabs(self, account: str) -> None:
         """열린 주문서·결제 탭을 닫는다(이 레인에서 보이는 것만). 못 닫아도 스냅샷은 이어 간다."""
@@ -1444,6 +1830,14 @@ class BuyerAgent(AgentBase):
             {**q, 'points_used': used} if isinstance(q, dict) and not q.get('points_used') else q
             for q in raw_quotes
         ]
+        if snap.get('route') == ADPICK_ROUTE and adpick_reward_of(snap) > 0:
+            # 애드픽 경로 적립(결제액 × 적립률) — 견적 줄의 reward 는 사이트 적립뿐이라 줄마다 한 번 더한다
+            raw_quotes = [
+                {**q, 'reward': _as_float(q.get('reward')) + self._adpick_for(snap, _as_float(q.get('cost')))}
+                if isinstance(q, dict)
+                else q
+                for q in raw_quotes
+            ]
         src = source_of(self.spec.name)
         quotes = cheapest_quotes(
             raw_quotes, a.options.get('card'), payable, src.easy_pay_card, src.charge_pay
@@ -1472,6 +1866,12 @@ class BuyerAgent(AgentBase):
             f'{label} {best["cost"]:,.0f}원 — 최저 (후보 {len(quotes)}건, 기본 '
             f'{_as_float(out.get("base_cost")):,.0f}원{payable_note})',
         )
+
+    @staticmethod
+    def _adpick_for(snap: dict[str, object], paid: float) -> float:
+        """그 결제액의 애드픽 적립 — 적립률(%)이 있으면 결제액 × 적립률, 없으면 스냅샷 적립액 그대로."""
+        rate = _as_float(snap.get('adpick_rate'))
+        return float(round(paid * rate / 100)) if rate > 0 else _as_float(snap.get('adpick_reward'))
 
     def _quote(self, a: Assignment, account: str) -> dict[str, object] | None:
         """한 계정의 견적 — 로그인·주문서까지 만들어 원가를 읽는다. 살 수 없으면 None.
@@ -2202,6 +2602,16 @@ class BuyerAgent(AgentBase):
                 # 결제 진입 대조(expect.product_no·name)가 이걸 먼저 쓴다(2026-09-26 29CM 리뷰 차단2)
                 **({'product_no': pno} if pno else {}),
                 **({'product_name': str(snap.get('product_name'))} if snap.get('product_name') else {}),
+                # 진입 경로(SSG 직접·애드픽 …)와 애드픽 적립 — 경로 비교를 한 소싱처만 싣는다
+                **({'route': str(snap.get('route'))} if snap.get('route') else {}),
+                # 결제 진입 대조(expect.product_url) — 지정 몰·경로 비교 소싱처(SSG)만. 스냅샷이 도착한 상품 주소
+                **(
+                    {'product_url': str(snap.get('product_url'))}
+                    if snap.get('product_url')
+                    and (source_of(self.spec.name).mall_item or source_of(self.spec.name).route_compare)
+                    else {}
+                ),
+                **({'adpick_reward': snap.get('adpick_reward')} if snap.get('adpick_reward') else {}),
             },
             evidence=tuple(self.evidence),
         )
