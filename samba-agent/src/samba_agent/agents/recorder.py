@@ -204,8 +204,10 @@ class RecorderAgent(AgentBase):
 
     def _bought_account_id(self, a: Assignment) -> str | None:
         """구매 에이전트가 쓴 계정(handoff account)의 삼바웨이브 id. 주문 계정과 같거나 못 찾으면 주문 값."""
-        bought = str(a.handoff.get('account') or '').strip()
-        if bought and bought != (a.order.account or '') and self._wave is not None:
+        bought = str(a.handoff.get('account') or '').strip() or (a.order.account or '').strip()
+        # 주문 계정과 같아도 id 를 조회한다 — 주문에 미리 잡힌 계정은 아이디만 있고 id 가 비어 있어
+        # 주문계정이 빈칸으로 남았다(실기 2026-09-27: ABC buyer01·무신사 buyer05 결제건)
+        if bought and (bought != (a.order.account or '') or not a.order.account_id) and self._wave is not None:
             found = self._wave.sourcing_account_id(
                 _source_site(str(a.handoff.get('buy_source') or a.order.source)), bought
             )

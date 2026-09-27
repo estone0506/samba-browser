@@ -530,3 +530,28 @@ def test_소싱주문번호가_없으면_사람에게_넘기기_전에_ABC_주�
     assert out.status == 'ok'
     assert js.called
     assert json.loads(put.calls[0].request.content)['sourcing_order_number'] == '2026092742392'
+
+
+@respx.mock
+def test_주문_계정과_같은_계정으로_사도_id_가_비어_있으면_조회해서_채운다(reg):
+    # 실기 2026-09-27: 주문에 아이디만 있고 id 가 비어 ABC buyer01 결제건들의 주문계정이 빈칸이었다
+    put = respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
+    )
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(200, json=WAVE_ORDER))
+    respx.get(f'{WAVE_API}/sourcing-accounts').mock(
+        return_value=httpx.Response(
+            200, json={'items': [{'id': 'sa-edel', 'source_site': 'MUSINSA', 'username': 'buyer01'}]}
+        )
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    a = assignment(reg, dry_run=False)
+    a = a.model_copy(
+        update={
+            'order': ORDER.model_copy(update={'account': 'buyer01', 'account_id': None, 'source': 'MUSINSA'}),
+            'handoff': {**a.handoff, 'account': 'buyer01'},
+        }
+    )
+    out = recorder_with_wave(reg)(a)
+    assert out.status == 'ok'
+    assert json.loads(put.calls[0].request.content)['sourcing_account_id'] == 'sa-edel'
