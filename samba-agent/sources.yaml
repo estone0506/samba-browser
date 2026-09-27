@@ -89,6 +89,25 @@ sources:
     route_compare: true  # 2026-09-27 ssg_route_quotes — 직접·애드픽(적립) 경로 원가 비교, 애드픽이 비싸면 패스
     allow_department: true  # 사용자 2026-09-27: 신세계백화점(6009)도 허용. 이마트·트레이더스 등은 금지
     status: active  # 2026-09-27 사용자 요청으로 켬(봇 차단이면 즉시 사람에게)
+    # 2026-09-27 같은 상품을 현대H몰에서도 견적해 싼 쪽에서 산다. SSG 가 봇 차단(blocked)이면 H몰만 견적해 산다
+    cross_with: HMALL
+  # 현대H몰 — 삼바웨이브 pending 주문에 H몰 source_site 가 아직 없어 id 는 HMALL(2026-09-27 확인).
+  # hold: H몰 주문은 받지 않고 SSG 교차 비교의 짝으로만 쓴다(Sources.cross_only)
+  - id: HMALL
+    key: hmall
+    label: 현대H몰
+    home: https://www.hmall.com/
+    login_host: hmall.com
+    product_id: '[?&]slitmCd=(\d+)'
+    entry_route: danawa  # 사용자 2026-09-27: 반드시 다나와 경유(ReferCode 제휴할인). 직접 진입 금지
+    order_prep: true  # hmall_order_prep — 최대 할인 + 포인트는 롯데 5% 즉시할인 기준금액(5만원)이 유지되는 선까지만
+    payment_quotes: true  # hmall_payment_quotes — '카드' 탭 카드사별 총액
+    shipping_confirm: true  # hmall_set_shipping 은 저장하지 않는다 — 전화 채운 뒤 hmall_confirm_shipping 이 저장·선택
+    compare_accounts: false
+    buy_accounts: [buyer01]  # 키마스터 H몰 계정 라벨(2026-09-27 hmall.com → buyer01, 앱 재시작 뒤 반영)
+    direct_card: 롯데카드  # 사용자 2026-09-27: 롯데카드 직접 결제('카드' 탭 → 롯데). 결제창 승인은 사람(폰)
+    pay_provider: card
+    status: hold
   - id: FashionPlus
     key: fashionplus
     payment_quotes: true  # 2026-09-23 fashionplus_payment_quotes

@@ -54,6 +54,15 @@ def build_agents(
         for n, ag in agents.items()
         if isinstance(ag, BuyerAgent) and reg.source_of(n) is not None
     }
+    # 짝으로만 쓰는 소싱처(hold — SSG ↔ H몰): 에이전트는 만들되 등록 사전(agents)에는 넣지 않는다 — 그 소싱처 주문은 받지 않는다
+    for spec in reg.cross_only_specs():
+        src = reg.source_of(spec.name)
+        if src is None or src.id in by_source:
+            continue
+        only = BuyerAgent(spec, bridge, decide)
+        only.set_shipping_provider(shipping_fn)
+        only.compare_accounts_max = compare_accounts_max
+        by_source[src.id] = only
     for n, ag in agents.items():
         src = reg.source_of(n)
         if isinstance(ag, BuyerAgent) and src is not None and src.cross_with:

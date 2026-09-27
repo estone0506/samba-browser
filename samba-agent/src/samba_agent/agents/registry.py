@@ -162,6 +162,13 @@ class Registry:
     def of_kind(self, kind: str) -> list[AgentSpec]:
         return [s for s in self._specs if s.kind == kind]
 
+    def cross_only_specs(self) -> list[AgentSpec]:
+        """교차 비교 짝으로만 쓰는 소싱처(hold 인데 등록 소싱처의 cross_with)의 구매 에이전트 행.
+
+        등록부(_specs)에는 넣지 않는다 — 그 소싱처 주문은 여전히 배정되지 않고(unsupported), 짝 소싱처가 교차 비교로만 부른다.
+        """
+        return [buyer_spec(self._root, s) for s in self._sources.cross_only()]
+
     def _canon_source(self, value: str | None) -> str | None:
         """소싱처 이름을 비교용 키로 맞춘다 — 한글 이름·id·key 가 모두 같은 값이 된다.
 

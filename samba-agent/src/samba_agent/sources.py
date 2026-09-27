@@ -90,6 +90,21 @@ class Source(BaseModel):
     # True 면 '충전결제'(SSG MONEY 충전결제 등) 견적 줄도 후보로 둔다. 기본은 뺀다 —
     # 롯데온 L.pay 충전결제는 현대카드 결제보다 항상 불리하다(사용자 2026-09-26)
     charge_pay: bool = False
+    # 진입 경로 강제(H몰 = danawa, 사용자 2026-09-27): 스냅샷 전에 `<key>_danawa_entry` 로 다나와 이동 링크(entry_url)를
+    # 받아 그 링크로 들어간다(제휴할인 ReferCode). 직접 진입 금지 — 링크를 못 받으면 AI 수리 없이 사람에게
+    entry_route: Literal['danawa'] | None = None
+    # 주문서 '카드' 탭 직접 결제로 낼 카드사(H몰 = 롯데카드, 사용자 2026-09-27). 그 카드 견적 줄은 결제 제공자
+    # 'card'(DIRECT_CARD_PROVIDER)로 본다 — 키마스터 결제 비밀번호가 아니라 카드사 결제창(앱카드 등)에서 사람이 승인한다.
+    # 이 소싱처의 pay_provider 도 'card' 로 둔다
+    direct_card: str | None = None
+
+    @property
+    def entry_script(self) -> str:
+        return f'{self.key}_{self.entry_route}_entry'
+
+    @property
+    def find_product_script(self) -> str:
+        return f'{self.key}_find_product'
 
     @property
     def mall_item_script(self) -> str:
@@ -191,6 +206,12 @@ class Sources:
     def registered(self) -> list[Source]:
         """등록부에 buyer 행을 만들 소싱처 — hold 는 뺀다."""
         return [s for s in self._rows if s.status != 'hold']
+
+    def cross_only(self) -> list[Source]:
+        """등록은 안 됐지만(hold) 등록된 소싱처의 교차 비교 짝(cross_with)인 소싱처 — 그 주문은 받지 않고
+        짝 소싱처의 교차 비교에서만 쓴다(SSG ↔ H몰, 사용자 2026-09-27)."""
+        wanted = {s.cross_with for s in self.registered() if s.cross_with}
+        return [s for s in self._rows if s.status == 'hold' and s.id in wanted]
 
     def __iter__(self) -> Iterator[Source]:
         return iter(self._rows)
