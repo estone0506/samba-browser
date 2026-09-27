@@ -400,8 +400,8 @@
     "update": "Update",
     "unlockToSave": "Unlock to save",
     "lockedNotice": "KeyMaster is locked. Unlock it to save.",
-    "saved": "Saved your {{host}} account ({{username}}) to KeyMaster",
-    "updated": "Your {{host}} password was updated",
+    "saved": "Saved to KeyMaster · {{host}} ({{username}})",
+    "updated": "Saved to KeyMaster · {{host}} password updated",
     "undo": "Undo",
     "close": "Close"
   },

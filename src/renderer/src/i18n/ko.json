@@ -400,8 +400,8 @@
     "update": "업데이트",
     "unlockToSave": "잠금 해제 후 저장",
     "lockedNotice": "키마스터가 잠겨 있어요. 잠금을 풀면 저장할 수 있어요",
-    "saved": "{{host}} 계정({{username}})을 키마스터에 저장했어요",
-    "updated": "{{host}} 비밀번호를 업데이트했어요",
+    "saved": "키마스터에 저장됨 · {{host}} ({{username}})",
+    "updated": "키마스터에 저장됨 · {{host}} 비밀번호 업데이트",
     "undo": "되돌리기",
     "close": "닫기"
   },

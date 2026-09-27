@@ -101,8 +101,14 @@ export const DEFAULT_SETTINGS = {
   // [사용 안 함 — 2026-09-27 부터 vaultAutoSaveLogins 가 대신한다] 예전 "묻지 않고 비밀번호 자동 갱신" 설정.
   // 기본이 켜짐이라 무확인 저장이 됐다. 저장 파일·동기화 호환을 위해 키만 남긴다
   vaultAutoUpdatePassword: true,
-  // 로그인 성공 뒤 새 계정·바뀐 비밀번호를 묻지 않고 바로 키마스터에 저장할지(기본 꺼짐 — 꺼져 있으면 확인 바로 묻는다)
-  vaultAutoSaveLogins: false,
+  // 로그인 성공 뒤 새 계정·바뀐 비밀번호를 묻지 않고 바로 키마스터에 저장·수정할지(기본 켬 — 저장 뒤
+  // '키마스터에 저장됨 [되돌리기]' 알림만 띄운다. 끄면 주소창 아래 확인 바로 묻는다)
+  vaultAutoSaveLogins: true,
+  // vaultAutoSaveLogins 기본값을 켬으로 바꾼 1회 마이그레이션(2026-09-27)을 마쳤는가.
+  // 기기 전용 값이라 동기화하지 않는다(SYNCED_SETTING_KEYS 에 넣지 않는다).
+  // 기본은 켬(=마쳤음) — 새 설치는 이미 새 기본값이라 옮길 게 없다. 이 키가 없는 예전 저장 파일만
+  // migrateSettingsFile 이 원본 JSON 을 보고 한 번 옮긴다
+  vaultAutoSaveLoginsMigrated: true,
   // 저장 제안을 띄우지 않을 사이트(등록 도메인). 확인 바의 '이 사이트는 묻지 않기'가 여기에 더한다.
   // 제외 도메인(vaultExcludedHosts)과 달리 자동 채움은 그대로 쓴다
   vaultNeverSaveHosts: [] as string[],
@@ -299,8 +305,9 @@ export const settingsSchema = z.object({
   vaultKeepSignedIn: z.boolean().catch(DEFAULT_SETTINGS.vaultKeepSignedIn),
   // 로그인 성공 감지 시 비밀번호 자동 갱신 여부(끄면 기존 "갱신할까요?" 프롬프트로 동작)
   vaultAutoUpdatePassword: z.boolean().catch(DEFAULT_SETTINGS.vaultAutoUpdatePassword),
-  // 묻지 않고 자동 저장(기본 꺼짐)
+  // 묻지 않고 자동 저장(기본 켬)
   vaultAutoSaveLogins: z.boolean().catch(DEFAULT_SETTINGS.vaultAutoSaveLogins),
+  vaultAutoSaveLoginsMigrated: z.boolean().catch(DEFAULT_SETTINGS.vaultAutoSaveLoginsMigrated),
   // 저장 제안을 띄우지 않을 사이트. 손상된 값은 빈 배열로 되돌린다
   vaultNeverSaveHosts: z.array(z.string()).catch(DEFAULT_SETTINGS.vaultNeverSaveHosts),
   // 제외 도메인(정규화된 host 문자열 목록). 손상된 값은 빈 배열로 되돌린다
@@ -458,6 +465,18 @@ export function clampToolCalls(n: number): number {
 }
 
 // 임의의 입력(파일 내용·IPC 패치 결과)을 항상 유효한 Settings 로 만든다
+/**
+ * 저장 파일(원본 JSON)에 1회 마이그레이션을 건다(순수 함수). 바꿀 게 없으면 null.
+ * - 2026-09-27: 로그인 자격증명 '묻지 않고 자동 저장'을 기본 켬으로 바꿨다. 예전 기본값(꺼짐)이 저장된 파일도
+ *   한 번만 켬으로 옮긴다. 옮긴 뒤 사용자가 다시 끄면 그 값을 존중한다(플래그가 남아 다시 바꾸지 않는다)
+ */
+export function migrateSettingsFile(raw: unknown): Record<string, unknown> | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const obj = raw as Record<string, unknown>
+  if (obj.vaultAutoSaveLoginsMigrated === true) return null
+  return { ...obj, vaultAutoSaveLogins: true, vaultAutoSaveLoginsMigrated: true }
+}
+
 export function parseSettings(input: unknown): Settings {
   const r = settingsSchema.safeParse(input)
   const v = r.success ? r.data : { ...DEFAULT_SETTINGS }

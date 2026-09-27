@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
-import { parseSettings, type Settings } from '../../shared/settings'
+import { migrateSettingsFile, parseSettings, type Settings } from '../../shared/settings'
 import { SYNCED_SETTING_KEYS, type OutboxRecorder } from '../../shared/sync'
 import { setMainLanguage } from '../i18n'
 
@@ -25,10 +25,25 @@ export class SettingsStore {
 
   private load(): Settings {
     let raw: unknown = {}
+    let exists = false
     try {
-      if (existsSync(this.file)) raw = JSON.parse(readFileSync(this.file, 'utf8'))
+      exists = existsSync(this.file)
+      if (exists) raw = JSON.parse(readFileSync(this.file, 'utf8'))
     } catch (e) {
       console.error('설정 읽기 실패, 기본값 사용', e)
+      exists = false
+    }
+    // 저장된 파일에만 1회 마이그레이션을 걸고 곧바로 파일에 남긴다(다음 실행에서 다시 걸리지 않게).
+    // 새 설치(파일 없음)는 기본값이 이미 새 값이라 걸 필요가 없다
+    const migrated = exists ? migrateSettingsFile(raw) : null
+    if (migrated) {
+      raw = migrated
+      try {
+        writeFileSync(this.file, JSON.stringify(parseSettings(migrated), null, 2))
+        console.log('설정 마이그레이션: 로그인 자동 저장(vaultAutoSaveLogins)을 켬으로 옮겼다')
+      } catch (e) {
+        console.error('설정 마이그레이션 저장 실패', e)
+      }
     }
     // 손상·조작된 값은 parseSettings 가 필드별로 기본값으로 되돌린다
     return parseSettings(raw)
