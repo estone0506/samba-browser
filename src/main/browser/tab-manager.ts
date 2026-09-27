@@ -726,11 +726,19 @@ export class TabManager {
     wc.on('before-input-event', () => {
       if (isHumanInputEvent(wc)) markHuman(wc)
     })
-    // 페이지 JS 대화상자(alert/confirm/prompt)는 작업 실행 중에만 자동으로 닫는다
+    // 페이지 JS 대화상자(alert/confirm/prompt)는 작업 실행 중 자동으로 닫는다.
+    // 작업이 없어도 사람이 보고 있지 않은 탭(백그라운드·레인 탭)의 alert 는 닫는다
     installDialogHandler(wc, {
       // SAMBA_E2E 환경변수는 개발 빌드에서만 인정한다(패키징된 앱에서 자동 처리 금지)
       isAutomationActive: () =>
         isAutomationActive(this.agentRunning(), process.env, !app.isPackaged),
+      // 사람이 보는 탭 = 포커스를 가진(최소화되지 않은) 창의 활성 탭. 사람의 클릭은 키 입력 기록
+      // (humanBusy)에 남지 않으므로 그것까지 요구하지는 않는다 — 활성 탭의 루프는 반복 감지가 막는다
+      isUserFacing: () =>
+        this.activeId === tab.id &&
+        !this.win.isDestroyed() &&
+        this.win.isFocused() &&
+        !this.win.isMinimized(),
       mode: () => this.dialogMode(),
       ...(this.dialogConfirm ? { confirm: this.dialogConfirm } : {}),
       onMessage: (message) => this.lastDialogMessage.set(tab.id, message)
@@ -834,6 +842,8 @@ export class TabManager {
     installDialogHandler(wc, {
       isAutomationActive: () =>
         isAutomationActive(this.agentRunning(), process.env, !app.isPackaged),
+      // 팝업 창은 포커스를 가지고 있을 때만 사람이 보고 있다고 본다
+      isUserFacing: () => !win.isDestroyed() && win.isFocused() && !win.isMinimized(),
       mode: () => this.dialogMode(),
       ...(this.dialogConfirm ? { confirm: this.dialogConfirm } : {}),
       onMessage: (message) => this.lastDialogMessage.set(popup.id, message)
