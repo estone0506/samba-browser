@@ -92,7 +92,13 @@ def _norm(text: str) -> str:
 _ADDR_DROP = re.compile(r'\([^)]*\)|특별자치도|특별자치시|특별시|광역시|자치|\s+')
 
 
+# 행정구역 개편으로 바뀐 이름 — 주문은 옛 이름, 사이트 주소검색은 새 이름으로 온다(인천 서구 → 서해구, 2026-07)
+_ADDR_RENAMED = (('서해구', '서구'),)
+
+
 def _norm_address(text: str) -> str:
+    for new_name, old_name in _ADDR_RENAMED:
+        text = text.replace(new_name, old_name)
     return _ADDR_DROP.sub('', text).lower()
 
 

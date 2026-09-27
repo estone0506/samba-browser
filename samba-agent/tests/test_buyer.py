@@ -1162,6 +1162,10 @@ def test_배송지_비교는_사이트_표기_차이를_허용한다():
     assert shipping_matches(zip_exp, {'name': '홍길동', 'address': '경기 수원시 영통구 법조로14번길 11', 'zip': '16514'})
     assert not shipping_matches(zip_exp, {'name': '홍길동', 'address': '경기 수원시 영통구 법조로14번길 11', 'zip': '16515'})
     assert not shipping_matches(zip_exp, {'name': '홍길동', 'address': '', 'zip': '16514'})
+    # 인천 서구 → 서해구(2026-07 개편) — 주문은 옛 이름, 사이트 주소검색은 새 이름으로 되읽는다(실기 2026-09-27 29CM)
+    old = {'name': '홍길동', 'address': '인천광역시 서구 원창동', 'address_detail': '인천광역시 서구 원창동 488 로지스허브 9층910호'}
+    assert shipping_matches(old, {'name': '홍길동', 'address': '인천 서해구 원창동 488 로지스허브 9층910호'})
+    assert not shipping_matches(old, {'name': '홍길동', 'address': '인천 서해구 원창동 488 로지스허브 9층911호'})
 
 
 def test_matching_options_품절임박은_품절이_아니고_토큰_하나로도_맞춘다():
