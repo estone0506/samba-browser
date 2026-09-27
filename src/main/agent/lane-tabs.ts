@@ -75,3 +75,33 @@ export function laneTabs(real: TabManager, state: LaneState): TabManager {
     }
   })
 }
+
+/**
+ * 레인 없는 세션의 탭 보기 — 목록은 그대로 두고, 레인이 연 탭·팝업에 lane 이름만 붙인다.
+ *
+ * 왜: 하네스 본 작업(레인 없음)은 모든 탭을 본다. 작업이 끝나면 그 사이 생긴 탭을 모두 닫아
+ * 다른 레인(사람이 따로 돌리는 수동 작업)의 주문서까지 닫았다(실기 2026-09-27 패션플러스·SMARKET).
+ * 숨기지는 않는다 — 교차 비교가 레인에서 만든 주문서를 본 작업이 이어받는 흐름이 있다.
+ * 하네스는 lane 이 붙은 탭을 정리 대상에서 뺀다(레인 탭은 레인이 스스로 닫는다).
+ */
+export function labelLaneTargets(real: TabManager, lanes: ReadonlyMap<string, LaneState>): TabManager {
+  const laneOf = (t: AgentTarget): string | undefined => {
+    for (const [name, st] of lanes) {
+      if (st.owned.has(t.id)) return name
+      if (t.kind === 'popup' && typeof t.openerId === 'string' && st.owned.has(t.openerId)) return name
+    }
+    return undefined
+  }
+  const listTargets = (): AgentTarget[] =>
+    real.listTargets().map((t) => {
+      const lane = laneOf(t)
+      return lane ? { ...t, lane } : t
+    })
+  return new Proxy(real, {
+    get(target, prop, receiver) {
+      if (prop === 'listTargets') return listTargets
+      const v: unknown = Reflect.get(target, prop, receiver)
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v
+    }
+  })
+}

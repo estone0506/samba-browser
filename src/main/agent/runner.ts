@@ -37,7 +37,7 @@ import { makeCounter } from './counter'
 import type { SiteScriptStore } from './site-scripts-store'
 import { buildScriptsBlock } from '../../shared/site-scripts'
 import { createTextDeduper } from './dedupe'
-import { laneTabs, newLaneState, type LaneState } from './lane-tabs'
+import { labelLaneTargets, laneTabs, newLaneState, type LaneState } from './lane-tabs'
 import {
   watchHandoff,
   HANDOFF_TIMEOUT_MS,
@@ -946,7 +946,9 @@ ${CODEX_NO_IMAGE_NOTE}`
     // 키패드 입력 기록은 브릿지 세션(요청 1건)을 넘어 공유한다 — 같은 결제창에 두 번 넣지 않는다
     const bridgeCtx = { ...baseCtx, keypadEntered: this.bridgeKeypadEntered }
     const server = createSambaTools(
-      laneState ? { ...bridgeCtx, tabs: laneTabs(this.tabs, laneState) } : bridgeCtx
+      laneState
+        ? { ...bridgeCtx, tabs: laneTabs(this.tabs, laneState) }
+        : { ...bridgeCtx, tabs: labelLaneTargets(this.tabs, this.lanes) }
     )
     const tools = extractSdkTools(server).filter((t) => t.name !== 'done')
     // 브릿지 세션이 열려 있는 동안은 금고 자동 잠금을 보류한다(run() 과 같은 패턴). 두 번 풀려도 안전하다
