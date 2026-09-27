@@ -1257,3 +1257,105 @@ def test_키패드_아님_판정은_아무것도_누르지_않은_응답만이�
     assert not _is_login_url(NAVER_KEYPAD_POPUP)
     assert not _is_login_url('https://pay.naver.com/authentication/pw/check?token=abc')
     assert not _is_login_url('')
+
+
+# ---- 29CM 결제 확인 폴백(실기 2026-09-27 job 244: 페이코 결제가 됐는데 '확인되지 않는다'로 멈춤) ----
+
+CM29_HANDOFF = {
+    'buy_source': '29CM',
+    'account': 'buyer01',
+    'product_name': '다이나핏 HIIT (히트) 남성 폴로티_Black YMM25214Z1',
+    'selected': '08(2XL)',
+}
+
+
+def _cm29_found(minutes_ago: int = 1, order_no: str | None = 'ORD20260927-4902978') -> str:
+    from datetime import datetime, timedelta
+
+    from samba_agent.agents.payer import _KST
+
+    at = (datetime.now(_KST) - timedelta(minutes=minutes_ago)).strftime('%Y-%m-%d %H:%M')
+    body = {'order_no': order_no, 'paid': 59400, 'method': '페이코', 'at': at if order_no else ''}
+    body['note'] = None if order_no else '맞는 주문 2건 — 하나로 못 정함'
+    return json.dumps(body, ensure_ascii=False)
+
+
+def _mock_confirm(found: str):
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page('https://bill.payco.com/x'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('페이코 결제 진행 중'))
+    return respx.post(f'{URL}/tool/run_script').mock(return_value=page(found))
+
+
+@respx.mock
+def test_29CM_완료_화면을_못_잡으면_주문내역의_방금_주문으로_확인한다(reg):
+    run = _mock_confirm(_cm29_found())
+    a = assignment(reg, dry_run=False, handoff=CM29_HANDOFF)
+    out = agent(reg)._confirm_paid(a, '페이코')
+    assert out.status == 'ok'
+    assert out.payload['source_order_no'] == 'ORD20260927-4902978'
+    sent = json.loads(run.calls.last.request.content)['args']
+    assert sent['name'] == 'cm29_recent_order'
+    args = json.loads(sent['args'])
+    assert args['profile'] == 'buyer01'
+    assert args['name'] == CM29_HANDOFF['product_name']
+    assert args['option'] == '08(2XL)'
+    assert args['withinMin'] == 10
+
+
+@respx.mock
+def test_29CM_주문내역이_여러_건이거나_없으면_사람에게_넘긴다(reg):
+    _mock_confirm(_cm29_found(order_no=None))
+    a = assignment(reg, dry_run=False, handoff=CM29_HANDOFF)
+    with pytest.raises(AgentFailure) as e:
+        agent(reg)._confirm_paid(a, '페이코')
+    assert e.value.fail_reason == FailReason.VERIFY_MISMATCH
+
+
+@respx.mock
+def test_29CM_주문내역의_주문이_10분보다_오래됐으면_쓰지_않는다(reg):
+    _mock_confirm(_cm29_found(minutes_ago=30))
+    a = assignment(reg, dry_run=False, handoff=CM29_HANDOFF)
+    with pytest.raises(AgentFailure):
+        agent(reg)._confirm_paid(a, '페이코')
+
+
+@respx.mock
+def test_29CM_이_아닌_구매는_29CM_주문내역을_보지_않는다(reg):
+    run = _mock_confirm(_cm29_found())
+    a = assignment(reg, dry_run=False, handoff={**CM29_HANDOFF, 'buy_source': 'MUSINSA'})
+    with pytest.raises(AgentFailure):
+        agent(reg)._confirm_paid(a, '페이코')
+    assert not run.called
+
+
+@respx.mock
+def test_29CM_완료_탭으로_옮겨_읽고_주소의_order_serial_을_주문번호로_쓴다(reg):
+    confirmed = (
+        'https://www.29cm.co.kr/order/confirmed/66965965'
+        '?order_serial=ORD20260925-3907371&previous_screen=item_detail'
+    )
+    tabs = json.dumps(
+        [
+            {'id': 't1', 'kind': 'tab', 'url': 'https://www.29cm.co.kr/order/checkout'},
+            {'id': 't9', 'kind': 'tab', 'url': confirmed},
+        ]
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=page(tabs))
+    switch = respx.post(f'{URL}/tool/switch_tab').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('주문이 완료되었습니다 결제완료'))
+    run = respx.post(f'{URL}/tool/run_script')
+    a = assignment(reg, dry_run=False, handoff=CM29_HANDOFF)
+    out = agent(reg)._confirm_paid(a, '무신사머니')
+    assert json.loads(switch.calls.last.request.content)['args']['id'] == 't9'
+    assert out.payload['source_order_no'] == 'ORD20260925-3907371'
+    assert not run.called
+
+
+def test_29CM_완료_주소는_이미_결제로_본다():
+    from samba_agent.agents.payer import looks_already_paid
+
+    tabs = '[{"url":"https://www.29cm.co.kr/order/confirmed/66965965?order_serial=ORD20260925-3907371"}]'
+    assert looks_already_paid(tabs, '', '29cm.co.kr')
+    assert not looks_already_paid(tabs, '', 'musinsa.com')

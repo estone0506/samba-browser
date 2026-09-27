@@ -26,6 +26,8 @@ _ART_RECENT_ORDER_JS = (
     "const m = t.match(/주문번호 (\\d{10,}) 주문일시 (\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d) 총 결제금액 ([\\d,]+) 원/)\n"
     "return JSON.stringify(m ? { no: m[1], at: m[2], amount: m[3] } : {})"
 )
+# 29CM 결제 확인 폴백 — 주문내역에서 방금 생긴 결제완료 주문을 찾는 앱 저장 스크립트(읽기만)
+CM29_RECENT_ORDER_SCRIPT = 'cm29_recent_order'
 # 한국 시간(윈도에 tzdata 가 없어 고정 오프셋)
 _KST = timezone(timedelta(hours=9))
 
@@ -47,8 +49,9 @@ PAY_SUCCESS_MARKERS = ('결제 완료', '결제완료', '주문완료', '주문 
 # 결제 "전" 검사용 — 결제창·주문서에도 흔한 '결제 완료 시 적립' 같은 글자로 멈추지 않게 좁힌다
 # (실기: 무신사페이 결제창 문구에 걸려 결제 전 pay_interrupted). 주문 완료 주소의 탭이 있거나,
 # 화면에 주문 완료 문구와 주문번호가 함께 있어야 이미 결제된 것으로 본다
+# 29CM 완료 주소는 /order/confirmed/<상세번호>?order_serial=ORD… 다(실기 2026-09-25 무신사머니 결제 근거)
 _PAID_URL_RE = re.compile(
-    r'order/result|order/complete|order-complete|orderComplete|order_complete'
+    r'order/result|order/complete|order-complete|orderComplete|order_complete|order/confirmed'
 )
 _PAID_TEXT = ('주문이 완료', '주문완료', '주문 완료')
 
@@ -426,7 +429,11 @@ def _amount_krw(value: object) -> int | None:
 
 
 # 주문 완료 주소 속 주문번호(무신사 …/order/result/202609241804480002)
-RESULT_URL_ORDER_NO_RE = re.compile(r'order/(?:result|complete)/([A-Za-z0-9-]{6,32})')
+# 29CM 완료 주소의 경로 번호는 주문상세 번호라 쓰지 않고 order_serial(주문번호 ORD…)을 읽는다
+RESULT_URL_ORDER_NO_RE = re.compile(
+    r'order/(?:result|complete)/([A-Za-z0-9-]{6,32})'
+    r'|order/confirmed/[^\s"]*?[?&]order_serial=([A-Za-z0-9-]{6,32})'
+)
 
 
 def _source_order_no(page: str, tabs: str = '') -> str | None:
@@ -438,7 +445,7 @@ def _source_order_no(page: str, tabs: str = '') -> str | None:
     if m:
         return m.group(1)
     m = RESULT_URL_ORDER_NO_RE.search(tabs)
-    return m.group(1) if m else None
+    return (m.group(1) or m.group(2)) if m else None
 
 
 class PayerAgent(AgentBase):
@@ -718,7 +725,8 @@ class PayerAgent(AgentBase):
         if not any(m in page for m in PAY_SUCCESS_MARKERS):
             # ABC마트·그랜드스테이지는 네이버페이 뒤 완료 화면을 못 잡는 일이 있다 — 주문내역에서 방금(10분 안) 생긴
             # 결제완료 주문을 찾아 확인한다(실기 2026-09-25 반스: 결제됐는데 '확인되지 않는다'로 멈춤)
-            recent_no = self._recent_art_order(a)
+            # 29CM 도 페이코 뒤 완료 화면을 못 잡는 일이 있다(실기 2026-09-27 job 244: 결제됐는데 멈춤)
+            recent_no = self._recent_art_order(a) or self._recent_cm29_order(a)
             if recent_no:
                 page = f'결제완료 주문번호 {recent_no}'
         if not any(m in page for m in PAY_SUCCESS_MARKERS):
@@ -801,12 +809,54 @@ class PayerAgent(AgentBase):
         self.note('결제 확인(주문내역)', f'{no} {at} {found.get("amount")}원')
         return no
 
+    def _recent_cm29_order(self, a: Assignment) -> str | None:
+        """29CM 주문내역에서 10분 안 결제완료 주문 중 이번 상품명·옵션이 맞는 하나의 주문번호. 아니면 None.
+
+        앱 저장 스크립트 cm29_recent_order(읽기만)가 목록·상세를 읽는다. 이름·옵션이 안 맞거나 여러 건이면
+        스크립트가 order_no 를 비워 돌려주고, 그러면 사람에게 넘긴다(재결제 금지).
+        """
+        if str(a.handoff.get('buy_source') or a.order.source or '') != '29CM':
+            return None
+        account = str(a.handoff.get('account') or a.order.account or '')
+        name = str(a.handoff.get('product_name') or '') or expect_name(a)
+        option = str(a.handoff.get('selected') or '') or (a.order.option or '')
+        if not account or not name:
+            return None
+        args = {'profile': account, 'name': name, 'option': option, 'withinMin': 10}
+        try:
+            raw = self.tool(
+                'run_script',
+                name=CM29_RECENT_ORDER_SCRIPT,
+                args=json.dumps(args, ensure_ascii=False),
+            )
+            found = json.loads(raw[raw.index('{'):]) if '{' in raw else {}
+        except (AgentFailure, ValueError):
+            return None
+        if not isinstance(found, dict):
+            return None
+        no, at = str(found.get('order_no') or ''), str(found.get('at') or '')
+        if not no.startswith('ORD') or not at:
+            why = str(found.get('note') or '')[:120]
+            self.note('결제 확인(주문내역)', mask_text(f'29CM 못 찾음: {why}'))
+            return None
+        try:
+            placed = datetime.strptime(at, '%Y-%m-%d %H:%M').replace(tzinfo=_KST)
+        except ValueError:
+            return None
+        # 스크립트도 보지만 여기서 한 번 더 — 분 단위 표기라 1분 여유를 둔다
+        if abs((datetime.now(_KST) - placed).total_seconds()) > 660:
+            return None
+        method = str(found.get('method') or '')
+        self.note('결제 확인(주문내역)', f'{no} {at} {found.get("paid")}원 {method}'.strip())
+        return no
+
     def _success_page(self) -> str:
-        """결제 뒤 화면 — 주문 완료 탭(…/order/result/…)이 있으면 그 탭으로 옮겨 읽는다."""
+        """결제 뒤 화면 — 주문 완료 탭(…/order/result/…, 29CM …/order/confirmed/…)이 있으면 그 탭에서 읽는다."""
         try:
             listed = self.tool('list_tabs')
             for m in re.finditer(
-                r'"id"\s*:\s*"([^"]+)"[^}]*?"url"\s*:\s*"([^"]*order/result[^"]*)"', listed
+                r'"id"\s*:\s*"([^"]+)"[^}]*?"url"\s*:\s*"([^"]*order/(?:result|confirmed)[^"]*)"',
+                listed,
             ):
                 self.tool('switch_tab', id=m.group(1))
                 break
