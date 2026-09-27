@@ -335,7 +335,7 @@ describe('VaultService', () => {
     expect(vault.takePendingCapture()).toBeNull()
   })
 
-  it('capture 프롬프트 DTO 에는 비밀번호가 없다', () => {
+  it('capture 프롬프트 DTO 에는 비밀번호가 없고 아이디는 가린다', () => {
     vault.setPendingCapture({
       host: 'example.com',
       username: 'alice',
@@ -343,8 +343,9 @@ describe('VaultService', () => {
       isNew: true
     })
     const prompt = vault.pendingCapturePrompt()
-    expect(prompt).toEqual({ host: 'example.com', username: 'alice', isNew: true })
+    expect(prompt).toEqual({ host: 'example.com', username: 'al**e', isNew: true })
     expect(JSON.stringify(prompt)).not.toMatch(/sup3rs3cret/)
+    expect(JSON.stringify(prompt)).not.toContain('alice')
   })
 
   describe('기기 기억(vaultRememberDevice)', () => {

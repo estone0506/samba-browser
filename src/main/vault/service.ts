@@ -34,6 +34,7 @@ import {
   type StoredSection
 } from './fields'
 import type { ExportRow } from './export'
+import { toCapturePrompt } from './login-capture'
 import {
   randomBytes,
   deriveKey,
@@ -171,6 +172,8 @@ export interface PendingCapture {
   isNew: boolean
   // 감지 시점에 금고가 잠겨 있었는가(UI 문구 분기용)
   locked: boolean
+  // 제출이 일어난 탭의 프로필 이름(새 계정 라벨용). 모르면 undefined
+  profile?: string
 }
 
 const META_SALT = 'salt'
@@ -1700,15 +1703,10 @@ export class VaultService {
     if (prompt) for (const cb of this.captureListeners) cb(prompt)
   }
 
-  // 렌더러에 보여줄 정보(비밀번호 제외)
+  // 렌더러에 보여줄 정보(비밀번호 제외, 아이디는 가린 값)
   pendingCapturePrompt(): CapturePromptDto | null {
     if (!this.pending || Date.now() > this.pending.expiresAt) return null
-    return {
-      host: this.pending.host,
-      username: this.pending.username,
-      isNew: this.pending.isNew,
-      locked: this.pending.locked
-    }
+    return toCapturePrompt(this.pending)
   }
 
   // 한 번 가져가면 즉시 비운다(메모리에 남기지 않는다)
@@ -1721,8 +1719,8 @@ export class VaultService {
     }
     if (!pending) return null
     if (Date.now() > pending.expiresAt) return null
-    const { host, username, password, isNew, locked } = pending
-    return { host, username, password, isNew, locked }
+    const { host, username, password, isNew, locked, profile } = pending
+    return { host, username, password, isNew, locked, ...(profile ? { profile } : {}) }
   }
 }
 

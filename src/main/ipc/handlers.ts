@@ -46,7 +46,14 @@ import { ActivityRecorder } from '../activity/recorder'
 import { RecommendService } from '../activity/recommend'
 import { RECENT_CHAT_LIMIT, type AppendMessageInput } from '../../shared/chat'
 import { VaultCaptureGate } from './vault-capture'
-import { watchLoginSuccess } from './login-watch'
+import { watchLoginOutcome } from './login-watch'
+import { machineFilledRecently } from '../browser/human-activity'
+import {
+  addNeverSaveHost,
+  autoSaveCapturedLogin,
+  saveCapturedLogin
+} from '../vault/login-capture'
+import { CAPTURE_DECISIONS, maskUsername, type CaptureDecision } from '../../shared/vault'
 import { VaultPickerGate } from './vault-picker'
 import { autofillAccount, type AutofillDeps } from '../vault/autofill'
 import { assertFromRenderer, isFromRenderer, settingsForSender } from './sender'
@@ -537,18 +544,36 @@ export function registerIpc(
     )
   )
   // 페이지(preload 격리 월드)가 감지한 로그인 폼 제출.
-  // 검증·레이트리밋·호스트 대조는 전부 VaultCaptureGate 안에 있다(테스트 가능하도록 분리)
+  // 로그인 자격증명 자동 저장(크롬 '비밀번호 저장' 흐름).
+  // 검증·레이트리밋·호스트 대조·기계 입력 제외는 전부 VaultCaptureGate 안에 있다(테스트 가능하도록 분리).
+  // 통과한 제출은 그 탭의 로그인 성공을 지켜본 뒤에만 확인 바(렌더러)를 띄운다
   const captureGate = new VaultCaptureGate({
     vault,
     excludedHosts: () => settings.get().vaultExcludedHosts,
-    // 기존 계정 + 다른 값으로 로그인 폼이 제출되면(자동 갱신이 켜져 있을 때) 저장 제안 없이
-    // navigation 을 지켜보다가 로그인 성공을 감지했을 때만 조용히 갱신한다
-    autoUpdateEnabled: () => settings.get().vaultAutoUpdatePassword,
-    onPendingUpdate: (payload, senderKey) => {
+    neverSaveHosts: () => settings.get().vaultNeverSaveHosts,
+    machineFilled: (senderKey) => machineFilledRecently(senderKey as WebContents),
+    profileOf: (senderKey) => tabs.findByWebContents(senderKey as WebContents)?.profile,
+    watchLogin: (senderKey, onSettled) => {
       const wc = senderKey as WebContents
-      watchLoginSuccess(wc, wc.getURL(), payload, vault, (result) =>
-        send(IPC.vaultPasswordUpdated, result)
-      )
+      watchLoginOutcome(wc, wc.getURL(), onSettled)
+    },
+    autoSaveEnabled: () => settings.get().vaultAutoSaveLogins,
+    autoSave: (capture) => {
+      try {
+        const { result, undoToken } = autoSaveCapturedLogin(vault, capture)
+        if (result === 'same' || !undoToken) return false
+        send(IPC.vaultPasswordUpdated, {
+          host: capture.host,
+          username: maskUsername(capture.username),
+          undoToken,
+          kind: result
+        })
+        return true
+      } catch (e: unknown) {
+        // 실패 사유만 남긴다 — 값은 절대 로그에 넣지 않는다
+        console.error('자격정보 자동 저장 실패', e instanceof Error ? e.message : String(e))
+        return false
+      }
     }
   })
   ipcMain.on(IPC.vaultCapture, (e, raw: unknown) => {
@@ -619,33 +644,37 @@ export function registerIpc(
     }
   })
 
-  // 저장 제안 수락/거절. 거절이면 보관 중이던 비밀번호를 그냥 버린다
-  onFromRenderer(IPC.vaultCaptureDecision, (accept: boolean) => {
+  // 확인 바의 답. 저장이 아니면 보관 중이던 비밀번호를 그냥 버린다.
+  // 옛 렌더러(boolean)도 받는다 — true 는 저장, false 는 이번만 건너뛰기
+  onFromRenderer(IPC.vaultCaptureDecision, (raw: unknown) => {
+    const decision: CaptureDecision | null =
+      raw === true
+        ? 'save'
+        : raw === false
+          ? 'skip'
+          : typeof raw === 'string' && (CAPTURE_DECISIONS as readonly string[]).includes(raw)
+            ? (raw as CaptureDecision)
+            : null
+    if (!decision) return
     const capture = vault.takePendingCapture()
-    if (!accept || !capture) return
+    if (!capture) return
+    if (decision === 'never') {
+      // 이 사이트(등록 도메인)는 다시 묻지 않는다. 자동 채움은 그대로 쓸 수 있다(제외 도메인과 다르다)
+      settings.set({
+        vaultNeverSaveHosts: addNeverSaveHost(settings.get().vaultNeverSaveHosts, capture.host)
+      })
+      return
+    }
+    if (decision !== 'save') return
     // 수락했는데 그 사이 금고가 잠겼다면(자동 잠금 등) 조용히 버리지 않고 제안을 다시 띄운다.
-    // 사용자가 카드에서 잠금을 풀고 다시 저장할 수 있다
+    // 사용자가 확인 바에서 잠금을 풀고 다시 저장할 수 있다
     if (vault.state() !== 'unlocked') {
       vault.setPendingCapture({ ...capture, locked: true })
       return
     }
     try {
-      const host = normalizeHost(capture.host) || capture.host
-      // 기존 계정이면 label/isDefault 를 넘기지 않는다 — 사용자가 붙여 둔 라벨과
-      // 기본 계정 지정을 자동 저장이 덮어쓰지 않게 한다
-      const existing = vault.listAccounts(host).find((a) => a.username === capture.username)
-      const account = vault.upsertAccount({
-        id: existing?.id,
-        host,
-        ...(existing ? {} : { label: host }),
-        username: capture.username
-      })
-      vault.putItem({
-        accountId: account.id,
-        type: 'login',
-        label: '로그인 비밀번호',
-        value: capture.password
-      })
+      // 누른 시점에 다시 판정한다(같은 값이면 저장하지 않는다). 기존 계정의 라벨·기본 지정은 건드리지 않는다
+      saveCapturedLogin(vault, capture)
     } catch (e: unknown) {
       // 실패 사유만 남긴다 — 값은 절대 로그에 넣지 않는다
       console.error('자격정보 저장 실패', e instanceof Error ? e.message : String(e))

@@ -21,3 +21,32 @@ export function isLoginSuccess(prevUrl: string, newUrl: string, text: string): b
   if (FAILURE_TEXT_RE.test(snippet)) return false
   return true
 }
+
+/** 제출 뒤 한 번 들여다본 결과 */
+export type LoginOutcome = 'success' | 'failure' | 'unknown'
+
+export interface LoginObservation {
+  // 제출 시점의 URL
+  prevUrl: string
+  // 지금 URL
+  url: string
+  // 지금 페이지 텍스트(앞부분만 본다)
+  text: string
+  // 지금 화면에 로그인 비밀번호 칸이 보이는가. 읽지 못했으면 undefined
+  passwordVisible: boolean | undefined
+}
+
+/**
+ * 로그인 제출 뒤의 화면을 보고 성공·실패·아직 모름을 가른다(순수 함수 — 저장 제안 확인 바 전용).
+ * - 실패 문구(비밀번호 불일치 등)가 보이면 실패
+ * - 주소가 로그인 경로를 벗어나 바뀌었으면 성공(isLoginSuccess 와 같은 기준)
+ * - 주소가 그대로여도 비밀번호 칸이 사라졌으면 성공 — 레이어·SPA 로그인은 주소가 안 바뀐다
+ * - 그 밖에는 아직 모름(호출부가 조금 뒤 다시 본다, 끝내 모르면 버린다)
+ */
+export function judgeLoginOutcome(o: LoginObservation): LoginOutcome {
+  const snippet = o.text.slice(0, SNAPSHOT_TEXT_CHECK_LIMIT)
+  if (FAILURE_TEXT_RE.test(snippet)) return 'failure'
+  if (isLoginSuccess(o.prevUrl, o.url, o.text)) return 'success'
+  if (o.passwordVisible === false && o.url) return 'success'
+  return 'unknown'
+}
