@@ -483,7 +483,15 @@ def test_size_letters_must_match() -> None:
     assert size_letters('상아색 S') == {'S'}
     assert size_letters('-SHIRT_IVORY [LW263TS02IV]') == set()
     assert size_letters('IVORY [SIZE]S') == {'S'}
-    assert size_letters('BLACK · ONE') == {'ONE'}
+    # 프리사이즈 표기(ONE·ONE SIZE·OSFM·O/S·프리 사이즈)는 모두 FREE 하나로 본다
+    # (실기 2026-09-27 무신사 287: 주문 '네이비 블루 프리 사이즈' ↔ 선택지 'OSFM' 을 불일치로 봤다)
+    assert size_letters('BLACK · ONE') == {'FREE'}
+    for s in ('OSFM', 'O/S', 'ONE SIZE', 'ONESIZE', '네이비 블루 프리 사이즈 미국 버전', 'FREE'):
+        assert size_letters(s) == {'FREE'}, s
+    assert size_letters('BOSFMX') == set()
+    from samba_agent.agents.buyer import matching_options
+
+    assert matching_options(['OSFM'], '네이비 블루 프리 사이즈 미국 버전') == ['OSFM']
 
 
 def test_size_letter_options_matches_asia_size_prefix() -> None:

@@ -536,7 +536,7 @@ def shipping_fee_for(order: OrderRef, order_type: str) -> float:
     return 0.0
 
 
-_FREE_SIZE_TOKENS = frozenset({'free', 'f', 'one', 'onesize', 'os', 'fs', '프리', '프리사이즈', '단일', '단일사이즈', 'freesize'})
+_FREE_SIZE_TOKENS = frozenset({'free', 'f', 'one', 'onesize', 'os', 'osfm', 'fs', '프리', '프리사이즈', '단일', '단일사이즈', 'freesize'})
 
 
 def _is_free_size(text: str) -> bool:
@@ -620,6 +620,8 @@ def size_letters(text: str) -> set[str]:
     buyer01 이 품절로 빠지고 비싼 계정만 남아 마진 미달로 멈췄다.
     """
     upper = re.sub(r'프리\s*사이즈|프리(?=\s|$)|원\s*사이즈', ' FREE ', text.upper())
+    # 원사이즈 표기(OSFM·O/S·ONE SIZE·ONE)도 FREE 로 맞춘다(실기 2026-09-27 무신사 287: 주문 '프리 사이즈' ↔ 'OSFM')
+    upper = re.sub(r'(?<![A-Z])(?:OSFM|O/S|ONE\s*SIZE|ONE)(?![A-Z])', ' FREE ', upper)
     return set(_SIZE_LETTER_RE.findall(upper))
 
 
