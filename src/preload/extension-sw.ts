@@ -173,7 +173,30 @@ contextBridge.executeInMainWorld({
     // 이벤트는 아직 보내 주지 않는다(등록만 받는다). 프레임 조회는 최상위 프레임 하나로 답한다
     // 최상위 프레임 이동만 보낸다(샵백은 onCommitted 로 로그인 쿠키를 맞춘다 — 2026-09-27)
     const navListeners: Record<string, Array<(d: unknown) => void>> = { committed: [], completed: [] }
+    // tabs.onActivated — 탭이 보이는 탭이 될 때(앱 탭 관리자가 알린다)
+    const activatedListeners: Array<(info: unknown) => void> = []
+    set(tabs, 'onActivated', {
+      addListener: (fn: (info: unknown) => void) => {
+        if (typeof fn === 'function' && !activatedListeners.includes(fn)) activatedListeners.push(fn)
+        ready()
+      },
+      removeListener: (fn: (info: unknown) => void) => {
+        const i = activatedListeners.indexOf(fn)
+        if (i >= 0) activatedListeners.splice(i, 1)
+      },
+      hasListener: (fn: (info: unknown) => void) => activatedListeners.includes(fn)
+    })
     listenNav((kind, details) => {
+      if (kind === 'activated') {
+        for (const l of [...activatedListeners]) {
+          try {
+            l(details)
+          } catch {
+            // 리스너 오류 무시
+          }
+        }
+        return
+      }
       fireUpdated(kind, details)
       for (const l of [...(navListeners[kind] ?? [])]) {
         try {

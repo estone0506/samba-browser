@@ -3,6 +3,7 @@ import type { SyncBackend } from '../sync/backend'
 import {
   enableExtensionServiceWorkerSupport,
   pickActionIconPath,
+  sendExtensionTabEvent,
   setExtensionActionListener,
   warmExtensionWorkers
 } from '../extensions/cookies-bridge'
@@ -1262,7 +1263,13 @@ export function registerIpc(
   win.once('closed', () => extensionPopup.dispose())
   // 팝업은 탭 뷰 위에 얹히는데, 탭을 전환하면 활성 탭 뷰가 다시 맨 위로 올라간다.
   // 크롬도 탭을 바꾸면 팝업을 닫으므로 여기서 함께 닫는다
-  tabs.onActivated(() => extensionPopup.close())
+  tabs.onActivated(() => {
+    extensionPopup.close()
+    // 확장에 탭 활성화를 알린다(chrome.tabs.onActivated) — 샵백은 이때 아이콘·알림을 다시 판정한다
+    const t = tabs.active()
+    const wc = t?.view.webContents
+    if (wc && !wc.isDestroyed()) sendExtensionTabEvent(wc.session, 'activated', { tabId: wc.id, windowId: 0 })
+  })
 
   handleFromRenderer(IPC.extList, () => ({ items: extensions.list(), errors: extensions.errors() }))
   // 경로를 주지 않으면 폴더 선택 다이얼로그를 연다. 취소하면 null 을 돌려준다.

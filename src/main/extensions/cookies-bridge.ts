@@ -198,6 +198,12 @@ export async function warmExtensionWorkers(ses: Session): Promise<void> {
 
 // 이미 처리기를 건 서비스워커(같은 워커에 두 번 걸면 Electron 이 오류를 낸다)
 const wired = new WeakSet<object>()
+// 세션별 탭 이벤트 전송기 — 탭 활성화(tabs.onActivated)를 탭 관리자 쪽에서 밀어 넣는다
+const tabEventSenders = new WeakMap<Session, (kind: string, details: unknown) => void>()
+/** 확장 서비스워커에 탭 이벤트(activated 등)를 보낸다. 세션에 다리가 없으면 무시 */
+export function sendExtensionTabEvent(ses: Session, kind: string, details: unknown): void {
+  tabEventSenders.get(ses)?.(kind, details)
+}
 // 워커별 준비 신호 — 확장이 이동·탭 리스너를 단 뒤 보낸다(샵백처럼 초기화가 느린 확장은 그 전에 온 이벤트를 놓친다)
 const readyPromises = new WeakMap<object, Promise<void>>()
 const readyResolvers = new WeakMap<object, () => void>()
@@ -228,12 +234,18 @@ export function installExtensionCookiesBridge(ses: Session): void {
   // 이동 알림은 일어난 순서대로 보낸다 — 깨우기·준비 대기가 비동기라 순서가 섞이면 확장이 탭 주소를
   // 거꾸로 기억한다(실기 2026-09-27: 활성화 페이지 → 롯데온 순서가 뒤집혀 아이콘이 빨간색으로 남음)
   let navChain: Promise<void> = Promise.resolve()
-  const sendNav = (kind: 'committed' | 'completed', wc: WebContents, url: string): void => {
-    if (!/^https?:/.test(url)) return
-    const details = toNavDetails(wc.id, url, Date.now(), isActiveTabId(wc.id))
+  const enqueue = (kind: string, details: unknown): void => {
     navChain = navChain.then(() => deliverNav(kind, details)).catch(() => {})
   }
-  const deliverNav = async (kind: 'committed' | 'completed', details: ReturnType<typeof toNavDetails>): Promise<void> => {
+  tabEventSenders.set(ses, enqueue)
+  const sendNav = (kind: 'committed' | 'completed', wc: WebContents, url: string): void => {
+    if (!/^https?:/.test(url)) return
+    const active = isActiveTabId(wc.id)
+    enqueue(kind, toNavDetails(wc.id, url, Date.now(), active))
+    // 보이는 탭이 다 읽히면 활성화 알림도 한 번 더 — 확장이 아이콘·알림을 다시 판정한다(샵백 CHECK_ICON)
+    if (kind === 'completed' && active) enqueue('activated', { tabId: wc.id, windowId: 0 })
+  }
+  const deliverNav = async (kind: string, details: unknown): Promise<void> => {
     const exts = ses.extensions?.getAllExtensions?.() ?? []
     for (const ext of exts) {
       const manifest = ext.manifest as { background?: { service_worker?: string } }
@@ -243,7 +255,8 @@ export function installExtensionCookiesBridge(ses: Session): void {
         await readyOf(w)
         w.send(EXT_NAV_CHANNEL, kind, details)
         // 전달 기록(주소만) — 확장이 탭 주소를 못 따라올 때 어디까지 갔는지 본다(2026-09-27)
-        console.log('[ext-nav]', ext.id.slice(0, 8), kind, details.tabId, details.url.slice(0, 80))
+        const d = details as { tabId?: number; url?: string }
+        console.log('[ext-nav]', ext.id.slice(0, 8), kind, d.tabId, String(d.url ?? '').slice(0, 80))
       } catch (e: unknown) {
         console.warn('확장 이동 알림 실패', ext.id, e instanceof Error ? e.message : String(e))
       }
