@@ -4,7 +4,7 @@
 // cookies 권한을 선언했을 때만. 그 밖의 서비스워커(일반 사이트)는 거절한다.
 import { app, webContents } from 'electron'
 import type { Cookie, CookiesSetDetails, Session, WebContents } from 'electron'
-import { runTabsOp } from './tabs-bridge'
+import { isActiveTabId, runTabsOp } from './tabs-bridge'
 
 export const EXT_COOKIES_CHANNEL = 'samba-ext-cookies'
 // 탭·창 보충(preload/extension-sw.ts 의 tabs.create·windows 등)
@@ -41,7 +41,8 @@ export const SW_READY_TIMEOUT_MS = 5000
 export function toNavDetails(
   tabId: number,
   url: string,
-  now: number
+  now: number,
+  active = false
 ): {
   tabId: number
   url: string
@@ -51,8 +52,9 @@ export function toNavDetails(
   timeStamp: number
   transitionType: string
   transitionQualifiers: string[]
+  active: boolean
 } {
-  return { tabId, url, frameId: 0, parentFrameId: -1, processId: 0, timeStamp: now, transitionType: 'link', transitionQualifiers: [] }
+  return { tabId, url, frameId: 0, parentFrameId: -1, processId: 0, timeStamp: now, transitionType: 'link', transitionQualifiers: [], active }
 }
 
 /** 크롬 확장 API 의 Cookie 모양 */
@@ -228,7 +230,7 @@ export function installExtensionCookiesBridge(ses: Session): void {
   let navChain: Promise<void> = Promise.resolve()
   const sendNav = (kind: 'committed' | 'completed', wc: WebContents, url: string): void => {
     if (!/^https?:/.test(url)) return
-    const details = toNavDetails(wc.id, url, Date.now())
+    const details = toNavDetails(wc.id, url, Date.now(), isActiveTabId(wc.id))
     navChain = navChain.then(() => deliverNav(kind, details)).catch(() => {})
   }
   const deliverNav = async (kind: 'committed' | 'completed', details: ReturnType<typeof toNavDetails>): Promise<void> => {
@@ -240,6 +242,8 @@ export function installExtensionCookiesBridge(ses: Session): void {
         const w = await ses.serviceWorkers.startWorkerForScope(`chrome-extension://${ext.id}/`)
         await readyOf(w)
         w.send(EXT_NAV_CHANNEL, kind, details)
+        // 전달 기록(주소만) — 확장이 탭 주소를 못 따라올 때 어디까지 갔는지 본다(2026-09-27)
+        console.log('[ext-nav]', ext.id.slice(0, 8), kind, details.tabId, details.url.slice(0, 80))
       } catch (e: unknown) {
         console.warn('확장 이동 알림 실패', ext.id, e instanceof Error ? e.message : String(e))
       }
@@ -271,7 +275,10 @@ export function installExtensionCookiesBridge(ses: Session): void {
     if (!id) return
     wired.add(worker)
     void readyOf(worker)
-    worker.ipc.on(EXT_READY_CHANNEL, () => readyResolvers.get(worker)?.())
+    worker.ipc.on(EXT_READY_CHANNEL, () => {
+      console.log('[ext-ready]', id.slice(0, 8))
+      readyResolvers.get(worker)?.()
+    })
     const ext0 = ses.extensions?.getExtension?.(id) ?? ses.getExtension?.(id)
     if (ext0 && declaresCookies(ext0.manifest)) workers.add(worker)
     worker.ipc.handle(EXT_COOKIES_CHANNEL, async (_e, op: unknown, details: unknown) => {

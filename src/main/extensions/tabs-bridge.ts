@@ -84,6 +84,12 @@ export function matchesQuery(tab: ChromeTab, q: Details): boolean {
   return true
 }
 
+/** 지금 보이는(활성) 탭의 webContents id 인가 — 이동 알림에 active 를 실어 보낼 때 쓴다 */
+export function isActiveTabId(wcId: number): boolean {
+  if (!provider) return false
+  return provider.tabs().some((t) => t.active && t.wc.id === wcId)
+}
+
 /** 탭·창 동작 하나. ses 는 호출한 확장 문서(서비스워커)의 세션 */
 export function runTabsOp(op: string, raw: unknown, ses: Session, extensionId: string): unknown {
   if (!provider) return null

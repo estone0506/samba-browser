@@ -186,26 +186,21 @@ contextBridge.executeInMainWorld({
     // tabs.onUpdated — Electron 은 이 이벤트를 우리 탭에 대해 보내지 않는다. 최상위 이동 알림으로 대신 만든다
     // (샵백은 onUpdated 로 롯데온 탭을 알아채 알림을 띄우고 활성 상태를 기록한다 — 2026-09-27)
     const updatedListeners: Array<(tabId: number, info: unknown, tab: unknown) => void> = []
-    // 탭 조회가 비동기라 순서가 섞이지 않게 한 줄로 이어 보낸다
-    let updatedChain: Promise<void> = Promise.resolve()
+    // 탭 조회 없이 알림 값만으로 즉시 발생시킨다 — 비동기로 늦게 보내면 webNavigation 알림과 순서가 뒤집혀
+    // 확장이 탭 주소를 거꾸로 기억한다(실기 2026-09-27 샵백: 롯데온 committed 뒤에 alink onUpdated 가 도착)
     const fireUpdated = (kind: string, details: unknown): void => {
-      const d = (details ?? {}) as { tabId?: number; url?: string }
+      const d = (details ?? {}) as { tabId?: number; url?: string; active?: boolean }
       if (typeof d.tabId !== 'number') return
       const status = kind === 'committed' ? 'loading' : 'complete'
       const info = kind === 'committed' ? { status, url: d.url } : { status }
-      updatedChain = updatedChain
-        .then(() => call('get', { tabId: d.tabId }))
-        .then((tab) => {
-          const t = { ...((tab ?? {}) as Record<string, unknown>), id: d.tabId, url: d.url, status }
-          for (const l of [...updatedListeners]) {
-            try {
-              l(d.tabId as number, info, t)
-            } catch {
-              // 리스너 오류 무시
-            }
-          }
-        })
-        .catch(() => {})
+      const t = { id: d.tabId, url: d.url, status, active: d.active === true, windowId: 0, index: 0, highlighted: d.active === true, incognito: false, pinned: false, selected: d.active === true, title: '' }
+      for (const l of [...updatedListeners]) {
+        try {
+          l(d.tabId, info, t)
+        } catch {
+          // 리스너 오류 무시
+        }
+      }
     }
     const tabsAny = (c.tabs ?? {}) as Record<string, unknown>
     set(tabsAny, 'onUpdated', {
