@@ -77,6 +77,27 @@ class Source(BaseModel):
     # 이 소싱처의 주문은 항상 이 배송 종류로 본다(예: ABC마트는 전부 까대기 = 사무실 배송).
     # None 이면 주문(삼바웨이브 action_tag)이 정한 종류를 따른다
     order_type: Literal['direct', 'kkadaegi', 'gift'] | None = None
+    # True 면 주문 링크가 지정 몰(SSG = 신세계몰 siteNo 6004)이 아닐 때 `<key>_find_mall_item` 으로 그 몰의 같은 모델
+    # 상품을 찾아 싼 순서로 스냅샷하고, 주문 옵션이 맞는 첫 후보로 산다(사용자 2026-09-27: SSG 는 신세계몰에서만 산다)
+    mall_item: bool = False
+    # True 면 `<key>_route_quotes` 로 진입 경로(직접·애드픽·다나와·에누리)마다 주문서 원가를 비교해 가장 싼 경로로 산다.
+    # 경로는 쿠키로 기록되고 마지막 진입이 덮어쓰므로, 이긴 경로로 마지막에 한 번 더 들어가 그 주문서로 결제한다
+    route_compare: bool = False
+    # 비교할 진입 경로. 비우면 직접·애드픽(ROUTES_DEFAULT). 다나와·에누리는 필요할 때 켠다(실측상 금액이 같았다)
+    routes: list[Literal['direct', 'adpick', 'danawa', 'enuri']] = []
+    # True 면 신세계백화점(siteNo 6009) 상품도 산다(사용자 2026-09-27 허용). 이마트·트레이더스 등 그 밖의 몰은 여전히 금지
+    allow_department: bool = False
+    # True 면 '충전결제'(SSG MONEY 충전결제 등) 견적 줄도 후보로 둔다. 기본은 뺀다 —
+    # 롯데온 L.pay 충전결제는 현대카드 결제보다 항상 불리하다(사용자 2026-09-26)
+    charge_pay: bool = False
+
+    @property
+    def mall_item_script(self) -> str:
+        return f'{self.key}_find_mall_item'
+
+    @property
+    def route_quotes_script(self) -> str:
+        return f'{self.key}_route_quotes'
 
     @property
     def product_id_re(self) -> re.Pattern[str] | None:

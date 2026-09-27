@@ -146,3 +146,29 @@ def test_ABC마트와_그랜드스테이지는_항상_까대기다():
     assert src.by_id('ABCmart').order_type == 'kkadaegi'
     assert src.by_id('GrandStage').order_type == 'kkadaegi'
     assert src.by_id('MUSINSA').order_type is None
+
+
+def test_SSG_는_신세계몰_경로비교_견적을_켜고_보류는_유지한다(sources):
+    """SSG 주문 이행 연동(2026-09-27) — 켜는 것(status active)은 사용자 확인 뒤라 hold 그대로다."""
+    ssg = sources.by_id('SSG')
+    assert ssg.status == 'hold'
+    assert ssg.payment_quotes and ssg.mall_item and ssg.route_compare
+    assert ssg.allow_department is True  # 사용자 2026-09-27: 신세계백화점(6009)도 허용
+    assert ssg.mall_item_script == 'ssg_find_mall_item'
+    assert ssg.route_quotes_script == 'ssg_route_quotes'
+    assert ssg.charge_pay is False  # SSG MONEY 충전결제는 아직 후보에서 뺀다(현대카드가 더 싸다)
+
+
+def test_새_필드는_기본이_꺼져_있어_기존_소싱처는_그대로다(sources):
+    for sid in ('MUSINSA', '29CM', 'ABCmart', 'GrandStage', 'SHOEMAKER', 'LOTTEON'):
+        s = sources.by_id(sid)
+        assert not (s.mall_item or s.route_compare or s.allow_department or s.charge_pay), sid
+        assert s.routes == []
+
+
+def test_경로_이름은_정해진_것만_받는다(tmp_path):
+    (tmp_path / 'sources.yaml').write_text(
+        'sources:\n  - {id: X, key: x, label: 엑스, routes: [direct, coupang]}\n', encoding='utf-8'
+    )
+    with pytest.raises(ValueError):
+        Sources.load(tmp_path)
