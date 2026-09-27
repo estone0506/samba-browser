@@ -1473,7 +1473,7 @@ def test_교차_비교_견적은_제_레인에서_해_이_사이트_주문서를
 
     def fake_find(self, a):
         lanes.append(self.bridge._lane)
-        return 'https://www.29cm.co.kr/products/4014966'
+        return {'found': True, 'product_url': 'https://www.29cm.co.kr/products/4014966', 'name': '같은 상품'}
 
     def fake_pick(self, a, accounts):
         lanes.append(self.bridge._lane)

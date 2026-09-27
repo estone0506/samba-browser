@@ -137,12 +137,33 @@ QUOTE_PROVIDER_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # 롯데온 '충전결제'는 L.pay(사이트 결제 비밀번호, 키마스터 site 항목)다(실기 2026-09-26)
     # 슈마커·롯데온 '간편결제'는 사이트에 등록한 카드로 사이트 결제 비밀번호(키마스터 site 항목)를 쓴다
     ('site', ('머니', 'ssg pay', 'ssgpay', 'l.pay', 'lpay', '엘페이', '충전결제', '간편결제', '스마일', 'smile', '포인트')),
-    # 주문서의 '카드'(직접 결제)는 쓰지 않는다 — 결제 가능 수단에 절대 들어가지 않게 표에서 뺀다
+    # 주문서의 '카드'(직접 결제)는 쓰지 않는다 — 결제 가능 수단에 절대 들어가지 않게 표에서 뺀다.
+    # 예외는 소싱처 단위 direct_card(H몰 롯데카드) — quote_provider 가 표보다 먼저 본다
 )
 
 
-def quote_provider(method: str, card: str | None = None) -> str | None:
-    """견적 한 줄의 결제수단(카드사 포함)이 어느 결제 제공자인지. 모르면 None(결제 불가로 본다)."""
+# 주문서 '카드' 탭 직접 결제(소싱처 direct_card, H몰 = 롯데카드)의 결제 제공자 — 키마스터 결제 비밀번호가 아니라
+# 카드사 결제창(앱카드·안심클릭)에서 사람이 폰으로 승인한다. 그 소싱처의 허용 수단(pay_provider)도 이 값이다
+DIRECT_CARD_PROVIDER = 'card'
+# 카드 직접 결제로 보는 결제수단 이름(주문서 탭 글자)
+DIRECT_CARD_METHODS = ('카드', '신용카드')
+
+
+def _direct_card_provider(method: str, card: str | None, direct_card: str | None) -> str | None:
+    """소싱처가 허용한 카드사 직접 결제 줄이면 'card', 아니면 None. 다른 카드사 줄은 허용하지 않는다(None)."""
+    if not direct_card or method.strip() not in DIRECT_CARD_METHODS:
+        return None
+    issuer = direct_card.replace('카드', '').strip()
+    return DIRECT_CARD_PROVIDER if not card or (issuer and issuer in card) else None
+
+
+def quote_provider(method: str, card: str | None = None, direct_card: str | None = None) -> str | None:
+    """견적 한 줄의 결제수단(카드사 포함)이 어느 결제 제공자인지. 모르면 None(결제 불가로 본다).
+
+    direct_card(소싱처 표)가 있으면 주문서 '카드' 탭의 그 카드사 줄만 카드 직접 결제('card')로 본다(H몰 롯데카드).
+    """
+    if direct_card and method.strip() in DIRECT_CARD_METHODS:
+        return _direct_card_provider(method, card, direct_card)
     # 수단 이름을 먼저 본다 — 카드 칸에 옆 줄 문구가 섞일 수 있다(실기 2026-09-25 르무통: 페이코 줄의 카드가
     # '적립 무신사페이 혜택 관리 현대카드'로 읽혀 무신사페이로 분류, 페이코만 되는 buyer03 이 결제 수단 없음)
     for text in (method.lower(), f'{method} {card or ""}'.lower()):
@@ -204,10 +225,12 @@ def parse_account_payments(raw: str, label: str) -> set[str] | None:
     return None
 
 
-def method_providers(method: str, money_in_pay: bool = False) -> set[str]:
+def method_providers(
+    method: str, money_in_pay: bool = False, direct_card: str | None = None
+) -> set[str]:
     """주문서 결제수단 하나로 낼 수 있는 결제 제공자들. 사이트 머니가 간편결제 안에 있는 소싱처(29CM)면
-    '무신사페이' 는 무신사머니(site) 창구이기도 하다."""
-    provider = quote_provider(method)
+    '무신사페이' 는 무신사머니(site) 창구이기도 하다. direct_card 소싱처(H몰)면 '카드' 탭은 'card'."""
+    provider = quote_provider(method, None, direct_card)
     if provider is None:
         return set()
     if money_in_pay and provider == 'musinsapay':
@@ -215,9 +238,11 @@ def method_providers(method: str, money_in_pay: bool = False) -> set[str]:
     return {provider}
 
 
-def payable_methods(methods: list[str], payable: set[str], money_in_pay: bool = False) -> list[str]:
+def payable_methods(
+    methods: list[str], payable: set[str], money_in_pay: bool = False, direct_card: str | None = None
+) -> list[str]:
     """주문서에 보이는 결제수단 이름 중 키마스터로 낼 수 있는 것만(사이트 표기 그대로). 순서는 화면 순서."""
-    return [m for m in methods if method_providers(m, money_in_pay) & payable]
+    return [m for m in methods if method_providers(m, money_in_pay, direct_card) & payable]
 
 
 def cheapest_quotes(
@@ -226,6 +251,7 @@ def cheapest_quotes(
     payable: set[str] | None = None,
     easy_pay_card: str | None = None,
     charge_pay: bool = False,
+    direct_card: str | None = None,
 ) -> list[dict[str, object]]:
     """결제수단 견적 목록을 싼 순으로 정리한다. 금액이 없거나 0 이하인 줄은 뺀다.
 
@@ -269,7 +295,7 @@ def cheapest_quotes(
             # (실기: 삼성카드 할인가 49,310 으로 골랐는데 롯데카드로 51,360 결제)
             continue
         if payable is not None:
-            provider = quote_provider(method, card)
+            provider = quote_provider(method, card, direct_card)
             if provider is None or provider not in payable:
                 continue
         if wanted_card:
@@ -333,6 +359,11 @@ CARD_BILLING_FACTORS: tuple[tuple[tuple[str, ...], float], ...] = (
 NOT_MALL_ERROR = 'not_shinsegaemall'
 # 사이트 봇 차단(SSG PerimeterX 등) — 스크립트 잘못이 아니다. 재시도·AI 수리 없이 사람에게 넘긴다(돌릴수록 더 막힌다)
 BLOCKED_ERROR = 'blocked'
+# 진입 경로(다나와 이동 링크) 오류 — 링크 없음·도착 주소에 제휴(ReferCode) 없음·다른 상품 도착. 스크립트 잘못이 아니라
+# 규칙상 사지 말아야 하는 상태다(H몰 직접 진입 금지, 사용자 2026-09-27) — AI 수리 없이 사람에게 넘긴다
+ENTRY_ERRORS = frozenset({'no_entry', 'no_affiliate', 'wrong_product'})
+# 봇 차단 실패 사유 머리 — 교차 비교 짝이 있으면 그쪽만 견적해 사는 대체 경로로 간다(SSG → H몰)
+BLOCKED_REASON = '사이트 봇 차단'
 _MALL_URL_RE = re.compile(r'shinsegaemall\.ssg\.com|[?&]siteNo=6004(?!\d)')
 _DEPARTMENT_URL_RE = re.compile(r'department\.ssg\.com|[?&]siteNo=6009(?!\d)')
 # 신세계몰 같은 상품 후보를 주문서까지 시험해 보는 최대 개수(싼 순서) — 후보마다 상품 페이지·주문서를 연다.
@@ -414,7 +445,7 @@ def blocked_failure(out: dict[str, object], what: str) -> AgentFailure | None:
         return None
     return AgentFailure(
         'needs_human',
-        mask_text(f'사이트 봇 차단({what}) — 재시도하지 않는다: {str(out.get("note") or "")[:80]}'),
+        mask_text(f'{BLOCKED_REASON}({what}) — 재시도하지 않는다: {str(out.get("note") or "")[:80]}'),
         FailReason.CAPTCHA,
     )
 
@@ -427,9 +458,10 @@ def route_cost(snap: dict[str, object]) -> float:
 
 def product_no_of(url: str | None) -> str:
     """상품 주소의 상품번호(무신사 /products/123, 29CM /products/123, a-rt prdtNo=, 슈마커 ProductCode=,
-    SSG itemId=, 패션플러스 /goods/detail/123). 없으면 ''."""
+    SSG itemId=, 패션플러스 /goods/detail/123, H몰 slitmCd=). 없으면 ''."""
     m = re.search(
-        r'(?:/products/|[?&]prdtNo=|[?&]ProductCode=|/catalog/|[?&]itemId=|/goods/detail/)(\d+)', url or ''
+        r'(?:/products/|[?&]prdtNo=|[?&]ProductCode=|/catalog/|[?&]itemId=|/goods/detail/|[?&]slitmCd=)(\d+)',
+        url or '',
     )
     return m.group(1) if m else ''
 
@@ -701,7 +733,7 @@ def _quote_rows_brief(rows: list[object]) -> str:
 
 
 def quotes_problem(
-    out: dict[str, object], offered: list[str], allowed: set[str] | None
+    out: dict[str, object], offered: list[str], allowed: set[str] | None, direct_card: str | None = None
 ) -> str | None:
     """결제수단 견적 검사 — 허용 수단으로 실제 낼 수 있는 줄이 있어야 하고, 주문서에 무신사머니가 있으면 그 줄도 있어야 한다.
 
@@ -717,7 +749,7 @@ def quotes_problem(
         for r in rows
     ):
         return '주문서에 무신사머니가 있는데 무신사머니 줄(method 무신사머니, cost)이 없다 — 무신사머니를 골라 금액·적립을 읽어라'
-    if not cheapest_quotes(rows, None, allowed):
+    if not cheapest_quotes(rows, None, allowed, direct_card=direct_card):
         return f'허용 수단({sorted(allowed or [])})으로 낼 수 있는 견적 줄이 없다 — 가능한 수단마다 cost 를 읽어라'
     return None
 
@@ -738,9 +770,10 @@ def pay_card_quote_problem(out: dict[str, object]) -> str | None:
     return None
 
 
-# 주문서·결제 탭(과 그 팝업)만 닫는다. SSG 주문서는 pay.ssg.com/order/ordPage.ssg, 패션플러스는 /order/<번호>
+# 주문서·결제 탭(과 그 팝업)만 닫는다. SSG 주문서는 pay.ssg.com/order/ordPage.ssg, 패션플러스는 /order/<번호>,
+# H몰은 hmall.com/mo/oda/order
 _CLOSE_ORDER_TABS_JS = (
-    "for (const t of await tabs.list()) { if (/order\\/order-form|order\\/checkout|order\\/orderform|pay\\.ssg\\.com\\/order|fashionplus\\.co\\.kr\\/order\\/\\d+/.test(t.url || '')) "
+    "for (const t of await tabs.list()) { if (/order\\/order-form|order\\/checkout|order\\/orderform|pay\\.ssg\\.com\\/order|fashionplus\\.co\\.kr\\/order\\/\\d+|hmall\\.com\\/mo\\/oda\\/order/.test(t.url || '')) "
     '{ try { await tabs.close(t.id) } catch (e) {} } } return "ok"'
 )
 # 레인 보기에서는 제 레인이 연 탭만 보인다 — 전부 닫으면 그 레인 탭만 닫힌다
@@ -890,6 +923,9 @@ def snapshot_problem(
         # 지정 몰(SSG 신세계몰)이 아닌 상품 — 스크립트가 규칙대로 멈췄다. 호출부가 그 몰의 같은 상품을 찾는다.
         # 봇 차단도 스크립트 잘못이 아니다 — 호출부가 사람에게 넘긴다
         if out.get('error') in (NOT_MALL_ERROR, BLOCKED_ERROR):
+            return None
+        # 다나와 진입 실패(제휴 없음·링크 없음·다른 상품) — 고칠 스크립트가 아니다. 호출부가 사람에게 넘긴다
+        if out.get('error') in ENTRY_ERRORS:
             return None
         # 주문 옵션이 '품절' 표시로 떠 있다 = 품절이다. 사이즈를 못 골라 selected·원가가 비는 게 당연하다 —
         # 스크립트 잘못이 아니니 고치지 않는다(실기 2026-09-26: 품절 주문마다 계정 4개가 AI 수리를 돌아 1건에 10~20분)
@@ -1256,7 +1292,45 @@ class BuyerAgent(AgentBase):
         source = source_of(self.spec.name)
         if source.mall_item or source.route_compare:
             return self._mall_route_snapshot(a, account)
+        if source.entry_route:
+            return self._snapshot_once(a, account, self._entry_extra(a, account))
         return self._snapshot_once(a, account)
+
+    def _entry_extra(self, a: Assignment, account: str) -> dict[str, object]:
+        """진입 경로가 정해진 소싱처(H몰 = 다나와)의 스냅샷 인자 {route, entry_url}.
+
+        교차 비교가 상품 찾기에서 받아 둔 이동 링크(options.entry_url)가 있으면 그것을, 없으면 `<key>_danawa_entry` 로 받는다.
+        링크를 못 받으면 직접 들어가지 않는다 — AI 수리 없이 사람에게(사용자 2026-09-27: H몰은 반드시 다나와 경유).
+        """
+        source = source_of(self.spec.name)
+        route = str(source.entry_route)
+        known = str(a.options.get('entry_url') or '')
+        if known.startswith('https://'):
+            return {'route': route, 'entry_url': known}
+        model = str(a.options.get('model') or '') or model_code_of(a.order.sku)
+        pno = product_no_of(a.order.product_url) if _same_host(a.order.product_url or '', source.home) else ''
+        args: dict[str, object] = {'model': model, 'name': a.order.sku, 'profile': account}
+        if pno:
+            args['slitmCd'] = pno
+        self.step(f'{self.spec.name}: {route} 진입 링크({model or "모델코드 없음"})')
+        try:
+            out = self.json_tool('run_script', name=source.entry_script, args=json.dumps(args, ensure_ascii=False))
+        except AgentFailure as e:
+            raise AgentFailure(
+                'needs_human', mask_text(f'{route} 진입 링크를 못 받았다 — 직접 진입하지 않는다: {e.reason[:80]}'), FailReason.UNKNOWN
+            ) from e
+        url = str(out.get('entry_url') or '')
+        if not out.get('ok') or not url.startswith('https://'):
+            raise AgentFailure(
+                'needs_human',
+                mask_text(
+                    f'{route} 경유 링크 없음({out.get("error") or "-"}: {str(out.get("note") or "")[:80]}) — '
+                    '직접 진입하지 않는다, 사람이 확인한다'
+                ),
+                FailReason.UNKNOWN,
+            )
+        self.note('진입 경로', mask_text(f'{route}: {url[:120]}'))
+        return {'route': route, 'entry_url': url}
 
     def _snapshot_once(
         self,
@@ -1301,6 +1375,13 @@ class BuyerAgent(AgentBase):
         blocked = blocked_failure(snap, f'상품 확인 {account}')
         if blocked:
             raise blocked
+        if snap.get('error') in ENTRY_ERRORS:
+            # 다나와 경유 도착에 제휴(ReferCode)가 없거나 다른 상품이 떴다 — 그대로 사면 규칙 위반이다(H몰 직접 진입 금지)
+            raise AgentFailure(
+                'needs_human',
+                mask_text(f'진입 경로 확인 실패({snap.get("error")}): {str(snap.get("note") or "")[:100]}'),
+                FailReason.UNKNOWN,
+            )
         if snap.get('already_ordered') or snap.get('existing_order_no'):
             return snap  # 중복 구매 흔적 — 정돈·견적 없이 호출부가 바로 거절한다
         limit = snapshot_purchase_limit(snap)
@@ -1673,13 +1754,29 @@ class BuyerAgent(AgentBase):
     def _order_prep(self, account: str, snap: dict[str, object]) -> None:
         """주문서 정돈(`<key>_order_prep`): 적립금 규칙(5만 미만 0원·이상 최대)·선할인. 규칙대로 못 맞추면 사람에게."""
         self.step(f'{self.spec.name}: 주문서 정돈({account})')
+        source = source_of(self.spec.name)
+        prep_args: dict[str, object] = {'profile': account}
+        if source.direct_card:
+            # 카드 직접 결제 소싱처(H몰): 포인트는 그 카드 즉시할인 기준금액(5만원)이 유지되는 선까지만(사용자 2026-09-27)
+            prep_args.update({'points': 'keep_card_discount', 'card': source.direct_card})
+            if snap.get('order_tab'):
+                prep_args['tab'] = str(snap.get('order_tab'))
         out = self.script_json(
-            source_of(self.spec.name).order_prep_script,
-            {'profile': account},
+            source.order_prep_script,
+            prep_args,
             goal=(
-                '주문서에서 상품 쿠폰·장바구니 쿠폰(확인까지)을 최대 할인으로 적용하고, 적립금은 보유 5만원 미만이면 0원·'
-                '이상이면 최대 사용(사용 제한 상품은 0원), 선할인이 가능하면 켠 뒤 총 결제 금액(total)을 돌려준다. '
-                '규칙대로 맞췄으면 ok:true.'
+                (
+                    f'주문서에서 최대 할인을 켜고, 포인트(적립금 먼저·H.Point)는 {source.direct_card} 즉시할인 기준금액'
+                    '(결제예정액 5만원 이상)이 유지되는 선까지만 쓴다: 사용량 = min(보유, 결제예정액 − 기준금액), 음수면 0. '
+                    '넣은 뒤 즉시할인 줄이 남았는지 확인하고 {ok, total, points_used, points_balance, reward, coupon} 을 돌려준다. '
+                    '결제하기는 누르지 않는다.'
+                )
+                if source.direct_card
+                else (
+                    '주문서에서 상품 쿠폰·장바구니 쿠폰(확인까지)을 최대 할인으로 적용하고, 적립금은 보유 5만원 미만이면 0원·'
+                    '이상이면 최대 사용(사용 제한 상품은 0원), 선할인이 가능하면 켠 뒤 총 결제 금액(total)을 돌려준다. '
+                    '규칙대로 맞췄으면 ok:true.'
+                )
             ),
             check=lambda o: self._prep_problem(account, o),
         )
@@ -1728,7 +1825,11 @@ class BuyerAgent(AgentBase):
             raw = self.tool('list_accounts', host=host)
         except AgentFailure:
             return None
-        return parse_account_payments(raw, account)
+        found = parse_account_payments(raw, account)
+        if found is not None and source_of(self.spec.name).direct_card:
+            # 카드 직접 결제(H몰 롯데카드)는 키마스터 결제 비밀번호 없이 카드사 결제창에서 사람이 승인한다 — 계정이 있으면 낼 수 있다
+            found = found | {DIRECT_CARD_PROVIDER}
+        return found
 
     def _allowed_providers(self, account: str | None = None) -> set[str] | None:
         """이 소싱처에서 쓸 수 있는 결제 제공자. 소싱처가 하나로 고정했으면(pay_provider) 그것만, 아니면 전역 허용 수단.
@@ -1787,7 +1888,8 @@ class BuyerAgent(AgentBase):
             return
         # 주문서 결제수단 중 우리가 낼 수 있는 종류(간편결제·사이트 머니)가 하나도 없으면 견적할 것이 없다
         offered = [str(m) for m in (snap.get('methods') or [])]
-        if not any(quote_provider(m) for m in offered):
+        src = source_of(self.spec.name)
+        if not any(quote_provider(m, None, src.direct_card) for m in offered):
             self.note('결제수단 견적', f'견적할 수단 없음(주문서 {offered}) — 스냅샷 원가로 진행')
             return
         # 결제 가능한 수단을 먼저 정한다 — 그 수단만 시험한다(카드사 12개를 전부 돌리는 낭비·화면 소란 방지)
@@ -1819,7 +1921,7 @@ class BuyerAgent(AgentBase):
                 f'{account} 에 허용 수단의 키마스터 결제 항목 없음 — 이 계정으로 못 산다',
             )
             return
-        methods = payable_methods(offered, payable, source_of(self.spec.name).money_in_pay)
+        methods = payable_methods(offered, payable, src.money_in_pay, src.direct_card)
         if not methods:
             snap['_unpayable'] = True
             self.note(
@@ -1828,10 +1930,16 @@ class BuyerAgent(AgentBase):
             )
             return
         self.step(f'{self.spec.name}: 결제수단 견적({account})')
+        quote_args: dict[str, object] = {'profile': account, 'methods': methods}
+        if src.direct_card:
+            # 카드 직접 결제 소싱처(H몰): 그 카드사 줄만 견적한다(다른 카드사는 허용 수단이 아니다)
+            quote_args['cards'] = [src.direct_card]
+            if snap.get('order_tab'):
+                quote_args['tab'] = str(snap.get('order_tab'))
         try:
             out = self.script_json(
-                source_of(self.spec.name).payment_quotes_script,
-                {'profile': account, 'methods': methods},
+                src.payment_quotes_script,
+                quote_args,
                 goal=(
                     f'주문서에서 결제수단 {methods} 을 하나씩 골라(무신사머니가 있으면 무신사머니 줄은 반드시 포함) '
                     '각 수단의 할인 반영 결제 금액(cost)을 읽어 '
@@ -1840,7 +1948,7 @@ class BuyerAgent(AgentBase):
                     'points_used 에는 사용한 적립금·포인트를 넣는다 — 원가 = cost × 카드 청구할인 − reward + points_used. '
                     '결제하기는 누르지 않는다.'
                 ),
-                check=lambda o: quotes_problem(o, offered, allowed),
+                check=lambda o: quotes_problem(o, offered, allowed, src.direct_card),
             )
         except AgentFailure as e:
             self.note('결제수단 견적', mask_text(f'못 읽음({e.reason[:80]}) — 스냅샷 원가로 진행'))
@@ -1869,9 +1977,8 @@ class BuyerAgent(AgentBase):
                 else q
                 for q in raw_quotes
             ]
-        src = source_of(self.spec.name)
         quotes = cheapest_quotes(
-            raw_quotes, a.options.get('card'), payable, src.easy_pay_card, src.charge_pay
+            raw_quotes, a.options.get('card'), payable, src.easy_pay_card, src.charge_pay, src.direct_card
         )
         if not quotes:
             # 결제 항목은 있는데 이 주문서의 수단과 겹치지 않는다 — 모델이 고르게 두면 실결제에서 어차피 막힌다
@@ -2125,17 +2232,28 @@ class BuyerAgent(AgentBase):
             self.note('견적 검증', mask_text(f'AI 검토 실패 — 규칙 검사만 씀({e.reason[:60]})'))
         return flags
 
-    def _find_same_product(self, a: Assignment) -> str | None:
-        """다른 사이트 주문의 상품을 이 사이트에서 찾는다(`<key>_find_product`). 없으면 None."""
+    def _find_same_product(self, a: Assignment) -> dict[str, object] | None:
+        """다른 사이트 주문의 상품을 이 사이트에서 찾는다(`<key>_find_product`). 없으면 None.
+
+        돌려주는 값: {product_url, name, model, entry_url?}. 모델코드·상품명(삼바 sku)을 함께 넘긴다 — H몰 찾기는
+        원래 사이트(SSG)를 열지 않고(봇 차단) 모델코드로 다나와에서 찾는다(2026-09-27).
+        """
         source = source_of(self.spec.name)
         host = urlparse(source.home or '').hostname or ''
         site_key = host.replace('www.', '')
+        model = model_code_of(a.order.sku)
         out = self.script_json(
-            f'{source.key}_find_product',
-            {'source_url': a.order.product_url, 'option': a.order.option or ''},
+            source.find_product_script,
+            {
+                'source_url': a.order.product_url,
+                'option': a.order.option or '',
+                'model': model,
+                'name': a.order.sku,
+            },
             goal=(
-                f'source_url(다른 쇼핑몰 상품 페이지)을 열어 브랜드·품번(모델코드)·상품명을 읽고 {host} 검색에서 '
-                '같은 상품(품번 일치 우선, 없으면 브랜드+상품명 일치)을 찾아 {found, product_url, name, model} 을 돌려준다. '
+                f'model(모델코드 {model or "없음"})·name(상품명)으로, 없으면 source_url(다른 쇼핑몰 상품 페이지)을 열어 읽은 '
+                f'브랜드·품번으로 {host} 에서 같은 상품(품번 일치 우선, 없으면 브랜드+상품명 일치)을 찾아 '
+                '{found, product_url, name, model} 을 돌려준다. '
                 '같은 상품이 없으면 found:false. 다른 상품을 같은 것으로 치지 않는다. 결제·장바구니는 누르지 않는다.'
             ),
             check=lambda o: (
@@ -2145,19 +2263,20 @@ class BuyerAgent(AgentBase):
                 else f'found 인데 이 사이트({site_key}) 상품 주소·이름이 없다'
             ),
         )
-        if not out.get('found'):
+        if not out.get('found') or not str(out.get('product_url') or ''):
             return None
-        return str(out.get('product_url') or '') or None
+        return out
 
     def _cross_compare(
-        self, a: Assignment, account: str, snap: dict[str, object]
+        self, a: Assignment, account: str | None, snap: dict[str, object] | None
     ) -> AgentResult | None:
         """다른 사이트(sibling)의 같은 상품과 최종 원가(결제수단 견적 포함)를 비교한다.
 
         다른 사이트가 더 싸면 그 사이트 에이전트가 그 계정으로 산 결과를 돌려준다. 같거나 비싸면 None(이 사이트로 산다).
+        snap 이 None 이면 이 사이트 견적을 못 낸 것이다(SSG 봇 차단) — 다른 사이트에서 살 수 있으면 그쪽으로 산다.
         """
         sib = self.sibling
-        if sib is None or a.options.get('no_cross') or not a.order.product_url:
+        if sib is None or a.options.get('no_cross') or not (a.order.product_url or model_code_of(a.order.sku)):
             return None
         sib_src = source_of(sib.spec.name)
         self.step(f'{self.spec.name}: 교차 비교({sib_src.id})')
@@ -2184,50 +2303,57 @@ class BuyerAgent(AgentBase):
     def _cross_compare_in_lane(
         self,
         a: Assignment,
-        account: str,
-        snap: dict[str, object],
+        account: str | None,
+        snap: dict[str, object] | None,
         sib: 'BuyerAgent',
         cmp: 'BuyerAgent',
     ) -> AgentResult | None:
         """교차 비교 본문 — 다른 사이트 상품 찾기·견적은 cmp(견적 레인), 그쪽이 더 싸면 구매는 sib(레인 밖)."""
         sib_src = source_of(sib.spec.name)
+        here = source_of(self.spec.name).id
+        fallback = snap is None  # 이 사이트 견적 없음(봇 차단) — 다른 사이트만 견적해 산다
+        stay = '사람에게 넘긴다' if fallback else '이 사이트로 산다'
         try:
-            url = cmp._find_same_product(a)
+            found = cmp._find_same_product(a)
         except AgentFailure as e:
-            self.note(
-                '교차 비교',
-                mask_text(f'{sib_src.id} 상품 찾기 실패({e.reason[:60]}) — 이 사이트로 산다'),
-            )
+            self.note('교차 비교', mask_text(f'{sib_src.id} 상품 찾기 실패({e.reason[:60]}) — {stay}'))
             return None
-        if not url:
-            self.note('교차 비교', f'{sib_src.id} 에 같은 상품 없음 — 이 사이트로 산다')
+        if not found:
+            self.note('교차 비교', f'{sib_src.id} 에 같은 상품 없음 — {stay}')
             return None
-        if source_of(self.spec.name).payment_quotes and _as_float(snap.get('cost')) > 0:
-            self._apply_payment_quotes(a, account, snap)
-            snap['_quoted'] = True
-        own = _as_float(snap.get('cost'))
+        url = str(found.get('product_url'))
+        own = float('inf')
+        if snap is not None:
+            if source_of(self.spec.name).payment_quotes and _as_float(snap.get('cost')) > 0:
+                self._apply_payment_quotes(a, str(account), snap)
+                snap['_quoted'] = True
+            own = _as_float(snap.get('cost'))
         order2 = a.order.model_copy(
             update={'product_url': url, 'sku': url, 'source': sib_src.id, 'account': None}
         )
-        a2 = a.model_copy(update={'order': order2, 'options': {**a.options, 'no_cross': True}})
+        # 찾기가 준 모델코드·진입 링크(H몰 다나와 이동 링크)를 넘긴다 — sku 가 주소로 바뀌어 모델코드를 다시 못 읽는다
+        extra = {
+            k: str(found.get(k))
+            for k in ('model', 'entry_url')
+            if str(found.get(k) or '').strip()
+        }
+        a2 = a.model_copy(
+            update={'order': order2, 'options': {**a.options, **extra, 'no_cross': True}}
+        )
         try:
             s_acc, s_snap = cmp._pick_cheapest(a2, cmp._candidate_accounts(a2))
             if sib_src.payment_quotes and _as_float(s_snap.get('cost')) > 0:
                 cmp._apply_payment_quotes(a2, s_acc, s_snap)
         except AgentFailure as e:
-            self.note(
-                '교차 비교',
-                mask_text(f'{sib_src.id} 견적 실패({e.reason[:60]}) — 이 사이트로 산다'),
-            )
+            self.note('교차 비교', mask_text(f'{sib_src.id} 견적 실패({e.reason[:60]}) — {stay}'))
             return None
         other = _as_float(s_snap.get('cost'))
-        self.note(
-            '교차 비교',
-            f'{source_of(self.spec.name).id} {account} {own:,.0f}원 vs {sib_src.id} {s_acc} {other:,.0f}원 ({url})',
-        )
+        own_txt = '견적 없음(봇 차단)' if fallback else f'{account} {own:,.0f}원'
+        self.note('교차 비교', f'{here} {own_txt} vs {sib_src.id} {s_acc} {other:,.0f}원 ({url})')
         if not (0 < other < own):
             return None
-        self.note('교차 비교', f'{sib_src.id} 가 더 싸다 — {sib_src.id} {s_acc} 로 산다')
+        why = f'{here} 봇 차단 — 대체 경로' if fallback else '더 싸다'
+        self.note('교차 비교', f'{sib_src.id} {why} — {sib_src.id} {s_acc} 로 산다')
         a3 = a2.model_copy(update={'order': order2.model_copy(update={'account': s_acc})})
         result = sib(a3)
         return result.model_copy(update={'evidence': (*self.evidence, *result.evidence)})
@@ -2468,14 +2594,24 @@ class BuyerAgent(AgentBase):
         # 계정 비교(사용자 지시 2026-09-23) — 주문 지정 계정이 없으면 키마스터 계정마다 주문서까지
         # 만들어 원가를 비교하고 가장 싼 계정으로 산다
         accounts = self._candidate_accounts(a)
-        if len(accounts) == 1:
-            account = accounts[0]
-            self._login_as(account)
-            snap = self._snapshot(a, account)
-            why = '주문 지정 계정' if a.order.account else '키마스터의 유일한 계정'
-            self.note('계정 선택', f'{account} — {why}')
-        else:
-            account, snap = self._pick_cheapest(a, accounts)
+        try:
+            if len(accounts) == 1:
+                account = accounts[0]
+                self._login_as(account)
+                snap = self._snapshot(a, account)
+                why = '주문 지정 계정' if a.order.account else '키마스터의 유일한 계정'
+                self.note('계정 선택', f'{account} — {why}')
+            else:
+                account, snap = self._pick_cheapest(a, accounts)
+        except AgentFailure as e:
+            # 이 사이트가 봇 차단(SSG PerimeterX)이면 교차 비교 짝(H몰)만 견적해 산다 — 이 사이트는 다시 열지 않는다
+            if self.sibling is None or BLOCKED_REASON not in e.reason:
+                raise
+            self.note('교차 비교', mask_text(f'이 사이트 견적 불가({e.reason[:60]}) — 짝 소싱처만 견적한다'))
+            delegated = self._cross_compare(a, None, None)
+            if delegated is not None:
+                return delegated
+            raise
 
         # 무신사 ↔ 29CM 같은 상품을 같이 비교해 더 싼 쪽에서 산다(사용자 2026-09-24)
         delegated = self._cross_compare(a, account, snap)
@@ -2553,7 +2689,8 @@ class BuyerAgent(AgentBase):
         if allowed_now is not None:
             # 허용 결제수단만 후보(SAMBA_ALLOWED_PAY_PROVIDERS) — 견적이 없을 때도 이 밖은 고르지 않는다
             money_in_pay = source_of(self.spec.name).money_in_pay
-            methods = [m for m in methods if method_providers(m, money_in_pay) & allowed_now]
+            direct_card = source_of(self.spec.name).direct_card
+            methods = [m for m in methods if method_providers(m, money_in_pay, direct_card) & allowed_now]
             if not methods:
                 raise AgentFailure(
                     'needs_human',
@@ -2653,7 +2790,11 @@ class BuyerAgent(AgentBase):
                 **(
                     {'product_url': str(snap.get('product_url'))}
                     if snap.get('product_url')
-                    and (source_of(self.spec.name).mall_item or source_of(self.spec.name).route_compare)
+                    and (
+                        source_of(self.spec.name).mall_item
+                        or source_of(self.spec.name).route_compare
+                        or source_of(self.spec.name).entry_route
+                    )
                     else {}
                 ),
                 **({'adpick_reward': snap.get('adpick_reward')} if snap.get('adpick_reward') else {}),
