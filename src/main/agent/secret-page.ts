@@ -18,7 +18,7 @@ export const DIGIT_BUTTON_MIN = 10
 
 // 결제 비밀번호 화면에서 흔히 보이는 문구
 export const SECRET_KEYPAD_TEXT_RE =
-  /결제\s?비밀번호|비밀번호\s?6\s?자리|비밀번호를\s?입력|\bPIN\b|간편\s?비밀번호/i
+  /결제\s?비밀번호|비밀번호\s?6\s?자리|비밀번호를\s?입력|\bPIN\b|간편\s?비밀번호|보안\s?키패드/i
 
 // 알려진 PIN 인증 경로. 숫자가 이미지로 그려져 DOM 으로 못 세는 화면을 여기서 잡는다
 export const PIN_URL_PATTERNS: readonly RegExp[] = [

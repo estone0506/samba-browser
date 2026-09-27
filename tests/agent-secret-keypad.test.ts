@@ -385,3 +385,16 @@ describe('fill_secret 은 키패드 화면에서 사람에게 넘긴다', () => 
     expect(pageBridge.fillValue).not.toHaveBeenCalled()
   })
 })
+
+describe('SSGPAY 보안 키패드(2026-09-27 실측)', () => {
+  it('숫자 버튼 10개와 "보안 키패드 동작중" 문구면 결제 키패드로 본다', () => {
+    expect(
+      secretKeypadReason({
+        url: 'https://www.ssgpay.com/mobile/order/onlinePay',
+        text: '비밀번호를 잊으셨나요? 비밀번호 재설정하기 보안 키패드 동작중',
+        digitButtons: 10,
+        pinField: false
+      })
+    ).toBe('digit-keypad')
+  })
+})
