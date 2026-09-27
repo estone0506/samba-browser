@@ -12,7 +12,12 @@ const EMPTY_SNAPSHOT: PageSnapshot = { url: '', title: '', text: '', elements: [
 
 /** 활성 탭이 없을 때도 던지지 않는다 — 인증 흐름이 'no-field' 로 조용히 끝난다 */
 export function createTabPagePort(tabs: TabManager): PagePort {
-  const active = (): ReturnType<TabManager['active']> => tabs.active()
+  // 자동화가 조작하는 탭 — 사람이 창을 쓰는 중이라 자동화가 뒤 탭에서 돌면 보이는 탭과 다르다.
+  // workingTab 이 없는 대역(테스트)은 보이는 탭으로 되돌린다
+  const active = (): ReturnType<TabManager['active']> => {
+    const candidate = tabs as Partial<TabManager>
+    return typeof candidate.workingTab === 'function' ? candidate.workingTab() : tabs.active()
+  }
 
   return {
     host: () => {

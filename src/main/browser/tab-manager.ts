@@ -27,7 +27,19 @@ import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emul
 import { installWebstoreNavigatorUserAgent, installWebstoreUserAgent } from './webstore-ua'
 import { installSessionCookieKeeper } from './session-cookies'
 import { installDialogHandler, isAutomationActive } from './dialogs'
-import { isHumanInputEvent, markHuman } from './human-activity'
+import {
+  isAutomation,
+  isHumanInputEvent,
+  lastHumanInWindowAt,
+  markHuman,
+  markHumanInWindow
+} from './human-activity'
+import {
+  isHumanMouseInput,
+  openInBackground,
+  pickWorkingTabId,
+  shouldHoldVisible
+} from './visible-guard'
 import { PopupRegistry, type PopupEntry } from './popups'
 import { buildTargets, pickAgentTargetId, type AgentTarget } from './targets'
 import { getFaviconService, type FaviconResponse } from '../favicon/service'
@@ -168,6 +180,10 @@ export class TabManager {
   private activeId: string | null = null
   // AI 가 switch_tab 으로 고른 팝업. 그 팝업이 닫히면 계산 단계에서 자동으로 무시된다
   private focusedPopupId: string | null = null
+  // 자동화 대상 탭 — 사람이 이 창을 쓰는 중이라 자동화가 보이는 탭을 바꾸지 못했을 때, 자동화가 고른 탭을
+  // 여기에만 적어 둔다(visible-guard.ts). 화면은 사람이 보던 탭 그대로이고 AI 도구는 이 탭을 조작한다.
+  // null 이면 보이는 탭이 곧 자동화 대상이다
+  private automationTabId: string | null = null
   // 팝업이 새로 열렸을 때 알리는 구독자(AI 도구가 "팝업이 열렸다"를 결과에 붙인다)
   private popupOpenedListeners: Array<(target: AgentTarget) => void> = []
   // 로그인 게이트: 계정 로그인 전에는 탭 뷰(네이티브)를 화면에서 치운다 — 렌더러가 가리는 것만으로는 안 보인다
@@ -397,6 +413,7 @@ export class TabManager {
     this.popupOpenedListeners = []
     this.tabs = []
     this.activeId = null
+    this.automationTabId = null
     this.focusedPopupId = null
     // 부모 창이 사라졌는데 결제창만 남아 떠 있지 않게 팝업도 함께 파괴한다
     this.popups.destroyAll()
@@ -447,10 +464,8 @@ export class TabManager {
           .filter((t) => isTabAlive(t))
           .map((t) => ({ wc: t.view.webContents, active: t.id === this.activeId, profile: t.profile })),
       create: (url, profile, active) => {
-        const before = this.activeId
-        const info = this.create({ url, profile })
         // 뒤에서 열기 — 크롬 tabs.create({active:false}) 처럼 보던 탭을 그대로 둔다
-        if (!active && before) this.activate(before)
+        const info = this.create({ url, profile, background: !active && this.activeId !== null })
         return this.get(info.id)?.view.webContents ?? null
       },
       close: (wc) => {
@@ -513,7 +528,8 @@ export class TabManager {
       url: p.win.isDestroyed() ? '' : p.win.webContents.getURL(),
       openerId: p.openerId
     }))
-    return buildTargets(tabs, popups, this.activeId, this.focusedPopupId)
+    // AI 가 보는 '활성' 표시는 자동화 대상 탭 기준이다(보이는 탭과 다를 수 있다)
+    return buildTargets(tabs, popups, this.workingTabId(), this.focusedPopupId)
   }
 
   /**
@@ -556,7 +572,7 @@ export class TabManager {
     const id = pickAgentTargetId(
       this.focusedPopupId,
       alive.map((p) => p.id),
-      this.activeId
+      this.workingTabId()
     )
     if (id === null) return null
     const popup = alive.find((p) => p.id === id)
@@ -572,8 +588,13 @@ export class TabManager {
     if (popup) {
       this.focusedPopupId = id
       if (!popup.win.isDestroyed()) {
-        popup.win.show()
-        popup.win.focus()
+        if (this.holdVisible()) {
+          // 사람이 이 창을 쓰는 중이면 포커스를 가져가지 않는다 — 숨어 있으면 포커스 없이 보여만 준다
+          if (!popup.win.isVisible()) popup.win.showInactive()
+        } else {
+          popup.win.show()
+          popup.win.focus()
+        }
       }
       this.emit()
       return
@@ -628,6 +649,13 @@ export class TabManager {
        * `chrome-extension://` 은 그쪽으로는 여전히 열리지 않는다
        */
       extension?: boolean
+      /** 보이는 탭을 바꾸지 않고 뒤에서 연다(자동화 대상 표식도 건드리지 않는다) */
+      background?: boolean
+      /**
+       * 전역 자동화 대상 표식을 건드리지 않는다 — 레인(lane-tabs)은 제 작업 창을 따로 쥐므로
+       * 레인 탭 생성이 레인 없는 세션의 대상 탭을 바꾸면 안 된다
+       */
+      keepAgentTarget?: boolean
     } = {}
   ): TabInfo {
     if (this.disposed) throw new Error('window closed')
@@ -722,10 +750,9 @@ export class TabManager {
     // 웹스토어 페이지 JS 가 읽는 navigator.userAgent 도 헤더와 같은 크롬 UA 로 맞춘다.
     // 모바일 탭은 emulation.ts 가 UA 를 따로 관리하므로 건드리지 않는다
     tab.refreshWebstoreUa = installWebstoreNavigatorUserAgent(wc, () => tab.mobile)
-    // 사람의 키 입력을 기록한다 — 그 탭은 잠시 자동화가 입력·로그인하지 않는다(human-activity.ts)
-    wc.on('before-input-event', () => {
-      if (isHumanInputEvent(wc)) markHuman(wc)
-    })
+    // 사람의 키 입력·마우스 누름을 기록한다 — 그 탭은 잠시 자동화가 입력·로그인하지 않고,
+    // 창 전체도 잠시 자동화가 보이는 탭을 바꾸거나 포커스를 가져가지 않는다(human-activity.ts·visible-guard.ts)
+    this.watchHumanInput(wc)
     // 페이지 JS 대화상자(alert/confirm/prompt)는 작업 실행 중 자동으로 닫는다.
     // 작업이 없어도 사람이 보고 있지 않은 탭(백그라운드·레인 탭)의 alert 는 닫는다
     installDialogHandler(wc, {
@@ -755,7 +782,17 @@ export class TabManager {
       // (같은 profile 로 열어 로그인 세션·쿠키가 이어진다)
       if (disposition === 'foreground-tab' || disposition === 'background-tab') {
         try {
-          this.create({ url: target, profile, mobile: tab.mobile, openerId: tab.id })
+          // 보이지 않는 탭(자동화가 뒤에서 조작하는 탭)이 연 새 탭은 사람이 보던 탭을 덮지 않게 뒤에서 연다
+          const background = openInBackground(tab.id, this.activeId)
+          const opened = this.create({
+            url: target,
+            profile,
+            mobile: tab.mobile,
+            openerId: tab.id,
+            background
+          })
+          // 자동화 대상 탭이 연 탭이면 자동화 대상도 새 탭으로 옮긴다(보이는 탭이 연 새 탭을 따라가던 예전 동작과 같다)
+          if (background && this.automationTabId === tab.id) this.automationTabId = opened.id
         } catch (e: unknown) {
           console.warn('새 탭 등록 실패', e instanceof Error ? e.message : String(e))
         }
@@ -766,10 +803,14 @@ export class TabManager {
       // about:blank 팝업을 먼저 열고 폼을 target 으로 보내는 결제 흐름이 통째로 깨진다.
       // 창은 Electron 의 표준 경로에 맡기고(직접 createWindow 로 만들면 부모 탭이 이동하는 순간
       // 브라우저 프로세스가 죽는 경우가 있었다), did-create-window 에서 받아 추적만 한다
+      // 보이지 않는 탭(자동화가 뒤에서 조작하는 탭)이 연 팝업 창은 포커스를 가져가지 않게 숨긴 채 만들고
+      // did-create-window 에서 showInactive 로 띄운다 — 사람이 쓰던 창의 키 입력이 팝업으로 넘어가지 않게
+      const quiet = openInBackground(tab.id, this.activeId)
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
           autoHideMenuBar: true,
+          ...(quiet ? { show: false } : {}),
           // 팝업 창의 iframe 에도 preload 가 돌게. webPreferences 를 덮어쓰면 세션(partition)이 여는 탭에서
           // 물려지지 않아 팝업이 기본 프로필로 열렸다(실기: buyer01 탭의 SSG 배송지·로그인 팝업이 로그아웃 상태) —
           // 여는 탭의 파티션을 그대로 지정한다
@@ -777,16 +818,97 @@ export class TabManager {
         }
       }
     })
-    wc.on('did-create-window', (popupWin) => this.registerPopup(popupWin, tab.id, profile))
+    wc.on('did-create-window', (popupWin) => {
+      this.registerPopup(popupWin, tab.id, profile)
+      // 숨긴 채 만든 팝업(뒤 탭이 연 것)은 포커스 없이 보여 준다
+      if (!popupWin.isDestroyed() && !popupWin.isVisible()) popupWin.showInactive()
+    })
     if (tab.mobile) void applyMobileEmulation(wc)
     void wc.loadURL(url)
-    this.activate(tab.id)
+    if (opts.background === true) {
+      this.sizeHidden(tab)
+    } else if (opts.keepAgentTarget === true) {
+      // 레인 탭 — 레인이 제 작업 창을 쥐므로 전역 자동화 대상 표식은 그대로 둔다.
+      // 사람이 쓰는 중이면 뒤에서만 열고, 아니면 예전처럼 보여 준다
+      if (this.activeId !== null && this.holdVisible()) {
+        this.sizeHidden(tab)
+      } else {
+        const kept = this.automationTabId
+        this.activate(tab.id)
+        this.automationTabId = kept
+      }
+    } else {
+      // 자동화 흐름 + 사람이 쓰는 창이면 activate 가 보이는 탭 대신 자동화 대상 표식만 바꾼다
+      this.activate(tab.id)
+      if (this.activeId !== tab.id) this.sizeHidden(tab)
+    }
     return this.list().find((t) => t.id === tab.id)!
+  }
+
+  /** 사람이 이 창을 쓰는 중이라 자동화가 보이는 탭·창 포커스를 바꾸면 안 되는가(visible-guard.ts) */
+  private holdVisible(): boolean {
+    if (this.win.isDestroyed()) return false
+    return shouldHoldVisible(isAutomation(), lastHumanInWindowAt(this.win), Date.now())
+  }
+
+  /** 탭·팝업의 사람 입력(키 입력·마우스 누름)을 탭과 이 창에 기록한다. 자동화가 보낸 입력은 빼고 센다 */
+  private watchHumanInput(wc: WebContents): void {
+    const note = (kind: 'key' | 'pointer'): void => {
+      if (!isHumanInputEvent(wc)) return
+      const now = Date.now()
+      markHuman(wc, now, kind)
+      if (!this.win.isDestroyed()) markHumanInWindow(this.win, now)
+    }
+    wc.on('before-input-event', () => note('key'))
+    wc.on('before-mouse-event', (_e, mouse) => {
+      if (isHumanMouseInput(mouse.type)) note('pointer')
+    })
+  }
+
+  /**
+   * 보이지 않는 탭(창에 얹지 않은 뷰)에도 보이는 탭과 같은 크기를 준다. 크기가 0 이면 페이지가 폭 0 으로
+   * 배치돼 요소 좌표·클릭·스냅샷이 모두 틀어진다
+   */
+  private sizeHidden(tab: Tab): void {
+    if (this.disposed || this.win.isDestroyed() || !isTabAlive(tab)) return
+    const [w, h] = this.win.getContentSize()
+    tab.view.setBounds(computeViewBounds(this.layout, w, h, tab.mobile))
+  }
+
+  /** 자동화가 조작할 진짜 탭(팝업 제외). 자동화 대상 표식이 살아 있으면 그 탭, 아니면 보이는 탭 */
+  workingTab(): Tab | null {
+    const id = this.workingTabId()
+    return id ? this.get(id) : null
+  }
+
+  /** 자동화 대상 표식을 지운다 — 사용자가 새 AI 지시를 내리면 다시 보이는 탭부터 조작한다 */
+  clearAgentTarget(): void {
+    this.automationTabId = null
+  }
+
+  private workingTabId(): string | null {
+    const alive = this.tabs.filter((t) => isTabAlive(t)).map((t) => t.id)
+    const id = pickWorkingTabId(this.automationTabId, alive, this.activeId)
+    // 표식이 가리키던 탭이 닫혔으면 표식을 지운다
+    if (this.automationTabId !== null && id !== this.automationTabId) this.automationTabId = null
+    return id
   }
 
   activate(id: string): void {
     const tab = this.get(id)
     if (!tab || this.win.isDestroyed()) return
+    // 자동화 흐름인데 사람이 이 창을 쓰는 중이면 보이는 탭은 두고 자동화 대상 표식만 옮긴다
+    // (실기 2026-09-27: 브리지의 new_tab·switch_tab 이 로그인하던 탭을 가려 로그인을 못 했다)
+    // 보이는 탭이 닫혀 없으면(close 가 다음 탭을 보일 때) 막지 않는다 — 빈 화면으로 둘 수는 없다
+    const visibleAlive = this.activeId !== null && this.get(this.activeId) !== null
+    if (visibleAlive && this.holdVisible()) {
+      this.automationTabId = id === this.activeId ? null : id
+      this.sizeHidden(tab)
+      return
+    }
+    // 보이는 탭이 곧 자동화 대상이 된다 — 자동화가 바꿨거나, 사람이 자동화 대상 탭을 직접 눌렀을 때.
+    // 사람이 다른 탭을 누른 것은 표식을 지우지 않는다(뒤에서 돌던 자동화가 사람의 탭으로 옮겨 오지 않게)
+    if ((isAutomation() && visibleAlive) || this.automationTabId === id) this.automationTabId = null
     // 탭 뷰를 다시 얹기 전에 알린다 — 위에 떠 있던 확장 팝업이 탭 뷰 아래로 묻히지 않게
     for (const cb of this.activatedListeners) cb()
     // 모든 탭 뷰를 창에서 제거(없으면 무시됨)한 뒤 활성 탭만 다시 추가
@@ -834,10 +956,8 @@ export class TabManager {
     // 팝업도 탭과 똑같이 막는다 — 결제창에서 file:// 로 넘어가면 로컬 DB 파일이
     // 그대로 읽힌다. 확장 문서는 팝업으로 열 일이 없으므로 허용하지 않는다
     guardNavigation(wc, false)
-    // 팝업(결제창·로그인 창)에서도 사람의 키 입력을 기록한다
-    wc.on('before-input-event', () => {
-      if (isHumanInputEvent(wc)) markHuman(wc)
-    })
+    // 팝업(결제창·로그인 창)에서도 사람의 키 입력·마우스 누름을 기록한다(부모 창 단위로도 남는다)
+    this.watchHumanInput(wc)
     // 페이지 JS 대화상자도 탭과 같은 정책으로 처리한다(결제창의 alert 가 작업을 멈추지 않게)
     installDialogHandler(wc, {
       isAutomationActive: () =>
@@ -890,6 +1010,7 @@ export class TabManager {
     if (idx < 0) return
     const [tab] = this.tabs.splice(idx, 1)
     this.lastDialogMessage.delete(id)
+    if (this.automationTabId === id) this.automationTabId = null
     // 닫히기 전에 주소를 챙겨 둔다(제스처 '닫은 탭 다시 열기')
     if (isTabAlive(tab)) {
       const record: ClosedTabRecord = {
@@ -971,6 +1092,9 @@ export class TabManager {
     }
     const [w, h] = this.win.getContentSize()
     tab.view.setBounds(computeViewBounds(this.layout, w, h, tab.mobile))
+    // 뒤에서 도는 자동화 대상 탭도 창 크기를 따라가게 한다(크기가 어긋나면 좌표 클릭이 빗나간다)
+    const working = this.automationTabId ? this.get(this.automationTabId) : null
+    if (working && working !== tab) this.sizeHidden(working)
   }
 }
 

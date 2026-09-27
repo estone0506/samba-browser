@@ -48,7 +48,8 @@ export function laneTabs(real: TabManager, state: LaneState): TabManager {
       if (state.owned.has(id)) state.current = id
     },
     create: (opts: Parameters<TabManager['create']>[0]): ReturnType<TabManager['create']> => {
-      const t = real.create(opts)
+      // 레인 탭은 전역 자동화 대상 표식을 바꾸지 않고, 사람이 창을 쓰는 중이면 뒤에서만 연다(visible-guard.ts)
+      const t = real.create({ ...opts, keepAgentTarget: true })
       state.owned.add(t.id)
       state.current = t.id
       return t

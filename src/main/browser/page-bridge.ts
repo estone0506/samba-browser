@@ -23,7 +23,8 @@ import {
   automationBlocked,
   isAutomation,
   markMachineInput,
-  withAutomationInput
+  withAutomationInput,
+  withAutomationInputSync
 } from './human-activity'
 
 // preload 가 실행되는 격리 월드 id. Electron 의 WorldId.ISOLATED_WORLD = 999
@@ -628,8 +629,12 @@ export const pageBridge = {
     if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) return false
     const point = { x: Math.round(x), y: Math.round(y), button: 'left' as const, clickCount: 1 }
     try {
-      wc.sendInputEvent({ type: 'mouseDown', ...point })
-      wc.sendInputEvent({ type: 'mouseUp', ...point })
+      // 자동화의 클릭이 before-mouse-event 로 사람의 마우스 누름으로 세이지 않게 감싼다
+      const send = (): void => {
+        wc.sendInputEvent({ type: 'mouseDown', ...point })
+        wc.sendInputEvent({ type: 'mouseUp', ...point })
+      }
+      withAutomationInputSync(wc, send)
       return true
     } catch {
       return false

@@ -481,6 +481,12 @@ export class AgentRunner {
     // 자동 이어가기 문장이 아니면 사용자의 새 지시 — 허용 횟수를 되돌린다
     const autoContinuing = prompt.startsWith(AUTO_CONTINUE_PROMPT)
     if (!autoContinuing) this.autoContinueLeft = 1
+    // 사용자의 새 지시는 지금 보이는 탭부터 조작한다 — 이전 자동화가 뒤 탭에 남긴 대상 표식을 지운다
+    // (사람이 창을 쓰는 중이라 뒤에서만 돌던 자동화의 대상 탭이 새 지시로 이어지지 않게, visible-guard.ts)
+    if (!autoContinuing && !prompt.startsWith(LEARN_PROMPT_PREFIX)) {
+      const tabs = this.tabs as Partial<TabManager>
+      if (typeof tabs.clearAgentTarget === 'function') tabs.clearAgentTarget()
+    }
     this.followUpRunning = autoContinuing || prompt.startsWith(LEARN_PROMPT_PREFIX)
     // 이 실행의 행동 도구 호출 기록. 성공으로 끝나면 사이트 기억이 여기서 경로를 뽑는다
     const calls: AgentToolCall[] = []

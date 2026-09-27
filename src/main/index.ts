@@ -14,6 +14,7 @@ import type { VaultService } from './vault/service'
 import type { SyncEngineHolder } from './sync/engine'
 import { runLoginHarness, writeVaultLocked } from './e2e/login-harness'
 import { chromeUserAgent } from './browser/webstore-ua'
+import { humanBusyInWindow } from './browser/human-activity'
 
 // 브라우저 프로세스 크래시 덤프를 로컬에 남긴다(서버 업로드 없음). 원인 추적용
 crashReporter.start({ uploadToServer: false, compress: false })
@@ -47,6 +48,9 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => {
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return
+    // 사람이 방금(HUMAN_BUSY_MS 안) 이 창에 입력 중이면 앞으로 끌어오지 않는다 — 그 사이의 두 번째 실행은
+    // 사람이 아니라 스크립트(워치독·하네스)가 띄운 것이라, 로그인하던 창의 포커스를 빼앗으면 안 된다
+    if (humanBusyInWindow(win)) return
     if (win.isMinimized()) win.restore()
     win.focus()
   })
