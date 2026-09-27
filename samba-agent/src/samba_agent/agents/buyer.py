@@ -418,8 +418,10 @@ def route_cost(snap: dict[str, object]) -> float:
 
 def product_no_of(url: str | None) -> str:
     """상품 주소의 상품번호(무신사 /products/123, 29CM /products/123, a-rt prdtNo=, 슈마커 ProductCode=,
-    SSG itemId=). 없으면 ''."""
-    m = re.search(r'(?:/products/|[?&]prdtNo=|[?&]ProductCode=|/catalog/|[?&]itemId=)(\d+)', url or '')
+    SSG itemId=, 패션플러스 /goods/detail/123). 없으면 ''."""
+    m = re.search(
+        r'(?:/products/|[?&]prdtNo=|[?&]ProductCode=|/catalog/|[?&]itemId=|/goods/detail/)(\d+)', url or ''
+    )
     return m.group(1) if m else ''
 
 
@@ -727,9 +729,9 @@ def pay_card_quote_problem(out: dict[str, object]) -> str | None:
     return None
 
 
-# 주문서·결제 탭(과 그 팝업)만 닫는다. SSG 주문서는 pay.ssg.com/order/ordPage.ssg
+# 주문서·결제 탭(과 그 팝업)만 닫는다. SSG 주문서는 pay.ssg.com/order/ordPage.ssg, 패션플러스는 /order/<번호>
 _CLOSE_ORDER_TABS_JS = (
-    "for (const t of await tabs.list()) { if (/order\\/order-form|order\\/checkout|order\\/orderform|pay\\.ssg\\.com\\/order/.test(t.url || '')) "
+    "for (const t of await tabs.list()) { if (/order\\/order-form|order\\/checkout|order\\/orderform|pay\\.ssg\\.com\\/order|fashionplus\\.co\\.kr\\/order\\/\\d+/.test(t.url || '')) "
     '{ try { await tabs.close(t.id) } catch (e) {} } } return "ok"'
 )
 # 레인 보기에서는 제 레인이 연 탭만 보인다 — 전부 닫으면 그 레인 탭만 닫힌다
