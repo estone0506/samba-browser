@@ -1521,3 +1521,12 @@ def test_라자다_배대지_주문은_까대기다(reg):
     assert a.order_type_of(o, {'normal_price': 99000}) == 'kkadaegi'
     other = o.model_copy(update={'order_no': 'D1'})
     assert a.order_type_of(other, {'normal_price': 99000}) == 'direct'
+
+
+def test_주문_옵션의_품번_숫자는_사이즈로_보지_않는다():
+    # 실기 2026-09-27: '블랙 M 2406433303' 의 품번 때문에 선택지 'M' 을 못 골라 품절로 멈췄다
+    from samba_agent.agents.buyer import size_letter_options, size_numbers
+
+    assert size_numbers('블랙 M 2406433303') == set()
+    assert size_numbers('카키 085(L) 230') == {'085', '230'}
+    assert size_letter_options(['S (품절)', 'M', 'L (품절)', 'XL'], '블랙 M 2406433303') == ['M']

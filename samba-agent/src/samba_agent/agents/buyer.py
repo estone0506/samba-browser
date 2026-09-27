@@ -456,8 +456,11 @@ _SIZE_NUM_RE = re.compile(r'\d+(?:\.\d+)?')
 
 
 def size_numbers(text: str) -> set[str]:
-    """옵션 글자 속 사이즈 숫자들(두 자리 이상)."""
-    return {n for n in _SIZE_NUM_RE.findall(text) if len(n.replace('.', '')) >= 2}
+    """옵션 글자 속 사이즈 숫자들(두~네 자리). 다섯 자리 이상은 품번이라 뺀다.
+
+    실기 2026-09-27: 주문 '블랙 M 2406433303' 의 품번을 사이즈 숫자로 봐서 선택지 'M' 을 못 골랐다.
+    """
+    return {n for n in _SIZE_NUM_RE.findall(text) if 2 <= len(n.replace('.', '')) <= 4}
 
 
 _SIZE_LETTER_RE = re.compile(
