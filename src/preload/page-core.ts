@@ -258,6 +258,51 @@ function isInViewport(el: HTMLElement): boolean {
   return rect.bottom > 0 && rect.right > 0 && rect.top < height && rect.left < width
 }
 
+/** 요소 자신이나 조상이 position fixed/sticky 인가(하단 고정 구매 바 등). 조상 판정은 cache 로 한 번만 한다 */
+function isPinned(el: HTMLElement, cache: Map<Element, boolean>): boolean {
+  const path: Element[] = []
+  let node: Element | null = el
+  let pinned = false
+  while (node && node !== document.body && node !== document.documentElement) {
+    const known = cache.get(node)
+    if (known !== undefined) {
+      pinned = known
+      break
+    }
+    path.push(node)
+    const position = window.getComputedStyle(node).position
+    if (position === 'fixed' || position === 'sticky') {
+      pinned = true
+      break
+    }
+    node = node.parentElement
+  }
+  for (const n of path) cache.set(n, pinned)
+  return pinned
+}
+
+const FORM_CONTROL_TAGS = new Set(['BUTTON', 'SELECT', 'INPUT'])
+
+/**
+ * 뷰포트 안 요소가 하나도 없을 때의 대체 순서.
+ * 창에 붙지 않은 탭(뒤에서 도는 자동화 탭)은 뷰포트 판정이 전부 false 라 문서 순으로만 나열되고,
+ * 페이지 끝의 구매 버튼·옵션칸이 MAX_ELEMENTS 밖으로 밀렸다(실기: 무신사 'buy button not found').
+ * fixed/sticky 조상을 가진 요소 → button/select/input → 나머지 순서로, 각 묶음 안은 문서 순서를 지킨다
+ */
+function fallbackOrder(items: PageElement[], nodes: HTMLElement[]): PageElement[] {
+  const cache = new Map<Element, boolean>()
+  const pinned: PageElement[] = []
+  const controls: PageElement[] = []
+  const rest: PageElement[] = []
+  items.forEach((item, i) => {
+    const el = nodes[i]
+    if (isPinned(el, cache)) pinned.push(item)
+    else if (FORM_CONTROL_TAGS.has(el.tagName)) controls.push(item)
+    else rest.push(item)
+  })
+  return pinned.concat(controls, rest)
+}
+
 /** 검색어가 요소의 라벨·name·href·placeholder 에 들어 있는가(대소문자 무시 부분일치) */
 function matchesQuery(el: HTMLElement, item: PageElement, query: string): boolean {
   const haystack = [
@@ -429,7 +474,12 @@ export function buildSnapshot(options: SnapshotOptions = {}): PageSnapshot {
     const rest: PageElement[] = []
     scoped.forEach((item, i) => (isInViewport(scopedNodes[i]) ? inView : rest).push(item))
     total = scoped.length
-    picked = inView.concat(rest).slice(0, MAX_ELEMENTS)
+    // 뷰포트 안이 0개인데 잘려야 하면(창에 안 붙은 탭 등) 고정 바·폼 컨트롤을 먼저 둔다
+    const ordered =
+      inView.length === 0 && scoped.length > MAX_ELEMENTS
+        ? fallbackOrder(scoped, scopedNodes)
+        : inView.concat(rest)
+    picked = ordered.slice(0, MAX_ELEMENTS)
   }
   // selector 를 주면 본문 텍스트도 그 범위 안만 모은다(전체 페이지 텍스트를 다시 보내지 않게)
   const body =

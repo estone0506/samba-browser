@@ -246,6 +246,38 @@ describe('나열 순서 — 뷰포트 안 요소가 먼저', () => {
   })
 })
 
+describe('나열 순서 — 뷰포트 판정이 전부 false 일 때(창에 안 붙은 탭)', () => {
+  beforeEach(() => {
+    // 상한보다 많은 링크 뒤, 페이지 끝에 옵션칸과 하단 고정 구매 바가 있다(무신사 상품 페이지 모양)
+    const links = Array.from(
+      { length: MAX_ELEMENTS + 20 },
+      (_, i) => `<a href="/p/${i}">상품${i}</a>`
+    ).join('')
+    document.body.innerHTML = `
+      ${links}
+      <select name="size"><option>235</option></select>
+      <div style="position: fixed; bottom: 0"><span><a href="/buy" id="buy">구매하기</a></span></div>
+    `
+  })
+
+  it('fixed 조상 요소 → 폼 컨트롤 → 나머지 순으로 앞에 둔다', () => {
+    const s = buildSnapshot()
+    expect(s.total).toBe(MAX_ELEMENTS + 22)
+    expect(s.elements).toHaveLength(MAX_ELEMENTS)
+    expect(s.elements[0].text).toBe('구매하기')
+    expect(s.elements[1].name).toBe('size')
+    expect(s.elements[2].text).toBe('상품0')
+  })
+
+  it('상한 안에 다 들어가면 순서를 바꾸지 않는다', () => {
+    document.body.innerHTML = `
+      <a href="/a">처음</a>
+      <div style="position: sticky; top: 0"><button>고정</button></div>
+    `
+    expect(buildSnapshot().elements.map((e) => e.text)).toEqual(['처음', '고정'])
+  })
+})
+
 describe('serializeSnapshot 상한', () => {
   it('잘린 개수와 find_elements 안내를 덧붙인다', () => {
     const elements = Array.from({ length: MAX_ELEMENTS }, (_, i) => ({
