@@ -32,6 +32,14 @@ const notifyAction = (op: string, details: unknown): void => {
 
 // 최상위 프레임 이동 알림(webNavigation.onCommitted·onCompleted) — 메인이 보낸다
 const NAV_CHANNEL = 'samba-ext-nav'
+// 확장이 이동·탭 리스너를 달았다 — 메인은 이 신호 뒤에 이벤트를 보낸다(한 번만)
+const READY_CHANNEL = 'samba-ext-ready'
+let readySent = false
+const notifyReady = (): void => {
+  if (readySent) return
+  readySent = true
+  ipcRenderer.send(READY_CHANNEL)
+}
 const subscribeNav = (fn: (kind: string, details: unknown) => void): void => {
   ipcRenderer.on(NAV_CHANNEL, (_e, kind: string, details: unknown) => fn(kind, details))
 }
@@ -94,7 +102,8 @@ contextBridge.executeInMainWorld({
   func: (
     call: (op: string, details: unknown) => Promise<unknown>,
     listenNav: (fn: (kind: string, details: unknown) => void) => void,
-    notify: (op: string, details: unknown) => void
+    notify: (op: string, details: unknown) => void,
+    ready: () => void
   ): void => {
     type Cb = (v: unknown) => void
     const g = globalThis as unknown as { chrome?: Record<string, unknown> }
@@ -200,6 +209,7 @@ contextBridge.executeInMainWorld({
     set(tabsAny, 'onUpdated', {
       addListener: (fn: (tabId: number, info: unknown, tab: unknown) => void) => {
         if (typeof fn === 'function' && !updatedListeners.includes(fn)) updatedListeners.push(fn)
+        ready()
       },
       removeListener: (fn: (tabId: number, info: unknown, tab: unknown) => void) => {
         const i = updatedListeners.indexOf(fn)
@@ -210,6 +220,7 @@ contextBridge.executeInMainWorld({
     const navEvent = (kind: string) => ({
       addListener: (fn: (d: unknown) => void) => {
         if (typeof fn === 'function' && !navListeners[kind].includes(fn)) navListeners[kind].push(fn)
+        ready()
       },
       removeListener: (fn: (d: unknown) => void) => {
         const i = navListeners[kind].indexOf(fn)
@@ -266,5 +277,5 @@ contextBridge.executeInMainWorld({
       })
     }
   },
-  args: [invokeTabs, subscribeNav, notifyAction]
+  args: [invokeTabs, subscribeNav, notifyAction, notifyReady]
 })

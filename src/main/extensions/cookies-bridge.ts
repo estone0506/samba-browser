@@ -32,8 +32,10 @@ export function pickActionIconPath(raw: unknown): string | null {
   entries.sort((a, b) => Number(b[0]) - Number(a[0]))
   return entries[0][1] as string
 }
-// 막 깨운 확장 서비스워커가 리스너를 달 때까지 기다리는 시간
-export const SW_WAKE_WAIT_MS = 700
+// 확장 서비스워커가 이동·탭 리스너를 단 뒤 보내는 준비 신호(preload/extension-sw.ts)
+export const EXT_READY_CHANNEL = 'samba-ext-ready'
+// 준비 신호가 없을 때 이벤트를 보내기 전 최대 대기(큰 확장은 초기화가 몇 초 걸린다)
+export const SW_READY_TIMEOUT_MS = 5000
 
 /** webNavigation 이벤트 값(순수 함수) — 최상위 프레임만 보낸다 */
 export function toNavDetails(
@@ -174,6 +176,20 @@ export function enableExtensionServiceWorkerSupport(ses: Session, preloadPath: s
 
 // 이미 처리기를 건 서비스워커(같은 워커에 두 번 걸면 Electron 이 오류를 낸다)
 const wired = new WeakSet<object>()
+// 워커별 준비 신호 — 확장이 이동·탭 리스너를 단 뒤 보낸다(샵백처럼 초기화가 느린 확장은 그 전에 온 이벤트를 놓친다)
+const readyPromises = new WeakMap<object, Promise<void>>()
+const readyResolvers = new WeakMap<object, () => void>()
+function readyOf(worker: object): Promise<void> {
+  let p = readyPromises.get(worker)
+  if (!p) {
+    p = new Promise<void>((resolve) => {
+      readyResolvers.set(worker, resolve)
+      setTimeout(resolve, SW_READY_TIMEOUT_MS)
+    })
+    readyPromises.set(worker, p)
+  }
+  return p
+}
 // 세션별 쿠키 권한 확장 서비스워커 — 쿠키가 바뀌면 이들에게 알린다
 const cookieWorkers = new WeakMap<Session, Set<{ send: (channel: string, ...args: unknown[]) => void }>>()
 
@@ -187,7 +203,6 @@ export function installExtensionCookiesBridge(ses: Session): void {
   // sbet 쿠키를 읽어 로그인을 맞춘다 — 이벤트가 없으면 로그인해도 확장이 모른다(실기 2026-09-27)
   // 크롬은 이벤트가 오면 잠든 백그라운드를 깨워 전달한다 — 여기서도 서비스워커 확장을 깨운 뒤 보낸다.
   // 막 깨운 워커는 리스너를 다는 데 시간이 걸리므로 잠깐 기다린다(실기 2026-09-27 샵백: 잠든 채 이벤트를 놓쳤다)
-  const awake = new WeakSet<object>()
   const sendNav = async (kind: 'committed' | 'completed', wc: WebContents, url: string): Promise<void> => {
     if (!/^https?:/.test(url)) return
     const details = toNavDetails(wc.id, url, Date.now())
@@ -197,10 +212,7 @@ export function installExtensionCookiesBridge(ses: Session): void {
       if (!manifest?.background?.service_worker) continue
       try {
         const w = await ses.serviceWorkers.startWorkerForScope(`chrome-extension://${ext.id}/`)
-        if (!awake.has(w)) {
-          awake.add(w)
-          await new Promise((r) => setTimeout(r, SW_WAKE_WAIT_MS))
-        }
+        await readyOf(w)
         w.send(EXT_NAV_CHANNEL, kind, details)
       } catch (e: unknown) {
         console.warn('확장 이동 알림 실패', ext.id, e instanceof Error ? e.message : String(e))
@@ -232,6 +244,8 @@ export function installExtensionCookiesBridge(ses: Session): void {
     const id = extensionIdOfScope(worker.scope)
     if (!id) return
     wired.add(worker)
+    void readyOf(worker)
+    worker.ipc.on(EXT_READY_CHANNEL, () => readyResolvers.get(worker)?.())
     const ext0 = ses.extensions?.getExtension?.(id) ?? ses.getExtension?.(id)
     if (ext0 && declaresCookies(ext0.manifest)) workers.add(worker)
     worker.ipc.handle(EXT_COOKIES_CHANNEL, async (_e, op: unknown, details: unknown) => {

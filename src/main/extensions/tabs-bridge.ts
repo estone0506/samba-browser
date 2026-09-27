@@ -22,8 +22,8 @@ export interface ChromeTab {
   status: 'loading' | 'complete'
 }
 
-/** 앱 창 하나 — 확장에는 창 번호 1 로만 보인다 */
-export const WINDOW_ID = 1
+/** 앱 창 하나 — Electron 기본 chrome.tabs 가 주는 창 번호(0)와 같게 둔다(섞어 쓰는 확장이 현재 창 판정을 틀리지 않게) */
+export const WINDOW_ID = 0
 
 /** 탭 관리자가 이 다리에 주는 것(테스트 대역으로 갈아 끼운다) */
 export interface ExtensionTabsProvider {
@@ -93,6 +93,11 @@ export function runTabsOp(op: string, raw: unknown, ses: Session, extensionId: s
   const byId = (id: unknown): (typeof all)[number] | undefined =>
     typeof id === 'number' ? all.find((t) => t.wc.id === id) : undefined
   const activeOne = all.find((t) => t.active)
+  // 확장의 탭 동작 기록 — 주소만 남긴다(샵백 활성화 흐름 추적, 2026-09-27)
+  if (op === 'update' || op === 'create' || op === 'remove') {
+    const props = obj(d.props)
+    console.log('[ext-tabs]', extensionId.slice(0, 8), op, JSON.stringify({ tabId: d.tabId, url: d.url ?? props.url, active: d.active ?? props.active }).slice(0, 200))
+  }
   switch (op) {
     case 'query':
       return all.map((t) => t.tab).filter((t) => matchesQuery(t, d))
