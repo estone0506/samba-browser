@@ -390,17 +390,22 @@
     }
   },
   "capture": {
-    "title": "Save your {{host}} account info?",
-    "titleUpdate": "Update the password for your {{host}} account?",
-    "titleLocked": "Save your sign-in for {{host}}?",
-    "body": "You just signed in to {{host}} as {{username}}. Save it so it can autofill next time?",
-    "skip": "Skip this time",
+    "title": "Save this site's account to KeyMaster?",
+    "titleUpdate": "Update the password?",
+    "titleLocked": "Save your {{host}} sign-in to KeyMaster?",
+    "account": "{{host}} · {{username}}",
+    "skip": "Not now",
+    "never": "Never for this site",
     "save": "Save",
+    "update": "Update",
     "unlockToSave": "Unlock to save",
     "lockedNotice": "KeyMaster is locked. Unlock it to save.",
+    "saved": "Saved your {{host}} account ({{username}}) to KeyMaster",
     "updated": "Your {{host}} password was updated",
-    "undo": "Undo"
+    "undo": "Undo",
+    "close": "Close"
   },
+
   "screenCapture": {
     "title": "Capture",
     "image": "Image",
@@ -563,8 +568,10 @@
       "accessNeverDesc": "AI can never fill KeyMaster values",
       "autoSubmit": "Auto-submit after autofill",
       "autoSubmitDesc": "When off, fields are filled but you press the login button yourself",
-      "autoUpdatePassword": "Auto-update password on successful sign-in",
-      "autoUpdatePasswordDesc": "If you sign in with a different value, it's updated right away without asking (undo available)",
+      "autoSaveLogins": "Save without asking",
+      "autoSaveLoginsDesc": "When you sign in to a site for the first time or with a new password, save or update it in KeyMaster right away (undo available). When off, a bar below the address bar asks once",
+      "neverSaveHosts": "Never ask to save on",
+      "neverSaveHostsDesc": "Signing in to these sites won't ask to save. Separate with commas. Autofill still works",
       "remember": "Remember on this PC",
       "rememberDesc": "Turning this off deletes the stored device key immediately",
       "excludedHosts": "Excluded domains",

@@ -11,8 +11,6 @@ import { HandoffCard } from './HandoffCard'
 import { AuthBanner } from './AuthBanner'
 import { PanelRightClose } from 'lucide-react'
 import { useUiStore } from '@renderer/stores/uiStore'
-import { CapturePrompt } from '@renderer/components/vault/CapturePrompt'
-import { PasswordUpdatedToast } from '@renderer/components/vault/PasswordUpdatedToast'
 
 // 배지에 쓸 제공자 이름 키
 const PROVIDER_LABEL_KEYS: Record<AiProviderId, string> = {
@@ -91,9 +89,6 @@ export function ChatPanel(): React.JSX.Element {
           </span>
         </div>
       )}
-      {/* 자동 저장 제안 카드 · 자동 갱신 토스트는 메시지 목록 맨 위에 고정한다 */}
-      <CapturePrompt />
-      <PasswordUpdatedToast />
       <MessageList />
       <HandoffCard />
       <ConfirmCard />

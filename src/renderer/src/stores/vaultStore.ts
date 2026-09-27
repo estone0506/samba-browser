@@ -4,6 +4,7 @@ import type {
   AgentAccess,
   AuditLogDto,
   FieldKind,
+  CaptureDecision,
   CapturePromptDto,
   ImportBookmarksResult,
   ImportPasswordsResult,
@@ -92,7 +93,8 @@ interface VaultStoreState {
   captureErr: string | null
   subscribeCapture: () => void
   setCapture: (prompt: CapturePromptDto | null) => void
-  decideCapture: (accept: boolean) => void
+  // 확인 바의 답. save 는 잠겨 있으면 먼저 잠금 해제를 요구한다
+  decideCapture: (decision: CaptureDecision) => void
   // 자동 갱신 토스트 구독·상태·되돌리기
   subscribePasswordUpdated: () => void
   setPasswordUpdated: (dto: PasswordUpdatedDto | null) => void
@@ -190,14 +192,14 @@ export const useVaultStore = create<VaultStoreState>((set, get) => ({
         : { capture: prompt }
     }),
 
-  decideCapture: (accept) => {
-    // 잠긴 상태에서 '저장'을 누르면 메인이 조용히 버린다. 대신 카드에서 잠금 해제를
+  decideCapture: (decision) => {
+    // 잠긴 상태에서 '저장'을 누르면 메인이 저장할 수 없다. 대신 확인 바에서 잠금 해제를
     // 요구하고 그 이유를 알린다(captureErr 는 번역된 문장이 아니라 i18n 키다)
-    if (accept && get().state !== 'unlocked') {
+    if (decision === 'save' && get().state !== 'unlocked') {
       set({ captureUnlocking: true, captureErr: 'capture.lockedNotice' })
       return
     }
-    window.samba.vault.captureDecision(accept)
+    window.samba.vault.captureDecision(decision)
     set({ capture: null, captureUnlocking: false, capturePw: '', captureErr: null })
   },
 

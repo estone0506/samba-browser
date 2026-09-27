@@ -46,9 +46,10 @@ export function VaultSettingsPanel({ open, onOpenChange }: Props): React.JSX.Ele
   const [autoLockMinutes, setAutoLockMinutes] = useState(10080)
   const [accessPolicy, setAccessPolicy] = useState<VaultAccessPolicy>('while_unlocked')
   const [autoSubmit, setAutoSubmit] = useState(true)
-  const [autoUpdatePassword, setAutoUpdatePassword] = useState(true)
+  const [autoSaveLogins, setAutoSaveLogins] = useState(false)
   const [rememberDevice, setRememberDevice] = useState(true)
   const [excludedHostsText, setExcludedHostsText] = useState('')
+  const [neverSaveText, setNeverSaveText] = useState('')
   const [exportOpen, setExportOpen] = useState(false)
 
   useEffect(() => {
@@ -58,9 +59,10 @@ export function VaultSettingsPanel({ open, onOpenChange }: Props): React.JSX.Ele
       setAutoLockMinutes(r.data.vaultAutoLockMinutes)
       setAccessPolicy(r.data.vaultAccessPolicy)
       setAutoSubmit(r.data.vaultAutoSubmit)
-      setAutoUpdatePassword(r.data.vaultAutoUpdatePassword)
+      setAutoSaveLogins(r.data.vaultAutoSaveLogins)
       setRememberDevice(r.data.vaultRememberDevice)
       setExcludedHostsText(r.data.vaultExcludedHosts.join(', '))
+      setNeverSaveText(r.data.vaultNeverSaveHosts.join(', '))
     })
   }, [open])
 
@@ -76,9 +78,9 @@ export function VaultSettingsPanel({ open, onOpenChange }: Props): React.JSX.Ele
     setAutoSubmit(v)
     void window.samba.settings.set({ vaultAutoSubmit: v })
   }
-  const toggleAutoUpdatePassword = (v: boolean): void => {
-    setAutoUpdatePassword(v)
-    void window.samba.settings.set({ vaultAutoUpdatePassword: v })
+  const toggleAutoSaveLogins = (v: boolean): void => {
+    setAutoSaveLogins(v)
+    void window.samba.settings.set({ vaultAutoSaveLogins: v })
   }
   const toggleRemember = (v: boolean): void => {
     setRememberDevice(v)
@@ -91,6 +93,13 @@ export function VaultSettingsPanel({ open, onOpenChange }: Props): React.JSX.Ele
       .map((h) => h.trim())
       .filter((h) => h.length > 0)
     void window.samba.settings.set({ vaultExcludedHosts: hosts })
+  }
+  const commitNeverSave = (): void => {
+    const hosts = neverSaveText
+      .split(',')
+      .map((h) => h.trim())
+      .filter((h) => h.length > 0)
+    void window.samba.settings.set({ vaultNeverSaveHosts: hosts })
   }
 
   return (
@@ -178,17 +187,17 @@ export function VaultSettingsPanel({ open, onOpenChange }: Props): React.JSX.Ele
               <Switch checked={autoSubmit} onCheckedChange={toggleAutoSubmit} />
             </div>
 
-            {/* 로그인 성공 감지 자동 갱신 */}
-            <div className="flex items-center justify-between">
+            {/* 로그인 자격증명 묻지 않고 자동 저장(기본 꺼짐) */}
+            <div className="flex items-center justify-between gap-3">
               <span>
                 <span className="block text-[12.5px] font-medium text-[var(--text)]">
-                  {t('vault.settings.autoUpdatePassword')}
+                  {t('vault.settings.autoSaveLogins')}
                 </span>
                 <span className="block text-[11px] text-[var(--text2)]">
-                  {t('vault.settings.autoUpdatePasswordDesc')}
+                  {t('vault.settings.autoSaveLoginsDesc')}
                 </span>
               </span>
-              <Switch checked={autoUpdatePassword} onCheckedChange={toggleAutoUpdatePassword} />
+              <Switch checked={autoSaveLogins} onCheckedChange={toggleAutoSaveLogins} />
             </div>
 
             {/* 이 PC 에서 기억 */}
@@ -218,6 +227,23 @@ export function VaultSettingsPanel({ open, onOpenChange }: Props): React.JSX.Ele
                 value={excludedHostsText}
                 onChange={(e) => setExcludedHostsText(e.target.value)}
                 onBlur={commitExcludedHosts}
+                placeholder={t('vault.settings.excludedHostsPlaceholder')}
+                className="h-9 w-full rounded-[9px] border border-[var(--line)] bg-[var(--bg)] px-2.5 text-[13px] text-[var(--text)] outline-none"
+              />
+            </div>
+
+            {/* 저장 묻지 않는 사이트(확인 바의 '이 사이트는 묻지 않기') */}
+            <div>
+              <div className="mb-1 text-[12.5px] font-medium text-[var(--text)]">
+                {t('vault.settings.neverSaveHosts')}
+              </div>
+              <p className="mb-1.5 text-[11px] text-[var(--text2)]">
+                {t('vault.settings.neverSaveHostsDesc')}
+              </p>
+              <input
+                value={neverSaveText}
+                onChange={(e) => setNeverSaveText(e.target.value)}
+                onBlur={commitNeverSave}
                 placeholder={t('vault.settings.excludedHostsPlaceholder')}
                 className="h-9 w-full rounded-[9px] border border-[var(--line)] bg-[var(--bg)] px-2.5 text-[13px] text-[var(--text)] outline-none"
               />

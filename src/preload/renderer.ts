@@ -8,6 +8,7 @@ import {
   type Settings,
   type TabInfo,
   type AccountDto,
+  type CaptureDecision,
   type CapturePromptDto,
   type PasswordUpdatedDto,
   type SiteDto,
@@ -321,8 +322,9 @@ const api = {
       ipcRenderer.on(IPC.vaultCapturePrompt, h)
       return () => ipcRenderer.off(IPC.vaultCapturePrompt, h)
     },
-    captureDecision: (accept: boolean): void => {
-      ipcRenderer.send(IPC.vaultCaptureDecision, accept)
+    // 확인 바의 답(save·skip·never). 값은 메인에 남아 있고 이 채널에는 답만 실린다
+    captureDecision: (decision: CaptureDecision): void => {
+      ipcRenderer.send(IPC.vaultCaptureDecision, decision)
     },
     // 로그인 성공 감지로 비밀번호가 자동 갱신됐을 때(묻지 않음). 토스트로 알리고 되돌리기를 제공한다
     onPasswordUpdated: (cb: (dto: PasswordUpdatedDto) => void): (() => void) => {

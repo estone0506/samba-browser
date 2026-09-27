@@ -8,6 +8,7 @@ import { TabBar } from '@renderer/components/browser/TabBar'
 import { AddressBar } from '@renderer/components/browser/AddressBar'
 import { ProgressBar } from '@renderer/components/browser/ProgressBar'
 import { WebArea } from '@renderer/components/browser/WebArea'
+import { LoginSaveBar } from '@renderer/components/vault/LoginSaveBar'
 import { PersonalInfoPage } from '@renderer/pages/PersonalInfoPage'
 import { BookmarksPage } from '@renderer/pages/BookmarksPage'
 import { PhonesPage } from '@renderer/pages/PhonesPage'
@@ -86,7 +87,7 @@ export default function App(): React.JSX.Element {
       }),
     []
   )
-  // 자동 저장 제안 카드(vault:capturePrompt) · 자동 갱신 토스트(vault:passwordUpdated) 구독은
+  // 로그인 저장 확인 바(vault:capturePrompt) · 자동 저장 알림(vault:passwordUpdated) 구독은
   // 앱 전체에서 한 번만 한다
   useEffect(() => {
     void refreshVaultState()
@@ -144,6 +145,8 @@ export default function App(): React.JSX.Element {
                 progress={chat.taskProgress}
                 onStop={() => void chat.stop()}
               />
+              {/* 로그인 자격증명 저장 확인 바(주소창 아래). 뜨면 웹 영역이 그만큼 줄어든다 */}
+              <LoginSaveBar />
               <WebArea />
             </>
           ) : view === 'tasks' ? (
