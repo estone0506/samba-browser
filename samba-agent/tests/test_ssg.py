@@ -42,3 +42,12 @@ def test_충전결제는_소싱처가_켤_때만_후보다() -> None:
     # charge_pay 를 켜면 남는다 — 현대카드 청구할인(×0.973 = 97,300)이 1.5% 적립(98,500)보다 싸다
     got = cheapest_quotes(SSG_QUOTES, None, {'site'}, charge_pay=True)
     assert [(q['method'], q['cost']) for q in got] == [('SSGPAY', 97300), ('SSG MONEY 충전결제', 98500)]
+
+
+def test_몰을_알_수_없는_SSG_주소는_열어_본다():
+    # 실기 2026-09-27: 신세계백화점 백팩 주소가 www.ssg.com(siteNo 없음)이라 신세계몰 검색으로 빠졌다
+    from samba_agent.agents.buyer import mall_unknown_url
+
+    assert mall_unknown_url('https://www.ssg.com/item/itemView.ssg?itemId=1000707428452')
+    assert not mall_unknown_url('https://www.ssg.com/item/itemView.ssg?itemId=1&siteNo=6009')
+    assert not mall_unknown_url('https://www.musinsa.com/products/1')

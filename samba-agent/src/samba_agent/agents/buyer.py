@@ -354,6 +354,15 @@ def is_mall_url(url: str | None, allow_department: bool = False) -> bool:
     return bool(_MALL_URL_RE.search(u) or (allow_department and _DEPARTMENT_URL_RE.search(u)))
 
 
+def mall_unknown_url(url: str | None) -> bool:
+    """몰을 주소로 알 수 없는 SSG 상품 주소(www.ssg.com/item/…, siteNo 없음) — 열어 봐야 신세계몰·백화점인지 안다.
+
+    실기 2026-09-27: 신세계백화점 백팩 주소가 www.ssg.com 이라 몰 아님으로 보고 신세계몰 검색으로 빠졌다.
+    """
+    u = url or ''
+    return bool(re.search(r'//(www\.)?ssg\.com/item/', u)) and 'siteNo=' not in u
+
+
 def model_code_of(name: str | None) -> str:
     """상품명의 모델코드(영문+숫자, 뒤 세 자리 색 코드는 '-' 로 잇는다). 없으면 ''.
 
@@ -1321,7 +1330,11 @@ class BuyerAgent(AgentBase):
         """
         source = source_of(self.spec.name)
         snap: dict[str, object] | None = None
-        if not source.mall_item or is_mall_url(a.order.product_url, source.allow_department):
+        if (
+            not source.mall_item
+            or is_mall_url(a.order.product_url, source.allow_department)
+            or mall_unknown_url(a.order.product_url)
+        ):
             snap = (
                 self._route_compare(a, account, None)
                 if source.route_compare
