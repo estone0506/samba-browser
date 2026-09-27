@@ -6,6 +6,7 @@ import {
   fillValue,
   submitForm,
   installCaptureListener,
+  isLoginSubmitClick,
   readLoginCredentials,
   readUsernameStep
 } from '../src/preload/page-core'
@@ -395,5 +396,159 @@ describe('installCaptureListener — 2단계 로그인·Enter 제출', () => {
     pw.value = 'bot-pw'
     pw.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     expect(send).not.toHaveBeenCalled()
+  })
+})
+
+describe('installCaptureListener — 실제 쇼핑몰 로그인 방식(JS 버튼·Enter 가로채기)', () => {
+  const fill = (user: string, pw: string): void => {
+    ;(document.getElementById('u') as HTMLInputElement).value = user
+    ;(document.getElementById('p') as HTMLInputElement).value = pw
+  }
+
+  it('폼 안의 type="button" 로그인 버튼(패션플러스 v-on:click="login")도 잡는다', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" id="u" class="textfield">
+        <input type="password" id="p" class="textfield">
+        <input type="checkbox"> <span>아이디 저장</span>
+        <button type="button" id="go" class="mm_btn"><b>로그인</b></button>
+        <input hidden>
+      </form>
+    `
+    const send = vi.fn()
+    installCaptureListener(send, { allowUntrusted: true })
+    fill('fp-user', 'fp-pass')
+    document.getElementById('go')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ username: 'fp-user', password: 'fp-pass' })
+    )
+  })
+
+  it('버튼 안쪽 글자(<b>)를 눌러도 버튼 클릭으로 본다', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" id="u"><input type="password" id="p">
+        <button type="button"><b id="inner">로그인</b></button>
+      </form>
+    `
+    const send = vi.fn()
+    installCaptureListener(send, { allowUntrusted: true })
+    fill('inner-user', 'inner-pass')
+    document.getElementById('inner')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it('폼 안 비밀번호 칸의 Enter 를 페이지가 가로채도(현대H몰) 잡는다', () => {
+    document.body.innerHTML = `
+      <form name="login">
+        <input type="text" id="u" name="userid">
+        <input type="password" id="p" name="password">
+        <button type="button">로그인</button>
+      </form>
+    `
+    const pw = document.getElementById('p') as HTMLInputElement
+    // 페이지 핸들러: Enter 를 막고 JS 로 로그인한다(submit 이벤트가 생기지 않는다)
+    pw.addEventListener('keydown', (e) => e.preventDefault())
+    const send = vi.fn()
+    installCaptureListener(send, { allowUntrusted: true })
+    fill('hm-user', 'hm-pass')
+    pw.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ username: 'hm-user', password: 'hm-pass' })
+    )
+  })
+
+  it('Enter 뒤 브라우저 submit 이 이어져도 한 번만 보낸다', () => {
+    document.body.innerHTML = `
+      <form id="f">
+        <input type="text" id="u" placeholder="아이디">
+        <input type="password" id="p">
+        <button type="submit">로그인</button>
+      </form>
+    `
+    const send = vi.fn()
+    installCaptureListener(send, { allowUntrusted: true })
+    fill('dup-user', 'dup-pass')
+    const pw = document.getElementById('p') as HTMLInputElement
+    pw.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    document
+      .getElementById('f')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it('이미지 로그인 링크(<a href="javascript:"><img alt="로그인">)도 잡는다', () => {
+    document.body.innerHTML = `
+      <input type="text" id="u" name="mem_id">
+      <input type="password" id="p" name="mem_pw">
+      <a href="#" id="go"><img src="btn_login.gif" alt="로그인"></a>
+    `
+    const send = vi.fn()
+    installCaptureListener(send, { allowUntrusted: true })
+    fill('img-user', 'img-pass')
+    document.querySelector('#go img')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it('아이디 찾기·회원가입·소셜 로그인·다른 폼 버튼은 로그인 제출로 보지 않는다', () => {
+    document.body.innerHTML = `
+      <form id="search"><input type="text" name="q"><button type="button" id="sbtn">로그인 검색</button></form>
+      <form>
+        <input type="text" id="u"><input type="password" id="p">
+        <button type="button">로그인</button>
+      </form>
+      <a href="/auth/find-id" id="find">아이디 찾기</a>
+      <a href="/join" id="join">회원가입</a>
+      <a href="#" id="naver">네이버 로그인</a>
+      <label><input type="checkbox" id="keep">로그인 상태 유지</label>
+    `
+    const send = vi.fn()
+    installCaptureListener(send, { allowUntrusted: true })
+    fill('nope', 'nope-pass')
+    for (const id of ['find', 'join', 'naver', 'keep', 'sbtn']) {
+      document.getElementById(id)!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    }
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('원인 파악용 단계를 알린다 — 빈 비밀번호 제출, 로그인 아닌 클릭(값은 담지 않는다)', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" id="u"><input type="password" id="p">
+        <button type="button" id="go">로그인</button>
+        <button type="button" id="other">취소</button>
+      </form>
+    `
+    const send = vi.fn()
+    const trace = vi.fn()
+    installCaptureListener(send, { allowUntrusted: true, trace })
+    ;(document.getElementById('u') as HTMLInputElement).value = 'only-id'
+    document.getElementById('go')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(trace).toHaveBeenCalledWith('no-password-value')
+    fill('only-id', 'pw-now')
+    document.getElementById('other')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(trace).toHaveBeenCalledWith('click-not-login')
+    expect(send).not.toHaveBeenCalled()
+    for (const call of trace.mock.calls) expect(JSON.stringify(call)).not.toContain('pw-now')
+  })
+})
+
+describe('isLoginSubmitClick', () => {
+  it('폼의 submit 버튼은 글자와 무관하게 제출이다', () => {
+    document.body.innerHTML = `
+      <form><input type="password" id="p"><button id="b">확인</button></form>
+    `
+    const pw = document.getElementById('p') as HTMLInputElement
+    expect(isLoginSubmitClick(document.getElementById('b')!, pw)).toBe(true)
+  })
+
+  it('글자가 너무 긴 링크(안내문)는 제출로 보지 않는다', () => {
+    document.body.innerHTML = `
+      <input type="password" id="p">
+      <a id="a">로그인하시면 더 많은 혜택을 받을 수 있습니다 지금 바로 확인해 보세요</a>
+    `
+    const pw = document.getElementById('p') as HTMLInputElement
+    expect(isLoginSubmitClick(document.getElementById('a')!, pw)).toBe(false)
   })
 })

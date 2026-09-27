@@ -210,6 +210,28 @@ export type CaptureDecision = 'save' | 'skip' | 'never'
 
 export const CAPTURE_DECISIONS: readonly CaptureDecision[] = ['save', 'skip', 'never']
 
+// 페이지(preload)가 로그인 제출 감지 단계에서 보내는 원인 파악용 기록(vault:captureTrace).
+// 값·아이디는 담지 않고 단계 이름만 보낸다 — 메인이 발신 프레임의 호스트와 함께 로그에 남긴다
+export type CaptureTraceStage =
+  // 로그인 버튼·Enter 로 보이는 제출이 있었지만 비밀번호 칸이 비어 있었다
+  | 'no-password-value'
+  // 비밀번호가 채워진 상태의 클릭이지만 로그인 버튼으로 보지 않았다
+  | 'click-not-login'
+  // 비밀번호 칸이 없는 화면에서 아이디만 기억했다(2단계 로그인 1단계)
+  | 'username-step'
+  // 페이지 쪽 레이트리밋(30초 3회)에 걸려 보내지 않았다
+  | 'rate-limited'
+  // 같은 값을 방금 보냈다(submit·click·Enter 가 한 제출에서 겹침)
+  | 'duplicate'
+
+export const CAPTURE_TRACE_STAGES: readonly CaptureTraceStage[] = [
+  'no-password-value',
+  'click-not-login',
+  'username-step',
+  'rate-limited',
+  'duplicate'
+]
+
 // '묻지 않고 자동 저장'으로 저장·갱신됐을 때 렌더러에 보내는 알림 정보.
 // 값(비밀번호)은 담지 않고 username 은 마스킹한다. undoToken 은 60초간만 유효하다
 export interface PasswordUpdatedDto {

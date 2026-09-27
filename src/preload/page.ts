@@ -146,13 +146,20 @@ if (!isExtensionDocument) {
   })
 }
 
+// 로그인 제출 감지(저장 제안·자동 저장) → 메인의 vault:capture 로 전달(비밀번호는 이 채널로만 나간다).
+// **모든 프레임**에 건다 — 로그인 폼을 iframe 에 두는 사이트가 있다. 메인(VaultCaptureGate)이 발신 프레임이
+// 탭 최상위 문서와 같은 등록 도메인일 때만 받는다(광고·제3자 iframe 의 제출은 버린다).
+// 격리 월드 preload 는 contextIsolation 하에서도 ipcRenderer 를 직접 사용할 수 있다.
+// allowUntrusted 없이 호출 → 합성(스크립트 생성) 이벤트는 무시하고 신뢰된(isTrusted) 사용자 이벤트만 처리한다.
+// trace 는 감지 단계 이름만 보낸다(값·아이디 없음) — 바가 안 뜰 때 앱 로그로 원인을 찾는다
+if (!isExtensionDocument) {
+  installCaptureListener((payload) => ipcRenderer.send(PAGE_IPC.vaultCapture, payload), {
+    trace: (stage) => ipcRenderer.send(PAGE_IPC.vaultCaptureTrace, stage)
+  })
+}
+
 // === 여기부터는 최상위 문서 전용 ============================================
 if (isTopFrame && !isExtensionDocument) {
-  // 폼 제출 감지 → 메인의 vault:capture 로 전달(비밀번호는 이 채널로만, pendingCapture 에만 잠깐 머문다)
-  // 격리 월드 preload 는 contextIsolation 하에서도 ipcRenderer 를 직접 사용할 수 있다
-  // 옵션 없이 호출 → 합성(스크립트 생성) 이벤트는 무시하고 신뢰된(isTrusted) 사용자 이벤트만 처리한다
-  installCaptureListener((payload) => ipcRenderer.send(PAGE_IPC.vaultCapture, payload))
-
   // 페이지 내 자동 채움 피커. 계정 목록에는 값이 없고, 채우기는 메인이 수행한다.
   // 문구는 페이지 언어가 아니라 앱 언어를 따라야 하므로, settings:get 으로 현재 언어를
   // 물어본 뒤 page-constants 의 ko/en 표에서 골라 쓴다(격리 월드에는 i18n 모듈을 쓸 수 없다).

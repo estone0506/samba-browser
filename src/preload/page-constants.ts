@@ -30,6 +30,7 @@ export const MAX_ELEMENTS = 150
 // preload(격리 월드) → 메인 프로세스 IPC 채널
 export const PAGE_IPC = {
   vaultCapture: 'vault:capture',
+  vaultCaptureTrace: 'vault:captureTrace',
   vaultPickerAccounts: 'vault:pickerAccounts',
   vaultPickerFill: 'vault:pickerFill',
   settingsGet: 'settings:get',

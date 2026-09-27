@@ -10,7 +10,8 @@ import {
   session,
   shell,
   type BrowserWindow,
-  type WebContents
+  type WebContents,
+  type WebFrameMain
 } from 'electron'
 import { join } from 'node:path'
 import * as os from 'node:os'
@@ -48,12 +49,13 @@ import { RECENT_CHAT_LIMIT, type AppendMessageInput } from '../../shared/chat'
 import { VaultCaptureGate } from './vault-capture'
 import { watchLoginOutcome } from './login-watch'
 import { machineFilledRecently } from '../browser/human-activity'
+import { addNeverSaveHost, autoSaveCapturedLogin, saveCapturedLogin } from '../vault/login-capture'
 import {
-  addNeverSaveHost,
-  autoSaveCapturedLogin,
-  saveCapturedLogin
-} from '../vault/login-capture'
-import { CAPTURE_DECISIONS, maskUsername, type CaptureDecision } from '../../shared/vault'
+  CAPTURE_DECISIONS,
+  CAPTURE_TRACE_STAGES,
+  maskUsername,
+  type CaptureDecision
+} from '../../shared/vault'
 import { VaultPickerGate } from './vault-picker'
 import { autofillAccount, type AutofillDeps } from '../vault/autofill'
 import { assertFromRenderer, isFromRenderer, settingsForSender } from './sender'
@@ -553,10 +555,12 @@ export function registerIpc(
     neverSaveHosts: () => settings.get().vaultNeverSaveHosts,
     machineFilled: (senderKey) => machineFilledRecently(senderKey as WebContents),
     profileOf: (senderKey) => tabs.findByWebContents(senderKey as WebContents)?.profile,
-    watchLogin: (senderKey, onSettled) => {
+    watchLogin: (senderKey, onSettled, subFrame) => {
       const wc = senderKey as WebContents
-      watchLoginOutcome(wc, wc.getURL(), onSettled)
+      watchLoginOutcome(wc, wc.getURL(), onSettled, subFrame as WebFrameMain | undefined)
     },
+    // 호스트·단계·버린 이유만 남긴다(값·아이디 없음) — 바가 안 뜰 때 원인을 앱 로그로 찾는다
+    log: (line) => console.log(line),
     autoSaveEnabled: () => settings.get().vaultAutoSaveLogins,
     autoSave: (capture) => {
       try {
@@ -572,15 +576,38 @@ export function registerIpc(
       } catch (e: unknown) {
         // 실패 사유만 남긴다 — 값은 절대 로그에 넣지 않는다
         console.error('자격정보 자동 저장 실패', e instanceof Error ? e.message : String(e))
-        return false
+        return 'error'
       }
     }
   })
   ipcMain.on(IPC.vaultCapture, (e, raw: unknown) => {
+    const frame = e.senderFrame
+    const isSubFrame = !!frame && frame.parent !== null
     captureGate.handle(
       e.sender,
-      { trusted: tabs.hasWebContents(e.sender), frameUrl: e.senderFrame?.url ?? '' },
+      {
+        trusted: tabs.hasWebContents(e.sender),
+        frameUrl: frame?.url ?? '',
+        topUrl: e.sender.isDestroyed() ? '' : e.sender.getURL(),
+        ...(isSubFrame && frame ? { subFrame: frame } : {})
+      },
       raw
+    )
+  })
+  // 페이지(preload)의 감지 단계 기록 — 단계 이름만 받아 발신 프레임 호스트와 함께 로그에 남긴다.
+  // 실제 탭이 보낸 것만, 정해진 단계 이름만, 탭당 30초에 10줄까지만(로그 도배 방지)
+  const traceSentAt = new WeakMap<WebContents, number[]>()
+  ipcMain.on(IPC.vaultCaptureTrace, (e, raw: unknown) => {
+    if (!tabs.hasWebContents(e.sender)) return
+    if (typeof raw !== 'string' || !(CAPTURE_TRACE_STAGES as readonly string[]).includes(raw))
+      return
+    const now = Date.now()
+    const recent = (traceSentAt.get(e.sender) ?? []).filter((t) => now - t < 30_000)
+    if (recent.length >= 10) return
+    recent.push(now)
+    traceSentAt.set(e.sender, recent)
+    console.log(
+      `[로그인 저장] ${normalizeHost(e.senderFrame?.url ?? '') || '(호스트 모름)'} 페이지 감지 단계: ${raw}`
     )
   })
 
@@ -1191,7 +1218,10 @@ export function registerIpc(
   // 기본 세션에 걸고, 작업공간 파티션 세션이 새로 생기면 같은 확장을 그 세션에도 건다.
   // 로드 실패는 항목별 오류 문자열로만 남고 앱을 멈추지 않는다
   // 확장 서비스워커에 없는 chrome.cookies 보충을 확장 로드보다 먼저 건다(기본 세션)
-  enableExtensionServiceWorkerSupport(session.defaultSession, join(__dirname, '../preload/extension-sw.js'))
+  enableExtensionServiceWorkerSupport(
+    session.defaultSession,
+    join(__dirname, '../preload/extension-sw.js')
+  )
   const extensions = new ExtensionManager(
     createSessionExtensionHost(session.defaultSession),
     settings

@@ -27,6 +27,7 @@ describe('page-constants 는 shared 원본과 동기화되어야 한다', () => 
 
   it('vaultCapture 채널명이 shared/ipc 와 같다', () => {
     expect(PAGE_IPC.vaultCapture).toBe(IPC.vaultCapture)
+    expect(PAGE_IPC.vaultCaptureTrace).toBe(IPC.vaultCaptureTrace)
   })
 
   it('새 탭·새 창 알림 채널명이 shared/ipc 와 같다', () => {

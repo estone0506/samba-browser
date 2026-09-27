@@ -9,6 +9,7 @@ import type {
   PageOverlay,
   PageSnapshot
 } from '../shared/snapshot'
+import type { CaptureTraceStage } from '../shared/vault'
 import { MAX_ELEMENTS } from './page-constants'
 import {
   isCloseLabel,
@@ -24,6 +25,7 @@ import {
   labelTextOf,
   passwordElement as detectPasswordElement,
   standaloneUsernameElement,
+  SOCIAL_RE,
   usernameElementFor as detectUsernameElementFor,
   type CaptchaHint,
   type LoginFields,
@@ -1289,6 +1291,8 @@ export interface InstallCaptureListenerOptions {
   // 테스트 전용: jsdom 의 dispatchEvent 는 isTrusted=false 이므로 합성 이벤트도 허용한다.
   // 실제 page.ts 는 이 옵션 없이(옵션 생략 = 신뢰된 이벤트만) 호출해야 한다.
   allowUntrusted?: boolean
+  // 원인 파악용 단계 기록(값·아이디 없이 단계 이름만). page.ts 가 메인 로그로 보낸다
+  trace?: (stage: CaptureTraceStage) => void
 }
 
 const CAPTURE_WINDOW_MS = 30_000
@@ -1329,14 +1333,59 @@ export function readUsernameStep(): string {
   return (standaloneUsernameElement()?.value ?? '').trim()
 }
 
+// 로그인 제출로 볼 수 있는 클릭 대상. 한국 쇼핑몰은 form 안이어도 type="button" 버튼(패션플러스 v-on:click="login"),
+// 디자인 시스템 버튼 컴포넌트(현대H몰), <a href="javascript:..."> 링크로 로그인을 보내는 경우가 많다
+const CAPTURE_CLICK_TARGET =
+  'button, input[type="submit"], input[type="button"], input[type="image"], [role="button"], a'
+// 로그인 버튼 글자로 보지 않는 문구 — 아이디·비밀번호 찾기, 회원가입 등(로그인 낱말이 섞여도 제출이 아니다)
+const NOT_LOGIN_TEXT =
+  /찾기|회원\s?가입|가입하기|비회원|find|forgot|reset|join|sign\s?up|register|로그인\s?상태|유지|자동\s?로그인|로그아웃|logout|log\s?out/i
+// 버튼 글자가 이보다 길면 버튼이 아니라 안내문을 감싼 링크일 가능성이 크다
+const LOGIN_BUTTON_TEXT_MAX = 30
+
+/** 클릭한 요소에서 로그인 버튼 판정에 쓰는 글자 — 보이는 글자, 없으면 value·title·이미지 alt·aria-label */
+export function loginButtonText(el: HTMLElement): string {
+  const own = labelOf(el)
+  if (own) return own
+  const input = el instanceof HTMLInputElement ? el.value || el.alt : ''
+  const img = el.querySelector('img')?.getAttribute('alt') ?? ''
+  return `${input} ${el.getAttribute('title') ?? ''} ${img}`.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * 클릭이 비밀번호 칸(pw)의 로그인 제출인가(순수 판정 — 테스트 대상).
+ * - pw 가 폼 안이고 그 폼의 submit 버튼이면 제출이다
+ * - 그 밖에는(폼 안의 type="button" 도, 폼 밖 SPA 버튼·링크도) 글자가 '로그인'류이고
+ *   찾기·가입·소셜 로그인 버튼이 아닐 때만 제출이다
+ */
+export function isLoginSubmitClick(clicked: HTMLElement, pw: HTMLInputElement): boolean {
+  const pwForm = formOf(pw)
+  if (pwForm && isSubmitLike(clicked) && formOf(clicked) === pwForm) return true
+  const text = loginButtonText(clicked)
+  if (!text || text.length > LOGIN_BUTTON_TEXT_MAX) return false
+  if (!LOGIN_TEXT.test(text)) return false
+  if (NOT_LOGIN_TEXT.test(text) || SOCIAL_RE.test(text)) return false
+  // 다른 폼의 버튼이면(예: 헤더 검색 폼) 이 비밀번호의 제출이 아니다
+  const clickedForm = formOf(clicked) ?? clicked.closest('form')
+  if (pwForm && clickedForm && clickedForm !== pwForm) return false
+  return true
+}
+
 // ipcRenderer.send 등 실제 전송 함수는 주입받는다(테스트에서 스텁 가능하도록)
 export function installCaptureListener(
   send: (payload: { host: string; username: string; password: string }) => void,
   options: InstallCaptureListenerOptions = {}
 ): void {
   const allowUntrusted = options.allowUntrusted === true
+  const trace = (stage: CaptureTraceStage): void => {
+    try {
+      options.trace?.(stage)
+    } catch {
+      // 원인 파악용 기록이 실패해도 감지는 계속한다
+    }
+  }
 
-  // 같은 제출이 submit 과 click 양쪽에서 잡혀 중복 전송되는 것을 짧게 막는다
+  // 같은 제출이 submit 과 click·Enter 양쪽에서 잡혀 중복 전송되는 것을 짧게 막는다
   let lastSignature = ''
   let lastSentAt = 0
   // 2단계 로그인의 앞 단계 아이디(같은 문서 안에서만 — SPA 로그인)
@@ -1363,30 +1412,29 @@ export function installCaptureListener(
       if (step) {
         stepUsername = step
         stepUsernameAt = now
+        trace('username-step')
+      } else {
+        trace('no-password-value')
       }
       return // 비밀번호 값이 없으면 저장 제안을 띄우지 않는다
     }
     const signature = `${creds.username}:${creds.password}`
-    if (signature === lastSignature && now - lastSentAt < 1000) return
-    if (!withinRateLimit(now)) return
+    if (signature === lastSignature && now - lastSentAt < 1000) {
+      trace('duplicate')
+      return
+    }
+    if (!withinRateLimit(now)) {
+      trace('rate-limited')
+      return
+    }
     lastSignature = signature
     lastSentAt = now
     sentTimestamps.push(now)
     send({ host: location.host, username: creds.username, password: creds.password })
   }
 
-  // click 이 감지된 password 와 관련된 제출 액션인지 판정한다.
-  // - password 가 form 안에 있으면: 그 form 소속의 submit 성격 버튼일 때만
-  // - password 가 form 밖이면: findSubmit() 이 로그인 텍스트로 고르는 것과 같은 기준(같은 요소)일 때만
-  function isRelevantSubmitClick(clicked: HTMLElement, pw: HTMLInputElement): boolean {
-    const pwForm = formOf(pw)
-    if (pwForm) {
-      return isSubmitLike(clicked) && formOf(clicked) === pwForm
-    }
-    return isButtonish(clicked) && LOGIN_TEXT.test(labelOf(clicked))
-  }
-
-  // 일반적인 폼 제출(캡처 단계 — 페이지 핸들러의 preventDefault 와 무관하게 이벤트는 도달한다)
+  // 일반적인 폼 제출(캡처 단계 — 페이지 핸들러의 preventDefault 와 무관하게 이벤트는 도달한다).
+  // 페이지 스크립트의 form.submit() 은 submit 이벤트를 일으키지 않는다 — 그 경우는 아래 클릭·Enter 가 잡는다
   document.addEventListener(
     'submit',
     (ev) => {
@@ -1395,27 +1443,32 @@ export function installCaptureListener(
     },
     true
   )
-  // SPA 대비: 페이지가 submit 을 아예 막고 클릭만으로 처리하는 경우도 감지
+  // 로그인 버튼 클릭. 페이지가 submit 을 막거나(SPA) type="button" 버튼·링크의 JS 로 로그인하는 경우도 잡는다
   document.addEventListener(
     'click',
     (ev) => {
       if (!allowUntrusted && ev.isTrusted !== true) return
       const target = ev.target
-      if (!(target instanceof HTMLElement)) return
-      const clicked = target.closest('button, input[type="submit"]')
+      if (!(target instanceof Element)) return
+      const clicked = target.closest(CAPTURE_CLICK_TARGET)
       if (!(clicked instanceof HTMLElement)) return
       const pw = detectPasswordElement()
       if (!pw) {
         // 아이디 단계의 '다음' 버튼 — 아이디만 기억한다
-        if (isButtonish(clicked)) attempt(null)
+        if (isButtonish(clicked) || clicked.getAttribute('role') === 'button') attempt(null)
         return
       }
-      if (!isRelevantSubmitClick(clicked, pw)) return
+      if (!isLoginSubmitClick(clicked, pw)) {
+        // 비밀번호가 채워진 화면의 다른 클릭만 기록한다(빈 로그인 화면의 클릭은 소음이다)
+        if (pw.value) trace('click-not-login')
+        return
+      }
       attempt(formOf(pw))
     },
     true
   )
-  // 폼 없는 SPA 에서 비밀번호 칸에 Enter 로 제출하는 경우(submit·click 이 모두 없다)
+  // 비밀번호 칸에서 Enter. 폼 안이어도 페이지가 Enter 를 가로채 JS 로 로그인하면(현대H몰·패션플러스)
+  // submit 이 일어나지 않으므로 여기서 직접 잡는다. 브라우저가 submit 도 일으키면 중복 방지가 거른다
   document.addEventListener(
     'keydown',
     (ev) => {
@@ -1423,9 +1476,7 @@ export function installCaptureListener(
       if (ev.key !== 'Enter' || ev.isComposing) return
       const target = ev.target
       if (!(target instanceof HTMLInputElement) || target.type !== 'password') return
-      // 폼 안이면 브라우저가 submit 을 일으키므로 submit 쪽에서 잡는다
-      if (formOf(target)) return
-      attempt(null)
+      attempt(formOf(target))
     },
     true
   )

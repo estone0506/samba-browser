@@ -6,9 +6,10 @@
 // 값(비밀번호)은 이 모듈을 지나지 않는다. 호출부가 콜백 클로저 안에 들고 있다가 성공일 때만 쓰고,
 // 실패·시간 초과·탭 닫힘이면 onSettled(false) 로 알려 호출부가 버리게 한다.
 
-import type { WebContents } from 'electron'
+import type { WebContents, WebFrameMain } from 'electron'
 import { judgeLoginOutcome } from './login-success'
 import { ISOLATED_WORLD_ID } from '../browser/page-bridge'
+import { callFrameOp } from '../browser/frame-channel'
 
 // 로그인 성공 판정 대기 최대 시간
 export const LOGIN_WATCH_TIMEOUT_MS = 20_000
@@ -40,6 +41,35 @@ async function observe(wc: WebContents): Promise<{ text: string; passwordVisible
   return { text, passwordVisible }
 }
 
+// 하위 프레임(iframe 로그인 폼)의 비밀번호 칸 유무. 프레임이 사라졌으면(로그인 레이어가 닫힘) false,
+// 물어보지 못했으면 undefined(모름 — 성공으로 치지 않는다). 값은 읽지 않는다(스냅샷은 비밀 칸 값을 담지 않는다)
+async function framePasswordVisible(frame: WebFrameMain): Promise<boolean | undefined> {
+  try {
+    if (frame.isDestroyed() || frame.detached) return false
+  } catch {
+    return false
+  }
+  try {
+    const snap = await callFrameOp(frame, { op: 'snapshot' })
+    if (!snap || typeof snap !== 'object') return undefined
+    const elements = (snap as { elements?: unknown }).elements
+    if (!Array.isArray(elements)) return undefined
+    return elements.some(
+      (el) =>
+        typeof el === 'object' &&
+        el !== null &&
+        ((el as { inputType?: unknown }).inputType === 'password' ||
+          (el as { isSecret?: unknown }).isSecret === true)
+    )
+  } catch {
+    return undefined
+  }
+}
+
+/** 감시가 끝난 사유(로그용 — 값은 담지 않는다) */
+export type LoginWatchReason =
+  'url-changed' | 'password-gone' | 'failure-text' | 'timeout' | 'tab-closed' | 'replaced'
+
 /**
  * 탭을 지켜보다가 로그인 성공이면 onSettled(true), 실패·시간 초과·탭 닫힘·새 제출로 대체되면 onSettled(false).
  * onSettled 는 정확히 한 번 불린다
@@ -47,12 +77,13 @@ async function observe(wc: WebContents): Promise<{ text: string; passwordVisible
 export function watchLoginOutcome(
   wc: WebContents,
   prevUrl: string,
-  onSettled: (success: boolean) => void
+  onSettled: (success: boolean, reason: LoginWatchReason) => void,
+  subFrame?: WebFrameMain
 ): void {
   // 같은 탭의 이전 감시는 버린다(그 제출의 값도 호출부가 버린다)
   watchers.get(wc)?.()
   if (wc.isDestroyed()) {
-    onSettled(false)
+    onSettled(false, 'tab-closed')
     return
   }
 
@@ -60,32 +91,42 @@ export function watchLoginOutcome(
   let checking = false
   const startedAt = Date.now()
 
-  const finish = (success: boolean): void => {
+  const finish = (success: boolean, reason: LoginWatchReason): void => {
     if (settled) return
     settled = true
     clearInterval(timer)
     // 감시마다 붙인 리스너를 떼어 낸다(한 탭에서 여러 번 로그인해도 리스너가 쌓이지 않게)
     if (!wc.isDestroyed()) wc.removeListener('destroyed', cancel)
     if (watchers.get(wc) === cancel) watchers.delete(wc)
-    onSettled(success)
+    onSettled(success, reason)
   }
-  const cancel = (): void => finish(false)
+  const cancel = (): void => finish(false, wc.isDestroyed() ? 'tab-closed' : 'replaced')
 
   const tick = async (): Promise<void> => {
     if (settled || checking) return
-    if (wc.isDestroyed() || Date.now() - startedAt > LOGIN_WATCH_TIMEOUT_MS) {
-      finish(false)
+    if (wc.isDestroyed()) {
+      finish(false, 'tab-closed')
+      return
+    }
+    if (Date.now() - startedAt > LOGIN_WATCH_TIMEOUT_MS) {
+      finish(false, 'timeout')
       return
     }
     // 새 문서를 싣는 중에는 보지 않는다 — 빈 화면을 "비밀번호 칸이 사라짐"으로 오판한다
     if (wc.isLoading()) return
     checking = true
     try {
-      const { text, passwordVisible } = await observe(wc)
+      const top = await observe(wc)
       if (settled || wc.isDestroyed()) return
-      const outcome = judgeLoginOutcome({ prevUrl, url: wc.getURL(), text, passwordVisible })
-      if (outcome === 'success') finish(true)
-      else if (outcome === 'failure') finish(false)
+      const url = wc.getURL()
+      // iframe 로그인은 최상위 문서에 비밀번호 칸이 원래 없다 — 최상위 기준으로 보면 제출 즉시 "성공"이 된다.
+      // 그 경우 비밀번호 칸 유무는 제출한 프레임에서 본다
+      const passwordVisible = subFrame ? await framePasswordVisible(subFrame) : top.passwordVisible
+      if (settled || wc.isDestroyed()) return
+      const outcome = judgeLoginOutcome({ prevUrl, url, text: top.text, passwordVisible })
+      if (outcome === 'success') {
+        finish(true, passwordVisible === false ? 'password-gone' : 'url-changed')
+      } else if (outcome === 'failure') finish(false, 'failure-text')
     } finally {
       checking = false
     }

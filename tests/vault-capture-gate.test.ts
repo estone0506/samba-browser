@@ -31,6 +31,7 @@ function build(
     watchLogin?: VaultCaptureGateDeps['watchLogin']
     autoSaveEnabled?: boolean
     autoSave?: ReturnType<typeof vi.fn>
+    log?: (line: string) => void
   } = {}
 ): Built {
   let clock = 1_000_000
@@ -51,7 +52,8 @@ function build(
     profileOf: () => opts.profile,
     watchLogin: opts.watchLogin,
     autoSaveEnabled: () => opts.autoSaveEnabled ?? false,
-    autoSave: opts.autoSave
+    autoSave: opts.autoSave,
+    log: opts.log
   })
   return {
     gate,
@@ -235,7 +237,7 @@ describe('VaultCaptureGate', () => {
     expect(b.setPendingCapture).toHaveBeenCalledWith(expect.objectContaining({ locked: true }))
   })
 
-  it('자동 저장 기본값(꺼짐)이면 기존 계정 + 다른 값은 업데이트 확인 바(isNew=false)로 묻는다', () => {
+  it('자동 저장을 끄면 기존 계정 + 다른 값은 업데이트 확인 바(isNew=false)로 묻는다', () => {
     const autoSave = vi.fn(() => true)
     const b = build({ accounts: [{ id: 7, username: 'alice' }], autoSave })
     expect(b.gate.handle({}, FRAME, PAYLOAD)).toBe('accepted')
@@ -249,5 +251,71 @@ describe('VaultCaptureGate', () => {
     const b = build()
     const outcome = b.gate.handle({}, FRAME, PAYLOAD)
     expect(JSON.stringify(outcome)).not.toContain(PASSWORD)
+  })
+})
+
+describe('VaultCaptureGate — iframe 로그인·자동 저장·원인 로그', () => {
+  it('같은 등록 도메인의 하위 프레임 제출은 받고, 그 프레임을 로그인 감시에 넘긴다', () => {
+    const watchLogin = vi.fn()
+    const b = build({ watchLogin })
+    const subFrame = {}
+    const sender = {
+      trusted: true,
+      frameUrl: 'https://member.shop.example/login-frame',
+      topUrl: 'https://www.shop.example/login',
+      subFrame
+    }
+    const outcome = b.gate.handle({}, sender, { ...PAYLOAD, host: 'member.shop.example' })
+    expect(outcome).toBe('watching')
+    expect(watchLogin).toHaveBeenCalledWith(expect.anything(), expect.any(Function), subFrame)
+  })
+
+  it('탭 최상위 문서와 다른 사이트의 iframe 제출은 버린다(광고·제3자 프레임)', () => {
+    const b = build()
+    const sender = {
+      trusted: true,
+      frameUrl: 'https://ads.other.example/frame',
+      topUrl: 'https://www.shop.example/login'
+    }
+    expect(b.gate.handle({}, sender, { ...PAYLOAD, host: 'ads.other.example' })).toBe(
+      'cross-site-frame'
+    )
+    expect(b.setPendingCapture).not.toHaveBeenCalled()
+  })
+
+  it('자동 저장이 켜져 있으면 바뀐 비밀번호도 묻지 않고 업데이트한다', () => {
+    const autoSave = vi.fn(() => true)
+    const b = build({ accounts: [{ id: 7, username: 'alice' }], autoSaveEnabled: true, autoSave })
+    expect(b.gate.handle({}, FRAME, PAYLOAD)).toBe('auto-saved')
+    expect(autoSave).toHaveBeenCalledWith(expect.objectContaining({ isNew: false }))
+    expect(b.setPendingCapture).not.toHaveBeenCalled()
+  })
+
+  it('자동 저장이 실패하면 값을 버리지 않고 확인 바로 묻는다', () => {
+    const autoSave = vi.fn(() => 'error' as const)
+    const b = build({ autoSaveEnabled: true, autoSave })
+    expect(b.gate.handle({}, FRAME, PAYLOAD)).toBe('accepted')
+    expect(b.setPendingCapture).toHaveBeenCalledTimes(1)
+  })
+
+  it('처리 결과·버린 이유를 호스트와 함께 로그에 남기되 아이디·비밀번호는 남기지 않는다', () => {
+    const lines: string[] = []
+    let settle: ((success: boolean, reason?: string) => void) | undefined
+    const b = build({
+      log: (line) => lines.push(line),
+      watchLogin: (_key, onSettled) => {
+        settle = onSettled
+      }
+    })
+    b.gate.handle({}, FRAME, PAYLOAD)
+    settle?.(false, 'timeout')
+    b.gate.handle({}, { ...FRAME, frameUrl: 'http://www.shop.example/login' }, PAYLOAD)
+    const all = lines.join(' | ')
+    expect(all).toContain('shop.example')
+    expect(all).toContain('watching')
+    expect(all).toContain('timeout')
+    expect(all).toContain('insecure-page')
+    expect(all).not.toContain(PASSWORD)
+    expect(all).not.toContain('alice')
   })
 })

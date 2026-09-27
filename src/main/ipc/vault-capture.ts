@@ -49,6 +49,11 @@ export interface CaptureSender {
   trusted: boolean
   // e.senderFrame?.url — 메시지를 보낸 프레임의 실제 URL(확인 불가면 빈 문자열)
   frameUrl: string
+  // 탭 최상위 문서의 URL(e.sender.getURL()). 주면 발신 프레임이 그와 같은 등록 도메인이어야 받는다 —
+  // iframe 로그인 폼은 받되 광고·제3자 iframe 의 제출은 버린다. 없으면(테스트·예전 호출부) 검사하지 않는다
+  topUrl?: string
+  // 발신 프레임이 하위 프레임이면 그 프레임(로그인 성공 감시가 그 프레임의 비밀번호 칸을 본다). 최상위면 없다
+  subFrame?: object
 }
 
 // 처리 결과. 값(비밀번호)은 절대 담지 않는다
@@ -59,6 +64,8 @@ export type CaptureOutcome =
   | 'rate-limited'
   | 'invalid'
   | 'host-mismatch'
+  // 발신 프레임이 탭 최상위 문서와 다른 사이트(제3자 iframe)
+  | 'cross-site-frame'
   // https 가 아닌 페이지(로컬 개발 서버 제외)
   | 'insecure-page'
   | 'excluded'
@@ -87,12 +94,20 @@ export interface VaultCaptureGateDeps {
   // 이 sender(탭)의 프로필 이름(새 계정 라벨용)
   profileOf?: (senderKey: object) => string | undefined
   // 로그인 성공 감시. 없으면 곧바로 성공으로 본다(테스트·동기 경로).
-  // onSettled 는 정확히 한 번 불려야 한다 — false 면 보관 중이던 값을 버린다
-  watchLogin?: (senderKey: object, onSettled: (success: boolean) => void) => void
+  // onSettled 는 정확히 한 번 불려야 한다 — false 면 보관 중이던 값을 버린다(reason 은 로그용 짧은 영문 사유).
+  // subFrame 은 제출이 하위 프레임(iframe 로그인)에서 왔을 때 그 프레임
+  watchLogin?: (
+    senderKey: object,
+    onSettled: (success: boolean, reason?: string) => void,
+    subFrame?: object
+  ) => void
+  // 원인 파악용 로그 한 줄(호스트·단계·사유만 — 값·아이디는 절대 넣지 않는다). 없으면 남기지 않는다
+  log?: (line: string) => void
   // '묻지 않고 자동 저장'(설정, 기본 꺼짐). 없으면 꺼진 것으로 본다
   autoSaveEnabled?: () => boolean
-  // 자동 저장을 실행한다(잠금 해제 상태에서만 불린다). 같은 값이라 저장할 게 없으면 false
-  autoSave?: (capture: CaptureCandidateInput) => boolean
+  // 자동 저장을 실행한다(잠금 해제 상태에서만 불린다). 같은 값이라 저장할 게 없으면 false,
+  // 저장이 실패하면 'error' — 그때는 값을 버리지 않고 확인 바로 한 번 묻는다
+  autoSave?: (capture: CaptureCandidateInput) => boolean | 'error'
 }
 
 export class VaultCaptureGate {
@@ -117,8 +132,22 @@ export class VaultCaptureGate {
     return false
   }
 
-  /** 한 건의 vault:capture 메시지를 처리한다 */
+  private log(host: string, stage: string): void {
+    try {
+      this.deps.log?.(`[로그인 저장] ${host || '(호스트 모름)'} ${stage}`)
+    } catch {
+      // 로그 실패는 무시한다
+    }
+  }
+
+  /** 한 건의 vault:capture 메시지를 처리한다. 결과(버린 이유 포함)를 호스트와 함께 로그에 남긴다 */
   handle(senderKey: object, sender: CaptureSender, raw: unknown): CaptureOutcome {
+    const outcome = this.evaluate(senderKey, sender, raw)
+    this.log(normalizeHost(sender.frameUrl), `제출 감지 → ${outcome}`)
+    return outcome
+  }
+
+  private evaluate(senderKey: object, sender: CaptureSender, raw: unknown): CaptureOutcome {
     // 발신자가 실제 탭의 webContents 가 아니면 무시(위조 발신자 방지)
     if (!sender.trusted) return 'untrusted-sender'
     if (this.isRateLimited(senderKey)) return 'rate-limited'
@@ -140,6 +169,16 @@ export class VaultCaptureGate {
     ) {
       return 'host-mismatch'
     }
+    // 하위 프레임의 제출은 탭 최상위 문서와 같은 사이트(등록 도메인)일 때만 받는다
+    if (sender.topUrl !== undefined) {
+      const topHost = normalizeHost(sender.topUrl)
+      if (
+        !topHost ||
+        (topHost !== frameHost && registrableDomain(topHost) !== registrableDomain(frameHost))
+      ) {
+        return 'cross-site-frame'
+      }
+    }
 
     // 평문(http) 페이지의 값은 받지 않는다(자동 채움과 같은 기준 — 로컬 개발 서버만 예외)
     if (!isSecurePageUrl(sender.frameUrl)) return 'insecure-page'
@@ -159,9 +198,18 @@ export class VaultCaptureGate {
 
     if (!this.deps.watchLogin) return this.decide(candidate)
     // 로그인 성공을 확인한 뒤에만 판정한다. 값은 이 클로저에만 머물고 실패·시간 초과면 함께 버려진다
-    this.deps.watchLogin(senderKey, (success) => {
-      if (success) this.decide(candidate)
-    })
+    this.deps.watchLogin(
+      senderKey,
+      (success, reason) => {
+        if (!success) {
+          this.log(host, `로그인 성공 확인 실패 → 버림(${reason ?? 'failure'})`)
+          return
+        }
+        const decided = this.decide(candidate)
+        this.log(host, `로그인 성공(${reason ?? 'success'}) → ${decided}`)
+      },
+      sender.subFrame
+    )
     return 'watching'
   }
 
@@ -188,7 +236,9 @@ export class VaultCaptureGate {
     if (verdict.kind === 'same') return 'duplicate'
     const candidate = { ...c, isNew: verdict.kind === 'new', locked: false }
     if (this.deps.autoSaveEnabled?.() && this.deps.autoSave) {
-      return this.deps.autoSave(candidate) ? 'auto-saved' : 'duplicate'
+      const saved = this.deps.autoSave(candidate)
+      if (saved === true) return 'auto-saved'
+      if (saved === false) return 'duplicate'
     }
     vault.setPendingCapture(candidate)
     return 'accepted'
