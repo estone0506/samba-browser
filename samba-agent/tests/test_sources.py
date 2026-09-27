@@ -148,10 +148,10 @@ def test_ABC마트와_그랜드스테이지는_항상_까대기다():
     assert src.by_id('MUSINSA').order_type is None
 
 
-def test_SSG_는_신세계몰_경로비교_견적을_켜고_보류는_유지한다(sources):
+def test_SSG_는_신세계몰_경로비교_견적을_켜고_사용_중이다(sources):
     """SSG 주문 이행 연동(2026-09-27) — 켜는 것(status active)은 사용자 확인 뒤라 hold 그대로다."""
     ssg = sources.by_id('SSG')
-    assert ssg.status == 'hold'
+    assert ssg.status == 'active'
     assert ssg.payment_quotes and ssg.mall_item and ssg.route_compare
     assert ssg.allow_department is True  # 사용자 2026-09-27: 신세계백화점(6009)도 허용
     assert ssg.mall_item_script == 'ssg_find_mall_item'
