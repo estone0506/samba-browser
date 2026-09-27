@@ -344,6 +344,22 @@ function isSocialButton(el: HTMLElement): boolean {
   return SOCIAL_RE.test(buttonTextOf(el))
 }
 
+// 로그인 낱말이 섞여도 제출이 아닌 버튼 — 아이디·비밀번호 찾기, 회원가입, 비회원, 로그인 상태 유지 등
+export const NOT_SUBMIT_TEXT_RE =
+  /찾기|회원\s?가입|가입하기|비회원|find|forgot|reset|join|sign\s?up|register|로그인\s?상태|자동\s?로그인|로그아웃|logout|log\s?out/i
+
+/**
+ * 폼 안의 type="button" 로그인 버튼인가 — 한국 쇼핑몰은 form 안이어도 제출 버튼 대신
+ * <button type="button" v-on:click="login"> 로 로그인을 보낸다(실기: 패션플러스). 글자가 로그인·다음류이고
+ * 찾기·가입·소셜 버튼이 아닐 때만 제출로 본다
+ */
+function isFormLoginButton(el: HTMLElement): boolean {
+  if (!isButtonish(el)) return false
+  const text = buttonTextOf(el)
+  if (!SUBMIT_TEXT_RE.test(text)) return false
+  return !NOT_SUBMIT_TEXT_RE.test(text) && !SOCIAL_RE.test(text)
+}
+
 /**
  * 요소 → 스냅샷 id 를 알려 주는 함수.
  * 주지 않으면 목록 순서(1-base)를 id 로 본다 — 안정 id 표가 없는 호출부(테스트)용 기본값이다
@@ -370,6 +386,13 @@ export function findSubmit(
       if (formOf(el) !== form) continue
       if (!isSubmitLike(el)) continue
       if (isSocialButton(el)) continue
+      return idOf(el)
+    }
+    // 폼에 제출 버튼이 없으면 같은 폼 안의 로그인 글자 버튼(type="button")을 쓴다 — 문서 전체로 넘어가면
+    // 캐러셀 '다음' 같은 엉뚱한 버튼이 먼저 걸린다(실기: 패션플러스 로그인이 배너 '다음'을 눌러 실패)
+    for (const el of registry) {
+      if (formOf(el) !== form) continue
+      if (!isFormLoginButton(el)) continue
       return idOf(el)
     }
   }

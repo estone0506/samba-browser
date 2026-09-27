@@ -165,6 +165,47 @@ describe('submitForm', () => {
     expect(requestSubmit).toHaveBeenCalledTimes(1)
   })
 
+  it('type=button 로그인 버튼 id 를 받으면 폼 제출 대신 그 버튼을 누른다(패션플러스 Vue v-on:click)', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" name="uid">
+        <input type="password" name="pw">
+        <button type="button" class="btn_text-pw"><b>비밀번호 보기</b></button>
+        <button type="button" class="mm_btn"><b>로그인</b></button>
+      </form>
+    `
+    const form = document.querySelector('form') as HTMLFormElement
+    const requestSubmit = vi.fn()
+    form.requestSubmit = requestSubmit
+    const buttons = Array.from(document.querySelectorAll('button'))
+    const toggled = vi.fn()
+    const loggedIn = vi.fn()
+    buttons[0].addEventListener('click', toggled)
+    buttons[1].addEventListener('click', loggedIn)
+    const snap = buildSnapshot()
+    const btnId = snap.elements.find((e) => e.text === '로그인')!.id
+    expect(submitForm(btnId)).toBe('ok')
+    expect(loggedIn).toHaveBeenCalledTimes(1)
+    expect(requestSubmit).not.toHaveBeenCalled()
+    // 비밀번호 칸 id 로 불러도 폼 안 로그인 글자 버튼을 누른다(비밀번호 보기·찾기는 누르지 않는다)
+    const pwId = snap.elements.find((e) => e.name === 'pw')!.id
+    expect(submitForm(pwId)).toBe('ok')
+    expect(loggedIn).toHaveBeenCalledTimes(2)
+    expect(toggled).not.toHaveBeenCalled()
+    expect(requestSubmit).not.toHaveBeenCalled()
+  })
+
+  it('누를 버튼이 없으면 비밀번호 칸에 Enter keydown·keyup 을 보낸다(Vue keyup.enter)', () => {
+    document.body.innerHTML = `<div><input type="password" name="pw"></div>`
+    const pw = document.querySelector('input') as HTMLInputElement
+    const keys: string[] = []
+    pw.addEventListener('keydown', (e) => keys.push(`down:${e.key}:${e.keyCode}`))
+    pw.addEventListener('keyup', (e) => keys.push(`up:${e.key}:${e.keyCode}`))
+    const pwId = buildSnapshot().elements[0].id
+    expect(submitForm(pwId)).toBe('ok')
+    expect(keys).toEqual(['down:Enter:13', 'up:Enter:13'])
+  })
+
   it('form 이 없으면 click 을 호출한다', () => {
     document.body.innerHTML = `<button>로그인하기</button>`
     buildSnapshot()

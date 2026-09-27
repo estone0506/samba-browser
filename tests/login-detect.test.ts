@@ -105,6 +105,28 @@ describe('findLoginFields 픽스처', () => {
     expect(f.submit).toBe(snap.elements.find((e) => e.text === '로그인')?.id)
   })
 
+  it('패션플러스: 폼 안 type=button 로그인 버튼을 제출로 고른다(앞의 캐러셀 다음·찾기·소셜 제외)', () => {
+    const snap = snapshotWith(`
+      <div class="swiper">
+        <button type="button" class="btn_swiper-prev"><b>이전</b></button>
+        <button type="button" class="btn_swiper-next"><b>다음</b></button>
+      </div>
+      <form>
+        <input type="text" name="userId" placeholder="아이디">
+        <button type="button" class="btn_text-clear"><b>지우기</b></button>
+        <button type="button" class="btn_text-pw"><b>비밀번호 보기</b></button>
+        <input type="password" name="pw" placeholder="비밀번호">
+        <button type="button" class="btn_find"><b>아이디 찾기</b></button>
+        <button type="button" class="btn_naver"><b>네이버로 로그인</b></button>
+        <button type="button" class="mm_btn __btn_lg_primary__"><b>로그인</b></button>
+      </form>
+    `)
+    const f = findLoginFields()
+    expect(f.username).toBe(idOfName(snap, 'userId'))
+    expect(f.password).toBe(idOfName(snap, 'pw'))
+    expect(f.submit).toBe(snap.elements.find((e) => e.text === '로그인')?.id)
+  })
+
   it('카카오: 2단계(아이디 화면) → username-only', () => {
     const snap = snapshotWith(`
       <form>

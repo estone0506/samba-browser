@@ -26,6 +26,7 @@ import {
   passwordElement as detectPasswordElement,
   standaloneUsernameElement,
   SOCIAL_RE,
+  SUBMIT_TEXT_RE,
   usernameElementFor as detectUsernameElementFor,
   type CaptchaHint,
   type LoginFields,
@@ -1265,23 +1266,73 @@ function isSubmitControl(el: HTMLElement): boolean {
   return false
 }
 
+/** 입력칸이 아니라 누르는 요소인가(button·input[type=button|submit|image|reset]·role=button·링크) */
+function isPressable(el: HTMLElement): boolean {
+  if (el instanceof HTMLButtonElement || el instanceof HTMLAnchorElement) return true
+  if (el instanceof HTMLInputElement) return /^(button|submit|image|reset)$/.test(el.type)
+  return el.getAttribute('role') === 'button'
+}
+
+/**
+ * 폼 안의 로그인 글자 버튼(type="button" 포함). 패션플러스처럼 제출 버튼 없이
+ * <button type="button" v-on:click="login"> 으로 로그인하는 폼용 — 찾기·가입·소셜 버튼은 뺀다
+ */
+function loginButtonOf(form: HTMLFormElement): HTMLElement | null {
+  const buttons = Array.from(
+    form.querySelectorAll<HTMLElement>('button, input[type="button"], [role="button"]')
+  )
+  for (const button of buttons) {
+    if (button instanceof HTMLButtonElement && button.disabled) continue
+    const text = loginButtonText(button)
+    if (!SUBMIT_TEXT_RE.test(text)) continue
+    if (NOT_LOGIN_TEXT.test(text) || SOCIAL_RE.test(text)) continue
+    return button
+  }
+  return null
+}
+
+/**
+ * 입력칸에 Enter 를 누른 것처럼 keydown·keypress·keyup 을 보낸다 — Vue keyup.enter="login"·React onKeyDown
+ * 핸들러로 로그인하는 칸용. 합성 이벤트라 브라우저의 암묵적 폼 제출은 일어나지 않는다
+ */
+function pressEnter(el: HTMLElement): void {
+  const init: KeyboardEventInit = {
+    key: 'Enter',
+    code: 'Enter',
+    keyCode: 13,
+    which: 13,
+    bubbles: true,
+    cancelable: true
+  }
+  el.dispatchEvent(new KeyboardEvent('keydown', init))
+  el.dispatchEvent(new KeyboardEvent('keypress', init))
+  el.dispatchEvent(new KeyboardEvent('keyup', init))
+}
+
 /**
  * 로그인 폼 제출. **버튼 클릭이 먼저다** — 사이트의 로그인 버튼 핸들러가 reCAPTCHA 토큰을 받아 폼에 붙인 뒤
  * 제출하는데(실기: GS샵), form.requestSubmit() 은 그 핸들러를 건너뛰어 토큰 없는 요청이 나가 조용히 거부됐다.
- * 제출 버튼이 없는 폼만 requestSubmit, 폼이 없으면 요소 자체를 click
+ * - 버튼(type="button" 포함)을 받으면 그 버튼을 누른다 — type="button" 을 폼 제출로 바꾸면 Vue 폼(action 없음)이
+ *   같은 주소로 새로고침돼 로그인 요청이 나가지 않는다(실기: 패션플러스)
+ * - 입력칸을 받으면 폼의 제출 버튼 → 폼 안 로그인 글자 버튼(type="button") → Enter 키(+ requestSubmit) 순
  */
 export function submitForm(id: number): string {
   const el = get(id)
   if (!el) return missingMessage(id)
-  if (isSubmitControl(el)) {
+  if (isSubmitControl(el) || isPressable(el)) {
     el.click()
     return 'ok'
   }
   const form = formOf(el)
-  const button = form ? submitButtonOf(form) : null
-  if (button) button.click()
-  else if (form && typeof form.requestSubmit === 'function') form.requestSubmit()
-  else el.click()
+  const button = form ? (submitButtonOf(form) ?? loginButtonOf(form)) : null
+  if (button) {
+    button.click()
+    return 'ok'
+  }
+  // 누를 버튼이 없으면 Enter 로 칸의 키 핸들러를 부른 뒤, 폼이면 제출까지 한다(예전 동작 유지)
+  pressEnter(el)
+  if (form && typeof form.requestSubmit === 'function') form.requestSubmit()
+  else if (!form) el.click()
   return 'ok'
 }
 
