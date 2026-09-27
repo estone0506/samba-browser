@@ -56,3 +56,13 @@ describe('toChromeCookieChange', () => {
     expect(out.cookie.domain).toBe('.shopback.co.kr')
   })
 })
+
+describe('toNavDetails', () => {
+  it('최상위 프레임 이동 값을 크롬 webNavigation 모양으로 만든다', async () => {
+    const { toNavDetails } = await import('../src/main/extensions/cookies-bridge')
+    expect(toNavDetails(7, 'https://www.shopback.co.kr/', 1)).toEqual({
+      tabId: 7, url: 'https://www.shopback.co.kr/', frameId: 0, parentFrameId: -1, processId: 0,
+      timeStamp: 1, transitionType: 'link', transitionQualifiers: []
+    })
+  })
+})

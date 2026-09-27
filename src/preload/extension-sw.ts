@@ -24,6 +24,12 @@ const TABS_CHANNEL = 'samba-ext-tabs'
 const invokeTabs = (op: string, details: unknown): Promise<unknown> =>
   ipcRenderer.invoke(TABS_CHANNEL, op, details)
 
+// 최상위 프레임 이동 알림(webNavigation.onCommitted·onCompleted) — 메인이 보낸다
+const NAV_CHANNEL = 'samba-ext-nav'
+const subscribeNav = (fn: (kind: string, details: unknown) => void): void => {
+  ipcRenderer.on(NAV_CHANNEL, (_e, kind: string, details: unknown) => fn(kind, details))
+}
+
 contextBridge.executeInMainWorld({
   func: (
     call: (op: string, details: unknown) => Promise<unknown>,
@@ -79,7 +85,10 @@ contextBridge.executeInMainWorld({
 // Electron 서비스워커에 없는 tabs.create·remove, windows, notifications, identity 를 보충한다.
 // 삼바웨이브는 탭을 열고 닫는 일이 많고(tabs.create 32곳·remove 42곳), 애드픽은 설치 안내 탭을 연다
 contextBridge.executeInMainWorld({
-  func: (call: (op: string, details: unknown) => Promise<unknown>): void => {
+  func: (
+    call: (op: string, details: unknown) => Promise<unknown>,
+    listenNav: (fn: (kind: string, details: unknown) => void) => void
+  ): void => {
     type Cb = (v: unknown) => void
     const g = globalThis as unknown as { chrome?: Record<string, unknown> }
     const c = g.chrome
@@ -138,6 +147,27 @@ contextBridge.executeInMainWorld({
     }
     // webNavigation — Electron 에 없다. 샵백 백그라운드가 시작하자마자 onBeforeNavigate 에 붙다가 죽었다(2026-09-26).
     // 이벤트는 아직 보내 주지 않는다(등록만 받는다). 프레임 조회는 최상위 프레임 하나로 답한다
+    // 최상위 프레임 이동만 보낸다(샵백은 onCommitted 로 로그인 쿠키를 맞춘다 — 2026-09-27)
+    const navListeners: Record<string, Array<(d: unknown) => void>> = { committed: [], completed: [] }
+    listenNav((kind, details) => {
+      for (const l of [...(navListeners[kind] ?? [])]) {
+        try {
+          l(details)
+        } catch {
+          // 확장 리스너 오류가 다른 리스너를 막지 않게
+        }
+      }
+    })
+    const navEvent = (kind: string) => ({
+      addListener: (fn: (d: unknown) => void) => {
+        if (typeof fn === 'function' && !navListeners[kind].includes(fn)) navListeners[kind].push(fn)
+      },
+      removeListener: (fn: (d: unknown) => void) => {
+        const i = navListeners[kind].indexOf(fn)
+        if (i >= 0) navListeners[kind].splice(i, 1)
+      },
+      hasListener: (fn: (d: unknown) => void) => navListeners[kind].includes(fn)
+    })
     if (!c.webNavigation) {
       const frames = (d: unknown) => {
         const tabId = (d as { tabId?: unknown } | undefined)?.tabId
@@ -149,9 +179,9 @@ contextBridge.executeInMainWorld({
         getAllFrames: (d: unknown, cb?: unknown) => reply(frames(d), cb),
         getFrame: (d: unknown, cb?: unknown) => reply(frames(d).then((f) => (f ? f[0] : null)), cb),
         onBeforeNavigate: noEvent,
-        onCommitted: noEvent,
+        onCommitted: navEvent('committed'),
         onDOMContentLoaded: noEvent,
-        onCompleted: noEvent,
+        onCompleted: navEvent('completed'),
         onErrorOccurred: noEvent,
         onCreatedNavigationTarget: noEvent,
         onReferenceFragmentUpdated: noEvent,
@@ -166,5 +196,5 @@ contextBridge.executeInMainWorld({
       })
     }
   },
-  args: [invokeTabs]
+  args: [invokeTabs, subscribeNav]
 })

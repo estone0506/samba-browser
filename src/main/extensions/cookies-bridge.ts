@@ -2,7 +2,8 @@
 //
 // 받아 주는 조건: 호출한 서비스워커가 확장(chrome-extension://<id>/)이고, 그 확장의 manifest 가
 // cookies 권한을 선언했을 때만. 그 밖의 서비스워커(일반 사이트)는 거절한다.
-import type { Cookie, CookiesSetDetails, Session } from 'electron'
+import { app, webContents } from 'electron'
+import type { Cookie, CookiesSetDetails, Session, WebContents } from 'electron'
 import { runTabsOp } from './tabs-bridge'
 
 export const EXT_COOKIES_CHANNEL = 'samba-ext-cookies'
@@ -10,6 +11,26 @@ export const EXT_COOKIES_CHANNEL = 'samba-ext-cookies'
 export const EXT_TABS_CHANNEL = 'samba-ext-tabs'
 // 쿠키 변경 알림(chrome.cookies.onChanged) — 메인 → 확장 서비스워커
 export const EXT_COOKIE_CHANGED_CHANNEL = 'samba-ext-cookie-changed'
+// 최상위 프레임 이동 알림(chrome.webNavigation.onCommitted·onCompleted) — 메인 → 확장 서비스워커
+export const EXT_NAV_CHANNEL = 'samba-ext-nav'
+
+/** webNavigation 이벤트 값(순수 함수) — 최상위 프레임만 보낸다 */
+export function toNavDetails(
+  tabId: number,
+  url: string,
+  now: number
+): {
+  tabId: number
+  url: string
+  frameId: number
+  parentFrameId: number
+  processId: number
+  timeStamp: number
+  transitionType: string
+  transitionQualifiers: string[]
+} {
+  return { tabId, url, frameId: 0, parentFrameId: -1, processId: 0, timeStamp: now, transitionType: 'link', transitionQualifiers: [] }
+}
 
 /** 크롬 확장 API 의 Cookie 모양 */
 export interface ChromeCookie {
@@ -141,6 +162,27 @@ export function installExtensionCookiesBridge(ses: Session): void {
   // 프로필에서 로그인해도 확장은 로그아웃 상태로 남았다(실기 2026-09-27)
   const workers = new Set<{ send: (channel: string, ...args: unknown[]) => void }>()
   cookieWorkers.set(ses, workers)
+  // 확장 서비스워커 전부(권한 무관) — 최상위 프레임 이동을 알린다. 샵백은 샵백 페이지 이동(onCommitted)에서
+  // sbet 쿠키를 읽어 로그인을 맞춘다 — 이벤트가 없으면 로그인해도 확장이 모른다(실기 2026-09-27)
+  const navWorkers = new Set<{ send: (channel: string, ...args: unknown[]) => void }>()
+  const sendNav = (kind: 'committed' | 'completed', wc: WebContents, url: string): void => {
+    if (navWorkers.size === 0 || !/^https?:/.test(url)) return
+    const details = toNavDetails(wc.id, url, Date.now())
+    for (const w of [...navWorkers]) {
+      try {
+        w.send(EXT_NAV_CHANNEL, kind, details)
+      } catch {
+        navWorkers.delete(w)
+      }
+    }
+  }
+  const watch = (wc: WebContents): void => {
+    if (wc.session !== ses) return
+    wc.on('did-navigate', (_ev, url) => sendNav('committed', wc, url))
+    wc.on('did-finish-load', () => sendNav('completed', wc, wc.getURL()))
+  }
+  for (const wc of webContents.getAllWebContents()) watch(wc)
+  app.on('web-contents-created', (_e, wc) => watch(wc))
   ses.cookies.on('changed', (_e, cookie, cause, removed) => {
     if (workers.size === 0) return
     const payload = toChromeCookieChange(cookie, cause, removed)
@@ -161,6 +203,7 @@ export function installExtensionCookiesBridge(ses: Session): void {
     wired.add(worker)
     const ext0 = ses.extensions?.getExtension?.(id) ?? ses.getExtension?.(id)
     if (ext0 && declaresCookies(ext0.manifest)) workers.add(worker)
+    navWorkers.add(worker)
     worker.ipc.handle(EXT_COOKIES_CHANNEL, async (_e, op: unknown, details: unknown) => {
       const ext = ses.extensions?.getExtension?.(id) ?? ses.getExtension?.(id)
       if (!ext || !declaresCookies(ext.manifest)) return null
