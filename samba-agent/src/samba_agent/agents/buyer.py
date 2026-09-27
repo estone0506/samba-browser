@@ -782,10 +782,10 @@ def pay_card_quote_problem(out: dict[str, object]) -> str | None:
     return None
 
 
-# 주문서·결제 탭(과 그 팝업)만 닫는다. SSG 주문서는 pay.ssg.com/order/ordPage.ssg, 패션플러스는 /order/<번호>,
+# 주문서·결제 탭(과 그 팝업)만 닫는다. 다른 레인 탭(lane 표시)은 건드리지 않는다. SSG 주문서는 pay.ssg.com/order/ordPage.ssg, 패션플러스는 /order/<번호>,
 # H몰은 hmall.com/mo/oda/order
 _CLOSE_ORDER_TABS_JS = (
-    "for (const t of await tabs.list()) { if (/order\\/order-form|order\\/checkout|order\\/orderform|pay\\.ssg\\.com\\/order|fashionplus\\.co\\.kr\\/order\\/\\d+|hmall\\.com\\/mo\\/oda\\/order/.test(t.url || '')) "
+    "for (const t of await tabs.list()) { if (!t.lane && /order\\/order-form|order\\/checkout|order\\/orderform|pay\\.ssg\\.com\\/order|fashionplus\\.co\\.kr\\/order\\/\\d+|hmall\\.com\\/mo\\/oda\\/order/.test(t.url || '')) "
     '{ try { await tabs.close(t.id) } catch (e) {} } } return "ok"'
 )
 # 레인 보기에서는 제 레인이 연 탭만 보인다 — 전부 닫으면 그 레인 탭만 닫힌다

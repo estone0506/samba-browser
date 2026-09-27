@@ -10,7 +10,7 @@ MALL_ITEM = 'https://shinsegaemall.ssg.com/item/itemView.ssg?itemId=100001234567
 
 def _close_re() -> re.Pattern[str]:
     r"""주문서 탭 닫기 JS 의 정규식을 파이썬으로 옮긴다(JS 의 '\/' 는 '/')."""
-    js = re.search(r'if \(/(.+?)/\.test', _CLOSE_ORDER_TABS_JS)
+    js = re.search(r'if \((?:!t\.lane && )?/(.+?)/\.test', _CLOSE_ORDER_TABS_JS)
     assert js
     return re.compile(js.group(1).replace(r'\/', '/'))
 
@@ -21,6 +21,8 @@ def test_SSG_주문서_탭도_스냅샷_전에_닫는다() -> None:
     assert not pat.search(MALL_ITEM)  # 상품 탭은 닫지 않는다
     # 기존 사이트 주문서는 그대로 닫힌다
     assert pat.search('https://www.musinsa.com/order/order-form?x=1')
+    # 다른 레인(사람의 수동 작업) 탭은 닫지 않는다(실기 2026-09-27)
+    assert '!t.lane' in _CLOSE_ORDER_TABS_JS
 
 
 def test_SSG_상품번호는_itemId_다() -> None:

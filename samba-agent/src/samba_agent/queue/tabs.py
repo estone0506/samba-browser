@@ -41,6 +41,10 @@ class TabJanitor:
             tab_id = str(t.get('id') or '')
             if not tab_id or tab_id in before:
                 continue
+            # 다른 레인(사람의 수동 작업·계정 비교)이 연 탭은 그 레인이 닫는다 — 하네스가 닫으면 남의 주문서가
+            # 사라진다(실기 2026-09-27 패션플러스·SMARKET 수동 진행 중 탭이 닫힘)
+            if t.get('lane'):
+                continue
             try:
                 self._bridge.call('close_tab', id=tab_id)
                 closed += 1
