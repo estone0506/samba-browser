@@ -33,7 +33,8 @@ _STATUS_REASON = {
 }
 
 # 삼바웨이브 옵션 문자열은 '옵션:230' 처럼 머리말이 붙어 오기도 한다 — 값만 남긴다
-_OPTION_PREFIX = re.compile(r'^\s*옵션\s*[:：]\s*')
+# '옵션:230' 과 '옵션1:DEEP PEACH(H25)/옵션2:095'(무신사 292) — 줄 앞과 '/' 뒤의 '옵션N:' 머리말을 뗀다
+_OPTION_PREFIX = re.compile(r'(?:^|(?<=/))\s*옵션\d*\s*[:：]\s*')
 
 OrderType = Literal['direct', 'kkadaegi', 'gift']
 

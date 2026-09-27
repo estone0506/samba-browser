@@ -263,3 +263,11 @@ def test_되읽기는_소싱주문번호로_행을_고른다():
     assert route.calls[0].request.url.params['sourcing_order_number'] == 'S-9'
     client().get_order('A1')
     assert 'sourcing_order_number' not in route.calls[1].request.url.params
+
+
+def test_옵션_머리말이_여럿이면_모두_뗀다():
+    """무신사 292: '옵션1:DEEP PEACH(H25)/옵션2:095' — 가운데 '옵션2:' 가 남아 선택지와 못 맞췄다."""
+    o = WaveOrder(order_number='A1', product_option='옵션1:DEEP PEACH(H25)/옵션2:095')
+    assert o.option == 'DEEP PEACH(H25)/095'
+    assert WaveOrder(order_number='A1', product_option='옵션:230').option == '230'
+    assert WaveOrder(order_number='A1', product_option='BLACK / 270').option == 'BLACK / 270'
