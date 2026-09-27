@@ -120,6 +120,14 @@ contextBridge.executeInMainWorld({
     const tabs = (c.tabs ?? {}) as Record<string, unknown>
     if (typeof tabs.create !== 'function') set(tabs, 'create', (props: unknown, cb?: unknown) => reply(call('create', props ?? {}), cb))
     if (typeof tabs.remove !== 'function') set(tabs, 'remove', (ids: unknown, cb?: unknown) => reply(call('remove', { tabIds: ids }), cb))
+    // tabs.update — Electron 기본 구현은 tabId 없는 호출(지금 보고 있는 탭 이동)을 처리하지 못한다.
+    // 샵백은 활성화 뒤 tabs.update({url}) 로 상점으로 넘어가는데 여기서 멈췄다(2026-09-27). 항상 앱 탭 브리지로 보낸다
+    set(tabs, 'update', (...a: unknown[]) => {
+      const hasId = typeof a[0] === 'number'
+      const tabId = hasId ? (a[0] as number) : undefined
+      const props = (hasId ? a[1] : a[0]) ?? {}
+      return reply(call('update', { tabId, props }), lastFn(a))
+    })
     if (!c.tabs) set(c, 'tabs', tabs)
     if (!c.windows) {
       const win = (info: unknown, cb: unknown) => reply(call('windowGet', info ?? {}), cb)
