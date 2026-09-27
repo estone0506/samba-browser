@@ -467,3 +467,36 @@ def test_포인트_전액_결제는_현금_0원이라도_원가를_사용_포인
 
     assert actual_cost({'paid': 0, 'points_used': 66000, 'reward': 1320}) == 64680
     assert actual_cost({'paid': 0, 'points_used': 0}) is None
+
+
+@pytest.mark.parametrize(
+    ('site_reward', 'quoted_reward', 'cost'),
+    [
+        # 상세에 사이트 적립(신세계포인트 134)이 있으면 애드픽 적립(1,600)을 더한다: 100,000 × 0.973 − 134 − 1,600
+        (134, 1600, 95566),
+        # 상세에 적립이 없어 견적 적립(애드픽 포함 1,600)을 쓰면 애드픽을 또 더하지 않는다: 97,300 − 1,600
+        (0, 1600, 95700),
+    ],
+)
+@respx.mock
+def test_SSG_애드픽_적립은_기록_원가에_한_번만_뺀다(reg, site_reward, quoted_reward, cost):
+    put = respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
+    )
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(200, json=WAVE_ORDER))
+    detail = {
+        'source_order_no': 'M-777',
+        'paid': 100000,
+        'points_used': 0,
+        'reward': site_reward,
+        'card': '현대카드',
+    }
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(detail))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    a = agent(reg)
+    a.set_wave(wave_client())
+    a.mark_status = False
+    handoff = {'reward': quoted_reward, 'adpick_reward': 1600, 'route': 'adpick'}
+    out = a(assignment(reg, dry_run=False, handoff=handoff))
+    assert out.status == 'ok'
+    assert json.loads(put.calls[0].request.content)['cost'] == cost
