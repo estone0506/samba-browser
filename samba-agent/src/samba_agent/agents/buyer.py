@@ -685,6 +685,8 @@ def snapshot_login_required(out: dict[str, object]) -> bool:
 # '최대 구매수량을 이미 구매하셨으므로 더 이상 구매하실 수 없습니다 … 구매가능일 : 2026-10-01'). 주문서가 안 열려
 # selected 가 비어 '주문서 옵션 불일치(모름)' 으로 보였다
 _PURCHASE_LIMIT_RE = re.compile(r'최대 ?구매 ?수량|구매 ?한도|더 이상 구매하실 수 없')
+# 구매 수량 한도 실패 문구 머리 — 계정 사유(다른 계정은 살 수 있다)로 가른다
+PURCHASE_LIMIT = '구매 수량 한도 초과'
 
 
 def snapshot_purchase_limit(out: dict[str, object]) -> str | None:
@@ -701,7 +703,7 @@ def snapshot_purchase_limit(out: dict[str, object]) -> str | None:
             f'구매가능일 {until.group(1)}' if until else '',
         ]
         detail = ', '.join(p for p in parts if p)
-        return f'구매 수량 한도 초과({detail})' if detail else '구매 수량 한도 초과'
+        return f'{PURCHASE_LIMIT}({detail})' if detail else PURCHASE_LIMIT
     return None
 
 
@@ -724,6 +726,21 @@ SOLD_OUT_LISTED_SKIP = '주문 옵션 품절 표시'
 def is_confirmed_sold_out_skip(skip: str) -> bool:
     """계정 견적 건너뜀 사유가 '주문 옵션이 품절 표시로 떠 있다'인가."""
     return SOLD_OUT_LISTED_SKIP in skip
+
+
+# 계정 견적 건너뜀 사유 중 '이 계정은 허용 결제수단의 결제 항목이 없다'(_quote 가 붙인다) — 계정 사유
+UNPAYABLE_SKIP = '결제 가능한 수단 없음'
+
+
+def is_account_failure(e: AgentFailure) -> bool:
+    """계정 견적 실패가 그 계정만의 사유인가(구매 수량 한도·로그인 안 됨/실패·다른 계정 로그인·결제 항목 없음).
+
+    그러면 같은 상품을 다른 계정으로는 살 수 있다 — 다음 계정으로 잇는다.
+    """
+    return PURCHASE_LIMIT in e.reason or e.fail_reason in (
+        FailReason.PERMISSION_DENIED,
+        FailReason.CARD_MISSING,
+    )
 
 
 def snapshot_problem(
@@ -1488,7 +1505,7 @@ class BuyerAgent(AgentBase):
             snap['_quoted'] = True
             if snap.get('_unpayable'):
                 self.note('계정 견적', mask_text(f'{account}: 불가(결제 가능한 수단 없음)'))
-                self._quote_skips.append(f'{account}: 결제 가능한 수단 없음')
+                self._quote_skips.append(f'{account}: {UNPAYABLE_SKIP}')
                 return None
         cost = _as_float(snap.get('cost'))
         if cost <= 0:
@@ -1797,15 +1814,15 @@ class BuyerAgent(AgentBase):
         self._issued = issued
         return quotes
 
-    def _quick_pick(self, a: Assignment, accounts: list[str]) -> list[str]:
-        """계정별 빠른 가격(상품 페이지 할인가 − 최대 적립)으로 가장 싼 계정 하나만 남긴다.
+    def _quick_rank(self, a: Assignment, accounts: list[str]) -> list[str] | None:
+        """계정별 빠른 가격(상품 페이지 할인가 − 최대 적립)이 싼 순서로 계정을 세운다. 값을 못 읽은 계정은 뒤(원래 순서).
 
-        빠른 비교가 없는 소싱처, 계정이 하나, 모든 계정의 값을 못 읽음이면 그대로 돌려준다(주문서 비교로 간다).
-        같은 값이면 앞 계정(키마스터 결제 우선순위)이 이긴다.
+        빠른 비교가 없는 소싱처, 계정이 하나, 모든 계정의 값을 못 읽음이면 None(주문서로 모두 비교한다).
+        같은 값이면 앞 계정(키마스터 결제 우선순위)이 앞선다.
         """
         source = source_of(self.spec.name)
         if not source.quick_compare or len(accounts) < 2 or not a.order.product_url:
-            return accounts
+            return None
         import concurrent.futures
 
         def run(account: str) -> tuple[str, float | None]:
@@ -1833,33 +1850,100 @@ class BuyerAgent(AgentBase):
         valid = [(acc, v) for acc, v in scores if v is not None]
         if not valid:
             self.note('빠른 비교', '계정별 값을 못 읽음 — 주문서로 비교한다')
-            return accounts
-        best = min(valid, key=lambda x: x[1])  # min 은 같은 값이면 앞(우선순위 높은) 계정을 고른다
+            return None
+        # sorted 는 안정 정렬 — 같은 값이면 앞(우선순위 높은) 계정이 앞선다
+        ranked = [acc for acc, _ in sorted(valid, key=lambda x: x[1])]
+        ranked += [acc for acc, v in scores if v is None]
         self.note(
             '빠른 비교',
-            ' · '.join(f'{acc} {v:,.0f}' for acc, v in scores if v is not None) + f' → {best[0]}',
+            ' · '.join(f'{acc} {v:,.0f}' for acc, v in scores if v is not None) + f' → {ranked[0]}',
         )
-        return [best[0]]
+        return ranked
+
+    def _quote_batch(self, a: Assignment, accounts: list[str]) -> list[tuple[str, dict[str, object]]]:
+        """계정들의 견적(레인이 있으면 동시에). 살 수 있는 계정만 돌려준다."""
+        if self.parallel_accounts and len(accounts) > 1:
+            return self._quote_parallel(a, accounts)
+        quotes: list[tuple[str, dict[str, object]]] = []
+        for account in accounts:
+            q = self._quote(a, account)
+            if q is not None:
+                quotes.append((account, q))
+        return quotes
+
+    def _payable_only(
+        self, quotes: list[tuple[str, dict[str, object]]]
+    ) -> list[tuple[str, dict[str, object]]]:
+        """키마스터에 허용 결제수단의 결제 항목이 있는 계정만 남긴다.
+
+        결제 항목(비밀번호·카드)이 하나도 없는 계정은 살 수 없다(실기 2026-09-25: buyer03 이 최저로 뽑혀
+        견적 없이 진행, 엉뚱한 탭·카드로 결제됐다).
+        """
+        out = []
+        for account, q in quotes:
+            payable = self._payable_providers(account)
+            allowed = self._allowed_providers(account)
+            if payable is not None and not (payable & allowed if allowed is not None else payable):
+                self.note(
+                    '계정 비교', f'{account}: 허용 결제수단의 키마스터 결제 항목 없음 — 비교에서 뺌'
+                )
+                continue
+            out.append((account, q))
+        return out
+
+    def _account_reasons_only(self, n_err: int, n_skip: int) -> bool:
+        """이번 견적에서 빠진 사유(n_err·n_skip 뒤로 쌓인 것)가 모두 계정 사유인가 — 그러면 다른 계정은 살 수 있다."""
+        errors = self._quote_errors[n_err:]
+        skips = self._quote_skips[n_skip:]
+        if not (errors or skips):
+            return False
+        return all(is_account_failure(e) for e in errors) and all(
+            UNPAYABLE_SKIP in x for x in skips
+        )
 
     def _pick_cheapest(self, a: Assignment, accounts: list[str]) -> tuple[str, dict[str, object]]:
         """계정마다 견적을 내고 원가가 가장 낮은 계정(같으면 앞 계정)과 그 스냅샷을 고른다.
+
+        빠른 비교가 있는 소싱처는 빠른 가격이 싼 순서로 한 계정씩 주문서를 만든다. 그 계정이 계정 사유
+        (구매 수량 한도·로그인 안 됨·결제 항목 없음)로 빠지면 다음으로 싼 계정으로 잇는다 — 다른 계정은 살 수 있다
+        (실기 2026-09-27 무신사 가방: buyer01 이 7일 구매 한도에 걸렸는데 나머지 3계정을 시도하지 않았다).
+        상품 사유(품절·옵션 없음·스크립트 실패)면 거기서 멈춘다.
 
         스크립트는 가장 최근 주문서 탭을 읽으므로, 이긴 계정이 마지막으로 연 계정이 아니면
         다시 로그인·스냅샷해서 그 주문서를 최신 탭으로 만든다.
         """
         self._quote_errors = []
         self._quote_skips: list[str] = []
+        ranked = self._quick_rank(a, accounts)
+        batches = [[acc] for acc in ranked] if ranked else [accounts]
+        tried: list[str] = []
         quotes: list[tuple[str, dict[str, object]]] = []
-        accounts = self._quick_pick(a, accounts)
-        parallel = self.parallel_accounts and len(accounts) > 1
-        if parallel:
-            quotes = self._quote_parallel(a, accounts)
-        else:
-            for account in accounts:
-                q = self._quote(a, account)
-                if q is not None:
-                    quotes.append((account, q))
+        unpayable = False
+        parallel = False
+        for batch in batches:
+            if tried:
+                self.note(
+                    '계정 전환', f'{tried[-1]}: 계정 사유로 못 삼 — 다음으로 싼 계정 {batch[0]} 로 잇는다'
+                )
+            n_err, n_skip = len(self._quote_errors), len(self._quote_skips)
+            parallel = self.parallel_accounts and len(batch) > 1
+            got = self._quote_batch(a, batch)
+            tried.extend(batch)
+            if got:
+                got = self._payable_only(self._audit_quotes(a, got))
+                if got:
+                    quotes = got
+                    break
+                unpayable = True  # 결제 항목 없음도 계정 사유다 — 다음 계정으로 잇는다
+                continue
+            if not self._account_reasons_only(n_err, n_skip):
+                break
+        accounts = tried
         if not quotes:
+            if unpayable:
+                raise AgentFailure(
+                    'needs_human', '결제 항목이 있는 계정이 없다(키마스터)', FailReason.CARD_MISSING
+                )
             # 어느 계정도 스냅샷까지 못 갔고 전부 사람 확인(로그인 실패·캡차)이면 그 사유가 맞다 — 품절이 아니다
             errors = self._quote_errors
             if len(errors) == len(accounts) and all(e.status == 'needs_human' for e in errors):
@@ -1867,9 +1951,11 @@ class BuyerAgent(AgentBase):
                 raise AgentFailure(
                     'needs_human', f'모든 계정 불가 — {first.reason}', first.fail_reason
                 )
-            # 모든 계정이 '선택지는 읽었는데 주문 사이즈가 없다'면 확정 품절 — 다시 돌려도 같다(재시도하지 않는다)
-            if not errors and self._quote_skips and all(
-                is_confirmed_sold_out_skip(x) for x in self._quote_skips
+            # 계정 사유로 빠진 계정 말고는 모두 '주문 옵션이 품절 표시로 떠 있다'면 확정 품절 — 다시 돌려도 같다
+            if (
+                self._quote_skips
+                and all(is_confirmed_sold_out_skip(x) for x in self._quote_skips)
+                and all(is_account_failure(e) for e in errors)
             ):
                 raise AgentFailure(
                     'fail',
@@ -1886,24 +1972,6 @@ class BuyerAgent(AgentBase):
                 mask_text(f'모든 계정에서 살 수 없다(품절·실패): {", ".join(accounts)} — {why}'),
                 FailReason.OUT_OF_STOCK,
             )
-        quotes = self._audit_quotes(a, quotes)
-        # 키마스터에 결제 항목(비밀번호·카드)이 하나도 없는 계정은 살 수 없다 — 비교에서 뺀다
-        # (실기 2026-09-25: buyer03 이 최저로 뽑혀 견적 없이 진행, 엉뚱한 탭·카드로 결제됐다)
-        payable_quotes = []
-        for account, q in quotes:
-            payable = self._payable_providers(account)
-            allowed = self._allowed_providers(account)
-            if payable is not None and not (payable & allowed if allowed is not None else payable):
-                self.note(
-                    '계정 비교', f'{account}: 허용 결제수단의 키마스터 결제 항목 없음 — 비교에서 뺌'
-                )
-                continue
-            payable_quotes.append((account, q))
-        if not payable_quotes:
-            raise AgentFailure(
-                'needs_human', '결제 항목이 있는 계정이 없다(키마스터)', FailReason.CARD_MISSING
-            )
-        quotes = payable_quotes
         # min 은 같은 값이면 앞 것을 준다 — 동률이면 먼저 비교한 계정
         winner, snap = min(quotes, key=lambda q: _as_float(q[1].get('cost')))
         cost = _as_float(snap.get('cost'))
