@@ -171,14 +171,28 @@ def test_배송지_원문은_결과_어디에도_남지_않는다(reg):
 
 
 @respx.mock
-def test_옵션이_없으면_품절로_거절한다(reg):
+def test_옵션을_못_읽었으면_품절이_아니라_확인으로_넘긴다(reg):
+    """선택지가 비었고 품절 표시도 없으면 스크립트가 못 읽은 것 — 재고X 로 자르지 않는다(실기 2026-09-28)."""
     respx.post(f'{URL}/tool/run_script').mock(
         return_value=page('{"options":[],"coupons":{},"methods":["현대"],"cost":0,"margin_pct":0}')
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     mock_accounts()
     out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.UNKNOWN)
+    assert '품절 미확인' in out.reason
+
+
+@respx.mock
+def test_상품_전체_품절_표시면_확정_품절이다(reg):
+    respx.post(f'{URL}/tool/run_script').mock(
+        return_value=page('{"options":[],"sold_out":true,"coupons":{},"methods":["현대"],"cost":0,"margin_pct":0}')
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
+    out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
     assert (out.status, out.fail_reason) == ('fail', FailReason.OUT_OF_STOCK)
+    assert '확정 품절' in out.reason
 
 
 @respx.mock
@@ -894,8 +908,25 @@ def test_주문_옵션에_맞는_후보가_없으면_모델에게_묻지_않고_
 
     order = ORDER.model_copy(update={'option': '230'})
     out = agent(reg, decide)(assignment(reg).model_copy(update={'order': order}))
-    assert (out.status, out.fail_reason) == ('fail', FailReason.OUT_OF_STOCK)
+    # 목록에 없는 옵션은 품절 확증이 아니다 — 재고X 로 자르지 않고 확인으로 넘긴다(실기 2026-09-28)
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.UNKNOWN)
     assert asked == []
+
+
+@respx.mock
+def test_주문_옵션이_품절_표시로_떠_있으면_확정_품절이다(reg):
+    snap = {**SNAPSHOT_OK, 'options': ['220', '230 (품절)', '240']}
+    respx.post(f'{URL}/tool/run_script').mock(
+        side_effect=route_run_script({'musinsa_product_snapshot': snap})
+    )
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    mock_accounts()
+    order = ORDER.model_copy(update={'option': '230'})
+    out = agent(reg, lambda p, m: m(choice='230', reason='x'))(
+        assignment(reg).model_copy(update={'order': order})
+    )
+    assert (out.status, out.fail_reason) == ('fail', FailReason.OUT_OF_STOCK)
+    assert '확정 품절' in out.reason
 
 
 # ---- 계정 비교(사용자 지시 2026-09-23: 계정별로 싸게 살 수 있는 걸 비교하고 구매 계정을 고른다) ----
@@ -1061,7 +1092,8 @@ def test_모든_계정이_품절이면_품절로_거절한다(generic_musinsa, r
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
-    assert (out.status, out.fail_reason) == ('fail', FailReason.OUT_OF_STOCK)
+    # 옵션 목록이 비거나 원가를 못 읽은 것은 품절 확증이 아니다 — 확인으로 넘긴다(실기 2026-09-28)
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.UNKNOWN)
     assert 'A' in out.reason and 'B' in out.reason
     assert calls == ['snapshot:A', 'snapshot:B']  # 배송지까지 가지 않았다
 

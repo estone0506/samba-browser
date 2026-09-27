@@ -317,8 +317,11 @@ class WaveClient:
         sourcing_account_id: str | None = None,
         notes: str | None = None,
         order_type: OrderType | None = None,
+        replace: bool = False,
     ) -> WaveOrder:
         """소싱주문번호·매입금액을 삼바웨이브 행에 기입한다. 다른 번호가 이미 있으면 409(DUPLICATE).
+
+        replace=True 는 소싱처 주문을 취소하고 다시 산 경우(사용자 지시) — 다른 번호가 있어도 덮어쓴다.
 
         order_type 은 하네스가 판정한 배송 종류(직배/까대기) — 삼바웨이브가 action_tag 로 기록한다(결과값).
         삼바웨이브가 아직 이 필드를 모르면 무시된다.
@@ -334,6 +337,8 @@ class WaveClient:
             payload['order_type'] = order_type
         if notes:
             payload['notes'] = notes
+        if replace:
+            payload['replace'] = True
         body = self._request('PUT', f'/orders/{order_no}/sourcing', json=payload)
         order = body.get('order') if isinstance(body, dict) else None
         if not isinstance(order, dict):

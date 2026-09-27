@@ -512,7 +512,8 @@ def test_소싱처가_범위_밖으로_바뀐_주문은_돌리지_않는다(tmp_
     assert '범위 밖' in (job.error or '')
 
 
-def test_마진_미달로_멈추면_가격X_표시를_부른다(setup):
+def test_마진_미달로_멈춰도_가격X_표시를_부르지_않는다(setup):
+    """마진 미달은 쿠폰·적립 빠진 견적일 수 있다 — 자동 가격X·취소요청 금지(실기 2026-09-28)."""
     q, log, sent, _make = setup
     reg = Registry.load(DEFAULT_ROOT)
     marked: list[tuple[str, str | None]] = []
@@ -530,8 +531,8 @@ def test_마진_미달로_멈추면_가격X_표시를_부른다(setup):
     )
     job, _ = q.enqueue('A1', 'U1', {}, 'ts1')
     w._apply(job, {'outcome': 'needs_human', 'fail_reason': 'margin'})
-    assert marked == [('A1', 'margin')]
-    assert any('가격X 표시함' in s for s in sent)
+    assert marked == []
+    assert any('가격X 보류' in s for s in sent)
 
 
 @pytest.mark.parametrize(

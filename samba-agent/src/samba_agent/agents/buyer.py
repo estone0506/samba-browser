@@ -2666,10 +2666,12 @@ class BuyerAgent(AgentBase):
                 '; '.join([e.reason[:60] for e in errors[:4]] + self._quote_skips[:4])
                 or '견적 없음'
             )
+            # 품절 확증이 없는 실패는 품절이 아니다 — 사람 확인으로 넘긴다
+            # (실기 2026-09-28: 옵션 목록을 못 읽은 건들이 out_of_stock 으로 나가 재고X·취소요청이 찍혔다)
             raise AgentFailure(
-                'fail',
-                mask_text(f'모든 계정에서 살 수 없다(품절·실패): {", ".join(accounts)} — {why}'),
-                FailReason.OUT_OF_STOCK,
+                'needs_human',
+                mask_text(f'모든 계정에서 살 수 없다(품절 미확인·실패): {", ".join(accounts)} — {why}'),
+                FailReason.UNKNOWN,
             )
         # min 은 같은 값이면 앞 것을 준다 — 동률이면 먼저 비교한 계정
         winner, snap = min(quotes, key=lambda q: _as_float(q[1].get('cost')))
@@ -2787,17 +2789,30 @@ class BuyerAgent(AgentBase):
                     mask_text(f'{CONFIRMED_SOLD_OUT}: {account} — {SOLD_OUT_PRODUCT_SKIP}'),
                     FailReason.OUT_OF_STOCK,
                 )
-            raise AgentFailure('fail', f'옵션이 없다(품절): {a.order.sku}', FailReason.OUT_OF_STOCK)
+            # 선택지를 하나도 못 읽었고 품절 표시도 없다 — 스크립트가 못 읽은 것이지 품절이 아니다
+            raise AgentFailure(
+                'needs_human', f'옵션 목록을 못 읽었다(품절 미확인): {a.order.sku}', FailReason.UNKNOWN
+            )
         self.note('옵션 목록', ', '.join(options))
 
         # 주문 옵션과 맞는 후보만 남긴다 — 모델이 "가장 가까운 220" 을 골라 230 주문에 220 을 넣을 뻔했다(실기).
         # 맞는 후보가 없으면 품절, 하나면 그대로, 여럿이면 그 안에서만 모델이 고른다
         candidates = self._match_options(options, a.order.option)
         if not candidates:
+            if sold_out_option_listed(options, a.order.option):
+                raise AgentFailure(
+                    'fail',
+                    mask_text(
+                        f'{CONFIRMED_SOLD_OUT}: 주문 옵션 [{a.order.option}] 품절 표시 '
+                        f'{sold_out_option_matches(options, a.order.option)}'
+                    ),
+                    FailReason.OUT_OF_STOCK,
+                )
+            # 목록에 아예 없는 옵션은 품절 확증이 아니다 — 사람 확인
             raise AgentFailure(
-                'fail',
-                f'주문 옵션 [{a.order.option}] 에 맞는 후보가 없다(품절): {options}',
-                FailReason.OUT_OF_STOCK,
+                'needs_human',
+                f'주문 옵션 [{a.order.option}] 이 선택지에 없다(품절 미확인): {options}',
+                FailReason.UNKNOWN,
             )
         if len(candidates) == 1:
             picked = Decision(
