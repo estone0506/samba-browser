@@ -711,12 +711,18 @@ def snapshot_purchase_limit(out: dict[str, object]) -> str | None:
 CONFIRMED_SOLD_OUT = '확정 품절'
 
 
+def sold_out_option_matches(options: list[str], wanted: str | None) -> list[str]:
+    """선택지 중 '품절' 표시가 붙은 주문 옵션 항목(원문). 목록에 아예 없는 옵션은 품절 확증이 아니라 빈 목록이다."""
+    if not wanted:
+        return []
+    marked = {o: _SOLD_OUT_RE.sub('', o).strip() for o in options if _sold_out(o)}
+    hits = set(matching_options(list(marked.values()), wanted))
+    return [o for o, bare in marked.items() if bare in hits]
+
+
 def sold_out_option_listed(options: list[str], wanted: str | None) -> bool:
     """주문 옵션이 선택지에 '품절' 표시로 떠 있는가 — 스크립트가 목록을 제대로 읽었고 그 옵션만 품절이라는 확증."""
-    if not wanted:
-        return False
-    marked = [_SOLD_OUT_RE.sub('', o).strip() for o in options if _sold_out(o)]
-    return bool(marked) and bool(matching_options(marked, wanted))
+    return bool(sold_out_option_matches(options, wanted))
 
 
 # 계정 견적 건너뜀 사유 중 확정 품절 표시(_quote 가 붙인다)
@@ -1481,8 +1487,13 @@ class BuyerAgent(AgentBase):
         options = [str(o) for o in (snap.get('options') or [])]
         if not self._match_options(options, a.order.option):
             self.note('계정 견적', mask_text(f'{account}: 불가(주문 옵션 품절)'))
-            if sold_out_option_listed(options, a.order.option):
-                self._quote_skips.append(f'{account}: {SOLD_OUT_LISTED_SKIP} {options[:6]}')
+            marked = sold_out_option_matches(options, a.order.option)
+            if marked:
+                # 주문 옵션의 품절 항목 자체를 남긴다 — 앞 6개만 자르면 그 항목이 잘려 '품절 표시가 없다'로 보였다
+                # (실기 2026-09-27 그랜드스테이지 260: ['240',…,'270'] 뒤 7번째가 '260 품절')
+                self._quote_skips.append(
+                    f'{account}: {SOLD_OUT_LISTED_SKIP} {marked} (선택지 {len(options)}개)'
+                )
             else:
                 self._quote_skips.append(f'{account}: 옵션 불일치 {options[:6]}')
             return None

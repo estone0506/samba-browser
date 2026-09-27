@@ -11,6 +11,7 @@ from samba_agent.agents.buyer import (
     SOLD_OUT_LISTED_SKIP,
     BuyerAgent,
     is_account_failure,
+    sold_out_option_matches,
 )
 from samba_agent.agents.contracts import Assignment, OrderRef
 from samba_agent.agents.registry import Registry
@@ -215,3 +216,10 @@ def test_계정_사유_판정() -> None:
     assert not is_account_failure(AgentFailure('fail', '원가 못 읽음', FailReason.OUT_OF_STOCK))
     assert not is_account_failure(AgentFailure('needs_human', '캡차', FailReason.CAPTCHA))
 
+
+def test_품절_표시_항목은_목록_뒤쪽에_있어도_그대로_보인다() -> None:
+    """실기 2026-09-27 그랜드스테이지 260 — 사유에 앞 6개만 남겨 '품절 표시가 없다'로 보였다."""
+    options = ['240', '245', '250', '255', '265', '270', '260 품절', '275 품절', '280 품절']
+    assert sold_out_option_matches(options, '260') == ['260 품절']
+    # 목록에 아예 없는 옵션은 품절 확증이 아니다
+    assert sold_out_option_matches(['240', '250 품절'], '260') == []
