@@ -285,14 +285,25 @@ class WaveClient:
                 return str(item.get('id') or '') or None
         return None
 
-    def get_order(self, order_no: str, order_type: OrderType | None = None) -> WaveOrderDetail:
+    def get_order(
+        self,
+        order_no: str,
+        order_type: OrderType | None = None,
+        sourcing_order_number: str | None = None,
+    ) -> WaveOrderDetail:
         """주문 1건 상세. 배송지가 실려 온다 — 호출부는 즉시 쓰고 버린다.
 
         ``order_type`` 을 주면 그 종류의 배송지(까대기 = 사무실)를 달라고 요청한다. 삼바웨이브가
         아직 이 인자를 모르면 응답의 order_type 이 다르게 오고, 호출부가 그걸 보고 멈춘다.
+        한 상품주문번호에 행이 여럿이면 삼바웨이브는 아직 안 산 행을 준다. 기입 되읽기는
+        ``sourcing_order_number`` 로 방금 적은 행을 고른다(실기 20260927C5313B 240·260).
         """
-        params = {'order_type': order_type} if order_type else None
-        body = self._request('GET', f'/orders/{order_no}', params=params)
+        params: dict[str, str] = {}
+        if order_type:
+            params['order_type'] = order_type
+        if sourcing_order_number:
+            params['sourcing_order_number'] = sourcing_order_number
+        body = self._request('GET', f'/orders/{order_no}', params=params or None)
         return WaveOrderDetail.model_validate(body)
 
     def record_sourcing(

@@ -251,3 +251,15 @@ def test_소싱_계정_id_를_소싱처와_아이디로_찾는다():
     )
     assert client().sourcing_account_id('MUSINSA', 'buyer01') == 'sa_2'
     assert client().sourcing_account_id('MUSINSA', 'nobody') is None
+
+
+@respx.mock
+def test_되읽기는_소싱주문번호로_행을_고른다():
+    """한 상품주문번호에 행이 여럿(20260927C5313B 240·260) — 방금 적은 행을 되읽는다."""
+    route = respx.get(f'{API}/orders/A1').mock(
+        return_value=httpx.Response(200, json={'order_number': 'A1'})
+    )
+    client().get_order('A1', sourcing_order_number='S-9')
+    assert route.calls[0].request.url.params['sourcing_order_number'] == 'S-9'
+    client().get_order('A1')
+    assert 'sourcing_order_number' not in route.calls[1].request.url.params

@@ -243,7 +243,12 @@ class RecorderAgent(AgentBase):
         status = ''
         if self._wave is not None:
             try:
-                status = str(self._wave.get_order(a.order.order_no).status or '')
+                status = str(
+                    self._wave.get_order(
+                        a.order.order_no, sourcing_order_number=sourcing_no
+                    ).status
+                    or ''
+                )
             except WaveError:
                 status = ''
         if status == 'wait_ship':
@@ -389,7 +394,10 @@ class RecorderAgent(AgentBase):
                 order_type=_order_type_value(a.expected.get('order_type')),
             )
             self.step('recorder: 기입 확인')
-            saved = self._wave.get_order(a.order.order_no)  # type: ignore[union-attr]
+            # 행이 여럿인 주문은 방금 적은 행을 되읽는다(삼바웨이브 기본은 아직 안 산 행)
+            saved = self._wave.get_order(  # type: ignore[union-attr]
+                a.order.order_no, sourcing_order_number=sourcing_no
+            )
         except WaveError as e:
             status = 'needs_human' if e.reason is FailReason.DUPLICATE else 'fail'
             raise AgentFailure(status, f'삼바웨이브 기입 실패(재결제 금지): {e}', e.reason) from e
