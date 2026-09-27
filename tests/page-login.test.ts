@@ -5,7 +5,9 @@ import {
   findLoginFields,
   fillValue,
   submitForm,
-  installCaptureListener
+  installCaptureListener,
+  readLoginCredentials,
+  readUsernameStep
 } from '../src/preload/page-core'
 
 describe('findLoginFields', () => {
@@ -290,5 +292,108 @@ describe('installCaptureListener', () => {
     }
 
     expect(send).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('readLoginCredentials — 저장 제안용 감지 판정', () => {
+  it('제출된 폼 안의 비밀번호 칸과 짝 아이디를 읽는다', () => {
+    document.body.innerHTML = `
+      <input type="password" id="other">
+      <form id="f">
+        <input type="text" name="userId" placeholder="아이디" value="shopmine">
+        <input type="password" name="pw" value="p@ss">
+      </form>
+    `
+    const form = document.getElementById('f') as HTMLFormElement
+    expect(readLoginCredentials(form)).toEqual({ username: 'shopmine', password: 'p@ss' })
+  })
+
+  it('비밀번호 값이 없으면 null', () => {
+    document.body.innerHTML = `
+      <form id="f"><input type="text" name="userId" value="me"><input type="password" name="pw"></form>
+    `
+    expect(readLoginCredentials(document.getElementById('f') as HTMLFormElement)).toBeNull()
+  })
+
+  it('비밀번호 변경 화면에서는 새 비밀번호·확인칸이 아니라 현재 비밀번호 칸을 고른다', () => {
+    document.body.innerHTML = `
+      <input type="text" name="userId" placeholder="아이디" value="me">
+      <input type="password" name="newPw" autocomplete="new-password" value="new1">
+      <input type="password" name="curPw" autocomplete="current-password" value="cur1">
+    `
+    expect(readLoginCredentials(null)?.password).toBe('cur1')
+  })
+
+  it('아이디 칸이 없으면(2단계 로그인) 기억한 앞 단계 아이디를 쓴다', () => {
+    document.body.innerHTML = `<input type="password" name="pw" value="p@ss">`
+    expect(readLoginCredentials(null, 'first-step')).toEqual({
+      username: 'first-step',
+      password: 'p@ss'
+    })
+  })
+
+  it('비밀번호 칸이 없는 아이디 단계에서만 아이디를 읽는다', () => {
+    document.body.innerHTML = `<input type="email" name="email" value="me@example.com">`
+    expect(readUsernameStep()).toBe('me@example.com')
+    document.body.innerHTML = `
+      <input type="email" name="email" value="me@example.com"><input type="password" value="x">
+    `
+    expect(readUsernameStep()).toBe('')
+  })
+})
+
+describe('installCaptureListener — 2단계 로그인·Enter 제출', () => {
+  it('아이디 단계에서 다음을 누르면 기억했다가 비밀번호 단계 제출에 붙인다', () => {
+    document.body.innerHTML = `
+      <input type="email" name="email" autocomplete="username">
+      <button id="next" type="button">다음</button>
+    `
+    const send = vi.fn()
+    installCaptureListener(send, { allowUntrusted: true })
+    ;(document.querySelector('[name=email]') as HTMLInputElement).value = 'two@step.com'
+    document.getElementById('next')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    // 아이디 단계에서는 아무것도 보내지 않는다
+    expect(send).not.toHaveBeenCalled()
+
+    document.body.innerHTML = `
+      <form id="f"><input type="password" name="pw"><button type="submit">로그인</button></form>
+    `
+    ;(document.querySelector('[name=pw]') as HTMLInputElement).value = 'pw-2step'
+    document
+      .getElementById('f')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ username: 'two@step.com', password: 'pw-2step' })
+    )
+  })
+
+  it('폼 없는 비밀번호 칸에서 Enter 로 제출해도 잡는다', () => {
+    document.body.innerHTML = `
+      <input type="text" id="u" placeholder="아이디">
+      <input type="password" id="p">
+    `
+    const send = vi.fn()
+    installCaptureListener(send, { allowUntrusted: true })
+    ;(document.getElementById('u') as HTMLInputElement).value = 'enter-user'
+    const pw = document.getElementById('p') as HTMLInputElement
+    pw.value = 'enter-pw'
+    pw.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ username: 'enter-user', password: 'enter-pw' })
+    )
+  })
+
+  it('신뢰되지 않은(합성) Enter 는 무시한다 — 자동화 스크립트가 만든 이벤트', () => {
+    document.body.innerHTML = `
+      <input type="text" id="u" placeholder="아이디">
+      <input type="password" id="p">
+    `
+    const send = vi.fn()
+    installCaptureListener(send)
+    ;(document.getElementById('u') as HTMLInputElement).value = 'bot'
+    const pw = document.getElementById('p') as HTMLInputElement
+    pw.value = 'bot-pw'
+    pw.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(send).not.toHaveBeenCalled()
   })
 })

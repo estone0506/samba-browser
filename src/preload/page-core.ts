@@ -22,6 +22,8 @@ import {
   detectSignedInHint,
   detectCaptchaHint,
   labelTextOf,
+  passwordElement as detectPasswordElement,
+  standaloneUsernameElement,
   usernameElementFor as detectUsernameElementFor,
   type CaptchaHint,
   type LoginFields,
@@ -984,11 +986,6 @@ function formOf(el: HTMLElement): HTMLFormElement | null {
   return null
 }
 
-// username 후보 선택은 login-detect 모듈(Chromium/Bitwarden 규칙 이식)에 위임한다
-function usernameElementFor(passwordEl: HTMLInputElement): HTMLInputElement | undefined {
-  return detectUsernameElementFor(passwordEl)
-}
-
 function isSubmitLike(el: HTMLElement): boolean {
   if (el.tagName === 'INPUT') return (el as HTMLInputElement).type === 'submit'
   if (el.tagName === 'BUTTON') return (el as HTMLButtonElement).type !== 'button'
@@ -1296,6 +1293,41 @@ export interface InstallCaptureListenerOptions {
 
 const CAPTURE_WINDOW_MS = 30_000
 const CAPTURE_MAX_PER_WINDOW = 3
+// 2단계 로그인(아이디 화면 → 비밀번호 화면)에서 앞 단계 아이디를 기억해 두는 시간
+export const CAPTURE_USERNAME_STEP_MS = 5 * 60_000
+
+export interface CapturedCredentials {
+  username: string
+  password: string
+}
+
+/**
+ * 지금 화면의 로그인 칸에서 아이디·비밀번호를 읽는다(저장 제안용 — 메인으로만 보낸다).
+ * 비밀번호 칸은 로그인 탐지 엔진과 같은 기준(current-password 우선, 새 비밀번호·확인칸·허니팟 제외)으로 고르고,
+ * 제출된 폼(form)을 알면 그 폼 안의 칸을 먼저 쓴다. 값이 비어 있으면 null.
+ * 아이디 칸이 없거나 비어 있으면 앞 단계에서 기억한 아이디(rememberedUsername)를 쓴다
+ */
+export function readLoginCredentials(
+  form: HTMLFormElement | null,
+  rememberedUsername = ''
+): CapturedCredentials | null {
+  const inForm = form
+    ? Array.from(form.querySelectorAll<HTMLInputElement>('input[type="password"]')).find(
+        (el) => isVisible(el) && el.value
+      )
+    : undefined
+  const pw = inForm ?? detectPasswordElement()
+  if (!pw || !pw.value) return null
+  // username 후보 선택은 login-detect 모듈에 위임한다
+  const typed = (detectUsernameElementFor(pw)?.value ?? '').trim()
+  return { username: typed || rememberedUsername.trim(), password: pw.value }
+}
+
+/** 비밀번호 칸이 없는 화면(2단계 로그인의 아이디 단계)에서 입력된 아이디. 없으면 빈 문자열 */
+export function readUsernameStep(): string {
+  if (detectPasswordElement()) return ''
+  return (standaloneUsernameElement()?.value ?? '').trim()
+}
 
 // ipcRenderer.send 등 실제 전송 함수는 주입받는다(테스트에서 스텁 가능하도록)
 export function installCaptureListener(
@@ -1307,6 +1339,9 @@ export function installCaptureListener(
   // 같은 제출이 submit 과 click 양쪽에서 잡혀 중복 전송되는 것을 짧게 막는다
   let lastSignature = ''
   let lastSentAt = 0
+  // 2단계 로그인의 앞 단계 아이디(같은 문서 안에서만 — SPA 로그인)
+  let stepUsername = ''
+  let stepUsernameAt = 0
 
   // 시그니처와 무관하게, 적대 페이지가 서로 다른 값을 반복 주입/제출해 플러딩하는 것을 막는다
   // (호스트당 30초 최대 3회)
@@ -1318,22 +1353,26 @@ export function installCaptureListener(
     return sentTimestamps.length < CAPTURE_MAX_PER_WINDOW
   }
 
-  const attempt = (): void => {
-    const pwEls = Array.from(
-      document.querySelectorAll<HTMLInputElement>('input[type="password"]')
-    ).filter((el) => isVisible(el))
-    const pw = pwEls[0]
-    if (!pw || !pw.value) return // 값이 없으면 저장 제안을 띄우지 않는다
-    const userEl = usernameElementFor(pw)
-    const username = userEl?.value ?? ''
-    const signature = `${username}:${pw.value}`
+  const attempt = (form: HTMLFormElement | null): void => {
     const now = Date.now()
+    const remembered = now - stepUsernameAt < CAPTURE_USERNAME_STEP_MS ? stepUsername : ''
+    const creds = readLoginCredentials(form, remembered)
+    if (!creds) {
+      // 비밀번호 칸이 없는 화면이면 아이디 단계일 수 있다 — 다음 단계에서 쓰려고 기억만 한다(보내지 않는다)
+      const step = readUsernameStep()
+      if (step) {
+        stepUsername = step
+        stepUsernameAt = now
+      }
+      return // 비밀번호 값이 없으면 저장 제안을 띄우지 않는다
+    }
+    const signature = `${creds.username}:${creds.password}`
     if (signature === lastSignature && now - lastSentAt < 1000) return
     if (!withinRateLimit(now)) return
     lastSignature = signature
     lastSentAt = now
     sentTimestamps.push(now)
-    send({ host: location.host, username, password: pw.value })
+    send({ host: location.host, username: creds.username, password: creds.password })
   }
 
   // click 이 감지된 password 와 관련된 제출 액션인지 판정한다.
@@ -1352,7 +1391,7 @@ export function installCaptureListener(
     'submit',
     (ev) => {
       if (!allowUntrusted && ev.isTrusted !== true) return
-      attempt()
+      attempt(ev.target instanceof HTMLFormElement ? ev.target : null)
     },
     true
   )
@@ -1365,13 +1404,28 @@ export function installCaptureListener(
       if (!(target instanceof HTMLElement)) return
       const clicked = target.closest('button, input[type="submit"]')
       if (!(clicked instanceof HTMLElement)) return
-      const pwEls = Array.from(
-        document.querySelectorAll<HTMLInputElement>('input[type="password"]')
-      ).filter((el) => isVisible(el))
-      const pw = pwEls[0]
-      if (!pw) return
+      const pw = detectPasswordElement()
+      if (!pw) {
+        // 아이디 단계의 '다음' 버튼 — 아이디만 기억한다
+        if (isButtonish(clicked)) attempt(null)
+        return
+      }
       if (!isRelevantSubmitClick(clicked, pw)) return
-      attempt()
+      attempt(formOf(pw))
+    },
+    true
+  )
+  // 폼 없는 SPA 에서 비밀번호 칸에 Enter 로 제출하는 경우(submit·click 이 모두 없다)
+  document.addEventListener(
+    'keydown',
+    (ev) => {
+      if (!allowUntrusted && ev.isTrusted !== true) return
+      if (ev.key !== 'Enter' || ev.isComposing) return
+      const target = ev.target
+      if (!(target instanceof HTMLInputElement) || target.type !== 'password') return
+      // 폼 안이면 브라우저가 submit 을 일으키므로 submit 쪽에서 잡는다
+      if (formOf(target)) return
+      attempt(null)
     },
     true
   )
