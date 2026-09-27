@@ -41,6 +41,7 @@ import {
   shouldHoldVisible
 } from './visible-guard'
 import { PopupRegistry, type PopupEntry } from './popups'
+import { splitBehind, stackOrder } from './behind-views'
 import { buildTargets, pickAgentTargetId, type AgentTarget } from './targets'
 import { getFaviconService, type FaviconResponse } from '../favicon/service'
 
@@ -184,6 +185,11 @@ export class TabManager {
   // 여기에만 적어 둔다(visible-guard.ts). 화면은 사람이 보던 탭 그대로이고 AI 도구는 이 탭을 조작한다.
   // null 이면 보이는 탭이 곧 자동화 대상이다
   private automationTabId: string | null = null
+  // 보이는 탭 아래 층(contentView z-order 맨 아래)에 붙여 둔 뒤 탭 — 자동화 대상·레인 탭(behind-views.ts).
+  // 창에 붙지 않은 뷰는 뷰포트가 0 이라 스냅샷·레이아웃이 어긋나므로, 뒤에서 조작하는 탭도 창에 붙여 둔다
+  private behindIds: string[] = []
+  // 레인(lane-tabs)이 연 탭 — 전역 자동화 대상이 아니어도 뒤 층에 붙여 둔다
+  private laneIds = new Set<string>()
   // 팝업이 새로 열렸을 때 알리는 구독자(AI 도구가 "팝업이 열렸다"를 결과에 붙인다)
   private popupOpenedListeners: Array<(target: AgentTarget) => void> = []
   // 로그인 게이트: 계정 로그인 전에는 탭 뷰(네이티브)를 화면에서 치운다 — 렌더러가 가리는 것만으로는 안 보인다
@@ -414,6 +420,8 @@ export class TabManager {
     this.tabs = []
     this.activeId = null
     this.automationTabId = null
+    this.behindIds = []
+    this.laneIds.clear()
     this.focusedPopupId = null
     // 부모 창이 사라졌는데 결제창만 남아 떠 있지 않게 팝업도 함께 파괴한다
     this.popups.destroyAll()
@@ -825,6 +833,7 @@ export class TabManager {
     })
     if (tab.mobile) void applyMobileEmulation(wc)
     void wc.loadURL(url)
+    if (opts.keepAgentTarget === true) this.laneIds.add(tab.id)
     if (opts.background === true) {
       this.sizeHidden(tab)
     } else if (opts.keepAgentTarget === true) {
@@ -866,13 +875,51 @@ export class TabManager {
   }
 
   /**
-   * 보이지 않는 탭(창에 얹지 않은 뷰)에도 보이는 탭과 같은 크기를 준다. 크기가 0 이면 페이지가 폭 0 으로
-   * 배치돼 요소 좌표·클릭·스냅샷이 모두 틀어진다
+   * 뒤에서 조작할 탭을 보이는 탭 아래 층에 붙이고 같은 크기를 준다.
+   * 창에 붙지 않은 뷰는 크기만 줘도 innerHeight 가 0 이라 뷰포트 판정이 전부 false 가 되고
+   * 스냅샷이 페이지 끝 구매 버튼을 잘라 먹었다(c7d1e5a 회귀). contentView 0번(맨 아래)에 붙이므로
+   * 사람 화면은 보이는 탭이 그대로 가리고, 포커스는 주지 않는다(webContents.focus·win.focus 를 부르지 않는다)
    */
   private sizeHidden(tab: Tab): void {
     if (this.disposed || this.win.isDestroyed() || !isTabAlive(tab)) return
+    // 보이는 탭의 크기·층은 applyBounds·activate 가 맡는다
+    if (tab.id === this.activeId) return
+    this.setBehindBounds(tab)
+    if (this.behindIds.includes(tab.id)) return
+    this.behindIds.push(tab.id)
+    this.win.contentView.addChildView(tab.view, 0)
+    // 보이는 탭에 가려진 뷰도 타이머·requestAnimationFrame 이 늦춰지지 않게 한다(가려짐 판정 스로틀링 방지)
+    tab.view.webContents.setBackgroundThrottling(false)
+  }
+
+  /** 뒤 탭 크기 — 보이는 탭과 같다. 로그인 게이트 중이면 0(게이트 화면 위로 비치지 않게) */
+  private setBehindBounds(tab: Tab): void {
+    if (this.gateHidden) {
+      tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+      return
+    }
     const [w, h] = this.win.getContentSize()
     tab.view.setBounds(computeViewBounds(this.layout, w, h, tab.mobile))
+  }
+
+  /** 더는 뒤에서 조작하지 않는 탭(자동화 대상도 레인도 아님)을 뒤 층에서 뗀다. 보이는 탭은 떼지 않는다 */
+  private pruneBehind(): void {
+    if (this.disposed || this.win.isDestroyed()) return
+    const alive = new Set(this.tabs.filter((t) => isTabAlive(t)).map((t) => t.id))
+    const { keep, drop } = splitBehind({
+      behind: this.behindIds,
+      activeId: this.activeId,
+      automationId: this.automationTabId,
+      laneIds: this.laneIds,
+      alive
+    })
+    this.behindIds = keep
+    for (const id of drop) {
+      const t = this.get(id)
+      if (!t || !isTabAlive(t)) continue
+      if (id !== this.activeId) this.win.contentView.removeChildView(t.view)
+      t.view.webContents.setBackgroundThrottling(true)
+    }
   }
 
   /** 자동화가 조작할 진짜 탭(팝업 제외). 자동화 대상 표식이 살아 있으면 그 탭, 아니면 보이는 탭 */
@@ -884,6 +931,7 @@ export class TabManager {
   /** 자동화 대상 표식을 지운다 — 사용자가 새 AI 지시를 내리면 다시 보이는 탭부터 조작한다 */
   clearAgentTarget(): void {
     this.automationTabId = null
+    this.pruneBehind()
   }
 
   private workingTabId(): string | null {
@@ -904,6 +952,7 @@ export class TabManager {
     if (visibleAlive && this.holdVisible()) {
       this.automationTabId = id === this.activeId ? null : id
       this.sizeHidden(tab)
+      this.pruneBehind()
       return
     }
     // 보이는 탭이 곧 자동화 대상이 된다 — 자동화가 바꿨거나, 사람이 자동화 대상 탭을 직접 눌렀을 때.
@@ -911,12 +960,31 @@ export class TabManager {
     if ((isAutomation() && visibleAlive) || this.automationTabId === id) this.automationTabId = null
     // 탭 뷰를 다시 얹기 전에 알린다 — 위에 떠 있던 확장 팝업이 탭 뷰 아래로 묻히지 않게
     for (const cb of this.activatedListeners) cb()
-    // 모든 탭 뷰를 창에서 제거(없으면 무시됨)한 뒤 활성 탭만 다시 추가
+    // 모든 탭 뷰를 창에서 제거(없으면 무시됨)한 뒤 뒤 탭은 맨 아래부터, 활성 탭은 맨 위에 다시 추가한다
     for (const t of this.tabs) {
       this.win.contentView.removeChildView(t.view)
     }
-    this.win.contentView.addChildView(tab.view)
+    // 가려지는 레인 탭은 뒤 층으로 내린다 — 레인은 보이지 않아도 제 탭을 계속 조작한다
+    const prev = this.activeId !== null && this.activeId !== id ? this.get(this.activeId) : null
+    if (
+      prev &&
+      isTabAlive(prev) &&
+      this.laneIds.has(prev.id) &&
+      !this.behindIds.includes(prev.id)
+    ) {
+      this.behindIds.push(prev.id)
+      prev.view.webContents.setBackgroundThrottling(false)
+    }
     this.activeId = id
+    // 보이는 탭이 된 뒤 탭은 뒤 목록에서 빠지며 스로틀링이 원래대로(true) 돌아온다
+    this.pruneBehind()
+    const behind = stackOrder(id, this.behindIds).slice(0, -1)
+    behind.forEach((behindId, i) => {
+      const t = this.get(behindId)
+      // 확장 팝업 뷰 등 다른 뷰보다도 아래에 둔다
+      if (t && isTabAlive(t)) this.win.contentView.addChildView(t.view, i)
+    })
+    this.win.contentView.addChildView(tab.view)
     this.noteVisit(tab.view.webContents.getURL())
     this.applyBounds()
     this.emit()
@@ -1011,6 +1079,8 @@ export class TabManager {
     const [tab] = this.tabs.splice(idx, 1)
     this.lastDialogMessage.delete(id)
     if (this.automationTabId === id) this.automationTabId = null
+    this.behindIds = this.behindIds.filter((b) => b !== id)
+    this.laneIds.delete(id)
     // 닫히기 전에 주소를 챙겨 둔다(제스처 '닫은 탭 다시 열기')
     if (isTabAlive(tab)) {
       const record: ClosedTabRecord = {
@@ -1086,13 +1156,18 @@ export class TabManager {
     if (this.disposed || this.win.isDestroyed()) return
     const tab = this.active()
     if (!tab) return
+    // 뒤 층 탭도 창 크기·게이트를 따라가게 한다(크기가 어긋나면 좌표 클릭이 빗나간다)
+    for (const id of this.behindIds) {
+      const t = this.get(id)
+      if (t && t !== tab && isTabAlive(t)) this.setBehindBounds(t)
+    }
     if (this.gateHidden) {
       tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
       return
     }
     const [w, h] = this.win.getContentSize()
     tab.view.setBounds(computeViewBounds(this.layout, w, h, tab.mobile))
-    // 뒤에서 도는 자동화 대상 탭도 창 크기를 따라가게 한다(크기가 어긋나면 좌표 클릭이 빗나간다)
+    // 뒤에서 도는 자동화 대상 탭이 아직 뒤 층에 없으면 붙인다
     const working = this.automationTabId ? this.get(this.automationTabId) : null
     if (working && working !== tab) this.sizeHidden(working)
   }
