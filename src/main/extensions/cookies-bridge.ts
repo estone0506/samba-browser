@@ -174,6 +174,26 @@ export function enableExtensionServiceWorkerSupport(ses: Session, preloadPath: s
   installExtensionCookiesBridge(ses)
 }
 
+/**
+ * 세션의 서비스워커 확장을 미리 깨운다(준비 신호까지 기다린다).
+ *
+ * 왜: 앱 시작 뒤 첫 이동에서 샵백 활성화 페이지가 아직 초기화 중인 백그라운드에 묻고 빈 답을 받아
+ * 빈 화면으로 넘어갔다(2026-09-27). 프로필 세션이 생기거나 확장이 붙을 때 먼저 깨워 둔다
+ */
+export async function warmExtensionWorkers(ses: Session): Promise<void> {
+  const exts = ses.extensions?.getAllExtensions?.() ?? []
+  for (const ext of exts) {
+    const manifest = ext.manifest as { background?: { service_worker?: string } }
+    if (!manifest?.background?.service_worker) continue
+    try {
+      const w = await ses.serviceWorkers.startWorkerForScope(`chrome-extension://${ext.id}/`)
+      await readyOf(w)
+    } catch (e: unknown) {
+      console.warn('확장 서비스워커 깨우기 실패', ext.id, e instanceof Error ? e.message : String(e))
+    }
+  }
+}
+
 // 이미 처리기를 건 서비스워커(같은 워커에 두 번 걸면 Electron 이 오류를 낸다)
 const wired = new WeakSet<object>()
 // 워커별 준비 신호 — 확장이 이동·탭 리스너를 단 뒤 보낸다(샵백처럼 초기화가 느린 확장은 그 전에 온 이벤트를 놓친다)

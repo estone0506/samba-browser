@@ -3,7 +3,8 @@ import type { SyncBackend } from '../sync/backend'
 import {
   enableExtensionServiceWorkerSupport,
   pickActionIconPath,
-  setExtensionActionListener
+  setExtensionActionListener,
+  warmExtensionWorkers
 } from '../extensions/cookies-bridge'
 import { ChatSessionStore } from '../agent/chat-session'
 import {
@@ -1231,7 +1232,10 @@ export function registerIpc(
     createSessionExtensionHost(session.defaultSession),
     settings
   )
-  void extensions.loadSaved().catch((e: unknown) => console.error('저장된 확장 로드 실패', e))
+  void extensions
+    .loadSaved()
+    .then(() => warmExtensionWorkers(session.defaultSession))
+    .catch((e: unknown) => console.error('저장된 확장 로드 실패', e))
   // 확장이 툴바 아이콘을 바꾸면(샵백 활성화 → 초록) 목록의 아이콘을 바꾸고 렌더러가 다시 그리게 한다
   setExtensionActionListener((id, op, details) => {
     if (op !== 'setIcon') return
@@ -1246,6 +1250,7 @@ export function registerIpc(
     // 파티션 이름을 함께 넘긴다 — 같은 세션이 두 번 들어와도 한 번만 붙는다
     void extensions
       .attachHost(createSessionExtensionHost(ses), partition)
+      .then(() => warmExtensionWorkers(ses))
       .catch((e: unknown) => console.error('파티션 세션 확장 로드 실패', e))
   })
 
