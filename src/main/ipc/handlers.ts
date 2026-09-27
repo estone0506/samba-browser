@@ -1265,10 +1265,13 @@ export function registerIpc(
   // 크롬도 탭을 바꾸면 팝업을 닫으므로 여기서 함께 닫는다
   tabs.onActivated(() => {
     extensionPopup.close()
-    // 확장에 탭 활성화를 알린다(chrome.tabs.onActivated) — 샵백은 이때 아이콘·알림을 다시 판정한다
-    const t = tabs.active()
-    const wc = t?.view.webContents
-    if (wc && !wc.isDestroyed()) sendExtensionTabEvent(wc.session, 'activated', { tabId: wc.id, windowId: 0 })
+    // 확장에 탭 활성화를 알린다(chrome.tabs.onActivated) — 샵백은 이때 아이콘·알림을 다시 판정한다.
+    // 이 콜백은 활성 탭이 바뀌기 전에 불리므로 한 틱 뒤에 새 활성 탭을 읽는다(실기 2026-09-28: 이전 탭을 보냈다)
+    setTimeout(() => {
+      const t = tabs.active()
+      const wc = t?.view.webContents
+      if (wc && !wc.isDestroyed()) sendExtensionTabEvent(wc.session, 'activated', { tabId: wc.id, windowId: 0 })
+    }, 0)
   })
 
   handleFromRenderer(IPC.extList, () => ({ items: extensions.list(), errors: extensions.errors() }))
