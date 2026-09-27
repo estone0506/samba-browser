@@ -24,6 +24,12 @@ const TABS_CHANNEL = 'samba-ext-tabs'
 const invokeTabs = (op: string, details: unknown): Promise<unknown> =>
   ipcRenderer.invoke(TABS_CHANNEL, op, details)
 
+// 툴바 아이콘 변경 알림(chrome.action.setIcon) — 메인이 툴바를 다시 그린다
+const ACTION_CHANNEL = 'samba-ext-action'
+const notifyAction = (op: string, details: unknown): void => {
+  ipcRenderer.send(ACTION_CHANNEL, op, details)
+}
+
 // 최상위 프레임 이동 알림(webNavigation.onCommitted·onCompleted) — 메인이 보낸다
 const NAV_CHANNEL = 'samba-ext-nav'
 const subscribeNav = (fn: (kind: string, details: unknown) => void): void => {
@@ -87,7 +93,8 @@ contextBridge.executeInMainWorld({
 contextBridge.executeInMainWorld({
   func: (
     call: (op: string, details: unknown) => Promise<unknown>,
-    listenNav: (fn: (kind: string, details: unknown) => void) => void
+    listenNav: (fn: (kind: string, details: unknown) => void) => void,
+    notify: (op: string, details: unknown) => void
   ): void => {
     type Cb = (v: unknown) => void
     const g = globalThis as unknown as { chrome?: Record<string, unknown> }
@@ -223,6 +230,27 @@ contextBridge.executeInMainWorld({
         onTabReplaced: noEvent
       })
     }
+    // chrome.action.setIcon — Electron 은 아이콘을 그리지 않는다. 메인에 알려 툴바가 바꿔 그리게 한다
+    // (샵백은 활성화되면 초록 아이콘으로 바꾼다 — 2026-09-27). 원래 함수가 있으면 그것도 부른다
+    const action = (c.action ?? {}) as Record<string, unknown>
+    const origSetIcon = typeof action.setIcon === 'function' ? (action.setIcon as (...a: unknown[]) => unknown).bind(action) : null
+    set(action, 'setIcon', (details: unknown, cb?: unknown) => {
+      try {
+        const d = (details ?? {}) as { path?: unknown }
+        if (d.path !== undefined) notify('setIcon', { path: d.path })
+      } catch {
+        // 알림 실패는 무시
+      }
+      if (origSetIcon) {
+        try {
+          return reply(Promise.resolve(origSetIcon(details)).catch(() => undefined), cb)
+        } catch {
+          // Electron 이 거부해도 확장이 죽지 않게
+        }
+      }
+      return reply(Promise.resolve(undefined), cb)
+    })
+    if (!c.action) set(c, 'action', action)
     // 크롬 프로필 계정 — 앱에는 없다. 빈 값을 준다
     if (!c.identity) {
       set(c, 'identity', {
@@ -230,5 +258,5 @@ contextBridge.executeInMainWorld({
       })
     }
   },
-  args: [invokeTabs, subscribeNav]
+  args: [invokeTabs, subscribeNav, notifyAction]
 })

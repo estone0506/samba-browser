@@ -1,6 +1,10 @@
 import { isSupabaseAnonKey, isSupabaseProjectUrl, type AuthState } from '../../shared/sync'
 import type { SyncBackend } from '../sync/backend'
-import { enableExtensionServiceWorkerSupport } from '../extensions/cookies-bridge'
+import {
+  enableExtensionServiceWorkerSupport,
+  pickActionIconPath,
+  setExtensionActionListener
+} from '../extensions/cookies-bridge'
 import { ChatSessionStore } from '../agent/chat-session'
 import {
   app,
@@ -109,6 +113,7 @@ import type { DeviceService } from '../sync/devices'
 import { WorkspaceService } from '../workspace/service'
 import { workspaceShortcutIndex } from '../workspace/shortcut'
 import { ExtensionManager, createSessionExtensionHost } from '../extensions/manager'
+import { readIconDataUrl } from '../extensions/import-sources'
 import { createExtensionInstaller } from '../extensions/install-service'
 import { extensionPopupUrl } from '../extensions/action'
 import { ExtensionPopupHost, sessionWithExtension } from '../extensions/popup-view'
@@ -1227,6 +1232,15 @@ export function registerIpc(
     settings
   )
   void extensions.loadSaved().catch((e: unknown) => console.error('저장된 확장 로드 실패', e))
+  // 확장이 툴바 아이콘을 바꾸면(샵백 활성화 → 초록) 목록의 아이콘을 바꾸고 렌더러가 다시 그리게 한다
+  setExtensionActionListener((id, op, details) => {
+    if (op !== 'setIcon') return
+    const entry = extensions.find(id)
+    const rel = pickActionIconPath((details as { path?: unknown } | null)?.path)
+    if (!entry || !rel) return
+    const dataUrl = readIconDataUrl(entry.path, rel)
+    if (dataUrl && extensions.setActionIcon(id, dataUrl)) send(IPC.extChanged, null)
+  })
   tabs.setSessionHook((ses, partition) => {
     enableExtensionServiceWorkerSupport(ses, join(__dirname, '../preload/extension-sw.js'))
     // 파티션 이름을 함께 넘긴다 — 같은 세션이 두 번 들어와도 한 번만 붙는다

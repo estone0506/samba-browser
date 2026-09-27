@@ -66,3 +66,13 @@ describe('toNavDetails', () => {
     })
   })
 })
+
+describe('pickActionIconPath', () => {
+  it('setIcon 의 path 가 문자열이면 그대로, 크기 표면 가장 큰 크기의 경로를 고른다', async () => {
+    const { pickActionIconPath } = await import('../src/main/extensions/cookies-bridge')
+    expect(pickActionIconPath('images/icon/Green-32.png')).toBe('images/icon/Green-32.png')
+    expect(pickActionIconPath({ '16': 'a16.png', '32': 'a32.png' })).toBe('a32.png')
+    expect(pickActionIconPath({})).toBeNull()
+    expect(pickActionIconPath(undefined)).toBeNull()
+  })
+})

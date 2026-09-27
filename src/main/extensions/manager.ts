@@ -299,6 +299,14 @@ export class ExtensionManager {
     }
   }
 
+  /** 확장이 chrome.action.setIcon 으로 바꾼 툴바 아이콘을 목록에 반영한다. 항목이 없으면 false */
+  setActionIcon(id: string, dataUrl: string): boolean {
+    const entry = this.entries.find((e) => e.id === id)
+    if (!entry || entry.icon === dataUrl) return false
+    entry.icon = dataUrl
+    return true
+  }
+
   /** id 로 목록의 한 항목을 찾는다(툴바 액션이 팝업 경로를 읽을 때 쓴다) */
   find(id: string): ExtensionDto | null {
     return this.entries.find((e) => e.id === id) ?? null

@@ -13,6 +13,25 @@ export const EXT_TABS_CHANNEL = 'samba-ext-tabs'
 export const EXT_COOKIE_CHANGED_CHANNEL = 'samba-ext-cookie-changed'
 // 최상위 프레임 이동 알림(chrome.webNavigation.onCommitted·onCompleted) — 메인 → 확장 서비스워커
 export const EXT_NAV_CHANNEL = 'samba-ext-nav'
+// 확장이 툴바 아이콘을 바꿀 때(chrome.action.setIcon) — 확장 서비스워커 → 메인
+export const EXT_ACTION_CHANNEL = 'samba-ext-action'
+
+export type ExtensionActionListener = (extensionId: string, op: string, details: unknown) => void
+let actionListener: ExtensionActionListener | null = null
+/** 확장의 chrome.action 호출(setIcon 등)을 받을 곳을 건다 — 툴바가 아이콘을 바꿔 그린다 */
+export function setExtensionActionListener(fn: ExtensionActionListener | null): void {
+  actionListener = fn
+}
+
+/** setIcon 의 path 인자에서 그릴 파일 하나를 고른다(순수 함수) — 문자열이거나 {크기: 경로} 표 */
+export function pickActionIconPath(raw: unknown): string | null {
+  if (typeof raw === 'string' && raw) return raw
+  if (typeof raw !== 'object' || raw === null) return null
+  const entries = Object.entries(raw as Record<string, unknown>).filter(([, v]) => typeof v === 'string' && v)
+  if (entries.length === 0) return null
+  entries.sort((a, b) => Number(b[0]) - Number(a[0]))
+  return entries[0][1] as string
+}
 // 막 깨운 확장 서비스워커가 리스너를 달 때까지 기다리는 시간
 export const SW_WAKE_WAIT_MS = 700
 
@@ -223,6 +242,14 @@ export function installExtensionCookiesBridge(ses: Session): void {
       } catch (e: unknown) {
         console.warn('확장 쿠키 처리 실패', id, e instanceof Error ? e.message : String(e))
         return null
+      }
+    })
+    // 툴바 아이콘 변경(샵백: 활성화되면 초록 아이콘) — 앱은 매니페스트 기본 아이콘만 그렸다(2026-09-27)
+    worker.ipc.on(EXT_ACTION_CHANNEL, (_e, op: unknown, details: unknown) => {
+      try {
+        actionListener?.(id, String(op), details)
+      } catch (e: unknown) {
+        console.warn('확장 액션 처리 실패', id, e instanceof Error ? e.message : String(e))
       }
     })
     // 탭·창은 확장이면 권한과 무관하게 받는다(크롬도 tabs.create 는 권한 없이 된다)
