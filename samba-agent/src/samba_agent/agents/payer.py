@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, urlsplit
 
 from samba_agent.agents.base import AgentBase, AgentFailure, run_agent, split_page_dialogs
-from samba_agent.agents.buyer import POINTS_ONLY_METHOD, product_no_of
+from samba_agent.agents.buyer import DIRECT_CARD_METHODS, POINTS_ONLY_METHOD, product_no_of
 from samba_agent.agents.contracts import AgentResult, Assignment
 from samba_agent.failures import FailReason
 from samba_agent.ops.masking import mask_text
@@ -45,7 +45,7 @@ _PAYCO_AGREE_PAY_JS = (
     "return JSON.stringify({ clicked: true, agreed })"
 )
 
-PAY_SUCCESS_MARKERS = ('결제 완료', '결제완료', '주문완료', '주문 완료', 'approved')
+PAY_SUCCESS_MARKERS = ('결제 완료', '결제완료', '주문완료', '주문 완료', '주문이 완료', 'approved')
 # 결제 "전" 검사용 — 결제창·주문서에도 흔한 '결제 완료 시 적립' 같은 글자로 멈추지 않게 좁힌다
 # (실기: 무신사페이 결제창 문구에 걸려 결제 전 pay_interrupted). 주문 완료 주소의 탭이 있거나,
 # 화면에 주문 완료 문구와 주문번호가 함께 있어야 이미 결제된 것으로 본다
@@ -269,6 +269,24 @@ def expect_name(a: Assignment) -> str:
     if is_cross_buy(a) and a.handoff.get('product_name'):
         return str(a.handoff.get('product_name'))
     return a.order.sku or ''
+
+
+# 카드 직접 결제(H몰 롯데카드) — 결제하기 뒤 뜨는 카드사 결제창(KSNET 안심클릭 kspay.ksnet.to → 롯데카드 앱카드·간편결제·
+# 일반결제)은 에이전트가 누르지 않는다. 사람이 폰(카드사 앱)으로 승인하는 동안 주문 완료를 기다린다(사용자 2026-09-27:
+# 모르면 사람 승인 경로). 기다리는 총 시간 = 횟수 × 간격(약 3분)
+DIRECT_CARD_WAIT_TRIES = 36
+DIRECT_CARD_POLL_MS = 5000
+# 주문 완료 화면 글자(카드 직접 결제 대기 중 확인) — 결제 성공 문구와 같다(주문서 글자에는 없다)
+_DIRECT_CARD_DONE = PAY_SUCCESS_MARKERS
+
+
+def direct_card_of(a: Assignment) -> str | None:
+    """이 결제가 소싱처 direct_card(주문서 '카드' 탭 직접 결제)면 카드사 이름, 아니면 None."""
+    src = default_sources().by_id(str(a.handoff.get('buy_source') or a.order.source or ''))
+    card = str(a.options.get('card') or a.handoff.get('card') or '').strip()
+    if src is None or not src.direct_card or card not in DIRECT_CARD_METHODS:
+        return None
+    return str(a.handoff.get('card_issuer') or src.direct_card)
 
 
 def web_pay_provider(card: str) -> str | None:
@@ -788,7 +806,7 @@ class PayerAgent(AgentBase):
             )
         return out
 
-    def _confirm_paid(self, a: Assignment, card: str) -> AgentResult:
+    def _confirm_paid(self, a: Assignment, card: str, paid_by: str = 'agent') -> AgentResult:
         """결제 뒤 성공 확인 — 완료 화면 문구, 없으면(ABC·그랜드스테이지) 주문내역의 방금 생긴 주문으로."""
         self.step('payer: 성공 확인')
         page = self._success_page()
@@ -811,7 +829,7 @@ class PayerAgent(AgentBase):
         payload: dict[str, object] = {
             'dry_run': False,
             'paid': True,
-            'paid_by': 'agent',
+            'paid_by': paid_by,
             'card': card,
         }
         try:
@@ -831,6 +849,39 @@ class PayerAgent(AgentBase):
             reason=f'{card} 로 결제 완료를 화면에서 확인했다',
             payload=payload,
             evidence=tuple(self.evidence),
+        )
+
+    def _wait_direct_card(
+        self, a: Assignment, card: str, issuer: str, entered: dict[str, object]
+    ) -> AgentResult:
+        """카드 직접 결제(H몰 롯데카드) — 결제창이 뜬 뒤 사람이 카드사 앱으로 승인할 때까지 주문 완료를 기다린다.
+
+        에이전트는 결제창(KSNET 안심클릭 → 롯데카드 앱카드·간편결제·일반결제)에서 아무것도 누르지 않는다 — 결제창 종류와
+        비밀번호 키패드 제공자를 모른다(키마스터 H몰 'other' 항목은 이름이 '기타'뿐이라 무엇인지 확정 못 함). 주문 완료가
+        보이면 사람이 결제한 것으로 기록하고, 시간 안에 안 보이면 멈춘다(재결제 금지).
+        """
+        window = str(entered.get('popup_url') or '')
+        self.note(
+            '카드 직접 결제',
+            mask_text(f'{issuer} 결제창({entered.get("pay_window") or "-"} {window[:80]}) — 사람이 폰으로 승인한다. 에이전트는 누르지 않는다'),
+        )
+        self.step(f'payer: {issuer} 결제창 — 사람 승인(폰) 대기')
+        order_tab = str(a.handoff.get('order_tab') or '')
+        for _ in range(DIRECT_CARD_WAIT_TRIES):
+            self.tool('wait', ms=DIRECT_CARD_POLL_MS)
+            try:
+                if order_tab:
+                    self.tool('switch_tab', id=order_tab)
+                page = self.tool('get_page')
+            except AgentFailure:
+                continue
+            if any(m in page for m in _DIRECT_CARD_DONE):
+                self.note('카드 직접 결제', '주문 완료 화면 확인 — 사람이 승인했다')
+                return self._confirm_paid(a, card, paid_by='human')
+        raise AgentFailure(
+            'needs_human',
+            f'{issuer} 결제창 승인을 기다렸지만 주문 완료가 보이지 않는다 — 사람이 결제 여부를 확인한다(재결제 금지)',
+            FailReason.PAY_INTERRUPTED,
         )
 
     def _payco_agree_and_pay(self) -> bool:
@@ -1024,6 +1075,17 @@ class PayerAgent(AgentBase):
             self.step('payer: 포인트 전액 결제 — 결제창 없음')
             return self._confirm_paid(a, card)
 
+        issuer = direct_card_of(a)
+        if a.dry_run and a.dry_run_digits > 0 and issuer:
+            # 카드 직접 결제는 에이전트가 넣을 비밀번호 키패드가 없다(카드사 결제창은 사람이 승인) — 시험 입력도 없다
+            self.step('payer: dry-run — 카드 직접 결제라 키패드 시험 없음')
+            return AgentResult(
+                status='ok',
+                reason=f'dry-run: {issuer} 직접 결제 — 결제창 직전까지만 확인했다(키패드 시험 없음, 결제 안 함)',
+                payload={'dry_run': True, 'paid': False, 'direct_card': issuer},
+                evidence=tuple(self.evidence),
+            )
+
         if a.dry_run and a.dry_run_digits > 0:
             # 키패드 시험 입력: 결제 비밀번호를 절반만 누르고 취소한다(결제는 하지 않는다)
             return self._dry_run_keypad(a, card, a.dry_run_digits)
@@ -1064,6 +1126,10 @@ class PayerAgent(AgentBase):
                 '결제 금액을 모른다 — 확인 전에는 결제하지 않는다',
                 FailReason.UNKNOWN,
             )
+
+        if issuer:
+            # 카드 직접 결제 — 카드사 결제창에서는 아무것도 누르지 않고 사람 승인(폰)을 기다린다
+            return self._wait_direct_card(a, card, issuer, entered)
 
         # 신원정보 칸(주문자 연락처 등)은 사이트에 따라 있을 때만 채운다 — 무신사머니 결제창에는 없다(플레이북 §7)
         # 값은 앱이 직접 채운다 — 여기서는 어떤 비밀값도 보내거나 받지 않는다.
