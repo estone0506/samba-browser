@@ -355,6 +355,8 @@ const PAY_PRIORITY_CHOICES = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 interface Props {
   onEdit: () => void
+  // 선택된 계정을 본떠 새 계정을 만든다(사이트·아이디·비밀번호·태그를 채운 에디터를 연다)
+  onDuplicate: () => void
   // 전역(계정 없는) 항목 편집. 계정용 onEdit 과 분리해 항상 대상 항목을 명시적으로 넘긴다
   onEditGlobal: (item: VaultItemMeta) => void
   // 선택된 계정에 결제 비밀번호를 새로 추가한다
@@ -449,6 +451,7 @@ function PaymentSection({
 
 export function ItemDetail({
   onEdit,
+  onDuplicate,
   onEditGlobal,
   onAddPayment,
   onEditItem
@@ -571,6 +574,14 @@ export function ItemDetail({
           </Button>
           <Button variant="outline" size="sm" className="h-[30px] rounded-[9px]" onClick={onEdit}>
             {t('vault.detail.edit')}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-[30px] rounded-[9px]"
+            onClick={onDuplicate}
+          >
+            {t('vault.detail.duplicate')}
           </Button>
           <Button
             variant="outline"
