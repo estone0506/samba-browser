@@ -223,9 +223,15 @@ export function installExtensionCookiesBridge(ses: Session): void {
   // sbet 쿠키를 읽어 로그인을 맞춘다 — 이벤트가 없으면 로그인해도 확장이 모른다(실기 2026-09-27)
   // 크롬은 이벤트가 오면 잠든 백그라운드를 깨워 전달한다 — 여기서도 서비스워커 확장을 깨운 뒤 보낸다.
   // 막 깨운 워커는 리스너를 다는 데 시간이 걸리므로 잠깐 기다린다(실기 2026-09-27 샵백: 잠든 채 이벤트를 놓쳤다)
-  const sendNav = async (kind: 'committed' | 'completed', wc: WebContents, url: string): Promise<void> => {
+  // 이동 알림은 일어난 순서대로 보낸다 — 깨우기·준비 대기가 비동기라 순서가 섞이면 확장이 탭 주소를
+  // 거꾸로 기억한다(실기 2026-09-27: 활성화 페이지 → 롯데온 순서가 뒤집혀 아이콘이 빨간색으로 남음)
+  let navChain: Promise<void> = Promise.resolve()
+  const sendNav = (kind: 'committed' | 'completed', wc: WebContents, url: string): void => {
     if (!/^https?:/.test(url)) return
     const details = toNavDetails(wc.id, url, Date.now())
+    navChain = navChain.then(() => deliverNav(kind, details)).catch(() => {})
+  }
+  const deliverNav = async (kind: 'committed' | 'completed', details: ReturnType<typeof toNavDetails>): Promise<void> => {
     const exts = ses.extensions?.getAllExtensions?.() ?? []
     for (const ext of exts) {
       const manifest = ext.manifest as { background?: { service_worker?: string } }
@@ -241,8 +247,8 @@ export function installExtensionCookiesBridge(ses: Session): void {
   }
   const watch = (wc: WebContents): void => {
     if (wc.session !== ses) return
-    wc.on('did-navigate', (_ev, url) => void sendNav('committed', wc, url))
-    wc.on('did-finish-load', () => void sendNav('completed', wc, wc.getURL()))
+    wc.on('did-navigate', (_ev, url) => sendNav('committed', wc, url))
+    wc.on('did-finish-load', () => sendNav('completed', wc, wc.getURL()))
   }
   for (const wc of webContents.getAllWebContents()) watch(wc)
   app.on('web-contents-created', (_e, wc) => watch(wc))
