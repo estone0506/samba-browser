@@ -538,14 +538,14 @@ def test_마진_미달로_멈춰도_가격X_표시를_부르지_않는다(setup)
 @pytest.mark.parametrize(
     ('reason', 'flagged'),
     [
-        ('확정 품절: buyer01 — buyer01: 주문 옵션 품절 표시 [...]', True),
-        ('판매 종료 및 중지된 상품', True),
+        ('확정 품절: buyer01 — buyer01: 주문 옵션 품절 표시 [...]', False),
+        ('판매 종료 및 중지된 상품', False),
         ("모든 계정에서 살 수 없다(품절·실패): a — a: 옵션 불일치 ['65838704']", False),
         ('모든 계정에서 살 수 없다(품절·실패): a — a: 원가 못 읽음(None)', False),
     ],
 )
-def test_품절이_확인된_경우만_재고X_를_붙인다(setup, reason, flagged):
-    """스크립트가 옵션·원가를 못 읽은 실패에 재고X·취소요청을 찍지 않는다(실기 2026-09-26 3건)."""
+def test_품절_실패는_자동으로_재고X_를_붙이지_않는다(setup, reason, flagged):
+    """품절로 보여도 워커가 재고X·취소요청을 자동으로 찍지 않는다 — 검수자가 페이지 근거를 보고 적는다(2026-09-28)."""
     q, log, sent, _make = setup
     reg = Registry.load(DEFAULT_ROOT)
     marked: list[tuple[str, str | None]] = []

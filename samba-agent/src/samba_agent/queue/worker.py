@@ -17,7 +17,6 @@ from samba_agent.ops.tracing import run_metadata, traced
 from samba_agent.queue.db import PAY_STARTED_STEP, Job, JobQueue
 from samba_agent.queue.tabs import TabJanitor
 from samba_agent.supervisor.approval import resume_command
-from samba_agent.wave.flags import confirmed_no_stock
 
 THREAD_PREFIX = 'job:'
 
@@ -336,13 +335,12 @@ class Worker:
         )
         if fail and outcome != 'done' and self.d.flag_order is not None and not self.d.dry_run:
             reason = _failed_reason(out)
-            if str(fail) == str(FailReason.OUT_OF_STOCK) and not confirmed_no_stock(reason):
-                # 품절이 확인되지 않은 실패(옵션·원가를 못 읽음)는 재고X·취소요청을 하지 않는다 — 확인된 것만 표시
-                self.d.report(job, f'{job.order_no} 재고X 보류 — 품절 미확인({mask_text(reason)[:80]})')
-            elif str(fail) == str(FailReason.MARGIN):
-                # 마진 미달은 자동으로 가격X·취소요청하지 않는다 — 쿠폰·적립 빠진 견적으로 돈 되는 주문을 잘랐다
-                # (실기 2026-09-28). 사람이 실제 할인가를 보고 정한다
-                self.d.report(job, f'{job.order_no} 가격X 보류 — 사람 확인({mask_text(reason)[:80]})')
+            if str(fail) in (str(FailReason.OUT_OF_STOCK), str(FailReason.MARGIN)):
+                # 품절·마진 미달은 자동으로 재고X·가격X·취소요청하지 않는다 — 스크립트 문구('L (품절)' 합성 등)는
+                # 페이지 근거가 아니다. 검수자가 상품 페이지를 직접 보고 근거(본 가격·품절 표시)를 메모에 적은 뒤
+                # 취소한다(사용자 2026-09-28: 근거 없는 취소 금지)
+                kind = '재고X' if str(fail) == str(FailReason.OUT_OF_STOCK) else '가격X'
+                self.d.report(job, f'{job.order_no} {kind} 보류 — 검수 필요({mask_text(reason)[:80]})')
             else:
                 flagged = self.d.flag_order(job.order_no, str(fail))
                 if flagged:
