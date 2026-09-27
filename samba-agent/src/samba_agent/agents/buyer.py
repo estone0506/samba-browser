@@ -6,6 +6,7 @@
 
 import copy
 import json
+import logging
 import re
 import time
 from collections.abc import Callable
@@ -26,6 +27,8 @@ from samba_agent.ops.masking import mask_text
 from samba_agent.sources import Source, default_sources
 from samba_agent.supervisor.policy import is_poison_seller
 from samba_agent.wave.client import WaveError
+
+logger = logging.getLogger(__name__)
 
 # (주문번호, 배송 종류) → 배송지 사전. 배송 종류는 소싱처 강제값이 있으면 그것, 없으면 주문의 값.
 # 개인정보라 반환값은 호출 안에서만 쓰고 버린다
@@ -811,6 +814,15 @@ def prep_screen_mismatch(o: dict[str, object]) -> str | None:
             f'보유 적립금 {balance:,.0f}원(5만원 이상)인데 보유 적립금 사용이 0원이다 — "최대 사용"을 눌러 '
             f'한도({limit:,.0f}원)까지 써라'
         )
+    return None
+
+
+def own_snapshot_problem(snap: dict[str, object]) -> str | None:
+    """교차 비교에서 이 사이트 스냅샷을 비교에 쓸 수 없는 사유(스크립트 오류·원가 0). 쓸 수 있으면 None."""
+    if snap.get('error'):
+        return f'{snap.get("error")}: {str(snap.get("note") or "")[:60]}'
+    if _as_float(snap.get('cost')) <= 0:
+        return f'원가 못 읽음({str(snap.get("note") or "")[:60]})'
     return None
 
 
@@ -2278,6 +2290,8 @@ class BuyerAgent(AgentBase):
         sib = self.sibling
         if sib is None or a.options.get('no_cross') or not (a.order.product_url or model_code_of(a.order.sku)):
             return None
+        if snap is not None and (snap.get('already_ordered') or snap.get('existing_order_no')):
+            return None  # 이 사이트에서 이미 산 흔적 — 다른 사이트에서 또 사면 중복 구매다. 호출부가 거절한다
         sib_src = source_of(sib.spec.name)
         self.step(f'{self.spec.name}: 교차 비교({sib_src.id})')
         sib._dry_run = self._dry_run
@@ -2312,6 +2326,9 @@ class BuyerAgent(AgentBase):
         sib_src = source_of(sib.spec.name)
         here = source_of(self.spec.name).id
         fallback = snap is None  # 이 사이트 견적 없음(봇 차단) — 다른 사이트만 견적해 산다
+        # 이 사이트 스냅샷은 받았는데 못 쓰는 값(주문서 못 엶·원가 0) — 비교 대상이 아니다. 다른 사이트가 되면 그쪽으로.
+        # (실기 2026-09-27 job 258: SSG 주문서가 안 열려 원가 0 → '0 < H몰 < 0' 이 거짓이라 SSG 로 가서 배송지에서 멈췄다)
+        own_bad = own_snapshot_problem(snap) if snap is not None else None
         stay = '사람에게 넘긴다' if fallback else '이 사이트로 산다'
         try:
             found = cmp._find_same_product(a)
@@ -2328,6 +2345,9 @@ class BuyerAgent(AgentBase):
                 self._apply_payment_quotes(a, str(account), snap)
                 snap['_quoted'] = True
             own = _as_float(snap.get('cost'))
+            own_bad = own_snapshot_problem(snap)
+            if own_bad:
+                own = float('inf')
         order2 = a.order.model_copy(
             update={'product_url': url, 'sku': url, 'source': sib_src.id, 'account': None}
         )
@@ -2348,15 +2368,38 @@ class BuyerAgent(AgentBase):
             self.note('교차 비교', mask_text(f'{sib_src.id} 견적 실패({e.reason[:60]}) — {stay}'))
             return None
         other = _as_float(s_snap.get('cost'))
-        own_txt = '견적 없음(봇 차단)' if fallback else f'{account} {own:,.0f}원'
+        if fallback:
+            own_txt = '견적 없음(봇 차단)'
+        elif own_bad:
+            own_txt = mask_text(f'{account} 견적 불가({own_bad[:60]})')
+        else:
+            own_txt = f'{account} {own:,.0f}원'
         self.note('교차 비교', f'{here} {own_txt} vs {sib_src.id} {s_acc} {other:,.0f}원 ({url})')
-        if not (0 < other < own):
-            return None
-        why = f'{here} 봇 차단 — 대체 경로' if fallback else '더 싸다'
-        self.note('교차 비교', f'{sib_src.id} {why} — {sib_src.id} {s_acc} 로 산다')
         a3 = a2.model_copy(update={'order': order2.model_copy(update={'account': s_acc})})
+        if not (0 < other < own):
+            if other > 0:
+                # 이 사이트가 싸서 이 사이트로 산다 — 뒤 단계(배송지·주문서)가 실패하면 이 견적으로 대체 구매한다(_buy)
+                self._cross_alt = (sib, a3, other)
+            self._log_cross(a, f'{here} 선택 — {here} {own_txt} vs {sib_src.id} {other:,.0f}원')
+            return None
+        if fallback:
+            why = f'{here} 봇 차단 — 대체 경로'
+        elif own_bad:
+            why = f'{here} 견적 불가 — 대체 경로'
+        else:
+            why = '더 싸다'
+        self.note('교차 비교', f'{sib_src.id} {why} — {sib_src.id} {s_acc} 로 산다')
+        self._log_cross(a, f'{sib_src.id} 선택({why}) — {here} {own_txt} vs {sib_src.id} {other:,.0f}원')
+        return self._buy_sibling(sib, a3)
+
+    def _buy_sibling(self, sib: 'BuyerAgent', a3: Assignment) -> AgentResult:
+        """교차 비교 짝(sib)으로 산다. 이 사이트 근거를 앞에 붙인다."""
         result = sib(a3)
         return result.model_copy(update={'evidence': (*self.evidence, *result.evidence)})
+
+    def _log_cross(self, a: Assignment, text: str) -> None:
+        """교차 비교 결론을 하네스 로그에도 남긴다 — 근거(evidence)는 체크포인트에만 있어 로그로는 못 봤다(job 258)."""
+        logger.info('%s 교차 비교: %s', a.order.order_no, mask_text(text))
 
     def _quote_parallel(
         self, a: Assignment, accounts: list[str]
@@ -2591,6 +2634,8 @@ class BuyerAgent(AgentBase):
         # 주문마다 비교 기준을 비운다 — 앞 주문의 계정 원가(예: 89,000)가 남아 다음 주문 검사를 잘못 걸었다(실기 2026-09-25)
         self._expect_cost = {}
         self._issued = {}
+        # 교차 비교에서 진 짝 사이트 견적(sib, 배정, 원가) — 이 사이트 진행이 실패하면 그것으로 산다
+        self._cross_alt: tuple[BuyerAgent, Assignment, float] | None = None
         # 계정 비교(사용자 지시 2026-09-23) — 주문 지정 계정이 없으면 키마스터 계정마다 주문서까지
         # 만들어 원가를 비교하고 가장 싼 계정으로 산다
         accounts = self._candidate_accounts(a)
@@ -2617,7 +2662,29 @@ class BuyerAgent(AgentBase):
         delegated = self._cross_compare(a, account, snap)
         if delegated is not None:
             return delegated
+        try:
+            return self._buy_here(a, accounts, account, snap)
+        except AgentFailure as e:
+            # 이 사이트가 싸서 골랐는데 주문서·배송지 단계에서 막혔다 — 결제 전이니 교차 비교 짝 견적으로 대체 구매한다
+            # (사용자 2026-09-27: SSG 스냅샷·배송지 실패 시 H몰로). 중복 구매 흔적은 대체하지 않는다
+            alt = self._cross_alt
+            if alt is None or e.fail_reason is FailReason.DUPLICATE:
+                raise
+            self._cross_alt = None
+            sib, a3, other = alt
+            sib_id = source_of(sib.spec.name).id
+            here = source_of(self.spec.name).id
+            self.note(
+                '교차 비교',
+                mask_text(f'{here} 진행 실패({e.reason[:60]}) — {sib_id} {a3.order.account} {other:,.0f}원으로 대체 구매'),
+            )
+            self._log_cross(a, f'{here} 진행 실패 → {sib_id} 대체({e.reason[:60]})')
+            return self._buy_sibling(sib, a3)
 
+    def _buy_here(
+        self, a: Assignment, accounts: list[str], account: str, snap: dict[str, object]
+    ) -> AgentResult:
+        """계정·스냅샷을 정한 뒤 이 사이트에서 결제 직전까지 준비한다(옵션·배송지·결제수단)."""
         self._check_account(account, snap)
         if (
             source_of(self.spec.name).payment_quotes

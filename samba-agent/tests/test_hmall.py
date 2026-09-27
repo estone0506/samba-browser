@@ -370,6 +370,63 @@ def test_SSG_봇_차단인데_H몰에도_없으면_원래대로_사람에게(reg
 
 
 @respx.mock
+def test_SSG_주문서를_못_열어_원가가_0이면_H몰로_산다(reg, monkeypatch, caplog) -> None:
+    """실기 2026-09-27 job 258: SSG 스냅샷이 no_checkout(원가 0)인데 '0 < H몰 < 0' 이 거짓이라 SSG 로 갔다."""
+    ssg, sib, _seen = _ssg_with_sibling(reg, monkeypatch, 77185)
+    snap = {'error': 'no_checkout', 'note': 'order form not opened', 'cost': 0, 'options': ['285']}
+    with caplog.at_level('INFO', logger='samba_agent.agents.buyer'):
+        out = ssg._cross_compare(assignment(SSG_URL, source='SSG'), 'buyer01', snap)
+    assert out is not None and out.payload['buy_source'] == 'HMALL'
+    assert sib.bought and sib.bought[0].order.account == 'buyer01'
+    notes = [e.detail for e in ssg.evidence if e.label == '교차 비교']
+    assert any('견적 불가' in n and '77,185' in n for n in notes)
+    assert any('HMALL 선택' in r.getMessage() for r in caplog.records)
+
+
+@respx.mock
+def test_SSG_원가_0_은_에러가_없어도_비교에서_지지_않는다(reg, monkeypatch) -> None:
+    ssg, sib, _seen = _ssg_with_sibling(reg, monkeypatch, 77185)
+    out = ssg._cross_compare(assignment(SSG_URL, source='SSG'), 'buyer01', {'cost': 0, 'selected': '285'})
+    assert out is not None and sib.bought
+
+
+@respx.mock
+def test_SSG_에_중복_구매_흔적이면_H몰을_보지_않는다(reg, monkeypatch) -> None:
+    ssg, sib, seen = _ssg_with_sibling(reg, monkeypatch, 77185)
+    out = ssg._cross_compare(assignment(SSG_URL, source='SSG'), 'buyer01', {'cost': 81000, 'already_ordered': True})
+    assert out is None and sib.bought == [] and seen == []
+
+
+def _ssg_buy_fails(monkeypatch, failure: AgentFailure) -> None:
+    monkeypatch.setattr(BuyerAgent, '_login_as', lambda self, account: None)
+    monkeypatch.setattr(BuyerAgent, '_snapshot', lambda self, a, account: {'cost': 81000, 'selected': '285'})
+
+    def buy_here(self, a, accounts, account, snap):
+        raise failure
+
+    monkeypatch.setattr(BuyerAgent, '_buy_here', buy_here)
+
+
+@respx.mock
+def test_SSG_가_싸도_배송지에서_막히면_H몰_견적으로_대체_구매(reg, monkeypatch) -> None:
+    ssg, sib, _seen = _ssg_with_sibling(reg, monkeypatch, 84000)
+    _ssg_buy_fails(monkeypatch, AgentFailure('needs_human', '배송지 입력 검증에 실패했다: no order form', FailReason.UNKNOWN))
+    out = ssg(assignment(SSG_URL, source='SSG'))
+    assert out.status == 'ok' and out.payload['buy_source'] == 'HMALL'
+    bought = sib.bought[0]
+    assert bought.order.source == 'HMALL' and bought.options['entry_url'] == ENTRY
+    assert any('대체 구매' in e.detail for e in out.evidence)
+
+
+@respx.mock
+def test_SSG_중복_구매_실패는_H몰로_대체하지_않는다(reg, monkeypatch) -> None:
+    ssg, sib, _seen = _ssg_with_sibling(reg, monkeypatch, 84000)
+    _ssg_buy_fails(monkeypatch, AgentFailure('fail', '이미 구매한 흔적이 있다', FailReason.DUPLICATE))
+    out = ssg(assignment(SSG_URL, source='SSG'))
+    assert out.status == 'fail' and sib.bought == []
+
+
+@respx.mock
 def test_H몰_찾기는_SSG_를_열지_않게_모델코드·상품명을_넘긴다(reg, monkeypatch) -> None:
     row = default_sources().by_id('HMALL')
     monkeypatch.setattr(buyer_mod, 'source_of', lambda name: row)

@@ -188,6 +188,12 @@ def main() -> None:
         """에이전트 1회 실행 → kind='agent' 이벤트. ops.diagnose 가 이 종류만 집계한다."""
         status = str(getattr(result, 'status', ''))
         fail_reason = getattr(result, 'fail_reason', None)
+        # 교차 비교(SSG ↔ H몰 등) 결론 — 근거는 체크포인트에만 있어 이벤트로는 어느 쪽을 왜 골랐는지 못 봤다(job 258)
+        cross = [
+            mask_text(str(getattr(e, 'detail', '')))[:200]
+            for e in getattr(result, 'evidence', ()) or ()
+            if getattr(e, 'label', '') == '교차 비교'
+        ][:4]
         events.write(
             job_id=int(state.get('job_id', 0)),
             version=version_fn(),
@@ -203,6 +209,7 @@ def main() -> None:
                 'retries': attempt - 1,
                 'order_no': str(getattr(state.get('order'), 'order_no', '')),
                 'reason': mask_text(str(getattr(result, 'reason', '')))[:200],
+                **({'cross': cross} if cross else {}),
             },
         )
 
