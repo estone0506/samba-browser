@@ -827,9 +827,22 @@ def sold_out_option_listed(options: list[str], wanted: str | None) -> bool:
 SOLD_OUT_LISTED_SKIP = '주문 옵션 품절 표시'
 
 
+# 계정 견적 건너뜀 사유 중 상품 전체 품절 표시(_quote 가 붙인다)
+SOLD_OUT_PRODUCT_SKIP = '상품 전체 품절 표시'
+
+
+def snapshot_sold_out(out: dict[str, object]) -> bool:
+    """스냅샷이 '상품 전체가 품절(SOLD OUT)'이라고 알렸는가 — sold_out 이 정확히 True 이고 선택지가 하나도 없을 때만.
+
+    패션플러스는 품절 옵션이 목록에서 빠지고 상품에 SOLD OUT 표시만 남는다(2026-09-27). 선택지가 하나라도
+    읽혔으면 이 확증으로 보지 않는다(주문 옵션만 없을 수 있다 — 그건 옵션 대조가 가른다).
+    """
+    return out.get('sold_out') is True and not out.get('options')
+
+
 def is_confirmed_sold_out_skip(skip: str) -> bool:
-    """계정 견적 건너뜀 사유가 '주문 옵션이 품절 표시로 떠 있다'인가."""
-    return SOLD_OUT_LISTED_SKIP in skip
+    """계정 견적 건너뜀 사유가 '주문 옵션이 품절 표시로 떠 있다'·'상품 전체 품절 표시'인가."""
+    return SOLD_OUT_LISTED_SKIP in skip or SOLD_OUT_PRODUCT_SKIP in skip
 
 
 # 계정 견적 건너뜀 사유 중 '이 계정은 허용 결제수단의 결제 항목이 없다'(_quote 가 붙인다) — 계정 사유
@@ -872,6 +885,9 @@ def snapshot_problem(
         # 주문 옵션이 '품절' 표시로 떠 있다 = 품절이다. 사이즈를 못 골라 selected·원가가 비는 게 당연하다 —
         # 스크립트 잘못이 아니니 고치지 않는다(실기 2026-09-26: 품절 주문마다 계정 4개가 AI 수리를 돌아 1건에 10~20분)
         if option and sold_out_option_listed([str(o) for o in (out.get('options') or [])], option):  # type: ignore[union-attr]
+            return None
+        # 상품 전체 품절(SOLD OUT, 선택지 0개) — 고칠 스크립트가 없다. 호출부가 확정 품절로 끝낸다
+        if snapshot_sold_out(out):
             return None
         if option:
             sel = str(out.get('selected') or '').strip()
@@ -1895,6 +1911,13 @@ class BuyerAgent(AgentBase):
             raise AgentFailure(
                 'fail', f'이미 구매한 흔적이 있다: {a.order.sku}', FailReason.DUPLICATE
             )
+        if snapshot_sold_out(snap):
+            # 상품 전체 품절 — 옵션 대조(AI 매칭 포함)까지 가지 않는다. 계정과 무관한 상품 사유다
+            self.note('계정 견적', mask_text(f'{account}: 불가(상품 전체 품절)'))
+            self._quote_skips.append(
+                f'{account}: {SOLD_OUT_PRODUCT_SKIP} ({str(snap.get("note") or "SOLD OUT")[:60]})'
+            )
+            return None
         options = [str(o) for o in (snap.get('options') or [])]
         if not self._match_options(options, a.order.option):
             self.note('계정 견적', mask_text(f'{account}: 불가(주문 옵션 품절)'))
@@ -2469,6 +2492,13 @@ class BuyerAgent(AgentBase):
 
         options = [str(o) for o in (snap.get('options') or [])]
         if not options:
+            if snapshot_sold_out(snap):
+                # 한 계정으로만 산 경우(주문 지정 계정 등)도 상품 전체 품절 표시면 확정 품절 — 다시 돌려도 같다
+                raise AgentFailure(
+                    'fail',
+                    mask_text(f'{CONFIRMED_SOLD_OUT}: {account} — {SOLD_OUT_PRODUCT_SKIP}'),
+                    FailReason.OUT_OF_STOCK,
+                )
             raise AgentFailure('fail', f'옵션이 없다(품절): {a.order.sku}', FailReason.OUT_OF_STOCK)
         self.note('옵션 목록', ', '.join(options))
 
