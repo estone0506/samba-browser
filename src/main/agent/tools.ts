@@ -889,6 +889,20 @@ ${raw}`
       hosts.push(normalizeHost(opener.url))
       openerId = opener.openerId
     }
+    // 같은 탭 안에서 결제창으로 넘어온 경우(롯데온 → pay.naver.com, opener 없음)는 뒤로가기 이력의
+    // 직전 호스트들을 쇼핑몰 후보로 쓴다 — 없으면 결제 앱 호스트만 남아 계정을 못 골랐다(실기 2026-09-28)
+    if (hosts.length === 1) {
+      try {
+        const nav = tab.view.webContents.navigationHistory
+        const entries = nav.getAllEntries()
+        for (let i = nav.getActiveIndex() - 1; i >= 0 && hosts.length < 4; i -= 1) {
+          const h = normalizeHost(entries[i]?.url ?? '')
+          if (h && !hosts.includes(h) && !sameRegistrableDomain(h, hosts[0])) hosts.push(h)
+        }
+      } catch {
+        // 이력을 못 읽어도 opener 방식은 그대로 동작한다
+      }
+    }
     return hosts.filter((h) => h !== '')
   }
 
