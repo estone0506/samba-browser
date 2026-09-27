@@ -1325,7 +1325,7 @@ def test_까대기_사무실_배송지가_목록에_있으면_골라서_쓴다(r
     assert out.status == 'ok', out.reason
     assert 'abc_order_prep' in calls
     assert 'abc_select_shipping' in calls and 'abc_set_shipping' not in calls
-    assert any('목록의 사무실 배송지' in e.detail for e in out.evidence)
+    assert any('목록의 기존 배송지' in e.detail for e in out.evidence)
 
 
 def test_cheapest_quotes_는_낼_수_없는_수단을_뺀다():

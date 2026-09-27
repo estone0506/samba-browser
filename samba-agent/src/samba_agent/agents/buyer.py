@@ -2311,7 +2311,12 @@ class BuyerAgent(AgentBase):
             self._apply_shipping(a, dict(OFFICE_SHIPPING), account)
             return
 
-        self._apply_shipping(a, self._fetch_shipping(a, snap), account)
+        shipping = self._fetch_shipping(a, snap)
+        # 직배·선물도 같은 배송지가 이미 목록에 있으면 고른다 — 재시도마다 같은 주소가 새로 저장되던 것을 막는다
+        # (실기 2026-09-27: 29CM·무신사 주소록에 같은 고객 주소가 4개 쌓임)
+        if self._select_existing_shipping(dict(shipping), account):
+            return
+        self._apply_shipping(a, shipping, account)
 
     def _select_existing_shipping(self, shipping: dict[str, object], account: str) -> bool:
         """배송지 목록에서 이미 있는 항목(이름·주소)을 골라 주문서에 반영한다(`<key>_select_shipping`).
@@ -2352,7 +2357,7 @@ class BuyerAgent(AgentBase):
                 ),
             )
             return False
-        self.note('배송지', '목록의 사무실 배송지를 골라 주문서에 반영')
+        self.note('배송지', '목록의 기존 배송지를 골라 주문서에 반영')
         return True
 
     def _apply_shipping(self, a: Assignment, shipping: dict[str, object], account: str) -> None:
