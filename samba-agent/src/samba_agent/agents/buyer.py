@@ -225,8 +225,11 @@ def cheapest_quotes(
     wanted_card: str | None,
     payable: set[str] | None = None,
     easy_pay_card: str | None = None,
+    charge_pay: bool = False,
 ) -> list[dict[str, object]]:
     """결제수단 견적 목록을 싼 순으로 정리한다. 금액이 없거나 0 이하인 줄은 뺀다.
+
+    '충전결제' 줄은 charge_pay(소싱처 표)일 때만 후보로 둔다 — 기본은 뺀다(롯데온 L.pay).
 
     payable 이 주어지면 그 제공자로 낼 수 있는 줄만 남긴다(키마스터에 결제 비밀번호·카드가 있는 수단).
     요청자가 카드(수단 이름 또는 카드사 이름 일부)를 지정했으면 그것이 들어간 줄만 남긴다.
@@ -257,8 +260,9 @@ def cheapest_quotes(
         # 그 카드 전용 즉시할인(-5,000)을 받을 수 있다고 견적하면 안 된다
         if card and ('무신사 삼성' in card or '무신사삼성' in card):
             continue
-        if '충전결제' in method:
-            # 롯데온 L.pay 충전결제는 현대카드 결제보다 항상 불리하다 — 후보에서 뺀다(사용자 2026-09-26)
+        if '충전결제' in method and not charge_pay:
+            # 롯데온 L.pay 충전결제는 현대카드 결제보다 항상 불리하다 — 후보에서 뺀다(사용자 2026-09-26).
+            # 소싱처가 charge_pay 로 켜면(SSG MONEY 충전결제 1.5% 적립 등) 비교 후보로 남긴다
             continue
         if card and not any(n in card for n in ALLOWED_CARD_ISSUERS):
             # 허용 카드사(현대·KB·롯데·신한·농협) 밖 — 견적만 싸고 실제로는 기본 카드로 결제된다
@@ -1440,8 +1444,9 @@ class BuyerAgent(AgentBase):
             {**q, 'points_used': used} if isinstance(q, dict) and not q.get('points_used') else q
             for q in raw_quotes
         ]
+        src = source_of(self.spec.name)
         quotes = cheapest_quotes(
-            raw_quotes, a.options.get('card'), payable, source_of(self.spec.name).easy_pay_card
+            raw_quotes, a.options.get('card'), payable, src.easy_pay_card, src.charge_pay
         )
         if not quotes:
             # 결제 항목은 있는데 이 주문서의 수단과 겹치지 않는다 — 모델이 고르게 두면 실결제에서 어차피 막힌다
