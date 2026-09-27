@@ -8,6 +8,8 @@ import { runTabsOp } from './tabs-bridge'
 export const EXT_COOKIES_CHANNEL = 'samba-ext-cookies'
 // 탭·창 보충(preload/extension-sw.ts 의 tabs.create·windows 등)
 export const EXT_TABS_CHANNEL = 'samba-ext-tabs'
+// 쿠키 변경 알림(chrome.cookies.onChanged) — 메인 → 확장 서비스워커
+export const EXT_COOKIE_CHANGED_CHANNEL = 'samba-ext-cookie-changed'
 
 /** 크롬 확장 API 의 Cookie 모양 */
 export interface ChromeCookie {
@@ -39,6 +41,15 @@ export function toChromeCookie(c: Cookie): ChromeCookie {
     ...(c.expirationDate !== undefined ? { expirationDate: c.expirationDate } : {}),
     storeId: '0'
   }
+}
+
+/** chrome.cookies.onChanged 로 보낼 값(순수 함수). Electron 원인 이름을 크롬 이름으로 바꾼다 */
+export function toChromeCookieChange(
+  cookie: Cookie,
+  cause: string,
+  removed: boolean
+): { cookie: ChromeCookie; cause: string; removed: boolean } {
+  return { cookie: toChromeCookie(cookie), cause: cause.replace(/-/g, '_'), removed }
 }
 
 type Details = Record<string, unknown>
@@ -121,9 +132,26 @@ export function enableExtensionServiceWorkerSupport(ses: Session, preloadPath: s
 
 // 이미 처리기를 건 서비스워커(같은 워커에 두 번 걸면 Electron 이 오류를 낸다)
 const wired = new WeakSet<object>()
+// 세션별 쿠키 권한 확장 서비스워커 — 쿠키가 바뀌면 이들에게 알린다
+const cookieWorkers = new WeakMap<Session, Set<{ send: (channel: string, ...args: unknown[]) => void }>>()
 
 /** 세션의 확장 서비스워커가 뜰 때마다 chrome.cookies 처리기를 건다(세션당 1회 호출) */
 export function installExtensionCookiesBridge(ses: Session): void {
+  // 샵백 확장은 로그인 토큰 쿠키가 생기는 것을 onChanged 로 보고 로그인을 알아챈다 — 알림이 없으면
+  // 프로필에서 로그인해도 확장은 로그아웃 상태로 남았다(실기 2026-09-27)
+  const workers = new Set<{ send: (channel: string, ...args: unknown[]) => void }>()
+  cookieWorkers.set(ses, workers)
+  ses.cookies.on('changed', (_e, cookie, cause, removed) => {
+    if (workers.size === 0) return
+    const payload = toChromeCookieChange(cookie, cause, removed)
+    for (const w of [...workers]) {
+      try {
+        w.send(EXT_COOKIE_CHANGED_CHANNEL, payload)
+      } catch {
+        workers.delete(w) // 멈춘 워커
+      }
+    }
+  })
   ses.serviceWorkers.on('running-status-changed', ({ versionId, runningStatus }) => {
     if (runningStatus !== 'starting' && runningStatus !== 'running') return
     const worker = ses.serviceWorkers.getWorkerFromVersionID(versionId)
@@ -131,6 +159,8 @@ export function installExtensionCookiesBridge(ses: Session): void {
     const id = extensionIdOfScope(worker.scope)
     if (!id) return
     wired.add(worker)
+    const ext0 = ses.extensions?.getExtension?.(id) ?? ses.getExtension?.(id)
+    if (ext0 && declaresCookies(ext0.manifest)) workers.add(worker)
     worker.ipc.handle(EXT_COOKIES_CHANNEL, async (_e, op: unknown, details: unknown) => {
       const ext = ses.extensions?.getExtension?.(id) ?? ses.getExtension?.(id)
       if (!ext || !declaresCookies(ext.manifest)) return null

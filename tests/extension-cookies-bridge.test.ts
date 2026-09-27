@@ -44,3 +44,15 @@ describe('확장 쿠키 보충', () => {
     expect((ses as { cookies: { set: ReturnType<typeof vi.fn> } }).cookies.set).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://a.com', name: 'n', value: 'v', sameSite: 'lax' }))
   })
 })
+
+describe('toChromeCookieChange', () => {
+  it('쿠키 변경을 크롬 onChanged 모양으로 바꾸고 원인 이름의 - 를 _ 로 바꾼다', async () => {
+    const { toChromeCookieChange } = await import('../src/main/extensions/cookies-bridge')
+    const c = { name: 'sb_access_token', value: 'v', domain: '.shopback.co.kr', path: '/', secure: true, httpOnly: true, session: false } as unknown as Electron.Cookie
+    const out = toChromeCookieChange(c, 'expired-overwrite', false)
+    expect(out.removed).toBe(false)
+    expect(out.cause).toBe('expired_overwrite')
+    expect(out.cookie.name).toBe('sb_access_token')
+    expect(out.cookie.domain).toBe('.shopback.co.kr')
+  })
+})

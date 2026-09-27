@@ -13,15 +13,34 @@ type CookieOp = 'get' | 'getAll' | 'set' | 'remove'
 const invoke = (op: CookieOp, details: unknown): Promise<unknown> =>
   ipcRenderer.invoke(CHANNEL, op, details)
 
+// 쿠키 변경 알림 — 메인이 세션 쿠키가 바뀔 때마다 보낸다(chrome.cookies.onChanged)
+const CHANGED_CHANNEL = 'samba-ext-cookie-changed'
+const subscribe = (fn: (change: unknown) => void): void => {
+  ipcRenderer.on(CHANGED_CHANNEL, (_e, change: unknown) => fn(change))
+}
+
 // 탭·창 — 메인(extensions/tabs-bridge)이 앱 탭으로 처리한다
 const TABS_CHANNEL = 'samba-ext-tabs'
 const invokeTabs = (op: string, details: unknown): Promise<unknown> =>
   ipcRenderer.invoke(TABS_CHANNEL, op, details)
 
 contextBridge.executeInMainWorld({
-  func: (call: (op: string, details: unknown) => Promise<unknown>): void => {
+  func: (
+    call: (op: string, details: unknown) => Promise<unknown>,
+    listen: (fn: (change: unknown) => void) => void
+  ): void => {
     const g = globalThis as unknown as { chrome?: Record<string, unknown> }
     if (!g.chrome || g.chrome.cookies) return
+    const listeners: Array<(change: unknown) => void> = []
+    listen((change) => {
+      for (const l of [...listeners]) {
+        try {
+          l(change)
+        } catch {
+          // 확장 리스너 오류가 다른 리스너를 막지 않게
+        }
+      }
+    })
     // 콜백을 주면 콜백으로, 안 주면 Promise 로 — 크롬 확장 API 와 같은 모양
     const wrap =
       (op: string) =>
@@ -42,11 +61,19 @@ contextBridge.executeInMainWorld({
       remove: wrap('remove'),
       getAllCookieStores: (cb?: (v: unknown) => void) =>
         typeof cb === 'function' ? cb(stores) : Promise.resolve(stores),
-      // 변경 알림은 아직 없다 — 등록은 받아 두기만 한다(부르는 쪽이 죽지 않게)
-      onChanged: { addListener: () => {}, removeListener: () => {}, hasListener: () => false }
+      onChanged: {
+        addListener: (fn: (change: unknown) => void) => {
+          if (typeof fn === 'function' && !listeners.includes(fn)) listeners.push(fn)
+        },
+        removeListener: (fn: (change: unknown) => void) => {
+          const i = listeners.indexOf(fn)
+          if (i >= 0) listeners.splice(i, 1)
+        },
+        hasListener: (fn: (change: unknown) => void) => listeners.includes(fn)
+      }
     }
   },
-  args: [invoke]
+  args: [invoke, subscribe]
 })
 
 // Electron 서비스워커에 없는 tabs.create·remove, windows, notifications, identity 를 보충한다.
