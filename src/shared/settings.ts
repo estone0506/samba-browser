@@ -98,8 +98,14 @@ export const DEFAULT_SETTINGS = {
   vaultAutoSubmit: true,
   // 로그인 폼의 "로그인 상태 유지" 체크박스를 자동으로 켤지(세션 재사용 → 캡차 감소)
   vaultKeepSignedIn: true,
-  // 저장된 값과 다른 값으로 로그인에 성공하면 묻지 않고 자동으로 비밀번호를 갱신할지 여부
+  // [사용 안 함 — 2026-09-27 부터 vaultAutoSaveLogins 가 대신한다] 예전 "묻지 않고 비밀번호 자동 갱신" 설정.
+  // 기본이 켜짐이라 무확인 저장이 됐다. 저장 파일·동기화 호환을 위해 키만 남긴다
   vaultAutoUpdatePassword: true,
+  // 로그인 성공 뒤 새 계정·바뀐 비밀번호를 묻지 않고 바로 키마스터에 저장할지(기본 꺼짐 — 꺼져 있으면 확인 바로 묻는다)
+  vaultAutoSaveLogins: false,
+  // 저장 제안을 띄우지 않을 사이트(등록 도메인). 확인 바의 '이 사이트는 묻지 않기'가 여기에 더한다.
+  // 제외 도메인(vaultExcludedHosts)과 달리 자동 채움은 그대로 쓴다
+  vaultNeverSaveHosts: [] as string[],
   // 계정 선택기에서 계정을 고르면 로그인 버튼까지 눌러 준다
   autofillAutoSubmit: true,
   vaultExcludedHosts: [] as string[],
@@ -293,6 +299,10 @@ export const settingsSchema = z.object({
   vaultKeepSignedIn: z.boolean().catch(DEFAULT_SETTINGS.vaultKeepSignedIn),
   // 로그인 성공 감지 시 비밀번호 자동 갱신 여부(끄면 기존 "갱신할까요?" 프롬프트로 동작)
   vaultAutoUpdatePassword: z.boolean().catch(DEFAULT_SETTINGS.vaultAutoUpdatePassword),
+  // 묻지 않고 자동 저장(기본 꺼짐)
+  vaultAutoSaveLogins: z.boolean().catch(DEFAULT_SETTINGS.vaultAutoSaveLogins),
+  // 저장 제안을 띄우지 않을 사이트. 손상된 값은 빈 배열로 되돌린다
+  vaultNeverSaveHosts: z.array(z.string()).catch(DEFAULT_SETTINGS.vaultNeverSaveHosts),
   // 제외 도메인(정규화된 host 문자열 목록). 손상된 값은 빈 배열로 되돌린다
   autofillAutoSubmit: z.boolean().catch(DEFAULT_SETTINGS.autofillAutoSubmit),
   vaultExcludedHosts: z.array(z.string()).catch(DEFAULT_SETTINGS.vaultExcludedHosts),

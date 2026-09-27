@@ -194,7 +194,8 @@ export interface PickerAccountDto {
 
 export type VaultState = 'uninitialized' | 'locked' | 'unlocked'
 
-// 저장 제안 카드에 쓰는 정보. 비밀번호는 메인에만 남고 여기 담기지 않는다
+// 저장 제안 확인 바에 쓰는 정보. 비밀번호는 메인에만 남고 여기 담기지 않는다.
+// username 도 마스킹한 값(maskUsername)만 담는다 — 렌더러 방송으로 아이디 전체가 퍼지지 않게
 export interface CapturePromptDto {
   host: string
   username: string
@@ -204,12 +205,37 @@ export interface CapturePromptDto {
   locked: boolean
 }
 
-// 로그인 성공 감지로 비밀번호가 자동 갱신됐을 때 렌더러에 보내는 토스트용 정보.
-// 값(비밀번호)은 담지 않는다. undoToken 은 60초간만 유효하다
+// 확인 바에서 고른 답. never = 이 사이트(등록 도메인)는 다시 묻지 않기
+export type CaptureDecision = 'save' | 'skip' | 'never'
+
+export const CAPTURE_DECISIONS: readonly CaptureDecision[] = ['save', 'skip', 'never']
+
+// '묻지 않고 자동 저장'으로 저장·갱신됐을 때 렌더러에 보내는 알림 정보.
+// 값(비밀번호)은 담지 않고 username 은 마스킹한다. undoToken 은 60초간만 유효하다
 export interface PasswordUpdatedDto {
   host: string
   username: string
   undoToken: string
+  // 새 계정을 저장했는지(saved), 기존 계정의 비밀번호를 바꿨는지(updated). 옛 메시지는 updated 로 본다
+  kind?: 'saved' | 'updated'
+}
+
+/**
+ * 아이디를 화면·IPC 용으로 가린다(값 전체가 렌더러로 방송되지 않게).
+ * 이메일은 @ 앞부분만 가리고 도메인은 남긴다. 앞 2자·끝 1자만 보이고 나머지는 *.
+ * 3자 이하면 첫 글자만 남긴다. 빈 값은 그대로 빈 값
+ */
+export function maskUsername(username: string): string {
+  const value = username.trim()
+  if (!value) return ''
+  const at = value.lastIndexOf('@')
+  const local = at > 0 ? value.slice(0, at) : value
+  const domain = at > 0 ? value.slice(at) : ''
+  const chars = Array.from(local)
+  let masked: string
+  if (chars.length <= 3) masked = chars[0] + '*'.repeat(Math.max(chars.length - 1, 1))
+  else masked = chars.slice(0, 2).join('') + '*'.repeat(chars.length - 3) + chars[chars.length - 1]
+  return masked + domain
 }
 
 // 사용 기록(감사 로그) 한 줄. 값(평문)은 절대 포함하지 않는다

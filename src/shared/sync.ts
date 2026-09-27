@@ -144,6 +144,8 @@ export const SYNCED_SETTING_KEYS = [
   'vaultAutoSubmit',
   'vaultKeepSignedIn',
   'vaultAutoUpdatePassword',
+  'vaultAutoSaveLogins',
+  'vaultNeverSaveHosts',
   'vaultExcludedHosts',
   'autofillAutoSubmit',
   'homeUrl',

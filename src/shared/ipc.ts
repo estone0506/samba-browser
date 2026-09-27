@@ -311,6 +311,7 @@ export type {
   VaultItemMeta,
   VaultState,
   CapturePromptDto,
+  CaptureDecision,
   PasswordUpdatedDto,
   AuditLogDto
 } from './vault'
