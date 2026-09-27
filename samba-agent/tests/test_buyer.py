@@ -1166,6 +1166,8 @@ def test_배송지_비교는_사이트_표기_차이를_허용한다():
     old = {'name': '홍길동', 'address': '인천광역시 서구 원창동', 'address_detail': '인천광역시 서구 원창동 488 로지스허브 9층910호'}
     assert shipping_matches(old, {'name': '홍길동', 'address': '인천 서해구 원창동 488 로지스허브 9층910호'})
     assert not shipping_matches(old, {'name': '홍길동', 'address': '인천 서해구 원창동 488 로지스허브 9층911호'})
+    comma = {'name': '김*영', 'address': '서울 강동구 천중로35가길 6, 401호 (천호동 55-2, 그린캐슬)'}
+    assert shipping_matches(comma, {'name': '김*영', 'address': '서울 강동구 천중로35가길 6 401호'})
 
 
 def test_matching_options_품절임박은_품절이_아니고_토큰_하나로도_맞춘다():
