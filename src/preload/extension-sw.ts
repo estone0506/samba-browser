@@ -172,7 +172,7 @@ contextBridge.executeInMainWorld({
     // webNavigation — Electron 에 없다. 샵백 백그라운드가 시작하자마자 onBeforeNavigate 에 붙다가 죽었다(2026-09-26).
     // 이벤트는 아직 보내 주지 않는다(등록만 받는다). 프레임 조회는 최상위 프레임 하나로 답한다
     // 최상위 프레임 이동만 보낸다(샵백은 onCommitted 로 로그인 쿠키를 맞춘다 — 2026-09-27)
-    const navListeners: Record<string, Array<(d: unknown) => void>> = { committed: [], completed: [] }
+    const navListeners: Record<string, Array<(d: unknown) => void>> = { committed: [], domloaded: [], completed: [] }
     // tabs.onActivated — 탭이 보이는 탭이 될 때(앱 탭 관리자가 알린다)
     const activatedListeners: Array<(info: unknown) => void> = []
     set(tabs, 'onActivated', {
@@ -197,7 +197,7 @@ contextBridge.executeInMainWorld({
         }
         return
       }
-      fireUpdated(kind, details)
+      if (kind !== 'domloaded') fireUpdated(kind, details)
       for (const l of [...(navListeners[kind] ?? [])]) {
         try {
           l(details)
@@ -260,7 +260,7 @@ contextBridge.executeInMainWorld({
         getFrame: (d: unknown, cb?: unknown) => reply(frames(d).then((f) => (f ? f[0] : null)), cb),
         onBeforeNavigate: noEvent,
         onCommitted: navEvent('committed'),
-        onDOMContentLoaded: noEvent,
+        onDOMContentLoaded: navEvent('domloaded'),
         onCompleted: navEvent('completed'),
         onErrorOccurred: noEvent,
         onCreatedNavigationTarget: noEvent,

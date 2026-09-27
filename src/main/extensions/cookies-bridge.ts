@@ -238,7 +238,7 @@ export function installExtensionCookiesBridge(ses: Session): void {
     navChain = navChain.then(() => deliverNav(kind, details)).catch(() => {})
   }
   tabEventSenders.set(ses, enqueue)
-  const sendNav = (kind: 'committed' | 'completed', wc: WebContents, url: string): void => {
+  const sendNav = (kind: 'committed' | 'domloaded' | 'completed', wc: WebContents, url: string): void => {
     if (!/^https?:/.test(url)) return
     const active = isActiveTabId(wc.id)
     enqueue(kind, toNavDetails(wc.id, url, Date.now(), active))
@@ -265,6 +265,8 @@ export function installExtensionCookiesBridge(ses: Session): void {
   const watch = (wc: WebContents): void => {
     if (wc.session !== ses) return
     wc.on('did-navigate', (_ev, url) => sendNav('committed', wc, url))
+    // 샵백은 onDOMContentLoaded 에서 API 해시·매장 목록을 받아 온다 — 없으면 매장 목록이 비어 아이콘이 안 바뀐다(2026-09-27)
+    wc.on('dom-ready', () => sendNav('domloaded', wc, wc.getURL()))
     wc.on('did-finish-load', () => sendNav('completed', wc, wc.getURL()))
   }
   for (const wc of webContents.getAllWebContents()) watch(wc)
