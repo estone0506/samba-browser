@@ -295,7 +295,6 @@ class RecorderAgent(AgentBase):
         elif isinstance(box, int | float) and not isinstance(box, bool) and box >= 0:
             detail = {**detail, 'points_used': min(float(box), float(detail.get('points_used') or 0) or float(box))}
         quoted_reward = a.handoff.get('reward')
-        from_quote = False
         if (
             not detail.get('reward')
             and isinstance(quoted_reward, int | float)
@@ -305,21 +304,7 @@ class RecorderAgent(AgentBase):
             # 주문 상세에 적립이 안 나온다(ABC·그랜드스테이지: 구매확정 뒤 지급) — 결제 전 견적의 적립으로 원가를 낸다
             # (실기 2026-09-25 HQ2414: 적립 1,640원이 빠져 원가 59,200 기록, 맞는 값 57,560)
             detail = {**detail, 'reward': float(quoted_reward)}
-            from_quote = True
-        adpick = a.handoff.get('adpick_reward')
-        if (
-            not from_quote
-            and isinstance(adpick, int | float)
-            and not isinstance(adpick, bool)
-            and adpick > 0
-        ):
-            # 애드픽 경로 적립(SSG) — 주문 상세에는 사이트 적립만 나온다. 견적 적립(위)에는 이미 들어 있어 한 번만 더한다
-            try:
-                site_reward = float(detail.get('reward') or 0)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                site_reward = 0.0
-            detail = {**detail, 'reward': site_reward + float(adpick)}
-            self.note('애드픽 적립', f'{float(adpick):,.0f}원을 적립에 더한다(주문 상세엔 없다)')
+        # 애드픽·샵백 적립은 원가에 넣지 않는다(사용자 2026-09-27) — 주문 상세·견적의 사이트 적립만 쓴다
         cost = actual_cost(detail)
         if cost is None:
             self.note('실제 원가', '결제액을 못 읽어 견적 원가로 기록')

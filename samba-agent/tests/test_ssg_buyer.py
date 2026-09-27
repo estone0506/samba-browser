@@ -164,9 +164,9 @@ def test_신세계몰이_아니면_같은_모델_후보를_싼_순서로_보고_
     # 상품번호·상품명은 고른 후보 값
     assert snap['product_no'] == '1000000000333'
     assert snap['product_name'] == '나이키 HF5441-100 B'
-    # 원가 = 결제액 − 애드픽 적립(한 번만)
+    # 애드픽 적립은 원가에 넣지 않는다(사용자 2026-09-27) — 적립 예정액만 남긴다
     assert snap['route'] == 'adpick'
-    assert (snap['cost'], snap['reward'], snap['adpick_reward']) == (93480, 1520, 1520)
+    assert (snap['cost'], snap['adpick_reward']) == (95000, 1520)
     # 옵션이 없는 후보에 AI 수리를 돌리지 않았다(수리는 다른 이름의 도구 호출을 남긴다)
     assert {n for n, _ in calls} == {'ssg_find_mall_item', 'ssg_product_snapshot', 'ssg_route_quotes'}
 
@@ -191,7 +191,7 @@ def test_기본은_애드픽_경로_스냅샷_하나로_산다(ssg) -> None:
     shot = snapshots(calls)[0]
     assert (shot['route'], shot['entry_url'], shot['adpick_percent']) == ('adpick', ADPICK, 1.6)
     assert snap['route'] == 'adpick'
-    assert (snap['cost'], snap['reward'], snap['pay_amount']) == (93480, 1520, 95000)
+    assert (snap['cost'], snap['pay_amount'], snap['adpick_reward']) == (95000, 95000, 1520)
 
 
 @respx.mock
@@ -352,7 +352,7 @@ def test_애드픽_경로에서_봇_차단이면_직접_경로로_넘어가지_�
 
 
 @respx.mock
-def test_애드픽_경로_적립은_결제수단_견적_줄마다_한_번_더한다(ssg, monkeypatch) -> None:
+def test_애드픽_경로_적립은_결제수단_견적_원가에_넣지_않는다(ssg, monkeypatch) -> None:
     calls: Calls = []
     mock_scripts(
         {
@@ -370,20 +370,19 @@ def test_애드픽_경로_적립은_결제수단_견적_줄마다_한_번_더한
     )
     monkeypatch.setattr(BuyerAgent, '_payable_providers', lambda self, acc: {'site'})
     monkeypatch.setattr(BuyerAgent, '_allowed_providers', lambda self, acc=None: None)
-    # 경로 비교가 이미 애드픽 적립을 넣은 스냅샷(원가 98,400 = 100,000 − 1,600)
     snap: dict[str, object] = {
         'route': 'adpick',
         'adpick_rate': 1.6,
         'adpick_reward': 1600,
-        'cost': 98400,
-        'reward': 1600,
+        'cost': 100000,
+        'reward': 0,
         'pay_amount': 100000,
         'methods': ['SSGPAY', 'SSG MONEY'],
     }
     ssg._apply_payment_quotes(assignment(MALL_B), 'acc1', snap)
-    # 원가 = 100,000 × 0.973(현대 청구할인) − 1,600(애드픽 1.6%) = 95,700 — 애드픽 적립은 한 번만
+    # 원가 = 100,000 × 0.973(현대 청구할인) — 애드픽 적립은 원가 밖(사용자 2026-09-27)
     assert (snap['pay_method'], snap['pay_card']) == ('SSGPAY', '현대카드')
-    assert (snap['cost'], snap['reward'], snap['pay_amount']) == (95700, 1600, 100000)
+    assert (snap['cost'], snap['reward'], snap['pay_amount']) == (97300, 0, 100000)
 
 
 def test_애드픽_적립_계산() -> None:

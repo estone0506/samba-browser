@@ -461,9 +461,10 @@ def blocked_failure(out: dict[str, object], what: str) -> AgentFailure | None:
 
 
 def route_cost(snap: dict[str, object]) -> float:
-    """경로 비교 원가 = 결제액 − 애드픽 적립. 결제액을 모르면 0(비교에서 뺀다)."""
+    """경로 비교 값 = 결제액. 애드픽·샵백 적립은 원가에 넣지 않는다(사용자 2026-09-27) — 결제액이 같으면
+    호출부가 애드픽 경로를 고른다. 결제액을 모르면 0(비교에서 뺀다)."""
     paid = _as_float(snap.get('pay_amount')) or _as_float(snap.get('cost'))
-    return paid - adpick_reward_of(snap) if paid > 0 else 0.0
+    return paid if paid > 0 else 0.0
 
 
 def product_no_of(url: str | None) -> str:
@@ -1314,8 +1315,79 @@ class BuyerAgent(AgentBase):
         if source.mall_item or source.route_compare:
             return self._mall_route_snapshot(a, account)
         if source.entry_route:
-            return self._snapshot_once(a, account, self._entry_extra(a, account))
+            first = self._snapshot_once(a, account, self._entry_extra(a, account))
+            if ADPICK_ROUTE in (source.routes or []):
+                return self._entry_vs_adpick(a, account, first)
+            return first
         return self._snapshot_once(a, account)
+
+    def _entry_vs_adpick(self, a: Assignment, account: str, first: dict[str, object]) -> dict[str, object]:
+        """정해진 진입 경로(H몰 = 다나와) 주문서와 애드픽 적립 링크 주문서의 원가(결제액 − 적립)를 비교한다.
+
+        사용자 2026-09-27: H몰·GS샵은 애드픽 적립을 받는다. 다나와 제휴할인과 애드픽 적립은 제휴코드가 달라
+        함께 받을 수 없다 — 싼 쪽으로 산다. 애드픽 링크를 못 받거나 그 주문서를 못 쓰면 첫 경로로 산다.
+        """
+        if first.get('error') or first.get('already_ordered') or first.get('existing_order_no') or self._unusable(a, first):
+            return first
+        product_url = str(first.get('product_url') or a.order.product_url or '')
+        link = self._adpick_link(product_url, account)
+        if link is None:
+            return first
+        url, percent = link
+        extra: dict[str, object] = {'route': ADPICK_ROUTE, 'entry_url': url, 'adpick_percent': percent}
+        try:
+            snap = self._snapshot_once(a, account, extra, probe=True)
+        except AgentFailure as e:
+            if e.fail_reason is FailReason.CAPTCHA:
+                raise
+            self.note('경로 비교', mask_text(f'애드픽: 불가({e.reason[:60]})'))
+            return self._reenter(a, account, first)
+        why = self._unusable(a, snap)
+        if why:
+            self.note('경로 비교', mask_text(f'애드픽: 불가({why})'))
+            return self._reenter(a, account, first)
+        snap['adpick_rate'] = percent
+        route = str(source_of(self.spec.name).entry_route)
+        c_first, c_adp = route_cost(first), route_cost(snap)
+        self.note('경로 비교', f'{route} {c_first:,.0f} · 애드픽 {c_adp:,.0f}')
+        # 결제액이 같거나 싸면 애드픽(적립은 원가 밖 수익)
+        if c_adp > 0 and (c_first <= 0 or c_adp <= c_first):
+            snap['route'] = ADPICK_ROUTE
+            self._apply_adpick(snap)
+            return snap
+        # 첫 경로가 싸다 — 제휴코드는 마지막 진입이 덮어쓰므로 첫 경로로 다시 들어가 주문서를 새로 만든다
+        return self._reenter(a, account, first)
+
+    def _reenter(self, a: Assignment, account: str, first: dict[str, object]) -> dict[str, object]:
+        """정해진 진입 경로로 다시 들어가 주문서를 새로 만든다(다른 경로가 제휴코드를 덮어썼을 수 있다)."""
+        again = self._snapshot_once(a, account, self._entry_extra(a, account))
+        why = self._unusable(a, again)
+        if why:
+            raise AgentFailure(
+                'needs_human', mask_text(f'진입 경로로 다시 들어가 주문서를 못 만들었다: {why}'), FailReason.UNKNOWN
+            )
+        again['route'] = str(source_of(self.spec.name).entry_route)
+        return again
+
+    def _adpick_link(self, product_url: str, account: str) -> tuple[str, float] | None:
+        """애드픽 적립 추적 링크와 적립률(%) — 그 계정 프로필의 애드픽 로그인으로 받는다. 못 받으면 None."""
+        if not product_url.startswith('https://'):
+            return None
+        code = (
+            f'return JSON.stringify(await affiliate.adpick({json.dumps(product_url)}, {json.dumps(account)}))'
+        )
+        try:
+            raw = self.tool('run_js', code=code, safety='no_pay')
+            out = json.loads(json.loads(raw)) if raw.startswith('"') else json.loads(raw)
+        except (AgentFailure, ValueError, TypeError) as e:
+            self.note('경로 비교', mask_text(f'애드픽 링크 못 받음({str(e)[:60]})'))
+            return None
+        url = str(out.get('trackinglink') or '') if isinstance(out, dict) else ''
+        percent = _as_float(str(out.get('percent') or '').rstrip('%')) if isinstance(out, dict) else 0.0
+        if not (out.get('ok') and url.startswith('https://') and percent > 0):
+            self.note('경로 비교', mask_text(f'애드픽 링크 없음({str(out.get("note") if isinstance(out, dict) else out)[:60]})'))
+            return None
+        return url, percent
 
     def _entry_extra(self, a: Assignment, account: str) -> dict[str, object]:
         """진입 경로가 정해진 소싱처(H몰 = 다나와)의 스냅샷 인자 {route, entry_url}.
@@ -1643,8 +1715,8 @@ class BuyerAgent(AgentBase):
                 return first
             tried.append((DIRECT_ROUTE, first, direct))
         costs = ' · '.join(f'{name} {route_cost(sn):,.0f}' for name, sn, _ in tried)
-        # min 은 같은 값이면 앞 것 — 직접 경로가 먼저다
-        route, snap, extra = min(tried, key=lambda t: route_cost(t[1]))
+        # 결제액이 같으면 애드픽 경로(적립은 원가 밖 수익) — 그다음은 앞 것(직접 경로)
+        route, snap, extra = min(tried, key=lambda t: (route_cost(t[1]), t[0] != ADPICK_ROUTE))
         if snap is not tried[-1][1]:
             again = self._snapshot_once(a, account, extra)
             why = self._unusable(a, again)
@@ -1670,11 +1742,9 @@ class BuyerAgent(AgentBase):
         reward = adpick_reward_of(snap)
         if reward <= 0:
             return
-        paid = _as_float(snap.get('pay_amount')) or _as_float(snap.get('cost'))
+        # 애드픽·샵백 적립은 원가에 넣지 않는다(사용자 2026-09-27) — 적립 예정액만 남긴다
         snap['adpick_reward'] = reward
-        snap['cost'] = paid - reward
-        snap['reward'] = _as_float(snap.get('reward')) + reward
-        self.note('애드픽 적립', f'{reward:,.0f}원 — 결제액 {paid:,.0f}원에서 뺀다')
+        self.note('애드픽 적립', f'{reward:,.0f}원 예정 — 원가에는 넣지 않는다')
 
     def _close_order_tabs(self, account: str) -> None:
         """열린 주문서·결제 탭을 닫는다(이 레인에서 보이는 것만). 못 닫아도 스냅샷은 이어 간다."""
@@ -1990,14 +2060,7 @@ class BuyerAgent(AgentBase):
             {**q, 'points_used': used} if isinstance(q, dict) and not q.get('points_used') else q
             for q in raw_quotes
         ]
-        if snap.get('route') == ADPICK_ROUTE and adpick_reward_of(snap) > 0:
-            # 애드픽 경로 적립(결제액 × 적립률) — 견적 줄의 reward 는 사이트 적립뿐이라 줄마다 한 번 더한다
-            raw_quotes = [
-                {**q, 'reward': _as_float(q.get('reward')) + self._adpick_for(snap, _as_float(q.get('cost')))}
-                if isinstance(q, dict)
-                else q
-                for q in raw_quotes
-            ]
+        # 애드픽 적립은 견적 원가에 더하지 않는다(사용자 2026-09-27: 제휴 적립은 원가 밖)
         quotes = cheapest_quotes(
             raw_quotes, a.options.get('card'), payable, src.easy_pay_card, src.charge_pay, src.direct_card
         )

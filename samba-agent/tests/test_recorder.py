@@ -472,14 +472,14 @@ def test_포인트_전액_결제는_현금_0원이라도_원가를_사용_포인
 @pytest.mark.parametrize(
     ('site_reward', 'quoted_reward', 'cost'),
     [
-        # 상세에 사이트 적립(신세계포인트 134)이 있으면 애드픽 적립(1,600)을 더한다: 100,000 × 0.973 − 134 − 1,600
-        (134, 1600, 95566),
-        # 상세에 적립이 없어 견적 적립(애드픽 포함 1,600)을 쓰면 애드픽을 또 더하지 않는다: 97,300 − 1,600
-        (0, 1600, 95700),
+        # 애드픽·샵백 적립은 원가에 넣지 않는다(사용자 2026-09-27): 100,000 × 0.973 − 사이트 적립 134
+        (134, 0, 97166),
+        # 상세·견적 모두 사이트 적립이 없으면 청구할인만: 100,000 × 0.973
+        (0, 0, 97300),
     ],
 )
 @respx.mock
-def test_SSG_애드픽_적립은_기록_원가에_한_번만_뺀다(reg, site_reward, quoted_reward, cost):
+def test_SSG_애드픽_적립은_기록_원가에_넣지_않는다(reg, site_reward, quoted_reward, cost):
     put = respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
         return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
     )

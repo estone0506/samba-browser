@@ -100,6 +100,7 @@ sources:
     login_host: hmall.com
     product_id: '[?&]slitmCd=(\d+)'
     entry_route: danawa  # 사용자 2026-09-27: 반드시 다나와 경유(ReferCode 제휴할인). 직접 진입 금지
+    routes: [danawa, adpick]  # 사용자 2026-09-27: H몰은 애드픽 적립 — 다나와 경유와 원가(결제액 − 적립) 비교해 싼 쪽
     order_prep: true  # hmall_order_prep — 최대 할인 + 포인트는 롯데 5% 즉시할인 기준금액(5만원)이 유지되는 선까지만
     payment_quotes: true  # hmall_payment_quotes — '카드' 탭 카드사별 총액
     shipping_confirm: true  # hmall_set_shipping 은 저장하지 않는다 — 전화 채운 뒤 hmall_confirm_shipping 이 저장·선택
