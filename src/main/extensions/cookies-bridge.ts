@@ -13,6 +13,8 @@ export const EXT_TABS_CHANNEL = 'samba-ext-tabs'
 export const EXT_COOKIE_CHANGED_CHANNEL = 'samba-ext-cookie-changed'
 // 최상위 프레임 이동 알림(chrome.webNavigation.onCommitted·onCompleted) — 메인 → 확장 서비스워커
 export const EXT_NAV_CHANNEL = 'samba-ext-nav'
+// 막 깨운 확장 서비스워커가 리스너를 달 때까지 기다리는 시간
+export const SW_WAKE_WAIT_MS = 700
 
 /** webNavigation 이벤트 값(순수 함수) — 최상위 프레임만 보낸다 */
 export function toNavDetails(
@@ -164,22 +166,32 @@ export function installExtensionCookiesBridge(ses: Session): void {
   cookieWorkers.set(ses, workers)
   // 확장 서비스워커 전부(권한 무관) — 최상위 프레임 이동을 알린다. 샵백은 샵백 페이지 이동(onCommitted)에서
   // sbet 쿠키를 읽어 로그인을 맞춘다 — 이벤트가 없으면 로그인해도 확장이 모른다(실기 2026-09-27)
-  const navWorkers = new Set<{ send: (channel: string, ...args: unknown[]) => void }>()
-  const sendNav = (kind: 'committed' | 'completed', wc: WebContents, url: string): void => {
-    if (navWorkers.size === 0 || !/^https?:/.test(url)) return
+  // 크롬은 이벤트가 오면 잠든 백그라운드를 깨워 전달한다 — 여기서도 서비스워커 확장을 깨운 뒤 보낸다.
+  // 막 깨운 워커는 리스너를 다는 데 시간이 걸리므로 잠깐 기다린다(실기 2026-09-27 샵백: 잠든 채 이벤트를 놓쳤다)
+  const awake = new WeakSet<object>()
+  const sendNav = async (kind: 'committed' | 'completed', wc: WebContents, url: string): Promise<void> => {
+    if (!/^https?:/.test(url)) return
     const details = toNavDetails(wc.id, url, Date.now())
-    for (const w of [...navWorkers]) {
+    const exts = ses.extensions?.getAllExtensions?.() ?? []
+    for (const ext of exts) {
+      const manifest = ext.manifest as { background?: { service_worker?: string } }
+      if (!manifest?.background?.service_worker) continue
       try {
+        const w = await ses.serviceWorkers.startWorkerForScope(`chrome-extension://${ext.id}/`)
+        if (!awake.has(w)) {
+          awake.add(w)
+          await new Promise((r) => setTimeout(r, SW_WAKE_WAIT_MS))
+        }
         w.send(EXT_NAV_CHANNEL, kind, details)
-      } catch {
-        navWorkers.delete(w)
+      } catch (e: unknown) {
+        console.warn('확장 이동 알림 실패', ext.id, e instanceof Error ? e.message : String(e))
       }
     }
   }
   const watch = (wc: WebContents): void => {
     if (wc.session !== ses) return
-    wc.on('did-navigate', (_ev, url) => sendNav('committed', wc, url))
-    wc.on('did-finish-load', () => sendNav('completed', wc, wc.getURL()))
+    wc.on('did-navigate', (_ev, url) => void sendNav('committed', wc, url))
+    wc.on('did-finish-load', () => void sendNav('completed', wc, wc.getURL()))
   }
   for (const wc of webContents.getAllWebContents()) watch(wc)
   app.on('web-contents-created', (_e, wc) => watch(wc))
@@ -203,7 +215,6 @@ export function installExtensionCookiesBridge(ses: Session): void {
     wired.add(worker)
     const ext0 = ses.extensions?.getExtension?.(id) ?? ses.getExtension?.(id)
     if (ext0 && declaresCookies(ext0.manifest)) workers.add(worker)
-    navWorkers.add(worker)
     worker.ipc.handle(EXT_COOKIES_CHANNEL, async (_e, op: unknown, details: unknown) => {
       const ext = ses.extensions?.getExtension?.(id) ?? ses.getExtension?.(id)
       if (!ext || !declaresCookies(ext.manifest)) return null

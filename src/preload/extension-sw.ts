@@ -150,6 +150,7 @@ contextBridge.executeInMainWorld({
     // 최상위 프레임 이동만 보낸다(샵백은 onCommitted 로 로그인 쿠키를 맞춘다 — 2026-09-27)
     const navListeners: Record<string, Array<(d: unknown) => void>> = { committed: [], completed: [] }
     listenNav((kind, details) => {
+      fireUpdated(kind, details)
       for (const l of [...(navListeners[kind] ?? [])]) {
         try {
           l(details)
@@ -157,6 +158,39 @@ contextBridge.executeInMainWorld({
           // 확장 리스너 오류가 다른 리스너를 막지 않게
         }
       }
+    })
+    // tabs.onUpdated — Electron 은 이 이벤트를 우리 탭에 대해 보내지 않는다. 최상위 이동 알림으로 대신 만든다
+    // (샵백은 onUpdated 로 롯데온 탭을 알아채 알림을 띄우고 활성 상태를 기록한다 — 2026-09-27)
+    const updatedListeners: Array<(tabId: number, info: unknown, tab: unknown) => void> = []
+    const fireUpdated = (kind: string, details: unknown): void => {
+      const d = (details ?? {}) as { tabId?: number; url?: string }
+      if (typeof d.tabId !== 'number') return
+      const status = kind === 'committed' ? 'loading' : 'complete'
+      const info = kind === 'committed' ? { status, url: d.url } : { status }
+      call('get', { tabId: d.tabId }).then(
+        (tab) => {
+          const t = { ...((tab ?? {}) as Record<string, unknown>), id: d.tabId, url: d.url, status }
+          for (const l of [...updatedListeners]) {
+            try {
+              l(d.tabId as number, info, t)
+            } catch {
+              // 리스너 오류 무시
+            }
+          }
+        },
+        () => {}
+      )
+    }
+    const tabsAny = (c.tabs ?? {}) as Record<string, unknown>
+    set(tabsAny, 'onUpdated', {
+      addListener: (fn: (tabId: number, info: unknown, tab: unknown) => void) => {
+        if (typeof fn === 'function' && !updatedListeners.includes(fn)) updatedListeners.push(fn)
+      },
+      removeListener: (fn: (tabId: number, info: unknown, tab: unknown) => void) => {
+        const i = updatedListeners.indexOf(fn)
+        if (i >= 0) updatedListeners.splice(i, 1)
+      },
+      hasListener: (fn: (tabId: number, info: unknown, tab: unknown) => void) => updatedListeners.includes(fn)
     })
     const navEvent = (kind: string) => ({
       addListener: (fn: (d: unknown) => void) => {
