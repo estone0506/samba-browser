@@ -262,6 +262,9 @@ class WaveClient:
 
         실제로 산 계정으로 주문계정을 기록하려고 쓴다(주문에 미리 잡힌 계정과 다를 수 있다).
         """
+        # 삼바웨이브는 H몰을 내부적으로 THEHYUNDAI 로 저장한다(표시 이름만 HMALL, 2026-09-27)
+        if source_site.strip().upper() in ('HMALL', 'H몰', '현대H몰'):
+            source_site = 'TheHyundai'
         try:
             body = self._request('GET', '/sourcing-accounts', params={'source_site': source_site})
         except WaveError:
