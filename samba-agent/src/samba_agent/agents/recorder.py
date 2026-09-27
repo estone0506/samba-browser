@@ -11,6 +11,7 @@ import json
 
 from samba_agent.agents.base import AgentBase, AgentFailure, Decision, run_agent, split_page_dialogs
 from samba_agent.agents.contracts import AgentResult, Assignment
+from samba_agent.agents.payer import recent_art_order, recent_cm29_order
 from samba_agent.agents.source_detail import (
     actual_cost,
     detail_args,
@@ -360,6 +361,13 @@ class RecorderAgent(AgentBase):
         덮어쓰지 않고 사람에게 넘긴다.
         """
         sourcing_no = str(values.get('source_order_no') or '').strip()
+        if not sourcing_no:
+            # 결제 단계가 번호를 못 넘겼다 — 사람에게 넘기기 전에 주문내역(ABC·그랜드스테이지·29CM)에서 한 번 더 찾는다
+            # (실기 2026-09-27 job 262: ABC 결제 완료인데 번호 없이 멈춤)
+            sourcing_no = (recent_art_order(self, a) or recent_cm29_order(self, a) or '').strip()
+            if sourcing_no:
+                values['source_order_no'] = sourcing_no
+                self.note('소싱 주문번호(주문내역)', sourcing_no)
         if not sourcing_no:
             raise AgentFailure('needs_human', '기입할 소싱주문번호가 없다', FailReason.UNKNOWN)
         if self.read_actual_cost:

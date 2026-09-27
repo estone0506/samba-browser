@@ -500,3 +500,33 @@ def test_SSG_애드픽_적립은_기록_원가에_한_번만_뺀다(reg, site_re
     out = a(assignment(reg, dry_run=False, handoff=handoff))
     assert out.status == 'ok'
     assert json.loads(put.calls[0].request.content)['cost'] == cost
+
+
+@respx.mock
+def test_소싱주문번호가_없으면_사람에게_넘기기_전에_ABC_주문내역에서_찾아_기입한다(reg):
+    # 실기 2026-09-27 job 262: ABC 네이버페이 결제는 됐는데 번호가 안 넘어와 '기입할 소싱주문번호가 없다'로 멈춤
+    from datetime import datetime, timedelta
+
+    from samba_agent.agents.payer import _KST
+
+    at = (datetime.now(_KST) - timedelta(minutes=2)).strftime('%Y-%m-%d %H:%M:%S')
+    js = respx.post(f'{URL}/tool/run_js').mock(
+        return_value=page({'no': '2026092742392', 'at': at, 'amount': '41,800'})
+    )
+    put = respx.put(f'{WAVE_API}/orders/A1/sourcing').mock(
+        return_value=httpx.Response(200, json={'ok': True, 'order': WAVE_ORDER})
+    )
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(200, json=WAVE_ORDER))
+    respx.get(f'{WAVE_API}/sourcing-accounts').mock(return_value=httpx.Response(200, json={'items': []}))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = recorder_with_wave(reg)(
+        assignment(
+            reg,
+            dry_run=False,
+            expected={'real_price': 89000, 'shipping_fee': 0},
+            handoff={'buy_source': 'ABCmart', 'account': 'buyer02'},
+        )
+    )
+    assert out.status == 'ok'
+    assert js.called
+    assert json.loads(put.calls[0].request.content)['sourcing_order_number'] == '2026092742392'

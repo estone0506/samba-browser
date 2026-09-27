@@ -1359,3 +1359,55 @@ def test_29CM_완료_주소는_이미_결제로_본다():
     tabs = '[{"url":"https://www.29cm.co.kr/order/confirmed/66965965?order_serial=ORD20260925-3907371"}]'
     assert looks_already_paid(tabs, '', '29cm.co.kr')
     assert not looks_already_paid(tabs, '', 'musinsa.com')
+
+
+# ---- 완료 문구는 봤는데 번호를 못 뽑은 경우(실기 2026-09-27 job 262 ABC 네이버페이: recorder 가 번호 없이 멈춤) ----
+
+ABC_HANDOFF = {'buy_source': 'ABCmart', 'account': 'buyer02'}
+
+
+def _art_found(minutes_ago: int = 1, no: str = '2026092742392') -> str:
+    from datetime import datetime, timedelta
+
+    from samba_agent.agents.payer import _KST
+
+    at = (datetime.now(_KST) - timedelta(minutes=minutes_ago)).strftime('%Y-%m-%d %H:%M:%S')
+    return json.dumps({'no': no, 'at': at, 'amount': '41,800'})
+
+
+@respx.mock
+def test_완료_문구만_있고_번호가_없으면_ABC_주문내역에서_번호를_채운다(reg):
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(None))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('네이버페이 결제가 완료되었습니다 주문완료'))
+    js = respx.post(f'{URL}/tool/run_js').mock(return_value=page(_art_found()))
+    a = assignment(reg, dry_run=False, handoff=ABC_HANDOFF)
+    out = agent(reg)._confirm_paid(a, '네이버페이')
+    assert out.status == 'ok'
+    assert out.payload['source_order_no'] == '2026092742392'
+    code = json.loads(js.calls.last.request.content)['args']['code']
+    assert 'abcmart.a-rt.com/mypage/claim/claim-order-main' in code
+
+
+@respx.mock
+def test_완료_문구에서_번호를_뽑았으면_주문내역을_보지_않는다(reg):
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(None))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('주문완료 주문번호 2026092742392'))
+    js = respx.post(f'{URL}/tool/run_js').mock(return_value=page(_art_found()))
+    a = assignment(reg, dry_run=False, handoff=ABC_HANDOFF)
+    out = agent(reg)._confirm_paid(a, '네이버페이')
+    assert out.payload['source_order_no'] == '2026092742392'
+    assert not js.called
+
+
+@respx.mock
+def test_완료_문구만_있고_주문내역도_오래된_주문이면_번호_없이_넘긴다(reg):
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/list_tabs').mock(return_value=list_tabs_page(None))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page('주문완료'))
+    respx.post(f'{URL}/tool/run_js').mock(return_value=page(_art_found(minutes_ago=30)))
+    a = assignment(reg, dry_run=False, handoff=ABC_HANDOFF)
+    out = agent(reg)._confirm_paid(a, '네이버페이')
+    assert out.status == 'ok'
+    assert 'source_order_no' not in out.payload

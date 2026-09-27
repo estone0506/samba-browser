@@ -448,6 +448,77 @@ def _source_order_no(page: str, tabs: str = '') -> str | None:
     return (m.group(1) or m.group(2)) if m else None
 
 
+def recent_art_order(agent: AgentBase, a: Assignment) -> str | None:
+    """a-rt.com(ABC마트·그랜드스테이지) 주문내역에서 10분 안에 생긴 결제완료 주문번호. 아니면 None."""
+    source = str(a.handoff.get('buy_source') or a.order.source or '')
+    host = {'ABCmart': 'abcmart.a-rt.com', 'GrandStage': 'grandstage.a-rt.com'}.get(source)
+    account = str(a.handoff.get('account') or a.order.account or '')
+    if not host or not account:
+        return None
+    code = (
+        f"await tabs.open({{ url: 'https://{host}/mypage/claim/claim-order-main', "
+        f"profile: {json.dumps(account)} }})\n" + _ART_RECENT_ORDER_JS
+    )
+    try:
+        raw = agent.tool('run_js', code=code, safety='no_pay')
+        found = json.loads(raw[raw.index('{'):]) if '{' in raw else {}
+    except (AgentFailure, ValueError):
+        return None
+    no, at = str(found.get('no') or ''), str(found.get('at') or '')
+    if not no or not at:
+        return None
+    try:
+        placed = datetime.strptime(at, '%Y-%m-%d %H:%M:%S').replace(tzinfo=_KST)
+    except ValueError:
+        return None
+    if abs((datetime.now(_KST) - placed).total_seconds()) > 600:
+        return None
+    agent.note('결제 확인(주문내역)', f'{no} {at} {found.get("amount")}원')
+    return no
+
+
+def recent_cm29_order(agent: AgentBase, a: Assignment) -> str | None:
+    """29CM 주문내역에서 10분 안 결제완료 주문 중 이번 상품명·옵션이 맞는 하나의 주문번호. 아니면 None.
+
+    앱 저장 스크립트 cm29_recent_order(읽기만)가 목록·상세를 읽는다. 이름·옵션이 안 맞거나 여러 건이면
+    스크립트가 order_no 를 비워 돌려주고, 그러면 사람에게 넘긴다(재결제 금지).
+    """
+    if str(a.handoff.get('buy_source') or a.order.source or '') != '29CM':
+        return None
+    account = str(a.handoff.get('account') or a.order.account or '')
+    name = str(a.handoff.get('product_name') or '') or expect_name(a)
+    option = str(a.handoff.get('selected') or '') or (a.order.option or '')
+    if not account or not name:
+        return None
+    args = {'profile': account, 'name': name, 'option': option, 'withinMin': 10}
+    try:
+        raw = agent.tool(
+            'run_script',
+            name=CM29_RECENT_ORDER_SCRIPT,
+            args=json.dumps(args, ensure_ascii=False),
+        )
+        found = json.loads(raw[raw.index('{'):]) if '{' in raw else {}
+    except (AgentFailure, ValueError):
+        return None
+    if not isinstance(found, dict):
+        return None
+    no, at = str(found.get('order_no') or ''), str(found.get('at') or '')
+    if not no.startswith('ORD') or not at:
+        why = str(found.get('note') or '')[:120]
+        agent.note('결제 확인(주문내역)', mask_text(f'29CM 못 찾음: {why}'))
+        return None
+    try:
+        placed = datetime.strptime(at, '%Y-%m-%d %H:%M').replace(tzinfo=_KST)
+    except ValueError:
+        return None
+    # 스크립트도 보지만 여기서 한 번 더 — 분 단위 표기라 1분 여유를 둔다
+    if abs((datetime.now(_KST) - placed).total_seconds()) > 660:
+        return None
+    method = str(found.get('method') or '')
+    agent.note('결제 확인(주문내역)', f'{no} {at} {found.get("paid")}원 {method}'.strip())
+    return no
+
+
 class PayerAgent(AgentBase):
     """모든 소싱처의 결제를 맡는다. 등록부에서 retry: 0 이다 — 여기서도 다시 부르지 않는다."""
 
@@ -748,6 +819,10 @@ class PayerAgent(AgentBase):
         except AgentFailure:
             tabs_now = ''
         source_order_no = recent_no or _source_order_no(page, tabs_now)
+        if source_order_no is None:
+            # 완료 문구는 봤는데 화면에서 번호를 못 뽑았다 — 주문내역 폴백으로 채운다
+            # (실기 2026-09-27 job 262 ABC 네이버페이: 결제됐는데 recorder 가 '기입할 소싱주문번호가 없다'로 멈춤)
+            source_order_no = self._recent_art_order(a) or self._recent_cm29_order(a)
         if source_order_no is not None:
             payload['source_order_no'] = source_order_no
             self.note('소싱 주문번호', source_order_no)
@@ -782,73 +857,10 @@ class PayerAgent(AgentBase):
         return '"clicked":true' in out.replace(' ', '')
 
     def _recent_art_order(self, a: Assignment) -> str | None:
-        """a-rt.com(ABC마트·그랜드스테이지) 주문내역에서 10분 안에 생긴 결제완료 주문번호. 아니면 None."""
-        source = str(a.handoff.get('buy_source') or a.order.source or '')
-        host = {'ABCmart': 'abcmart.a-rt.com', 'GrandStage': 'grandstage.a-rt.com'}.get(source)
-        account = str(a.handoff.get('account') or a.order.account or '')
-        if not host or not account:
-            return None
-        code = (
-            f"await tabs.open({{ url: 'https://{host}/mypage/claim/claim-order-main', "
-            f"profile: {json.dumps(account)} }})\n" + _ART_RECENT_ORDER_JS
-        )
-        try:
-            raw = self.tool('run_js', code=code, safety='no_pay')
-            found = json.loads(raw[raw.index('{'):]) if '{' in raw else {}
-        except (AgentFailure, ValueError):
-            return None
-        no, at = str(found.get('no') or ''), str(found.get('at') or '')
-        if not no or not at:
-            return None
-        try:
-            placed = datetime.strptime(at, '%Y-%m-%d %H:%M:%S').replace(tzinfo=_KST)
-        except ValueError:
-            return None
-        if abs((datetime.now(_KST) - placed).total_seconds()) > 600:
-            return None
-        self.note('결제 확인(주문내역)', f'{no} {at} {found.get("amount")}원')
-        return no
+        return recent_art_order(self, a)
 
     def _recent_cm29_order(self, a: Assignment) -> str | None:
-        """29CM 주문내역에서 10분 안 결제완료 주문 중 이번 상품명·옵션이 맞는 하나의 주문번호. 아니면 None.
-
-        앱 저장 스크립트 cm29_recent_order(읽기만)가 목록·상세를 읽는다. 이름·옵션이 안 맞거나 여러 건이면
-        스크립트가 order_no 를 비워 돌려주고, 그러면 사람에게 넘긴다(재결제 금지).
-        """
-        if str(a.handoff.get('buy_source') or a.order.source or '') != '29CM':
-            return None
-        account = str(a.handoff.get('account') or a.order.account or '')
-        name = str(a.handoff.get('product_name') or '') or expect_name(a)
-        option = str(a.handoff.get('selected') or '') or (a.order.option or '')
-        if not account or not name:
-            return None
-        args = {'profile': account, 'name': name, 'option': option, 'withinMin': 10}
-        try:
-            raw = self.tool(
-                'run_script',
-                name=CM29_RECENT_ORDER_SCRIPT,
-                args=json.dumps(args, ensure_ascii=False),
-            )
-            found = json.loads(raw[raw.index('{'):]) if '{' in raw else {}
-        except (AgentFailure, ValueError):
-            return None
-        if not isinstance(found, dict):
-            return None
-        no, at = str(found.get('order_no') or ''), str(found.get('at') or '')
-        if not no.startswith('ORD') or not at:
-            why = str(found.get('note') or '')[:120]
-            self.note('결제 확인(주문내역)', mask_text(f'29CM 못 찾음: {why}'))
-            return None
-        try:
-            placed = datetime.strptime(at, '%Y-%m-%d %H:%M').replace(tzinfo=_KST)
-        except ValueError:
-            return None
-        # 스크립트도 보지만 여기서 한 번 더 — 분 단위 표기라 1분 여유를 둔다
-        if abs((datetime.now(_KST) - placed).total_seconds()) > 660:
-            return None
-        method = str(found.get('method') or '')
-        self.note('결제 확인(주문내역)', f'{no} {at} {found.get("paid")}원 {method}'.strip())
-        return no
+        return recent_cm29_order(self, a)
 
     def _success_page(self) -> str:
         """결제 뒤 화면 — 주문 완료 탭(…/order/result/…, 29CM …/order/confirmed/…)이 있으면 그 탭에서 읽는다."""
