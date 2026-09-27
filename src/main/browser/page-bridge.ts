@@ -22,6 +22,7 @@ import type { Tab } from './tab-manager'
 import {
   automationBlocked,
   isAutomation,
+  markMachineInput,
   withAutomationInput
 } from './human-activity'
 
@@ -376,6 +377,19 @@ export function needsHumanTyping(host: string): boolean {
   return HUMAN_TYPING_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))
 }
 
+/**
+ * 값을 넣는 동작이 끝나면 부른다 — 이 탭의 다음 로그인 제출은 기계가 채운 것으로 보고 저장 제안을 띄우지 않는다
+ * (vault-capture). 성공·실패와 무관하게 표시한다(일부만 들어갔어도 사람이 친 값이 아니다)
+ */
+async function asMachineInput<T>(tab: Tab, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } finally {
+    const wc = tab.view.webContents
+    if (!wc.isDestroyed()) markMachineInput(wc)
+  }
+}
+
 export const pageBridge = {
   // query 를 주면 라벨·name·href·placeholder 가 일치하는 요소만 나열한다(id 는 그대로)
   snapshot: async (tab: Tab, query?: string, selector?: string): Promise<PageSnapshot> => {
@@ -399,9 +413,13 @@ export const pageBridge = {
   click: (tab: Tab, id: number): Promise<string> =>
     callById(tab, id, (n) => ({ op: 'click', id: n }), resultSchema),
   type: (tab: Tab, id: number, text: string, submit: boolean): Promise<string> =>
-    callById(tab, id, (n) => ({ op: 'type', id: n, text, submit }), resultSchema),
+    asMachineInput(tab, () =>
+      callById(tab, id, (n) => ({ op: 'type', id: n, text, submit }), resultSchema)
+    ),
   select: (tab: Tab, id: number, value: string): Promise<string> =>
-    callById(tab, id, (n) => ({ op: 'select', id: n, value }), resultSchema),
+    asMachineInput(tab, () =>
+      callById(tab, id, (n) => ({ op: 'select', id: n, value }), resultSchema)
+    ),
   // id 를 주면 그 요소를 품은 스크롤 상자(드롭다운 목록 등)를 그 요소가 있는 프레임에서 스크롤한다
   scroll: (tab: Tab, dir: 'up' | 'down', id?: number): Promise<string> =>
     callById(
@@ -412,7 +430,10 @@ export const pageBridge = {
     ),
   // 값 주입(SECRET 허용) — 값이 code 문자열 안에 들어가므로, 실패해도 code 를 담은 오류를
   // 만들지 않도록 공용 call() 을 쓰지 않고 이 함수 안에서 직접 try/catch 한다
-  fillValue: async (tab: Tab, id: number, value: string): Promise<string> => {
+  fillValue: (tab: Tab, id: number, value: string): Promise<string> =>
+    asMachineInput(tab, () => pageBridge.fillValueNow(tab, id, value)),
+  /** fillValue 본문(기계 입력 표시 없이 부르지 말 것 — fillValue 를 쓴다) */
+  fillValueNow: async (tab: Tab, id: number, value: string): Promise<string> => {
     const wc = tab.view.webContents
     if (wc.isDestroyed()) return 'page is gone'
     try {
@@ -529,7 +550,7 @@ export const pageBridge = {
   },
   /** 키패드 버튼을 정확히 한 번 누른다(일반 click 의 재시도 폴백이 없다) */
   pressOnce: (tab: Tab, id: number): Promise<string> =>
-    callById(tab, id, (n) => ({ op: 'pressOnce', id: n }), resultSchema),
+    asMachineInput(tab, () => callById(tab, id, (n) => ({ op: 'pressOnce', id: n }), resultSchema)),
   /** 그 프레임의 비밀 입력칸에 찍힌 자리수(값은 읽지 않는다). 셀 수 없으면 null */
   keypadFilled: async (tab: Tab, frameIndex: number): Promise<number | null> => {
     const wc = tab.view.webContents
@@ -644,7 +665,10 @@ export const pageBridge = {
     return call(wc, opToCode({ op: 'valueLength', id: localId }), z.number()).catch(() => -1)
   },
   /** typeLogin 본문(가드 뒤) */
-  typeLoginNow: async (tab: Tab, id: number, value: string): Promise<string> => {
+  typeLoginNow: (tab: Tab, id: number, value: string): Promise<string> =>
+    asMachineInput(tab, () => pageBridge.typeLoginKeys(tab, id, value)),
+  /** typeLoginNow 본문(진짜 키 입력). 기계 입력 표시는 typeLoginNow 가 한다 */
+  typeLoginKeys: async (tab: Tab, id: number, value: string): Promise<string> => {
     const wc = tab.view.webContents
     if (wc.isDestroyed()) return 'page is gone'
     const point = await pageBridge.rectOf(tab, id).catch(() => null)

@@ -70,3 +70,44 @@ export async function withAutomationInput<T>(wc: WebContents, fn: () => Promise<
     automationUntil.set(wc, Date.now() + AUTOMATION_INPUT_TAIL_MS)
   }
 }
+
+// --- 기계가 채운 입력(로그인 저장 제안 제외용) --------------------------------
+//
+// 로그인 자격증명 자동 저장(vault-capture)은 **사람이 친 값**만 받는다. 자동화(AI 도구·하네스 브릿지)나
+// 키마스터 자동 채움(피커·fill_secret·login 도구)이 칸에 값을 넣은 뒤의 제출은 이미 금고에 있는 값이거나
+// 사람이 확인하지 않은 값이라 저장 제안을 띄우지 않는다. page-bridge 가 값을 넣는 동작마다 여기에 표시한다
+
+/** 기계 입력 뒤 이 시간 안에 온 제출은 사람 것으로 보지 않는다 */
+export const MACHINE_FILL_WINDOW_MS = 120_000
+/** 기계 입력이 끝난 뒤 이만큼 안의 키 입력은 그 기계 입력의 늦은 이벤트로 본다(사람이 고쳐 친 것으로 보지 않는다) */
+export const MACHINE_FILL_TAIL_MS = 1_500
+
+const lastMachine = new WeakMap<WebContents, number>()
+
+/** 기계(자동화·자동 채움)가 이 탭의 칸에 값을 넣었다고 표시한다 */
+export function markMachineInput(wc: WebContents, now = Date.now()): void {
+  lastMachine.set(wc, now)
+}
+
+/**
+ * 기계 입력 흔적으로 제출을 사람 것에서 뺄지 판정한다(순수 함수).
+ * - 기계 입력이 없거나 오래전(window 밖)이면 사람 제출
+ * - 기계 입력 뒤 사람이 다시 쳤으면(늦은 이벤트 여유 tail 을 넘겨) 사람 제출 — 자동 채움 뒤 비밀번호를 고쳐 친 경우
+ * - 그 밖에는 기계 제출
+ */
+export function isMachineSubmission(
+  machineAt: number | undefined,
+  humanAt: number | undefined,
+  now: number,
+  windowMs = MACHINE_FILL_WINDOW_MS,
+  tailMs = MACHINE_FILL_TAIL_MS
+): boolean {
+  if (machineAt === undefined || now - machineAt >= windowMs) return false
+  if (humanAt !== undefined && humanAt > machineAt + tailMs) return false
+  return true
+}
+
+/** 이 탭의 지금 제출이 기계가 채운 값의 제출인가 */
+export function machineFilledRecently(wc: WebContents, now = Date.now()): boolean {
+  return isMachineSubmission(lastMachine.get(wc), lastHuman.get(wc), now)
+}
