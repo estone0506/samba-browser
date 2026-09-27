@@ -9,10 +9,10 @@ MALL_ITEM = 'https://shinsegaemall.ssg.com/item/itemView.ssg?itemId=100001234567
 
 
 def _close_re() -> re.Pattern[str]:
-    """주문서 탭 닫기 JS 의 정규식을 파이썬으로 옮긴다(JS 의 '\/' 는 '/')."""
+    r"""주문서 탭 닫기 JS 의 정규식을 파이썬으로 옮긴다(JS 의 '\/' 는 '/')."""
     js = re.search(r'if \(/(.+?)/\.test', _CLOSE_ORDER_TABS_JS)
     assert js
-    return re.compile(js.group(1).replace('\/', '/'))
+    return re.compile(js.group(1).replace(r'\/', '/'))
 
 
 def test_SSG_주문서_탭도_스냅샷_전에_닫는다() -> None:
