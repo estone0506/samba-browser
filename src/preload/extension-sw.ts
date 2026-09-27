@@ -290,6 +290,24 @@ contextBridge.executeInMainWorld({
       return reply(Promise.resolve(undefined), cb)
     })
     if (!c.action) set(c, 'action', action)
+    // chrome.permissions — Electron 에 없다. 샵백은 아이콘 판정 직전에 permissions.contains 를 불러 예외로
+    // 멈췄다(2026-09-28: 활성화돼도 아이콘·알림이 안 나옴). 매니페스트 권한은 모두 허용된 것으로 답한다
+    if (!c.permissions) {
+      const granted = () => {
+        const m = (c.runtime as { getManifest?: () => Record<string, unknown> } | undefined)?.getManifest?.() ?? {}
+        const perms = Array.isArray(m.permissions) ? (m.permissions as string[]) : []
+        const origins = Array.isArray(m.host_permissions) ? (m.host_permissions as string[]) : []
+        return { permissions: perms, origins }
+      }
+      set(c, 'permissions', {
+        contains: (_d: unknown, cb?: unknown) => reply(Promise.resolve(true), cb),
+        getAll: (cb?: unknown) => reply(Promise.resolve(granted()), cb),
+        request: (_d: unknown, cb?: unknown) => reply(Promise.resolve(true), cb),
+        remove: (_d: unknown, cb?: unknown) => reply(Promise.resolve(true), cb),
+        onAdded: noEvent,
+        onRemoved: noEvent
+      })
+    }
     // 크롬 프로필 계정 — 앱에는 없다. 빈 값을 준다
     if (!c.identity) {
       set(c, 'identity', {
