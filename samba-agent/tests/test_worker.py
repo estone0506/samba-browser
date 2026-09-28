@@ -569,6 +569,39 @@ def test_품절_실패는_자동으로_재고X_를_붙이지_않는다(setup, re
         assert any('재고X 보류' in s for s in sent)
 
 
+@pytest.mark.parametrize(
+    ('export_status', 'expect_alert'),
+    [
+        ('conflict', True),
+        ('error', True),
+        ('done', False),
+        ('pending', False),
+        ('skipped', False),
+    ],
+)
+def test_외부_기입_conflict_error는_보고에_남는다(setup, export_status, expect_alert):
+    # 리뷰 지적 — I1: conflict·error 는 report 만으로 완료 문구에 묻혀 운영자에게 안 보였다
+    q, _log, sent, _make = setup
+    reg = Registry.load(DEFAULT_ROOT)
+    graph = build_supervisor(reg, agents([], None), checkpointer=MemorySaver(), gate=False)
+    w = Worker(
+        WorkerDeps(
+            queue=q,
+            graph=graph,
+            version='vtest',
+            report=lambda job, line: sent.append(line),
+            parse_order=order_of,
+        )
+    )
+    job, _ = q.enqueue('A1', 'U1', {}, 'ts1')
+    exporter_result = AgentResult(
+        status='ok', reason=f'외부 기입 {export_status} 사유', payload={'export': export_status}
+    )
+    w._apply(job, {'outcome': 'done', 'results': {'exporter': exporter_result}})
+    alerts = [s for s in sent if '외부 기입' in s and export_status in s]
+    assert (len(alerts) == 1) is expect_alert
+
+
 def test_검증_전_결제수단은_자동_승인하지_않는다(tmp_path):
     """페이코처럼 실결제 검증 전 수단이 뽑히면 사람 승인을 기다린다(2026-09-25)."""
     reg = Registry.load(DEFAULT_ROOT)

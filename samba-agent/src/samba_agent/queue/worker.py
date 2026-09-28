@@ -333,6 +333,9 @@ class Worker:
             job,
             f'{job.order_no} {outcome}' + (f' — 사유 {fail}' if fail else ' — 완료'),
         )
+        export_alert = _export_alert(out)
+        if export_alert is not None:
+            self.d.report(job, mask_text(f'{job.order_no} 외부 기입 {export_alert}')[:200])
         if fail and outcome != 'done' and self.d.flag_order is not None and not self.d.dry_run:
             reason = _failed_reason(out)
             if str(fail) in (str(FailReason.OUT_OF_STOCK), str(FailReason.MARGIN)):
@@ -346,6 +349,27 @@ class Worker:
                 if flagged:
                     self.d.report(job, f'{job.order_no} {flagged}')
         return self.d.queue.get(job.order_no)  # type: ignore[return-value]
+
+
+def _export_alert(out: dict) -> str | None:
+    """exporter 결과가 conflict·error 면 '{상태}: {사유}', 아니면 None.
+
+    ``out['results']`` 는 ``AgentResult`` 객체지만 체크포인트를 거치면 dict 로 올 수도
+    있다(``_failed_reason`` 과 같은 이유) — 둘 다 받는다.
+    """
+    result = (out.get('results') or {}).get('exporter')
+    if result is None:
+        return None
+    if isinstance(result, dict):
+        payload = result.get('payload') or {}
+        reason = result.get('reason')
+    else:
+        payload = result.payload
+        reason = result.reason
+    status = payload.get('export')
+    if status not in ('conflict', 'error'):
+        return None
+    return f'{status}: {reason or ""}'
 
 
 def _failed_reason(out: dict) -> str:
