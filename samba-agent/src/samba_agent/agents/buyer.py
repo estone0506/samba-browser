@@ -301,7 +301,7 @@ def cheapest_quotes(
             # 소싱처가 charge_pay 로 켜면(SSG MONEY 충전결제 1.5% 적립 등) 비교 후보로 남긴다
             continue
         if card and not any(n in card for n in ALLOWED_CARD_ISSUERS):
-            # 허용 카드사(현대·KB·롯데·신한·농협) 밖 — 견적만 싸고 실제로는 기본 카드로 결제된다
+            # 허용 카드사(ALLOWED_CARD_ISSUERS) 밖 — 견적만 싸고 실제로는 기본 카드로 결제된다
             # (실기: 삼성카드 할인가 49,310 으로 골랐는데 롯데카드로 51,360 결제)
             continue
         if payable is not None:
@@ -495,9 +495,10 @@ def effective_cost(row: dict[str, object]) -> float:
     return round(paid * billing_factor(str(row.get('card') or '') or None) - reward + used)
 
 
-# 결제창(토스페이·네이버페이) 안에서 고를 수 있는 카드사(사용자 2026-09-24: 현대·KB·롯데·신한·농협). 주문서 단계의
+# 결제창(토스페이·네이버페이) 안에서 고를 수 있는 카드사. 2026-09-24: 현대·KB·롯데·신한·농협, 2026-09-28 사용자 추가:
+# 우리·BC·삼성(일반 삼성카드 — '무신사 삼성카드' 제휴카드와 다르며 그쪽은 위에서 따로 뺀다). 주문서 단계의
 # '카드 직접 결제'는 쓰지 않는다 — 카드는 간편결제 창 안에서만 고른다. 결제 에이전트가 카드를 고를 때 이 표를 쓴다
-ALLOWED_CARD_ISSUERS = ('현대', 'KB', '국민', '롯데', '신한', '농협', 'NH')
+ALLOWED_CARD_ISSUERS = ('현대', 'KB', '국민', '롯데', '신한', '농협', 'NH', '우리', 'BC', '비씨', '삼성')
 
 
 def decide_order_type(
