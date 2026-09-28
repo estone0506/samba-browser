@@ -116,10 +116,10 @@ class ExportQueue:
             self._db.execute('BEGIN IMMEDIATE')
             try:
                 yield
+                self._db.execute('COMMIT')
             except BaseException:
                 self._db.execute('ROLLBACK')
                 raise
-            self._db.execute('COMMIT')
 
     def _row(self, request_id: int) -> sqlite3.Row | None:
         return self._db.execute(

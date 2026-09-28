@@ -1,4 +1,5 @@
 # 외부 기입 큐 — 중복 방지 · 상태 전이 · 재시도 예약 · 작업자 생존 표시
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -225,3 +226,34 @@ def test_없는_요청을_찾으면_KeyError(queue):
     with pytest.raises(KeyError):
         queue.get(999)
     assert queue.find('A1', 'emp') is None
+
+
+def test_COMMIT_실패_때도_롤백_해_연결을_산다(queue):
+    """COMMIT이 실패해도 ROLLBACK이 실행되므로 다음 트랜잭션이 가능하다."""
+
+    class DbWrapper:
+        """sqlite3.Connection을 감싸서 COMMIT을 조작한다."""
+
+        def __init__(self, db, fail_commit_once=True):
+            self._db = db
+            self._fail_commit_once = fail_commit_once
+
+        def __getattr__(self, name):
+            return getattr(self._db, name)
+
+        def execute(self, sql, params=()):
+            if self._fail_commit_once and sql == 'COMMIT':
+                self._fail_commit_once = False
+                raise sqlite3.OperationalError('simulated commit failure')
+            return self._db.execute(sql, params)
+
+    original_db = queue._db
+    queue._db = DbWrapper(original_db)
+    try:
+        with pytest.raises(sqlite3.OperationalError, match='simulated commit failure'):
+            queue.enqueue('A1', 'emp', 1000, 0)
+    finally:
+        queue._db = original_db
+    # 트랜잭션이 제대로 롤백되었다면 다음 enqueue가 성공해야 한다
+    req = queue.enqueue('A1', 'emp', 1000, 0)
+    assert req.status == 'pending'
