@@ -432,6 +432,30 @@ contextBridge.executeInMainWorld({
     } catch {
       // 리스너 등록 실패는 무시
     }
+    // 저장소 진단 — 워커가 읽는 chrome.storage.local 에 proxyUrl·deviceId 가 있는지(콘텐츠 스크립트 쪽과 다를 수 있다)
+    setTimeout(() => {
+      const st = (
+        c.storage as
+          { local?: { get?: (k: unknown) => Promise<Record<string, unknown>> } } | undefined
+      )?.local
+      if (!st?.get) {
+        report('storage', 'chrome.storage.local 없음')
+        return
+      }
+      st.get(['proxyUrl', 'deviceId', 'apiKey'])
+        .then((d) =>
+          report(
+            'storage',
+            JSON.stringify({
+              keys: Object.keys(d ?? {}),
+              proxyUrl: d?.proxyUrl ? 'set' : 'empty',
+              deviceId: d?.deviceId ? 'set' : 'none',
+              apiKey: d?.apiKey ? 'set' : 'none'
+            })
+          )
+        )
+        .catch((e: unknown) => report('storage', 'ERR ' + describe(e)))
+    }, 3000)
     // fetch 실패 진단 — 워커의 fetch 만 "Failed to fetch" 로 끝나는 일(2026-09-28: 레시피 버전 체크)을 주소·사유와 함께 남긴다
     const gf = globalThis as unknown as {
       fetch?: (input: unknown, init?: unknown) => Promise<unknown>
