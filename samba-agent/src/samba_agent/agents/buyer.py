@@ -1154,8 +1154,28 @@ class BuyerAgent(AgentBase):
 
         앱 login 도구는 이미 로그인돼 있으면 누구인지까지는 말해 주지 않는다 — 계정 일치는
         스냅샷의 account 로 한 번 더 본다(_check_account).
+
+        확인에 쓴 홈 탭은 끝나면 닫는다 — 스냅샷 스크립트가 상품·주문서 탭을 따로 열어 계정마다 탭이
+        둘씩 남았다(사용자 2026-09-28: 같은 사이트·같은 계정 탭이 중복으로 떠 리소스를 먹는다).
         """
-        home = self._home()
+        opened: list[str] = []
+        try:
+            self._login_check(account, opened)
+        finally:
+            for tab_id in opened:
+                try:
+                    self.tool('close_tab', id=tab_id)
+                except AgentFailure:
+                    pass  # 이미 닫혔거나 못 닫아도 로그인 결과는 바꾸지 않는다
+
+    def _open_home(self, account: str, opened: list[str]) -> None:
+        """계정 프로필로 홈 탭을 열고 그 탭 id 를 적어 둔다(끝나면 닫는다)."""
+        out = self.tool('new_tab', url=self._home(), profile=account)
+        m = re.search(r'tab ([0-9a-fA-F-]{8,})', out)
+        if m:
+            opened.append(m.group(1))
+
+    def _login_check(self, account: str, opened: list[str]) -> None:
         self.step(f'{self.spec.name}: 로그인 확인({account})')
         # 같은 사이트에서 직전에 다른 계정으로 로그인했으면 간격을 둔다(연달아 바꾸면 차단)
         last = self._last_login
@@ -1167,7 +1187,7 @@ class BuyerAgent(AgentBase):
                 self.tool('wait', ms=int(gap * 1000))
         self._last_login = (account, time.monotonic())
         # 계정 이름의 프로필로 탭을 연다 — 저장 스크립트도 같은 profile 인자를 받아 그 세션에서 돈다
-        self.tool('new_tab', url=home, profile=account)
+        self._open_home(account, opened)
         self.tool('wait', ms=_LOGIN_SETTLE_MS)
         out = self.tool('login', accountLabel=account).strip()
         # 계정 여럿을 동시에 돌려 앱이 바쁠 때 홈이 다 뜨기 전에 불리면 로그인 상태도 입력칸도 못 본다
@@ -1180,7 +1200,7 @@ class BuyerAgent(AgentBase):
             # 탭을 새로 열면 같은 로딩을 또 기다린다(실측 2026-09-28: 병렬 첫 호출 7~20초, 둘째 호출 0.7초).
             # 응답이 없었던 경우는 그 탭이 떠 가는 중이니 그대로 다시 부르고, 탭 자체가 없을 때만 새로 연다
             if not out.startswith('error: page did not respond'):
-                self.tool('new_tab', url=home, profile=account)
+                self._open_home(account, opened)
             self.tool('wait', ms=_LOGIN_SETTLE_MS * 2 * retry)
             out = self.tool('login', accountLabel=account).strip()
         if out.startswith(ALREADY_SIGNED_IN):
@@ -2553,7 +2573,15 @@ class BuyerAgent(AgentBase):
             clone._quote_skips = []
             clone._last_login = None
             clone._issued = {}
-            return account, clone._quote(a, account), clone
+            try:
+                return account, clone._quote(a, account), clone
+            finally:
+                # 견적이 끝난 계정의 탭은 바로 닫는다 — 다음 계정을 보는 동안 열어 두면 탭이 쌓여 리소스를 먹는다
+                # (사용자 2026-09-28: 체크한 계정은 닫고 안 쓰는 것도 닫아라). 이긴 계정 주문서는 뒤에서 다시 만든다
+                try:
+                    clone.tool('run_js', code=_CLOSE_LANE_TABS_JS, safety='no_pay')
+                except AgentFailure as e:
+                    clone.note('계정 비교', mask_text(f'{account} 레인 탭 정리 실패: {e.reason[:80]}'))
 
         self.step(f'{self.spec.name}: 계정 {len(accounts)}개 동시 비교')
         # 동시 실행 수 제한 — PC 가 바쁘면 탭 6개를 한꺼번에 띄울 때 페이지 호출이 20초 제한을 넘는다
@@ -2561,13 +2589,8 @@ class BuyerAgent(AgentBase):
         workers = max(1, min(len(accounts), int(os.environ.get('SAMBA_ACCOUNT_WORKERS') or 2)))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             outs = list(pool.map(run, accounts))
-        # 레인이 연 탭(각 계정 주문서)을 닫는다 — 이긴 계정 주문서를 레인 밖에서 다시 만들 때 저장 스크립트가
-        # "열린 주문서 탭" 중 다른 계정 것을 집지 않게 한다(레인 밖에서는 모든 탭이 보인다)
-        for _account, _q, clone in outs:
-            try:
-                clone.tool('run_js', code=_CLOSE_LANE_TABS_JS, safety='no_pay')
-            except AgentFailure as e:
-                self.note('계정 비교', mask_text(f'{_account} 레인 탭 정리 실패: {e.reason[:80]}'))
+        # 레인이 연 탭(각 계정 주문서)은 run() 이 계정마다 끝나는 즉시 닫았다 — 이긴 계정 주문서를 레인 밖에서
+        # 다시 만들 때 저장 스크립트가 다른 계정 주문서를 집지 않는다
         quotes: list[tuple[str, dict[str, object]]] = []
         issued = dict(getattr(self, '_issued', {}))
         for account, q, clone in outs:
