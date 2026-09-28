@@ -2882,8 +2882,16 @@ class BuyerAgent(AgentBase):
         if resolved is not None:
             picked = Decision(choice=resolved, reason=picked.reason)
         if picked.choice not in candidates:
+            # 2단 옵션(색상 + 사이즈)은 후보가 'BLK'·'95(77)' 처럼 단계별로 따로 온다 — 모델이 둘을 합쳐 답하면
+            # 그 조각이 전부 후보에 있을 때 주문 옵션 그대로를 고른 것으로 본다(실기 2026-09-28 SSG 'BLK/95(77)')
+            parts = [t for t in re.split(r'[,/·\s]+', picked.choice) if t]
+            if len(parts) >= 2 and all(t in candidates for t in parts) and a.order.option:
+                picked = Decision(choice=a.order.option, reason=picked.reason)
+                candidates = [*candidates, a.order.option]
+        if picked.choice not in candidates:
+            # 후보 밖을 골랐다 — 품절 확증이 아니라 판정 실패다(사람 확인)
             raise AgentFailure(
-                'fail', f'고른 옵션이 후보에 없다: {picked.choice}', FailReason.OUT_OF_STOCK
+                'needs_human', f'고른 옵션이 후보에 없다: {picked.choice}', FailReason.UNKNOWN
             )
         self.note('옵션 선택', f'{picked.choice} — {picked.reason}')
 
