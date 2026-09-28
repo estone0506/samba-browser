@@ -7,6 +7,7 @@ import {
   setExtensionActionListener,
   warmExtensionWorkers
 } from '../extensions/cookies-bridge'
+import { applyProfileProxy, loadProfileProxies, profileOfPartition } from '../browser/profile-proxy'
 import { ChatSessionStore } from '../agent/chat-session'
 import {
   app,
@@ -1246,7 +1247,11 @@ export function registerIpc(
     const dataUrl = readIconDataUrl(entry.path, rel)
     if (dataUrl && extensions.setActionIcon(id, dataUrl)) send(IPC.extChanged, null)
   })
+  // 프로필별 프록시(userData/profile-proxies.json · SAMBA_PROFILE_PROXY_<프로필>) — 스니커덩크처럼 사무실 IP 를
+  // 막는 사이트는 전용 프로필에만 프록시를 건다(사용자 2026-09-28)
+  const profileProxies = loadProfileProxies(app.getPath('userData'))
   tabs.setSessionHook((ses, partition) => {
+    applyProfileProxy(ses, profileOfPartition(partition, workspace.partitionPrefix()), profileProxies)
     enableExtensionServiceWorkerSupport(ses, join(__dirname, '../preload/extension-sw.js'))
     // 파티션 이름을 함께 넘긴다 — 같은 세션이 두 번 들어와도 한 번만 붙는다
     void extensions
