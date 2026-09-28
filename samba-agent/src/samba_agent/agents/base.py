@@ -366,8 +366,11 @@ class AgentBase:
         raise AgentFailure('needs_human', f'구조화 출력 실패: {last}', FailReason.UNKNOWN) from last
 
     def note(self, label: str, detail: str) -> None:
-        """근거 조각을 남긴다. 결과에 함께 실려 진단·검수 큐가 본다."""
+        """근거 조각을 남긴다. 결과에 함께 실려 진단·검수 큐가 본다.
+
+        하네스 로그에도 한 줄 남긴다(가린 값) — 계정별 견적·쿠폰·로그인 실패 원인을 나중에 찾는다(2026-09-28)."""
         self.evidence.append(Evidence(label=label, detail=detail))
+        log.info('%s 근거 [%s] %s', self.spec.name, label, mask_text(detail)[:300])
 
     def step(self, label: str) -> None:
         """진행 보고 — 슬랙 스레드에 한 줄로 뜬다.
