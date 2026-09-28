@@ -1492,6 +1492,9 @@ class BuyerAgent(AgentBase):
             live = [m for m in self._match_options(options, a.order.option) if '품절' not in m]
             if len(live) == 1 and live[0] != a.order.option:
                 self.note('옵션 재선택', mask_text(f'[{a.order.option}] → [{live[0]}] 로 다시 연다'))
+                reselected: dict[str, str] = getattr(self, '_reselected', {})
+                reselected[str(a.order.option)] = live[0]
+                self._reselected = reselected
                 if snap.get('product_tab'):
                     self._close_product_tabs(account, str(snap.get('product_url') or ''))
                 snap = self.script_json(
@@ -2212,6 +2215,10 @@ class BuyerAgent(AgentBase):
     def _selected_matches(self, selected: str, wanted: str | None) -> bool:
         """주문서에 담긴 옵션이 주문 옵션과 같은가. 주문 옵션에 사이즈 숫자가 있으면 그 숫자가 꼭 겹쳐야 한다."""
         if not wanted:
+            return True
+        # 하네스가 매칭해 스크립트에 넘긴 선택지 글자(옵션 재선택)가 주문서에 그대로 담겼으면 같은 옵션이다
+        picked = getattr(self, '_reselected', {}).get(wanted)
+        if picked and ''.join(picked.split()).lower() in ''.join(selected.split()).lower():
             return True
         sizes = size_numbers(wanted)
         if sizes and not (size_numbers(selected) & sizes):
