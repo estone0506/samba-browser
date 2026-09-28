@@ -74,9 +74,20 @@ def test_shopmine_대상은_샵마인_어댑터를_만든다(monkeypatch):
     assert isinstance(made['shopmine'], BatchAdapter)
 
 
+def test_emp_대상은_EMP_어댑터를_만든다(monkeypatch):
+    from samba_agent.export import desktop
+    from samba_agent.export.adapters import BatchAdapter
+    from samba_agent.export.desktop.emp import EmpAdapter
+
+    monkeypatch.setattr(desktop, '_emp_ui', lambda: object())
+    made = build_adapters(('emp',))
+    assert isinstance(made['emp'], EmpAdapter)
+    assert not isinstance(made['emp'], BatchAdapter)  # 셀형 — 주문별 읽기·쓰기
+
+
 def test_모르는_대상은_거부한다():
     with pytest.raises(ValueError):
-        build_adapters(('emp',))
+        build_adapters(('coupang',))
 
 
 def test_export_targets_설정은_쉼표_목록이다(monkeypatch, tmp_path):

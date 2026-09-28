@@ -7,6 +7,7 @@
 from collections.abc import Collection
 
 from samba_agent.export.adapters import Adapter, BatchAdapter
+from samba_agent.export.desktop.emp import EmpAdapter
 from samba_agent.export.desktop.shopmine import ShopMineAdapter
 
 
@@ -16,12 +17,21 @@ def _shopmine_ui():
     return PywinautoShopMineUi()
 
 
+def _emp_ui():
+    from samba_agent.export.desktop.emp_ui import PywinautoEmpUi
+
+    return PywinautoEmpUi()
+
+
 def build_adapters(targets: Collection[str]) -> dict[str, Adapter | BatchAdapter]:
     """설정에 적힌 대상만 만든다(대상 이름 → 어댑터). 모르는 이름은 거부한다."""
     made: dict[str, Adapter | BatchAdapter] = {}
     for target in targets:
         if target == 'shopmine':
             made[target] = ShopMineAdapter(_shopmine_ui())
+        elif target == 'emp':
+            # EMP 는 관리자 권한으로 돈다 — 작업자도 관리자 권한으로 띄워야 한다
+            made[target] = EmpAdapter(_emp_ui())
         else:
-            raise ValueError(f'모르는 외부 기입 대상: {target!r} (EMP 어댑터는 아직 없다)')
+            raise ValueError(f'모르는 외부 기입 대상: {target!r}')
     return made
