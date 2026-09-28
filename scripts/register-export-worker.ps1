@@ -1,4 +1,4 @@
-# 외부 기입 입력 작업자를 작업 스케줄러에 등록한다(관리자 권한 PowerShell 에서 1회 실행).
+﻿# 외부 기입 입력 작업자를 작업 스케줄러에 등록한다(관리자 권한 PowerShell 에서 1회 실행).
 #
 #   등록:  powershell -ExecutionPolicy Bypass -File scripts\register-export-worker.ps1
 #   해제:  powershell -ExecutionPolicy Bypass -File scripts\register-export-worker.ps1 -Remove
@@ -14,7 +14,22 @@ $taskName = 'SambaExportWorker'
 
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $admin) { throw '관리자 권한 PowerShell 에서 실행해야 한다' }
+if (-not $admin) {
+  # 일반 권한으로 불렀으면 권한 상승 창(UAC)을 띄워 스스로 다시 실행한다
+  $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
+  if ($Remove) { $argList += '-Remove' }
+  $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -Verb RunAs -Wait -PassThru
+  $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+  if ($Remove) {
+    if ($task) { Write-Host "해제 실패: $taskName 이 남아 있다" } else { Write-Host "해제함: $taskName" }
+  } elseif ($task) {
+    Write-Host "등록함: $taskName (상태 $($task.State))"
+  } else {
+    Write-Host "등록 실패(권한 상승을 거절했거나 오류) — 종료 코드 $($proc.ExitCode)"
+    exit 1
+  }
+  exit 0
+}
 
 if ($Remove) {
   Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
