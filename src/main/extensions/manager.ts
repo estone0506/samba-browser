@@ -183,6 +183,10 @@ export function createSessionExtensionHost(session: SessionLike): ExtensionHost 
   }
 }
 
+// 기본 세션에만 올리는 확장 — 삼바웨이브 확장은 삼바 페이지에서 설정(proxyUrl·apiKey)을 받는다.
+// 계정 프로필 세션에는 그 페이지가 없어 설정 없이 떠서 API 호출이 전부 실패했다(실기 2026-09-28: 10분에 173건)
+const PRIMARY_ONLY_IDS = new Set(['ojfcneljbbajgcmpmklgglhenieehicb'])
+
 export class ExtensionManager {
   /** 로드에 성공한 확장. 설정에 저장되는 경로 순서와 같다 */
   private entries: ExtensionDto[] = []
@@ -337,7 +341,7 @@ export class ExtensionManager {
     if (enabled) {
       // 첫 세션이 실패하면 아무것도 바꾸지 않는다
       await this.hosts[0].loadExtension(entry.path)
-      for (const host of this.hosts.slice(1)) {
+      for (const host of PRIMARY_ONLY_IDS.has(entry.id) ? [] : this.hosts.slice(1)) {
         try {
           await host.loadExtension(entry.path)
         } catch (e: unknown) {
@@ -365,7 +369,7 @@ export class ExtensionManager {
     this.entries.push(dto)
     this.persist()
     // 다른 파티션 세션에도 같은 확장을 걸어 준다(실패해도 전체를 되돌리지는 않는다)
-    for (const host of this.hosts.slice(1)) {
+    for (const host of PRIMARY_ONLY_IDS.has(dto.id) ? [] : this.hosts.slice(1)) {
       try {
         await host.loadExtension(dto.path)
       } catch (e: unknown) {
@@ -414,6 +418,7 @@ export class ExtensionManager {
     await this.ready
     for (const entry of this.entries) {
       if (!entry.enabled) continue
+      if (PRIMARY_ONLY_IDS.has(entry.id)) continue
       try {
         await host.loadExtension(entry.path)
       } catch (e: unknown) {
