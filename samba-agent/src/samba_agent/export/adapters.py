@@ -4,7 +4,7 @@
 """
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from samba_agent.export.failures import ExportFail
 
@@ -45,4 +45,17 @@ class Adapter(Protocol):
 
     def write(self, order_no: str, cost: int, shipping_fee: int) -> None:
         """원가·배송비를 입력하고 저장한다. 입력 직전에 선택 행의 주문번호를 다시 확인한다."""
+        ...
+
+
+@runtime_checkable
+class BatchAdapter(Protocol):
+    """일괄형 외부 프로그램 — 주문별 값 기입이 아니라 화면의 대상 전부를 한 번에 처리한다(샵마인).
+
+    작업자는 요청 하나를 집어 이 함수를 한 번 부르고, 그때 대기 중이던 같은 대상 요청을
+    전부 성공으로 끝낸다. 되풀이해 불러도 안전해야 한다(할 일이 없으면 0 을 돌려준다).
+    """
+
+    def complete_pending(self) -> int:
+        """처리한 건수. 창 없음·시간 초과·대화상자는 AdapterRetry, 되읽기 불일치는 AdapterReject."""
         ...

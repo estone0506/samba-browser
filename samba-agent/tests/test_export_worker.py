@@ -253,3 +253,81 @@ def test_run_forever_는_고리_오류로_죽지_않는다(queue):
     stops = iter([False, True])
     worker(queue, Broken(), retry_delay_s=0).run_forever(lambda: next(stops), sleep=lambda _s: None)
     assert queue.find('A1', 'emp').status == 'pending'
+
+
+class FakeBatch:
+    """배치형 어댑터 가짜 — 부를 때마다 정해진 건수를 돌려주거나 예외를 낸다."""
+
+    def __init__(self, count: int = 3) -> None:
+        self.count = count
+        self.calls = 0
+        self.error: Exception | None = None
+
+    def complete_pending(self) -> int:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.count
+
+
+def batch_worker(queue, adapter, idle: float = 999.0, **kw) -> ExportWorker:
+    return ExportWorker(queue, {'shopmine': adapter}, user_idle_s=lambda: idle, **kw)
+
+
+def test_배치_어댑터는_한_번_돌리고_대기_요청을_전부_끝낸다(queue):
+    adapter = FakeBatch(count=5)
+    a = queue.enqueue('A1', 'shopmine', 1000, 0)
+    b = queue.enqueue('A2', 'shopmine', 2000, 0)
+    c = queue.enqueue('A3', 'shopmine', 3000, 0)
+    out = batch_worker(queue, adapter).run_once()
+    assert out is not None and out.id == a.id
+    assert out.status == 'done'
+    assert out.detail == '일괄 완료됨 5건(대기 요청 3건 함께 종료)'
+    assert queue.get(b.id).status == 'done'
+    assert queue.get(c.id).status == 'done'
+    assert adapter.calls == 1
+    assert batch_worker(queue, adapter).run_once() is None
+
+
+def test_배치_처리_건수_0_도_성공이다(queue):
+    adapter = FakeBatch(count=0)
+    queue.enqueue('A1', 'shopmine', 1000, 0)
+    out = batch_worker(queue, adapter).run_once()
+    assert out.status == 'done'
+    assert out.detail == '일괄 완료됨 0건(대기 요청 1건 함께 종료)'
+
+
+def test_배치_어댑터의_재시도_사유는_대기_요청을_건드리지_않는다(queue):
+    adapter = FakeBatch()
+    adapter.error = AdapterRetry(ExportFail.WINDOW_MISSING, '샵마인 창 없음')
+    queue.enqueue('A1', 'shopmine', 1000, 0)
+    b = queue.enqueue('A2', 'shopmine', 2000, 0)
+    out = batch_worker(queue, adapter, retry_delay_s=0).run_once()
+    assert out.status == 'pending'
+    assert out.fail_reason == 'window_missing'
+    assert queue.get(b.id).status == 'pending'
+    assert queue.get(b.id).attempts == 0
+
+
+def test_배치_어댑터의_거절은_집은_요청만_실패시킨다(queue):
+    adapter = FakeBatch()
+    adapter.error = AdapterReject(ExportFail.VERIFY_MISMATCH, '재필터 뒤에도 2건 남음')
+    queue.enqueue('A1', 'shopmine', 1000, 0)
+    b = queue.enqueue('A2', 'shopmine', 2000, 0)
+    out = batch_worker(queue, adapter).run_once()
+    assert out.status == 'failed'
+    assert out.fail_reason == 'verify_mismatch'
+    assert queue.get(b.id).status == 'pending'  # 다음 요청이 다시 일괄 처리를 돌린다
+
+
+def test_배치_어댑터와_셀_어댑터가_함께_등록돼도_대상별로_고른다(queue):
+    cell = FakeAdapter({'E1': EMPTY})
+    batch = FakeBatch(count=1)
+    queue.enqueue('E1', 'emp', 62470, 2300)
+    queue.enqueue('S1', 'shopmine', 1000, 0)
+    w = ExportWorker(queue, {'emp': cell, 'shopmine': batch}, user_idle_s=lambda: 999.0)
+    first = w.run_once()
+    second = w.run_once()
+    assert {first.target, second.target} == {'emp', 'shopmine'}
+    assert cell.rows['E1'] == CellValues(62470, 2300)
+    assert batch.calls == 1

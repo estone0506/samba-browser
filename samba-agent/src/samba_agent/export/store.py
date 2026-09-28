@@ -215,6 +215,20 @@ class ExportQueue:
                 (detail, self._iso(), request_id),
             )
 
+    def done_pending(self, target: str, detail: str, *, except_id: int) -> int:
+        """그 대상의 대기(pending) 요청을 전부 성공으로 끝낸다 — 일괄형 어댑터가 한 번에 덮은 것들.
+
+        except_id(집어서 running 인 행)는 호출부가 따로 끝낸다. 바꾼 행 수를 돌려준다.
+        """
+        now = self._iso()
+        with self._immediate():
+            cur = self._db.execute(
+                "UPDATE export_requests SET status='done', fail_reason=NULL, detail=?, "
+                "updated_at=? WHERE target=? AND status='pending' AND id<>?",
+                (detail, now, target, except_id),
+            )
+        return int(cur.rowcount)
+
     def fail(self, request_id: int, reason: ExportFail, detail: str) -> None:
         with self._immediate():
             self._db.execute(

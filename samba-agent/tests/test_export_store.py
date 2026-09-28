@@ -314,3 +314,25 @@ def test_COMMIT_실패_때도_롤백_해_연결을_산다(queue):
     # 트랜잭션이 제대로 롤백되었다면 다음 enqueue가 성공해야 한다
     req = queue.enqueue('A1', 'emp', 1000, 0)
     assert req.status == 'pending'
+
+
+def test_done_pending_은_그_대상의_대기_요청만_전부_끝낸다(queue):
+    a = queue.enqueue('A1', 'shopmine', 1000, 0)
+    b = queue.enqueue('A2', 'shopmine', 2000, 0)
+    c = queue.enqueue('A3', 'shopmine', 3000, 0)
+    d = queue.enqueue('A4', 'emp', 4000, 0)
+    claimed = queue.claim_next(['shopmine'])  # a 가 running
+    assert claimed is not None and claimed.id == a.id
+    n = queue.done_pending('shopmine', '일괄 완료됨 2건', except_id=a.id)
+    assert n == 2
+    assert queue.get(a.id).status == 'running'  # 집은 행은 호출부가 따로 끝낸다
+    assert queue.get(b.id).status == 'done'
+    assert queue.get(b.id).detail == '일괄 완료됨 2건'
+    assert queue.get(c.id).status == 'done'
+    assert queue.get(d.id).status == 'pending'
+
+
+def test_done_pending_은_대기가_없으면_0(queue):
+    req = queue.enqueue('A1', 'shopmine', 1000, 0)
+    queue.claim_next(['shopmine'])
+    assert queue.done_pending('shopmine', '일괄', except_id=req.id) == 0
