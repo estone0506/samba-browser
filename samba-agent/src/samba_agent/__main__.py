@@ -23,6 +23,10 @@ from samba_agent.agents.registry import Registry
 from samba_agent.agents.verifier import VerifierAgent
 from samba_agent.api.server import build_app, serve
 from samba_agent.bridge.client import BridgeClient, BridgeError
+from samba_agent.export.notify import ExportNotifier
+from samba_agent.export.routing import ExportRouting
+from samba_agent.export.stage import ExportFn, make_exporter
+from samba_agent.export.store import ExportQueue
 from samba_agent.gateway.slack_bot import SambaBot
 from samba_agent.llm.decide import make_decide
 from samba_agent.ops.diagnose import diagnose
@@ -81,6 +85,15 @@ def make_wave(settings: 'Settings') -> WaveClient | None:
         settings.wave_internal_token.get_secret_value(),
         settings.wave_tenant_id,
     )
+
+
+def make_export(settings: 'Settings') -> tuple[ExportQueue, ExportFn] | None:
+    """외부 기입 큐와 export 단계 함수. 꺼져 있으면 None — 그래프에 export 노드가 붙지 않는다."""
+    if not settings.export_enabled:
+        return None
+    queue = ExportQueue(settings.export_db_path)
+    routing = ExportRouting.load(settings.export_routing_file)
+    return queue, make_exporter(queue, routing, wait_s=settings.export_wait_s)
 
 
 def _bridge_ready(bridge: BridgeClient) -> bool:
@@ -213,6 +226,10 @@ def main() -> None:
             },
         )
 
+    export = make_export(settings)
+    if export is None:
+        log.info('외부 기입(EMP·샵마인)은 꺼져 있다 — SAMBA_EXPORT_ENABLED')
+
     graph = build_supervisor(
         reg,
         agents,
@@ -220,6 +237,7 @@ def main() -> None:
         gate=True,
         on_stage_start=lambda state, stage: worker.mark_stage(state, stage),
         on_agent_result=_record_agent,
+        exporter=export[1] if export is not None else None,
     )
 
     _report, _approval_report = make_reporters(lambda: bot)
@@ -312,6 +330,17 @@ def main() -> None:
     api_thread = threading.Thread(target=serve, args=(app,), daemon=True, name='api')
     worker_thread.start()
     api_thread.start()
+
+    if export is not None:
+        # 실패한 외부 기입을 그 주문의 슬랙 스레드에 알린다(입력 작업자는 큐에 결과만 적는다)
+        def _thread_of(order_no: str) -> str | None:
+            job = queue.get(order_no)
+            return job.thread_ts if job is not None else None
+
+        notifier = ExportNotifier(export[0], _thread_of, lambda ts, text: bot.post(ts, text))
+        threading.Thread(
+            target=notifier.run_forever, args=(stop.is_set,), daemon=True, name='export-notify'
+        ).start()
 
     if intake is not None:
         threading.Thread(

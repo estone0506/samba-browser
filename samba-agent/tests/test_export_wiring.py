@@ -1,0 +1,100 @@
+# 외부 기입 배선 — 설정 기본값 · 하네스 연결 · CLI
+from pathlib import Path
+
+import pytest
+
+from samba_agent.__main__ import make_export
+from samba_agent.agents.contracts import AgentResult, OrderRef
+from samba_agent.export.__main__ import main as export_main
+from samba_agent.export.desktop import build_adapters
+from samba_agent.export.failures import ExportFail
+from samba_agent.export.store import ExportQueue
+from samba_agent.settings import DEFAULT_ROOT, Settings
+
+
+def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **env: str) -> Settings:
+    monkeypatch.setenv('SAMBA_BRIDGE_TOKEN', 'test-token')
+    monkeypatch.setenv('SAMBA_EXPORT_DB_PATH', str(tmp_path / 'exports.sqlite'))
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    return Settings()  # type: ignore[call-arg]
+
+
+def test_기본은_꺼져_있다(monkeypatch, tmp_path):
+    s = settings(monkeypatch, tmp_path)
+    assert s.export_enabled is False
+    assert s.export_wait_s == 60.0
+    assert s.export_routing_file == DEFAULT_ROOT / 'export.yaml'
+    assert make_export(s) is None
+
+
+def test_큐_파일_기본_위치는_하네스_폴더다(monkeypatch):
+    monkeypatch.setenv('SAMBA_BRIDGE_TOKEN', 'test-token')
+    monkeypatch.delenv('SAMBA_EXPORT_DB_PATH', raising=False)
+    assert Settings().export_db_path == DEFAULT_ROOT / 'exports.sqlite'  # type: ignore[call-arg]
+
+
+def test_켜면_큐와_export_함수를_만든다(monkeypatch, tmp_path):
+    s = settings(monkeypatch, tmp_path, SAMBA_EXPORT_ENABLED='true', SAMBA_EXPORT_WAIT_S='0')
+    made = make_export(s)
+    assert made is not None
+    queue, exporter = made
+    out = exporter(
+        {
+            'order': OrderRef(
+                order_no='A1', source='무신사', seller='GS이숍(캐논)', sku='S1', qty=1
+            ),
+            'dry_run': False,
+            'results': {
+                'recorder': AgentResult(
+                    status='ok',
+                    reason='기록',
+                    payload={'values': {'real_price': 62470, 'shipping_fee': 2300}},
+                )
+            },
+        }
+    )
+    assert out.payload['export'] == 'pending'
+    assert out.payload['target'] == 'emp'
+    assert queue.find('A1', 'emp') is not None
+
+
+def test_이_계획에서는_등록된_어댑터가_없다():
+    assert build_adapters() == {}
+
+
+def test_list_는_최근_요청을_보여_준다(monkeypatch, tmp_path, capsys):
+    settings(monkeypatch, tmp_path)
+    queue = ExportQueue(tmp_path / 'exports.sqlite')
+    req = queue.enqueue('A1', 'emp', 62470, 2300)
+    queue.claim_next(['emp'])
+    queue.fail(req.id, ExportFail.NOT_FOUND, '주문 없음')
+    assert export_main(['list']) == 0
+    out = capsys.readouterr().out
+    assert 'A1' in out
+    assert 'emp' in out
+    assert 'failed' in out
+    assert 'not_found' in out
+
+
+def test_list_는_비어_있으면_그렇게_말한다(monkeypatch, tmp_path, capsys):
+    settings(monkeypatch, tmp_path)
+    assert export_main(['list']) == 0
+    assert '없다' in capsys.readouterr().out
+
+
+def test_requeue_는_실패한_요청을_되살린다(monkeypatch, tmp_path, capsys):
+    settings(monkeypatch, tmp_path)
+    queue = ExportQueue(tmp_path / 'exports.sqlite')
+    req = queue.enqueue('A1', 'emp', 62470, 2300)
+    queue.claim_next(['emp'])
+    queue.fail(req.id, ExportFail.NOT_FOUND, '주문 없음')
+    assert export_main(['requeue', 'A1', 'emp']) == 0
+    assert queue.get(req.id).status == 'pending'
+    assert 'A1' in capsys.readouterr().out
+
+
+def test_requeue_할_실패_요청이_없으면_1(monkeypatch, tmp_path, capsys):
+    settings(monkeypatch, tmp_path)
+    assert export_main(['requeue', 'A9', 'emp']) == 1
+    assert '없다' in capsys.readouterr().out

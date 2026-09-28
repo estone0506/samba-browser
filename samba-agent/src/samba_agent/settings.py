@@ -76,6 +76,18 @@ class Settings(BaseSettings):
     site_scripts_file: Path = Field(
         default=DEFAULT_SITE_SCRIPTS_FILE, alias='SAMBA_SITE_SCRIPTS_FILE'
     )
+    # 외부 프로그램(EMP·샵마인) 원가·배송비 기입. 기본 꺼짐 — 입력 작업자와 어댑터를 실기로 확인한 뒤 켠다
+    export_enabled: bool = Field(default=False, alias='SAMBA_EXPORT_ENABLED')
+    # 하네스와 입력 작업자가 함께 보는 큐 파일
+    export_db_path: Path = Field(
+        default=DEFAULT_ROOT / 'exports.sqlite', alias='SAMBA_EXPORT_DB_PATH'
+    )
+    # 판매처 → 대상 라우팅 목록
+    export_routing_file: Path = Field(
+        default=DEFAULT_ROOT / 'export.yaml', alias='SAMBA_EXPORT_ROUTING_FILE'
+    )
+    # export 단계가 기입 결과를 기다리는 시간(초). 지나면 주문은 완료로 끝내고 결과는 나중에 알린다
+    export_wait_s: float = Field(default=60.0, ge=0, alias='SAMBA_EXPORT_WAIT_S')
 
     @field_validator('slack_allowed_users', mode='before')
     @classmethod
