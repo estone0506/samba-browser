@@ -1201,7 +1201,11 @@ ${raw}`
    * 배치를 돌려준다 — 하나라도 빠지거나 겹치면 null(잘못 누르면 결제 수단이 잠긴다).
    * 배치(숫자 위치)는 로그·결과·모델 어디에도 내보내지 않는다. 자리수 검증 수단이 없어 filled 는 null
    */
-  const ocrKeypadLayout = async (tab: Tab): Promise<KeypadLayout | null> => {
+  // 캡처는 탭이 화면에 그려져 있어야 한다 — 뒤 층(가려진) 탭이면 OCR 동안만 맨 위로 올린다
+  const ocrKeypadLayout = (tab: Tab): Promise<KeypadLayout | null> =>
+    ctx.tabs.withFront(tab.id, () => ocrKeypadLayoutInner(tab))
+
+  const ocrKeypadLayoutInner = async (tab: Tab): Promise<KeypadLayout | null> => {
     const cells = await pageBridge.keypadUnlabeled(tab).catch(() => null)
     if (!cells) {
       ctx.onStep('키패드 배치(OCR): 글자 없는 버튼 10~14개를 못 찾음', false)
@@ -2183,8 +2187,9 @@ overlays left: ${after.length}${kept}`
             sameRegistrableDomain(loginHost, h)
           )
           const linked = linkedAppAccount(available, tab, loginHost, accountLabel)
-          if (!linked && payAppHost && !accountLabel) {
-            return `${ACCOUNT_NOT_FOUND}: payment app site — pass accountLabel (profile-name fallback is disabled here)`
+          // 결제창(팝업)에서만 막는다 — 일반 탭의 프로필 이름 폴백(계정 순회)은 그대로 둔다
+          if (!linked && payAppHost && !accountLabel && tab.openerId) {
+            return `${ACCOUNT_NOT_FOUND}: payment popup — no linked app account; pass accountLabel`
           }
           const account =
             // 결제창 안의 네이버·페이코 로그인이면 결제창을 연 쇼핑몰 계정이 연결해 둔 앱 계정으로 로그인한다

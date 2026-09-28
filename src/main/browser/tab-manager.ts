@@ -854,6 +854,25 @@ export class TabManager {
     return this.list().find((t) => t.id === tab.id)!
   }
 
+  /**
+   * fn 이 도는 동안만 이 탭 뷰를 맨 위에 올린다(화면 캡처용). 뒤 층 탭은 보이는 탭에 완전히 가려져
+   * 캡처가 안 된다("Current display surface not available for capture" — 실기 2026-09-28 네이버페이 키패드 OCR).
+   * 끝나면 원래 보이던 탭을 다시 맨 위로 올린다. 활성 탭 표식(activeId)은 바꾸지 않는다
+   */
+  async withFront<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const tab = this.get(id)
+    if (!tab || this.win.isDestroyed() || id === this.activeId || !isTabAlive(tab)) return fn()
+    const visible = this.activeId !== null ? this.get(this.activeId) : null
+    this.win.contentView.addChildView(tab.view)
+    try {
+      return await fn()
+    } finally {
+      if (!this.win.isDestroyed() && visible && isTabAlive(visible)) {
+        this.win.contentView.addChildView(visible.view)
+      }
+    }
+  }
+
   /** 사람이 이 창을 쓰는 중이라 자동화가 보이는 탭·창 포커스를 바꾸면 안 되는가(visible-guard.ts) */
   private holdVisible(): boolean {
     if (this.win.isDestroyed()) return false
