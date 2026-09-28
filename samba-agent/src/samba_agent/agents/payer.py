@@ -828,7 +828,7 @@ class PayerAgent(AgentBase):
     def _confirm_paid(self, a: Assignment, card: str, paid_by: str = 'agent') -> AgentResult:
         """결제 뒤 성공 확인 — 완료 화면 문구, 없으면(ABC·그랜드스테이지) 주문내역의 방금 생긴 주문으로."""
         self.step('payer: 성공 확인')
-        page = self._success_page()
+        page = self._success_page(a)
         recent_no = None
         if not any(m in page for m in PAY_SUCCESS_MARKERS):
             # ABC마트·그랜드스테이지는 네이버페이 뒤 완료 화면을 못 잡는 일이 있다 — 주문내역에서 방금(10분 안) 생긴
@@ -932,15 +932,30 @@ class PayerAgent(AgentBase):
     def _recent_cm29_order(self, a: Assignment) -> str | None:
         return recent_cm29_order(self, a)
 
-    def _success_page(self) -> str:
-        """결제 뒤 화면 — 주문 완료 탭(…/order/result/…, 29CM …/order/confirmed/…)이 있으면 그 탭에서 읽는다."""
+    def _success_page(self, a: Assignment | None = None) -> str:
+        """결제 뒤 화면 — 주문 완료 탭(…/order/result/…, 29CM …/order/confirmed/…)이 있으면 그 탭에서 읽는다.
+
+        다른 레인(사람·다른 세션)이 연 탭은 보지 않는다 — 실기 2026-09-28: 검수용 레인의 무신사 주문 상세 탭을
+        ABC 결제 성공 화면으로 읽어 엉뚱한 소싱주문번호(무신사)를 기입했다. 소싱처 상품 주소와 같은 도메인의
+        탭만 후보로 본다.
+        """
         try:
             listed = self.tool('list_tabs')
-            for m in re.finditer(
-                r'"id"\s*:\s*"([^"]+)"[^}]*?"url"\s*:\s*"([^"]*order/(?:result|confirmed)[^"]*)"',
-                listed,
-            ):
-                self.tool('switch_tab', id=m.group(1))
+            try:
+                tabs = json.loads(listed)
+            except ValueError:
+                tabs = []
+            want = _host_of(str(a.order.product_url or '')) if a is not None else ''
+            want_domain = '.'.join(want.split('.')[-2:]) if want else ''
+            for t in tabs if isinstance(tabs, list) else []:
+                if not isinstance(t, dict) or t.get('lane'):
+                    continue
+                url = str(t.get('url') or '')
+                if not re.search(r'order/(?:result|confirmed)', url):
+                    continue
+                if want_domain and want_domain not in _host_of(url):
+                    continue
+                self.tool('switch_tab', id=str(t.get('id')))
                 break
         except AgentFailure:
             pass
