@@ -1,5 +1,6 @@
 # 감독자 — export 노드는 검증 뒤에 돌고, 어떤 경우에도 주문 결과를 바꾸지 않는다
 import pytest
+from langgraph.checkpoint.memory import MemorySaver
 
 from samba_agent.agents.contracts import AgentResult, OrderRef
 from samba_agent.agents.registry import Registry
@@ -117,6 +118,30 @@ def test_export_근거가_state_에_쌓인다(reg):
 
     out = run(reg, agents(), exporter)
     assert out['evidence'][-1].label == '외부 기입'
+
+
+def test_체크포인터를_거쳐도_exporter_결과가_round_trip된다(reg):
+    # 리뷰 지적 — M4: exporter 가 붙은 상태가 체크포인터에 저장·복원돼도 문제없어야 한다
+    calls = {'n': 0}
+
+    def exporter(_state):
+        calls['n'] += 1
+        return ok('exporter', export='done')
+
+    graph = build_supervisor(reg, agents(), exporter=exporter, checkpointer=MemorySaver())
+    config = {'configurable': {'thread_id': 'export-thread-1'}}
+
+    out = graph.invoke({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, config)
+    assert out['outcome'] == 'done'
+    assert out['results']['exporter'].payload['export'] == 'done'
+    assert calls['n'] == 1
+
+    # 끝난 스레드(next 가 비어 있다)로 같은 입력을 다시 부른다 — _ResumeSafeGraph 는 대기 중인
+    # 스레드만 이어달리기하므로 여기서는 그대로 컴파일된 그래프에 넘어간다. 체크포인터가 이미
+    # 끝난 상태를 문제없이 읽고 돌려줘야 한다(예외 없이, exporter 결과도 그대로)
+    again = graph.invoke({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, config)
+    assert again['outcome'] == 'done'
+    assert again['results']['exporter'].payload['export'] == 'done'
 
 
 def test_export_도_에이전트_결과_훅에_남는다(reg):
