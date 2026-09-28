@@ -912,6 +912,9 @@ def is_confirmed_sold_out_skip(skip: str) -> bool:
 # 계정 견적 건너뜀 사유 중 '이 계정은 허용 결제수단의 결제 항목이 없다'(_quote 가 붙인다) — 계정 사유
 UNPAYABLE_SKIP = '결제 가능한 수단 없음'
 
+# 계정 견적 건너뜀 사유 중 '이 계정의 주문서를 못 읽었다'(_quote 가 붙인다) — 다음 계정은 열릴 수 있다(계정 사유)
+ORDER_FORM_UNREADABLE_SKIP = '주문서 옵션 못 읽음'
+
 
 def is_account_failure(e: AgentFailure) -> bool:
     """계정 견적 실패가 그 계정만의 사유인가(구매 수량 한도·로그인 안 됨/실패·다른 계정 로그인·결제 항목 없음).
@@ -2596,8 +2599,10 @@ class BuyerAgent(AgentBase):
         skips = self._quote_skips[n_skip:]
         if not (errors or skips):
             return False
+        # '주문서 옵션 못 읽음'(주문서가 비었다 — "주문할 상품이 존재하지 않습니다")도 계정 사유로 본다:
+        # 실기 2026-09-28 무신사 언더웨어·KS4343 은 buyer01 만 주문서가 비고 buyer02 는 열렸다
         return all(is_account_failure(e) for e in errors) and all(
-            UNPAYABLE_SKIP in x for x in skips
+            UNPAYABLE_SKIP in x or ORDER_FORM_UNREADABLE_SKIP in x for x in skips
         )
 
     def _pick_cheapest(self, a: Assignment, accounts: list[str]) -> tuple[str, dict[str, object]]:
