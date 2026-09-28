@@ -1119,12 +1119,13 @@ class PayerAgent(AgentBase):
             if isinstance(parsed_enter, dict)
             else {'ok': False, 'note': raw_enter[:120]}
         )
-        self.note('결제창', mask_text(json.dumps(entered, ensure_ascii=False)[:200]))
+        self.note('결제창', mask_text(json.dumps(entered, ensure_ascii=False)[:400]))
         if not entered.get('ok'):
             # 결제하기를 못 눌렀다 — 비밀번호 단계로 가지 않는다(실기: 수단을 못 찾고도 키패드를 찾다 거절)
             raise AgentFailure(
                 'needs_human',
                 f'결제창을 열지 못했다: {mask_text(str(entered.get("error") or entered.get("note"))[:80])}'
+                + (f' — {mask_text(str(entered.get("why"))[:160])}' if entered.get('why') else '')
                 + (f' — 경고창: {mask_text(" | ".join(enter_dialogs)[:120])}' if enter_dialogs else '')
                 + (f' — 화면: {mask_text(str(entered.get("note"))[:160])}' if entered.get('error') and entered.get('note') else ''),
                 FailReason.UNKNOWN,
