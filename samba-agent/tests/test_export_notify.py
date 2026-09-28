@@ -93,6 +93,55 @@ def test_한_건이_실패해도_나머지는_알린다(queue):
     assert 'A2' in sent[0]
 
 
+def test_스레드가_없으면_post_new로_최상위_메시지를_올린다(queue):
+    # 리뷰 지적 — I2: 스레드 없는 주문의 실패 알림이 post(None, ...) 로 조용히 사라졌다
+    failed(queue, 'A1')
+    posted: list[tuple[str | None, str]] = []
+    posted_new: list[str] = []
+
+    def post(thread_ts, text):
+        posted.append((thread_ts, text))
+        return True
+
+    def post_new(text):
+        posted_new.append(text)
+        return 'ts-new-1'
+
+    notifier = ExportNotifier(queue, lambda _no: None, post, post_new=post_new)
+    n = notifier.tick()
+    assert n == 1
+    assert posted == []
+    assert len(posted_new) == 1
+    assert 'A1' in posted_new[0]
+
+
+def test_스레드가_있으면_post_new는_안_쓴다(queue):
+    failed(queue, 'A1')
+    posted: list[tuple[str | None, str]] = []
+    posted_new: list[str] = []
+
+    notifier = ExportNotifier(
+        queue,
+        lambda no: f'ts-{no}',
+        lambda ts, text: posted.append((ts, text)) or True,
+        post_new=lambda text: posted_new.append(text) or 'ts-new',
+    )
+    n = notifier.tick()
+    assert n == 1
+    assert posted == [('ts-A1', posted[0][1])]
+    assert posted_new == []
+
+
+def test_post_new가_None을_돌려주면_경고_경로이되_알린_것으로_친다(queue):
+    rid = failed(queue, 'A1')
+    notifier = ExportNotifier(
+        queue, lambda _no: None, lambda _t, _text: True, post_new=lambda _text: None
+    )
+    n = notifier.tick()
+    assert n == 1
+    assert queue.get(rid).notified is True
+
+
 def test_run_forever_는_멈추라고_하면_멈춘다(queue):
     failed(queue, 'A1')
     sent: list[str] = []

@@ -337,7 +337,12 @@ def main() -> None:
             job = queue.get(order_no)
             return job.thread_ts if job is not None else None
 
-        notifier = ExportNotifier(export[0], _thread_of, lambda ts, text: bot.post(ts, text))
+        notifier = ExportNotifier(
+            export[0],
+            _thread_of,
+            lambda ts, text: bot.post(ts, text),
+            post_new=bot.post_new,
+        )
         threading.Thread(
             target=notifier.run_forever, args=(stop.is_set,), daemon=True, name='export-notify'
         ).start()

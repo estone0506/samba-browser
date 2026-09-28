@@ -28,17 +28,26 @@ class ExportNotifier:
         queue: ExportQueue,
         thread_of: Callable[[str], str | None],
         post: Callable[[str | None, str], bool],
+        *,
+        # 스레드가 없는 주문(예: 자동 수집 이전 형식)도 놓치지 않게 최상위 메시지로 대신 올린다.
+        # 없으면 옛 동작 그대로 — 스레드 없는 실패는 로그에만 남고 notified 로 표시된다.
+        post_new: Callable[[str], object] | None = None,
     ) -> None:
         self._queue = queue
         self._thread_of = thread_of
         self._post = post
+        self._post_new = post_new
 
     def tick(self) -> int:
         """알리지 않은 실패를 알린다. 이번에 알린 건수를 돌려준다."""
         sent = 0
         for req in self._queue.unnotified_failed():
             try:
-                delivered = self._post(self._thread_of(req.order_no), _text(req))
+                thread_ts = self._thread_of(req.order_no)
+                if thread_ts is None and self._post_new is not None:
+                    delivered = self._post_new(_text(req)) is not None
+                else:
+                    delivered = self._post(thread_ts, _text(req))
             except Exception:
                 # 표시하지 않는다 — 다음 바퀴에 다시 알린다
                 log.exception('외부 기입 실패 알림 전송 오류: %s', req.order_no)
