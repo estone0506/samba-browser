@@ -3288,17 +3288,15 @@ class BuyerAgent(AgentBase):
         if account:
             args['profile'] = account
 
-        applied = self.script_json(
-            source_of(self.spec.name).set_shipping_script,
-            args,
-            goal=(
-                '주문서 배송지(새 배송지·직접 입력)에 args 의 name·address(·address_detail·postal_code)를 입력하고, '
-                '입력된 이름·주소를 되읽어 {"name","address"} 로 돌려준다. 전화 칸은 비워 두고 그 요소 번호를 '
-                'phone_field_id(칸 하나) 또는 phone_field_ids(2~3칸, 앞→뒤)로 돌려준다 — 번호는 하네스가 따로 채운다. '
-                '주소 검색 팝업이 있으면 우편번호·주소를 검색해 고른다.'
-            ),
-            check=shipping_set_problem(shipping),
-        )
+        applied = self._run_set_shipping(shipping, args)
+        # 주소 검색 팝업이 첫 시도에 안 뜨는 사이트가 있다(실측 2026-09-29 SSG: 첫 시도 '우편번호 팝업 안 뜸',
+        # 팝업을 닫고 다시 부르면 뜬다) — 팝업을 닫고 두 번까지 다시 넣는다
+        for _retry in (1, 2):
+            if shipping_matches(shipping, applied) or '팝업 안 뜸' not in str(applied.get('note') or ''):
+                break
+            self.note('배송지', f'주소 검색 팝업이 안 떠 다시 시도({_retry}/2)')
+            self._close_popups()
+            applied = self._run_set_shipping(shipping, args)
         # 원문끼리 비교하지 않는다 — 마스킹한 값끼리만 비교해서 판단에도 개인정보를 안 남긴다
         if not shipping_matches(shipping, applied):
             # 스크립트가 남긴 사유(note)를 붙인다 — 예전엔 사유 없이 멈춰 비교 오탐인지 스크립트 실패인지 몰랐다(job 207)
@@ -3313,6 +3311,35 @@ class BuyerAgent(AgentBase):
         # 마스킹 규칙이 이름을 가리려면 라벨이 앞에 있어야 한다(ops.masking) — 라벨을 붙여서 가린다
         summary = f'수취인 {shipping.get("name", "")} · {shipping.get("address", "")}'
         self.note('배송지', f'반영 완료 — {mask_text(summary)}')
+
+    def _close_popups(self) -> None:
+        """이 레인의 팝업 창을 닫는다(주소 검색·배송지 폼이 남아 다음 시도를 막는다). 실패는 무시한다."""
+        try:
+            tabs = json.loads(self.tool('list_tabs'))
+        except (AgentFailure, ValueError):
+            return
+        for t in tabs if isinstance(tabs, list) else []:
+            if isinstance(t, dict) and t.get('kind') == 'popup' and t.get('id'):
+                try:
+                    self.tool('close_tab', id=str(t['id']))
+                except AgentFailure:
+                    pass
+
+    def _run_set_shipping(
+        self, shipping: dict[str, object], args: dict[str, object]
+    ) -> dict[str, object]:
+        """배송지 입력 스크립트를 한 번 돌린다."""
+        return self.script_json(
+            source_of(self.spec.name).set_shipping_script,
+            args,
+            goal=(
+                '주문서 배송지(새 배송지·직접 입력)에 args 의 name·address(·address_detail·postal_code)를 입력하고, '
+                '입력된 이름·주소를 되읽어 {"name","address"} 로 돌려준다. 전화 칸은 비워 두고 그 요소 번호를 '
+                'phone_field_id(칸 하나) 또는 phone_field_ids(2~3칸, 앞→뒤)로 돌려준다 — 번호는 하네스가 따로 채운다. '
+                '주소 검색 팝업이 있으면 우편번호·주소를 검색해 고른다.'
+            ),
+            check=shipping_set_problem(shipping),
+        )
 
     def _confirm_shipping(self, shipping: dict[str, object], args: dict[str, object]) -> None:
         """팝업 폼 사이트는 전화까지 채운 폼을 저장/적용해야 주문서에 반영된다(sources.yaml shipping_confirm).
