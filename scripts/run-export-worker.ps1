@@ -21,4 +21,7 @@ if ($running) { exit 0 }
 $env:PYTHONIOENCODING = 'utf-8'
 $log = Join-Path $logDir ("export-worker-{0}.log" -f (Get-Date -Format 'yyyyMMdd'))
 Set-Location $agent
-& $python -m samba_agent.export worker *>> $log
+# 출력 방향 전환은 cmd 에 맡긴다 — PowerShell 5 는 외부 프로그램의 stderr(파이썬 로그)를 오류로
+# 취급해 ErrorActionPreference=Stop 에서 바로 죽는다(실기 2026-09-28: 종료 코드 1, 로그 0바이트)
+cmd /c "`"$python`" -m samba_agent.export worker >> `"$log`" 2>&1"
+exit $LASTEXITCODE
