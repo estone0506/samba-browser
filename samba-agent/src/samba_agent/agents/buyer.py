@@ -301,7 +301,7 @@ def cheapest_quotes(
             # 소싱처가 charge_pay 로 켜면(SSG MONEY 충전결제 1.5% 적립 등) 비교 후보로 남긴다
             continue
         if card and not any(n in card for n in ALLOWED_CARD_ISSUERS):
-            # 허용 카드사(현대·KB·롯데·신한·농협) 밖 — 견적만 싸고 실제로는 기본 카드로 결제된다
+            # 허용 카드사(ALLOWED_CARD_ISSUERS) 밖 — 견적만 싸고 실제로는 기본 카드로 결제된다
             # (실기: 삼성카드 할인가 49,310 으로 골랐는데 롯데카드로 51,360 결제)
             continue
         if payable is not None:
@@ -495,9 +495,10 @@ def effective_cost(row: dict[str, object]) -> float:
     return round(paid * billing_factor(str(row.get('card') or '') or None) - reward + used)
 
 
-# 결제창(토스페이·네이버페이) 안에서 고를 수 있는 카드사(사용자 2026-09-24: 현대·KB·롯데·신한·농협). 주문서 단계의
+# 결제창(토스페이·네이버페이) 안에서 고를 수 있는 카드사. 2026-09-24: 현대·KB·롯데·신한·농협, 2026-09-28 사용자 추가:
+# 우리·BC·삼성(일반 삼성카드 — '무신사 삼성카드' 제휴카드와 다르며 그쪽은 위에서 따로 뺀다). 주문서 단계의
 # '카드 직접 결제'는 쓰지 않는다 — 카드는 간편결제 창 안에서만 고른다. 결제 에이전트가 카드를 고를 때 이 표를 쓴다
-ALLOWED_CARD_ISSUERS = ('현대', 'KB', '국민', '롯데', '신한', '농협', 'NH')
+ALLOWED_CARD_ISSUERS = ('현대', 'KB', '국민', '롯데', '신한', '농협', 'NH', '우리', 'BC', '비씨', '삼성')
 
 
 def decide_order_type(
@@ -1459,19 +1460,47 @@ class BuyerAgent(AgentBase):
             args['gift'] = True  # 롯데온: 포이즌 외에는 '선물하기' 주문서로 들어간다(사용자 2026-09-27)
         args.update(extra or {})
         check = snapshot_problem(a.order.option, lambda sel: self._selected_matches(sel, a.order.option))
+        base_check = probe_snapshot_problem(a.order.option, check) if probe else check
+        goal = (
+            f'상품 {a.order.sku} 페이지에서 주문 옵션 "{a.order.option or "(없음)"}" 을 골라 주문서(구매하기)까지 가서 '
+            '원가(cost, 숫자)·선택지 목록(options, 고른 옵션 포함)·결제수단(methods)을 원래 키 그대로 돌려주고, '
+            '주문서에 실제로 담긴 상품 옵션 글자를 selected 로 돌려준다(고른 버튼 이름이 아니라 주문서에서 되읽은 값). '
+            '반드시 지킬 것: 옵션(사이즈·색상)을 실제로 고르지 못했으면 구매하기·바로구매 버튼을 절대 누르지 말고 '
+            'options 만 돌려준다 — 옵션 없이 누르면 "옵션을 선택해 주세요" 경고창이 계정 수만큼 쏟아진다. '
+            '구매 버튼은 옵션을 고른 뒤, 또는 옵션 선택창이 아예 없는 상품일 때만 누른다.'
+        )
+
+        def pick_failed(out: dict[str, object]) -> bool:
+            # 선택지는 읽었는데 스크립트가 주문 옵션 글자로 못 골랐다(표기 차이: '화이트 S' ↔ 'White-SM')
+            note = str(out.get('note') or '')
+            return (
+                bool(a.order.option)
+                and not out.get('selected')
+                and bool(out.get('options'))
+                and note.startswith(('option ambiguous', 'option not matched'))
+            )
+
         snap = self.script_json(
             source.snapshot_script,
             args,
-            goal=(
-                f'상품 {a.order.sku} 페이지에서 주문 옵션 "{a.order.option or "(없음)"}" 을 골라 주문서(구매하기)까지 가서 '
-                '원가(cost, 숫자)·선택지 목록(options, 고른 옵션 포함)·결제수단(methods)을 원래 키 그대로 돌려주고, '
-                '주문서에 실제로 담긴 상품 옵션 글자를 selected 로 돌려준다(고른 버튼 이름이 아니라 주문서에서 되읽은 값). '
-                '반드시 지킬 것: 옵션(사이즈·색상)을 실제로 고르지 못했으면 구매하기·바로구매 버튼을 절대 누르지 말고 '
-                'options 만 돌려준다 — 옵션 없이 누르면 "옵션을 선택해 주세요" 경고창이 계정 수만큼 쏟아진다. '
-                '구매 버튼은 옵션을 고른 뒤, 또는 옵션 선택창이 아예 없는 상품일 때만 누른다.'
-            ),
-            check=probe_snapshot_problem(a.order.option, check) if probe else check,
+            goal=goal,
+            check=lambda o: None if pick_failed(o) else base_check(o),
         )
+        if pick_failed(snap):
+            # 하네스의 옵션 매칭(규칙·AI)이 하나로 정하면 그 선택지 글자로 한 번만 다시 연다
+            # (실기 2026-09-28: AI 가 White-SM 으로 맞췄는데 스크립트에는 계속 '화이트 S' 를 줬다)
+            options = [str(o) for o in (snap.get('options') or [])]  # type: ignore[union-attr]
+            live = [m for m in self._match_options(options, a.order.option) if '품절' not in m]
+            if len(live) == 1 and live[0] != a.order.option:
+                self.note('옵션 재선택', mask_text(f'[{a.order.option}] → [{live[0]}] 로 다시 연다'))
+                reselected: dict[str, str] = getattr(self, '_reselected', {})
+                reselected[str(a.order.option)] = live[0]
+                self._reselected = reselected
+                if snap.get('product_tab'):
+                    self._close_product_tabs(account, str(snap.get('product_url') or ''))
+                snap = self.script_json(
+                    source.snapshot_script, {**args, 'size': live[0]}, goal=goal, check=base_check
+                )
         if snap.get('product_tab'):
             # 주문서가 안 열리면 스크립트는 사이트 알림(구매 한도 등)이 결과에 붙도록 상품 탭을 남긴다 — 여기서 닫는다
             self._close_product_tabs(account, str(snap.get('product_url') or ''))
@@ -2187,6 +2216,10 @@ class BuyerAgent(AgentBase):
     def _selected_matches(self, selected: str, wanted: str | None) -> bool:
         """주문서에 담긴 옵션이 주문 옵션과 같은가. 주문 옵션에 사이즈 숫자가 있으면 그 숫자가 꼭 겹쳐야 한다."""
         if not wanted:
+            return True
+        # 하네스가 매칭해 스크립트에 넘긴 선택지 글자(옵션 재선택)가 주문서에 그대로 담겼으면 같은 옵션이다
+        picked = getattr(self, '_reselected', {}).get(wanted)
+        if picked and ''.join(picked.split()).lower() in ''.join(selected.split()).lower():
             return True
         sizes = size_numbers(wanted)
         if sizes and not (size_numbers(selected) & sizes):
