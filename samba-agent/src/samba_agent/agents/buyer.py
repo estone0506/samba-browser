@@ -6,6 +6,7 @@
 
 import copy
 import json
+import os
 import logging
 import re
 import time
@@ -2555,7 +2556,10 @@ class BuyerAgent(AgentBase):
             return account, clone._quote(a, account), clone
 
         self.step(f'{self.spec.name}: 계정 {len(accounts)}개 동시 비교')
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(accounts)) as pool:
+        # 동시 실행 수 제한 — PC 가 바쁘면 탭 6개를 한꺼번에 띄울 때 페이지 호출이 20초 제한을 넘는다
+        # (실기 2026-09-28: ABC 6계정·무신사 4계정 전부 '응답 없음'). SAMBA_ACCOUNT_WORKERS 로 조절한다
+        workers = max(1, min(len(accounts), int(os.environ.get('SAMBA_ACCOUNT_WORKERS') or 2)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             outs = list(pool.map(run, accounts))
         # 레인이 연 탭(각 계정 주문서)을 닫는다 — 이긴 계정 주문서를 레인 밖에서 다시 만들 때 저장 스크립트가
         # "열린 주문서 탭" 중 다른 계정 것을 집지 않게 한다(레인 밖에서는 모든 탭이 보인다)
@@ -2606,7 +2610,11 @@ class BuyerAgent(AgentBase):
             return account, price - _as_float(out.get('max_reward'))
 
         self.step(f'{self.spec.name}: 계정 {len(accounts)}개 빠른 비교(할인가·최대 적립)')
-        workers = len(accounts) if self.parallel_accounts else 1
+        workers = (
+            max(1, min(len(accounts), int(os.environ.get('SAMBA_ACCOUNT_WORKERS') or 2)))
+            if self.parallel_accounts
+            else 1
+        )
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             scores = list(pool.map(run, accounts))
         valid = [(acc, v) for acc, v in scores if v is not None]
