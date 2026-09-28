@@ -1176,7 +1176,10 @@ class BuyerAgent(AgentBase):
             if not (out.startswith(LOGIN_FIELDS_NOT_FOUND) or any(w in out for w in _LOGIN_BUSY_WORDS)):
                 break
             self.note('로그인', f'{account}: 페이지가 덜 떠 다시 시도({retry}/2)')
-            self.tool('new_tab', url=home, profile=account)
+            # 탭을 새로 열면 같은 로딩을 또 기다린다(실측 2026-09-28: 병렬 첫 호출 7~20초, 둘째 호출 0.7초).
+            # 응답이 없었던 경우는 그 탭이 떠 가는 중이니 그대로 다시 부르고, 탭 자체가 없을 때만 새로 연다
+            if not out.startswith('error: page did not respond'):
+                self.tool('new_tab', url=home, profile=account)
             self.tool('wait', ms=_LOGIN_SETTLE_MS * 2 * retry)
             out = self.tool('login', accountLabel=account).strip()
         if out.startswith(ALREADY_SIGNED_IN):

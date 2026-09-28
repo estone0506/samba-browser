@@ -629,6 +629,12 @@ class PayerAgent(AgentBase):
                 'needs_human', f'결제 직전 SAMBA 재조회 실패(결제하지 않음): {e}', e.reason
             ) from e
         sourcing_no = (current.sourcing_order_number or '').strip()
+        # 재구매 — 소싱처에서 취소한 주문을 다시 사는 경우(작업 옵션 rebuy_of = 취소한 소싱주문번호).
+        # 삼바웨이브에 남은 번호가 그 번호와 같을 때만 통과한다(실기 2026-09-28: 카드 잘못 결제 2건 취소 뒤 재구매)
+        rebuy_of = str(a.options.get('rebuy_of') or '').strip()
+        if rebuy_of and sourcing_no == rebuy_of:
+            self.note('결제 직전 재조회', f'재구매 — 취소한 소싱주문 {rebuy_of} 을 새 주문으로 바꾼다')
+            return
         if sourcing_no:
             raise AgentFailure(
                 'fail', f'이미 소싱주문번호가 있다: {sourcing_no}', FailReason.DUPLICATE

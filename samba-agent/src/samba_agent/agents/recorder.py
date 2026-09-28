@@ -377,6 +377,8 @@ class RecorderAgent(AgentBase):
                 # 간단메모는 정해진 한 줄(계정·수단·실결제·원가) — LLM 문장을 싣지 않는다
                 notes=wave_notes(a, values),
                 order_type=_order_type_value(a.expected.get('order_type')),
+                # 재구매(작업 옵션 rebuy_of) — 취소한 소싱주문번호를 새 번호로 덮어쓴다
+                replace=bool(str(a.options.get('rebuy_of') or '').strip()),
             )
             self.step('recorder: 기입 확인')
             # 행이 여럿인 주문은 방금 적은 행을 되읽는다(삼바웨이브 기본은 아직 안 산 행)
