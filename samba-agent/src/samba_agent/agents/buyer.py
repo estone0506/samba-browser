@@ -3318,12 +3318,20 @@ class BuyerAgent(AgentBase):
             tabs = json.loads(self.tool('list_tabs'))
         except (AgentFailure, ValueError):
             return
-        for t in tabs if isinstance(tabs, list) else []:
-            if isinstance(t, dict) and t.get('kind') == 'popup' and t.get('id'):
+        rows = [t for t in tabs if isinstance(t, dict)] if isinstance(tabs, list) else []
+        for t in rows:
+            if t.get('kind') == 'popup' and t.get('id'):
                 try:
                     self.tool('close_tab', id=str(t['id']))
                 except AgentFailure:
                     pass
+        # 팝업을 닫으면 현재 탭이 비는 일이 있다 — 주문서 탭(마지막 일반 탭)을 다시 현재 탭으로 잡는다
+        pages = [t for t in rows if t.get('kind') != 'popup' and t.get('id')]
+        if pages:
+            try:
+                self.tool('switch_tab', id=str(pages[-1]['id']))
+            except AgentFailure:
+                pass
 
     def _run_set_shipping(
         self, shipping: dict[str, object], args: dict[str, object]
