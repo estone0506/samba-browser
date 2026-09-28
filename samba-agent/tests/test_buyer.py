@@ -1568,3 +1568,22 @@ def test_주문_옵션의_품번_숫자는_사이즈로_보지_않는다():
     assert size_numbers('블랙 M 2406433303') == set()
     assert size_numbers('카키 085(L) 230') == {'085', '230'}
     assert size_letter_options(['S (품절)', 'M', 'L (품절)', 'XL'], '블랙 M 2406433303') == ['M']
+
+
+def test_롯데온은_포이즌_외_전부_선물하기_포이즌은_까대기다(reg):
+    # 사용자 2026-09-27: 롯데온 = 롯데백화점 판매자만·샵백 경유, 포이즌 외 전부 선물하기, 포이즌은 바로구매(까대기)
+    from samba_agent.agents.buyer import source_of
+    from samba_agent.agents.contracts import OrderRef
+
+    source = source_of('buyer.lotteon')
+    assert source.gift_unless_poison and source.required_seller == '롯데백화점'
+    assert source.entry_route == 'shopback' and source.entry_script == 'lotteon_shopback_entry'
+    assert source.shipping_confirm and source.buy_accounts == ['buyer01']
+
+    spec = reg['buyer.lotteon']
+    a = BuyerAgent(spec, BridgeClient(URL, 'a' * 64, allowed=spec.tools, busy_wait_s=0.0), lambda _p, _m: '{}')
+    other = OrderRef(order_no='G1', source='롯데온', seller='KT알파', sku='S', sale_price=50000, order_type='direct')
+    # 정가를 몰라도(스냅샷 없음) 선물로 정해진다
+    assert a.order_type_of(other, None) == 'gift'
+    poison = other.model_copy(update={'order_no': 'P1', 'seller': '포이즌'})
+    assert a.order_type_of(poison, None) == 'kkadaegi'

@@ -92,7 +92,11 @@ class Source(BaseModel):
     charge_pay: bool = False
     # 진입 경로 강제(H몰 = danawa, 사용자 2026-09-27): 스냅샷 전에 `<key>_danawa_entry` 로 다나와 이동 링크(entry_url)를
     # 받아 그 링크로 들어간다(제휴할인 ReferCode). 직접 진입 금지 — 링크를 못 받으면 AI 수리 없이 사람에게
-    entry_route: Literal['danawa'] | None = None
+    entry_route: Literal['danawa', 'shopback'] | None = None
+    # 이 판매자 상품만 산다(롯데온 = 롯데백화점, 사용자 2026-09-27). 스냅샷이 seller 를 읽어 다르면 사지 않는다
+    required_seller: str | None = None
+    # True 면 포이즌 외 주문은 전부 '선물하기'(gift)로 산다(롯데온, 사용자 2026-09-27) — 삼바웨이브 배지와 무관
+    gift_unless_poison: bool = False
     # 주문서 '카드' 탭 직접 결제로 낼 카드사(H몰 = 롯데카드, 사용자 2026-09-27). 그 카드 견적 줄은 결제 제공자
     # 'card'(DIRECT_CARD_PROVIDER)로 본다 — 키마스터 결제 비밀번호가 아니라 카드사 결제창(앱카드 등)에서 사람이 승인한다.
     # 이 소싱처의 pay_provider 도 'card' 로 둔다

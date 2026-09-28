@@ -1450,6 +1450,10 @@ class BuyerAgent(AgentBase):
         args: dict[str, object] = json.loads(snapshot_args(self.spec.name, a.order, account=account))
         if source.allow_department:
             args['allow_department'] = True  # SSG: 신세계백화점(6009) 상품도 산다(사용자 2026-09-27)
+        if source.required_seller:
+            args['required_seller'] = source.required_seller  # 롯데온: 롯데백화점 판매 상품만(사용자 2026-09-27)
+        if source.gift_unless_poison and not is_poison_seller(a.order.seller):
+            args['gift'] = True  # 롯데온: 포이즌 외에는 '선물하기' 주문서로 들어간다(사용자 2026-09-27)
         args.update(extra or {})
         check = snapshot_problem(a.order.option, lambda sel: self._selected_matches(sel, a.order.option))
         snap = self.script_json(
@@ -1471,6 +1475,15 @@ class BuyerAgent(AgentBase):
         blocked = blocked_failure(snap, f'상품 확인 {account}')
         if blocked:
             raise blocked
+        if snap.get('error') == 'seller-not-allowed':
+            # 판매자가 정해진 곳(롯데백화점)이 아니다 — 품절이 아니라 '여기서 못 사는 상품'이다. 근거(판매자)를 남기고 멈춘다
+            raise AgentFailure(
+                'needs_human',
+                mask_text(
+                    f'판매자가 {source.required_seller} 이(가) 아니다(읽은 판매자: {str(snap.get("seller") or "-")[:40]}) — 사지 않는다'
+                ),
+                FailReason.UNKNOWN,
+            )
         if snap.get('error') in ENTRY_ERRORS:
             # 다나와 경유 도착에 제휴(ReferCode)가 없거나 다른 상품이 떴다 — 그대로 사면 규칙 위반이다(H몰 직접 진입 금지)
             raise AgentFailure(
@@ -3001,6 +3014,9 @@ class BuyerAgent(AgentBase):
         """
         source = source_of(self.spec.name)
         forced = source.order_type
+        if source.gift_unless_poison and not forced:
+            # 롯데온: 포이즌은 바로구매(까대기), 그 밖은 전부 선물하기 — 정가 비교 없이 정해진다(사용자 2026-09-27)
+            forced = 'kkadaegi' if is_poison_seller(order.seller) else 'gift'
         forwarder = not forced and self._is_forwarder(order)
         if not source.normal_price and not forced and not is_poison_seller(order.seller) and not forwarder:
             # 정가 스크립트가 없는 소싱처는 아직 자동 판정을 못 한다 — 삼바웨이브 태그(order_type)를 따른다

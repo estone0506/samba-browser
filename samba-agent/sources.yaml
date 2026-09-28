@@ -57,6 +57,14 @@ sources:
     home: https://www.lotteon.com/
     login_host: lotteon.com
     status: active
+    # 2026-09-28 이식(사용자): 샵백 경유 → 롯데백화점 판매자만 → 포이즌은 바로구매(까대기), 그 밖은 선물하기 →
+    # 선물 배송지(받는 분 주소로·새 등록·빠른 선물)는 lotteon_set_shipping + lotteon_confirm_shipping → L.POINT 전액 → 네이버페이
+    entry_route: shopback
+    required_seller: 롯데백화점
+    gift_unless_poison: true
+    shipping_confirm: true
+    pay_provider: naver
+    buy_accounts: [buyer01]
   # 그랜드스테이지는 ABC마트와 같은 a-rt.com 흐름이다 — 스크립트(key)를 그대로 공유한다
   - id: GrandStage
     key: abc
