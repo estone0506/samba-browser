@@ -8,12 +8,26 @@
 import logging
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import Literal
 
 from samba_agent.export.adapters import Adapter, AdapterReject, AdapterRetry, CellValues
 from samba_agent.export.failures import ExportFail
 from samba_agent.export.store import ExportQueue, ExportRequest
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _Outcome:
+    """어댑터를 다 부른 뒤 정한 결과 — 큐에는 이걸 한 번만 쓴다(리뷰 지적 — M2).
+
+    done 뒤의 fail_reason 은 없다. fail·retry 는 반드시 있다.
+    """
+
+    kind: Literal['done', 'fail', 'retry']
+    detail: str
+    reason: ExportFail | None = None
 
 
 def _same(current: CellValues, req: ExportRequest) -> bool:
@@ -69,38 +83,50 @@ class ExportWorker:
         return self._queue.get(req.id)
 
     def _process(self, req: ExportRequest, adapter: Adapter) -> None:
+        outcome = self._decide(req, adapter)
+        # 큐 기록은 어댑터 try 바깥에서 한 번만 한다 — 기입은 성공했는데 그 뒤 큐 쓰기가
+        # 실패하면(예: sqlite 오류) 리뷰 지적 M2 이전에는 UNKNOWN 실패로 잘못 남았다.
+        # 여기서 나는 예외는 run_once 밖으로 그대로 나가고, running 인 행은 재시작 때
+        # recover_running 이 되돌린다(같은 값이면 다시 입력하지 않으니 안전하다).
+        if outcome.kind == 'done':
+            self._queue.done(req.id, outcome.detail)
+        elif outcome.kind == 'retry':
+            assert outcome.reason is not None
+            self._queue.retry_later(req.id, outcome.reason, outcome.detail, self._retry_delay_s)
+        else:
+            assert outcome.reason is not None
+            self._queue.fail(req.id, outcome.reason, outcome.detail)
+
+    def _decide(self, req: ExportRequest, adapter: Adapter) -> _Outcome:
+        """어댑터를 불러 결과를 정한다. 큐는 건드리지 않는다(어댑터 계약 밖 예외만 여기서 잡는다)."""
         try:
             current = adapter.read(req.order_no)
             if _same(current, req):
-                self._queue.done(req.id, '이미 같은 값이 들어 있어 입력하지 않았다')
-                return
+                return _Outcome('done', '이미 같은 값이 들어 있어 입력하지 않았다')
             conflict = _conflict(current, req)
             if conflict is not None:
-                self._queue.fail(req.id, ExportFail.VALUE_CONFLICT, f'덮어쓰지 않았다 — {conflict}')
-                return
+                return _Outcome('fail', f'덮어쓰지 않았다 — {conflict}', ExportFail.VALUE_CONFLICT)
             adapter.write(req.order_no, req.cost, req.shipping_fee)
             after = adapter.read(req.order_no)
             if not _same(after, req):
-                self._queue.fail(
-                    req.id,
-                    ExportFail.VERIFY_MISMATCH,
+                return _Outcome(
+                    'fail',
                     f'되읽은 값이 다르다 — 원가 {after.cost} · 배송비 {after.shipping_fee}',
+                    ExportFail.VERIFY_MISMATCH,
                 )
-                return
-            self._queue.done(req.id, f'원가 {req.cost:,} · 배송비 {req.shipping_fee:,} 기입 확인')
+            return _Outcome('done', f'원가 {req.cost:,} · 배송비 {req.shipping_fee:,} 기입 확인')
         except AdapterRetry as e:
             if req.attempts >= self._max_attempts:
-                self._queue.fail(
-                    req.id, e.reason, f'재시도 {req.attempts}회 모두 실패 — {e.detail}'
-                )
-            else:
-                self._queue.retry_later(req.id, e.reason, e.detail, self._retry_delay_s)
+                return _Outcome('fail', f'재시도 {req.attempts}회 모두 실패 — {e.detail}', e.reason)
+            return _Outcome('retry', e.detail, e.reason)
         except AdapterReject as e:
-            self._queue.fail(req.id, e.reason, e.detail)
+            return _Outcome('fail', e.detail, e.reason)
         except Exception as e:
-            # 입력이 어디까지 됐는지 모른다 — 자동으로 다시 하지 않고 사람이 본다
+            # 어댑터 계약(AdapterRetry·AdapterReject) 밖의 예외다 — 입력이 어디까지 됐는지
+            # 모르니 자동으로 다시 하지 않고 사람이 본다(중간에 멈춘 경우만이 아니라 어떤
+            # 예상 못한 오류든 여기로 온다)
             log.exception('외부 기입 중 오류: %s(%s)', req.order_no, req.target)
-            self._queue.fail(req.id, ExportFail.UNKNOWN, f'{type(e).__name__}: {e}'[:200])
+            return _Outcome('fail', f'{type(e).__name__}: {e}'[:200], ExportFail.UNKNOWN)
 
     def run_forever(
         self,

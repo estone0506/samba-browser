@@ -192,6 +192,33 @@ def test_한_번에_한_건만_처리한다(queue):
     assert w.run_once() is None
 
 
+def test_기입_성공_뒤_큐_기록이_실패하면_예외가_나가고_행은_running으로_남는다(queue):
+    # 리뷰 지적 — M2: 기입은 성공했는데 그 뒤 queue.done() 이 실패하면 UNKNOWN 실패로
+    # 잘못 기록되면 안 된다 — 예외가 그대로 나가고, 행은 running 그대로 남아야 한다
+    # (재시작 때 recover_running 이 되돌린다).
+    adapter = FakeAdapter({'A1': EMPTY})
+    req = queue.enqueue('A1', 'emp', 62470, 2300)
+    w = worker(queue, adapter)
+
+    real_done = queue.done
+    calls = {'n': 0}
+
+    def boom_once(request_id, detail):
+        calls['n'] += 1
+        if calls['n'] == 1:
+            raise RuntimeError('디스크 오류')
+        real_done(request_id, detail)
+
+    queue.done = boom_once  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match='디스크 오류'):
+        w.run_once()
+
+    queue.done = real_done  # type: ignore[method-assign]
+    assert queue.get(req.id).status == 'running'
+    assert adapter.rows['A1'] == CellValues(62470, 2300)  # 기입 자체는 이미 성공했다
+
+
 def test_run_forever_는_생존_표시를_남기고_멈춘다(queue):
     adapter = FakeAdapter({'A1': EMPTY})
     queue.enqueue('A1', 'emp', 62470, 2300)
