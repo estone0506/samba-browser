@@ -3,6 +3,7 @@
 worker                   입력 작업자를 띄운다(관리자 권한으로 실행해야 EMP 에 입력된다)
 list [--limit N]         최근 요청을 본다
 requeue ORDER_NO TARGET  실패한 요청을 같은 값으로 다시 대기시킨다
+shopmine [--dry]        샵마인 일괄 완료됨을 큐 없이 한 번 돌린다(--dry 는 완료됨을 누르지 않는다)
 """
 
 import argparse
@@ -13,7 +14,9 @@ import threading
 from pathlib import Path
 from typing import get_args
 
+from samba_agent.export.adapters import AdapterReject, AdapterRetry
 from samba_agent.export.desktop import build_adapters
+from samba_agent.export.desktop.shopmine import ShopMineAdapter
 from samba_agent.export.idle import user_idle_seconds
 from samba_agent.export.routing import Target
 from samba_agent.export.store import ExportQueue
@@ -43,6 +46,28 @@ def _requeue(queue: ExportQueue, order_no: str, target: str) -> int:
         print(f'{order_no}({target}) 실패한 요청이 없다')
         return 1
     print(f'{req.order_no}({req.target}) 다시 대기 — 원가 {req.cost:,} 배송비 {req.shipping_fee:,}')
+    return 0
+
+
+def _shopmine_ui():
+    from samba_agent.export.desktop.shopmine_ui import PywinautoShopMineUi
+
+    return PywinautoShopMineUi()
+
+
+# 테스트가 바꿔 끼울 수 있게 모듈 이름으로 둔다
+PywinautoShopMineUi = _shopmine_ui
+
+
+def _shopmine(dry: bool) -> int:
+    """샵마인 일괄 완료됨을 큐 없이 한 번 돌린다 — 실기 시험용."""
+    adapter = ShopMineAdapter(PywinautoShopMineUi(), dry_run=dry)
+    try:
+        n = adapter.complete_pending()
+    except (AdapterRetry, AdapterReject) as e:
+        print(f'샵마인 처리 못 함 — {e.reason.value}: {e.detail}')
+        return 2
+    print(f'샵마인 {"필터 행(누르지 않음)" if dry else "완료됨 처리"} {n}건')
     return 0
 
 
@@ -78,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
     p_requeue = sub.add_parser('requeue', help='실패한 요청을 다시 대기시킨다')
     p_requeue.add_argument('order_no')
     p_requeue.add_argument('target', choices=list(get_args(Target)))
+    p_shop = sub.add_parser('shopmine', help='샵마인 일괄 완료됨을 한 번 돌린다')
+    p_shop.add_argument('--dry', action='store_true', help='완료됨을 누르지 않고 행 수만 본다')
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -85,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
         format='%(asctime)s.%(msecs)03d %(levelname)s:%(name)s:%(message)s',
         datefmt='%H:%M:%S',
     )
+    if args.cmd == 'shopmine':
+        return _shopmine(args.dry)
     db_path = (
         args.db if args.db is not None else load_settings(DEFAULT_ROOT / '.env').export_db_path
     )

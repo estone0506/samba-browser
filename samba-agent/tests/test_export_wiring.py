@@ -112,3 +112,41 @@ def test_db_옵션이_설정값을_덮어쓴다(monkeypatch, tmp_path, capsys):
     assert export_main(['--db', str(other_path), 'list']) == 0
     out = capsys.readouterr().out
     assert 'B1' in out
+
+
+def test_shopmine_명령은_드라이버를_만들어_한_번_돌린다(monkeypatch, tmp_path, capsys):
+    settings(monkeypatch, tmp_path)
+    import samba_agent.export.__main__ as cli
+
+    made: dict[str, object] = {}
+
+    class FakeAdapter:
+        def __init__(self, ui, *, dry_run=False, **_kw):
+            made['dry_run'] = dry_run
+
+        def complete_pending(self):
+            return 4
+
+    monkeypatch.setattr(cli, 'PywinautoShopMineUi', lambda: object())
+    monkeypatch.setattr(cli, 'ShopMineAdapter', FakeAdapter)
+    assert export_main(['shopmine', '--dry']) == 0
+    assert made['dry_run'] is True
+    assert '4' in capsys.readouterr().out
+
+
+def test_shopmine_명령은_재시도_사유를_출력하고_2를_돌려준다(monkeypatch, tmp_path, capsys):
+    settings(monkeypatch, tmp_path)
+    import samba_agent.export.__main__ as cli
+    from samba_agent.export.adapters import AdapterRetry
+
+    class Failing:
+        def __init__(self, ui, **_kw):
+            pass
+
+        def complete_pending(self):
+            raise AdapterRetry(ExportFail.WINDOW_MISSING, '샵마인 창 없음')
+
+    monkeypatch.setattr(cli, 'PywinautoShopMineUi', lambda: object())
+    monkeypatch.setattr(cli, 'ShopMineAdapter', Failing)
+    assert export_main(['shopmine']) == 2
+    assert 'window_missing' in capsys.readouterr().out

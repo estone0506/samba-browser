@@ -17,6 +17,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "respx>=0.21", "ruff>=0.7"]
+# 입력 작업자(샵마인·EMP 화면 조작) — 하네스 본체에는 필요 없다
+desktop = ["pywinauto>=0.6.8"]
 
 [build-system]
 requires = ["hatchling"]
