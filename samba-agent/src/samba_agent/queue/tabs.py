@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 # 브릿지에 요구하는 도구 — 진입점이 이 목록으로 scoped() 한다
 TAB_TOOLS = ('list_tabs', 'close_tab')
 # 정리에서 남기는 탭 — 사람이 보는 화면(삼바웨이브 주문관리·네이버 홈·앱 새 탭)
-KEEP_HOSTS = ('samba-wave', 'www.naver.com', 'localhost', 'about:blank')
+KEEP_HOSTS = ('samba-wave', 'www.naver.com', 'nid.naver.com', 'localhost', 'about:blank')
 
 
 class TabJanitor:
