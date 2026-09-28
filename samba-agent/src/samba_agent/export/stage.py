@@ -80,8 +80,11 @@ def make_exporter(
             req = queue.enqueue(order.order_no, target, cost, shipping_fee)
         except ExportConflict as e:
             return _result(f'외부 기입 충돌({target}) — {e}', {'export': 'conflict', **plan})
-        # 그 대상을 맡은 작업자가 떠 있을 때만 기다린다 — 없으면 주문마다 제한 시간을 통째로 쓴다
-        waited = wait_s if queue.alive(target) else 0
+        # 그 대상을 맡은 작업자가 떠 있고, 이 요청보다 먼저 온 대기 건이 없을 때만 기다린다 —
+        # 작업자가 죽었거나(alive 거짓) 대기열이 밀려 있으면(먼저 온 pending 이 있으면)
+        # 어차피 못 받으니 주문마다 제한 시간을 통째로 쓰지 않는다
+        can_wait = queue.alive(target) and not queue.has_older_pending(target, req.id)
+        waited = wait_s if can_wait else 0
         final = queue.wait(req.id, waited, poll_s=poll_s, sleep=sleep)
         if final.status == 'done':
             return _result(

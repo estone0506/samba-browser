@@ -112,7 +112,10 @@ class ExportWorker:
         while not should_stop():
             worked = False
             try:
-                self._queue.beat(self.targets)
+                # 살아 있다는 표시는 실제로 집을 수 있을 때만 남긴다 — 사람이 PC 를 쓰는 중에도
+                # beat 를 남기면 export 단계가 alive() 만 보고 주문마다 대기 시간을 통째로 쓴다
+                if self._user_idle_s() >= self._min_idle_s:
+                    self._queue.beat(self.targets)
                 worked = self.run_once() is not None
             except Exception:
                 log.exception('입력 작업자 고리 오류 — 계속한다')

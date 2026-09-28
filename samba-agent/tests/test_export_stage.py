@@ -118,6 +118,16 @@ def test_작업자가_없으면_기다리지_않고_pending(queue):
     assert '대기' in out.reason
 
 
+def test_대기열에_더_먼저_온_요청이_있으면_기다리지_않고_pending(queue):
+    # 리뷰 지적 — I4 (b): alive() 만 보면 대기열이 밀려 있어도 제한 시간을 통째로 쓴다
+    queue.beat(['emp'])
+    queue.enqueue('B9', 'emp', 1000, 0)  # 이 요청보다 먼저 온 대기 건
+    slept: list[float] = []
+    out = make_exporter(queue, ROUTING, wait_s=10, sleep=slept.append)(state())
+    assert out.payload['export'] == 'pending'
+    assert slept == []
+
+
 def test_나머지_판매처는_샵마인으로_넣는다(queue):
     out = make_exporter(queue, ROUTING, wait_s=0)(state(seller='스마트스토어'))
     assert out.payload['target'] == 'shopmine'

@@ -203,6 +203,20 @@ def test_run_forever_는_생존_표시를_남기고_멈춘다(queue):
     assert slept == [3.0]  # 첫 바퀴는 일을 했으니 쉬지 않고, 둘째 바퀴는 할 일이 없어 쉰다
 
 
+def test_run_forever_는_사람이_바쁘면_생존_표시도_남기지_않는다(queue):
+    # 리뷰 지적 — I4 (a): alive() 는 '처리 가능'이 아니라 '살아 있음'이다 — 집을 수 없을 때
+    # beat 를 남기면 export 단계가 alive() 만 보고 기다려 주문마다 대기 시간을 통째로 쓴다
+    adapter = FakeAdapter({'A1': EMPTY})
+    queue.enqueue('A1', 'emp', 62470, 2300)
+    stops = iter([False, True])
+    slept: list[float] = []
+    worker(queue, adapter, idle=3.0).run_forever(
+        lambda: next(stops), poll_s=3.0, sleep=slept.append
+    )
+    assert queue.alive('emp') is False
+    assert queue.find('A1', 'emp').status == 'pending'  # 바빠서 집지도 않았다
+
+
 def test_run_forever_는_고리_오류로_죽지_않는다(queue):
     class Broken(FakeAdapter):
         def read(self, order_no: str) -> CellValues:

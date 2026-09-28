@@ -319,6 +319,20 @@ class ExportQueue:
                     (target, now),
                 )
 
+    def has_older_pending(self, target: str, before_id: int) -> bool:
+        """이 대상에 ``before_id`` 보다 먼저 들어온 대기 요청이 있는가.
+
+        있으면 이 요청은 한참 뒤에나 집힐 테니 export 단계가 기다려도 소용없다
+        (리뷰 지적 — I4 (b): alive() 만 보면 대기열이 밀려 있어도 주문마다 대기 시간을 다 쓴다).
+        """
+        with self._lock:
+            row = self._db.execute(
+                "SELECT 1 FROM export_requests WHERE target=? AND status='pending' "
+                'AND id<? LIMIT 1',
+                (target, before_id),
+            ).fetchone()
+        return row is not None
+
     def alive(self, target: str, within_s: float = 30.0) -> bool:
         """이 대상을 맡은 작업자가 최근에 표시를 남겼는가."""
         with self._lock:

@@ -202,6 +202,29 @@ def test_알림_대상은_알리지_않은_실패뿐이다(queue):
     assert queue.unnotified_failed() == []
 
 
+def test_더_먼저_온_대기_요청이_있으면_has_older_pending(queue):
+    # 리뷰 지적 — I4 (b): alive() 만 보면 대기열이 밀려 있어도 export 단계가 기다린다
+    first = queue.enqueue('A1', 'emp', 1000, 0)
+    second = queue.enqueue('A2', 'emp', 2000, 0)
+    assert queue.has_older_pending('emp', second.id) is True  # A1 이 먼저 있다
+    assert queue.has_older_pending('emp', first.id) is False  # A1 앞에는 아무도 없다
+
+
+def test_다른_대상의_대기는_안_본다(queue):
+    queue.enqueue('A1', 'shopmine', 1000, 0)
+    later = queue.enqueue('A2', 'emp', 2000, 0)
+    assert queue.has_older_pending('emp', later.id) is False
+
+
+def test_running_이나_done_은_older_pending에_안_들어간다(queue):
+    first = queue.enqueue('A1', 'emp', 1000, 0)
+    queue.claim_next(['emp'])  # A1 은 이제 running
+    second = queue.enqueue('A2', 'emp', 2000, 0)
+    assert queue.has_older_pending('emp', second.id) is False
+    queue.done(first.id, '기입 완료')
+    assert queue.has_older_pending('emp', second.id) is False
+
+
 def test_작업자_생존_표시는_시간이_지나면_꺼진다(queue, clock):
     assert queue.alive('emp') is False
     queue.beat(['emp'])
