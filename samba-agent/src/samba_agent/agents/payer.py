@@ -250,6 +250,13 @@ def order_form_mismatch(
     site_words = _name_words(site_name)
     if site_words and _mostly_found(words, site_name) and _mostly_found(site_words, text):
         return None
+    # 4) 사이트 상품명의 모델 토큰(기호 뺀 영숫자 5자 이상, 예: 'P-6000' → 'p6000')이 주문서 글자에 있다 —
+    #    ABC 주문서는 스타일코드 없이 'NIKE P-6000' 만 보인다(실기 2026-09-28 B07648: CN0149 로 못 맞춰 결제 안 됨)
+    compact_text = re.sub(r'[^0-9a-z가-힣]', '', low)
+    for tok in re.split(r'\s+', (site_name or '').lower()):
+        c = re.sub(r'[^0-9a-z가-힣]', '', tok)
+        if len(c) >= 5 and not c.isdigit() and tok.upper() not in _GENERIC_WORDS and c in compact_text:
+            return None
     return f'상품명 단어 {words[:6]} 가 주문서에 없다' + (
         f'(사이트 상품명 {site_words[:6]} 로도 못 맞춤)' if site_words else ''
     )
