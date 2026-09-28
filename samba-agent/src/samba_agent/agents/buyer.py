@@ -568,6 +568,16 @@ def matching_options(options: list[str], wanted: str | None) -> list[str]:
         free = [o for o in live if _is_free_size(o)]
         if free:
             return free
+    # 선택지가 프리사이즈 하나뿐이고 주문 옵션에 사이즈가 없으면(색상만) 그것이다 — 색상은 상품 자체가 정한다
+    # (실기 2026-09-28: 주문 '블랙 & 올리브 그린' ↔ 무신사 선택지 ['FREE'] 를 옵션 불일치로 멈췄다).
+    # 상품이 맞는지는 결제 직전 주문서 대조가 다시 본다
+    if (
+        len(live) == 1
+        and _is_free_size(live[0])
+        and not re.search(r'\d', wanted)
+        and not size_letters(wanted)
+    ):
+        return live
     w = wanted.strip()
     exact = [o for o in live if o.strip() == w]
     if exact:
