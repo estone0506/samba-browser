@@ -53,8 +53,8 @@ class ShopMineUi(Protocol):
         """전체 선택을 풀고, 목록의 주문번호와 맞는 행만 체크한다. 주문번호 → 체크한 행 수."""
         ...
 
-    def set_status_done(self) -> None:
-        """작업상태지정 → 완료됨(우리 조작이 띄운 확인 대화상자는 누른다)."""
+    def set_status_done(self, expected_rows: int) -> None:
+        """작업상태지정 → 완료됨. 확인 대화상자의 '선택한 N개' 가 expected_rows 와 같을 때만 누른다."""
         ...
 
 
@@ -95,7 +95,7 @@ class ShopMineAdapter:
             )
         if self._dry_run:
             return set(found)
-        ui.set_status_done()
+        ui.set_status_done(sum(checked.get(o, 0) for o in found))
         # 되읽기 — 처리한 주문은 같은 필터에 남아 있으면 안 된다
         ui.set_filters()
         after = ui.filtered_order_nos()

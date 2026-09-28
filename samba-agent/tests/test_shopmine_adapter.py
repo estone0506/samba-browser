@@ -45,8 +45,8 @@ class FakeUi:
         self.checked = [o for o in order_nos if o in self.rows and o not in self.uncheckable]
         return {o: (1 if o in self.checked else 0) for o in order_nos}
 
-    def set_status_done(self) -> None:
-        self.calls.append('done')
+    def set_status_done(self, expected_rows: int) -> None:
+        self.calls.append(f'done {expected_rows}')
         self.rows = [r for r in self.rows if r not in self.checked or r in self.sticky]
 
 
@@ -61,7 +61,7 @@ def test_넘긴_주문_중_화면에_있는_것만_체크해_완료됨으로_바
         'filters',
         'list',
         'select S1,S3',
-        'done',
+        'done 2',
         'filters',
         'list',
     ]
@@ -71,7 +71,7 @@ def test_넘긴_주문_중_화면에_있는_것만_체크해_완료됨으로_바
 def test_넘긴_주문이_화면에_하나도_없으면_아무것도_누르지_않는다():
     ui = FakeUi(rows=('S1',))
     assert ShopMineAdapter(ui).complete_pending(['X1', 'X2']) == set()
-    assert 'done' not in ui.calls
+    assert not any(c.startswith('done') for c in ui.calls)
     assert not any(c.startswith('select') for c in ui.calls)
 
 
@@ -85,7 +85,7 @@ def test_dry_run_은_체크까지만_한다():
     ui = FakeUi(rows=('S1', 'S2'))
     assert ShopMineAdapter(ui, dry_run=True).complete_pending(['S2']) == {'S2'}
     assert ui.calls[-1] == 'select S2'
-    assert 'done' not in ui.calls
+    assert not any(c.startswith('done') for c in ui.calls)
     assert ui.rows == ['S1', 'S2']
 
 
@@ -95,7 +95,7 @@ def test_체크가_안_된_행이_있으면_누르지_않고_거절한다():
     with pytest.raises(AdapterReject) as e:
         ShopMineAdapter(ui).complete_pending(['S1', 'S2'])
     assert e.value.reason is ExportFail.AMBIGUOUS
-    assert 'done' not in ui.calls
+    assert not any(c.startswith('done') for c in ui.calls)
 
 
 def test_완료됨_뒤에도_남으면_verify_mismatch():

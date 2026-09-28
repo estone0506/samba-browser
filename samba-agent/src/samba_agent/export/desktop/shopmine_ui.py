@@ -13,6 +13,7 @@ UIA 요소를 만들어 automation id 색인을 만든다(약 4초). 숨은 탭 
 import ctypes
 import functools
 import logging
+import re
 import time
 from collections.abc import Sequence
 from ctypes import wintypes
@@ -24,7 +25,7 @@ from pywinauto.timings import TimeoutError as PwTimeoutError
 from pywinauto.uia_defines import NoPatternInterfaceError
 from pywinauto.uia_element_info import UIAElementInfo
 
-from samba_agent.export.adapters import AdapterRetry
+from samba_agent.export.adapters import AdapterReject, AdapterRetry
 from samba_agent.export.desktop.shopmine import order_matches
 from samba_agent.export.failures import ExportFail
 
@@ -41,6 +42,12 @@ STATUS_DONE = '완료됨'
 ORDER_NO_COLUMN = '주문번호'
 # 우리가 완료됨을 누른 뒤 뜨는 확인 대화상자에서 눌러도 되는 버튼 이름
 CONFIRM_BUTTONS = ('예(Y)', '확인', 'OK', 'Yes')
+# 확인 대화상자에서 물러날 때 누르는 버튼 이름
+CANCEL_BUTTONS = ('아니요(N)', '아니오(N)', '취소', 'No', 'Cancel')
+# 확인 대화상자 문구의 선택 개수('선택한 1개의 주문을 …')
+_SELECTED_COUNT = re.compile(r'선택한\s*(\d+)\s*개')
+# 완료됨 지정 뒤 결과 안내창 문구('[완료됨]으로 [작업상태지정] 되었습니다.')
+RESULT_MARK = '되었습니다'
 # 행별 선택 상태 셀 값이 '체크됨'으로 보이는 표시들
 _CHECKED_MARKERS = ('true', '1', '선택', '체크', 'checked')
 
@@ -68,7 +75,7 @@ def _guard_pywinauto_errors(fn):
         started = time.monotonic()
         try:
             return fn(self, *args, **kwargs)
-        except AdapterRetry:
+        except (AdapterRetry, AdapterReject):
             raise
         except (ElementNotFoundError, PwTimeoutError, NoPatternInterfaceError) as e:
             raise AdapterRetry(ExportFail.BLOCKED, f'{fn.__name__}: {e}') from e
@@ -408,7 +415,7 @@ class PywinautoShopMineUi:
 
     # ---- 완료됨 ----
     @_guard_pywinauto_errors
-    def set_status_done(self) -> None:
+    def set_status_done(self, expected_rows: int) -> None:
         pid = self._main.process_id()
         toolbar = self._el('ToolStripSub')
         menu = next(
@@ -432,11 +439,16 @@ class PywinautoShopMineUi:
             )
         before_confirm = {w.handle for w in self._top_windows(pid)}
         done_item.click_input()
-        self._confirm_own_dialog(pid, before_confirm)
+        self._confirm_own_dialog(pid, before_confirm, expected_rows)
+        self._dismiss_result_dialog(pid, before_confirm)
         time.sleep(self._poll_s * 2)
 
-    def _confirm_own_dialog(self, pid: int, before: set[int], wait_s: float = 5.0) -> None:
-        """우리가 방금 띄운 대화상자(클릭 전에는 없던 창)만 누른다. 없으면 그냥 지나간다."""
+    def _dismiss_result_dialog(self, pid: int, before: set[int], wait_s: float = 60.0) -> None:
+        """완료됨 지정 뒤 뜨는 결과 안내창('… 되었습니다' · 확인)을 닫는다(실기 2026-09-28).
+
+        닫지 않으면 메인 창이 그 창에 막힌 채 남는다. 클릭 전에 없던 창이고 문구가 결과
+        안내일 때만 누른다.
+        """
         deadline = time.monotonic() + wait_s
         while time.monotonic() < deadline:
             for w in _new_windows(before, self._top_windows(pid)):
@@ -446,15 +458,57 @@ class PywinautoShopMineUi:
                     buttons = dialog.descendants(control_type='Button')
                 except Exception:  # noqa: BLE001, S112 — 이미 닫힌 창은 건너뛴다
                     continue
-                for b in buttons:
-                    if b.window_text() in CONFIRM_BUTTONS:
-                        b.click_input()
-                        log.info(
-                            '샵마인 확인 대화상자 %r(%r) 에서 %r 을 눌렀다',
-                            (w.window_text() or '')[:40],
-                            ' '.join(t for t in texts if t)[:80],
-                            b.window_text(),
-                        )
-                        time.sleep(self._poll_s)
-                        return
+                message = ' '.join(t for t in texts if t)
+                if RESULT_MARK not in message:
+                    continue
+                named = {b.window_text(): b for b in buttons}
+                ok = next((named[n] for n in CONFIRM_BUTTONS if n in named), None)
+                if ok is None:
+                    continue
+                ok.click_input()
+                log.info('샵마인 결과 안내창(%r)을 닫았다', message[:80])
+                time.sleep(self._poll_s)
+                return
+            time.sleep(self._poll_s)
+        log.warning('샵마인 결과 안내창을 찾지 못했다 — 뜨지 않았거나 이미 닫혔다')
+
+    def _confirm_own_dialog(
+        self, pid: int, before: set[int], expected_rows: int, wait_s: float = 5.0
+    ) -> None:
+        """우리가 방금 띄운 대화상자(클릭 전에는 없던 창)만 누른다. 없으면 그냥 지나간다.
+
+        문구의 '선택한 N개' 가 우리가 체크한 행 수와 다르면 누르지 않고 물러난다 — 대상이 아닌
+        주문이 함께 바뀌는 것을 막는 마지막 확인이다(실기: '선택한 1개의 주문을 [완료됨]으로 …').
+        """
+        deadline = time.monotonic() + wait_s
+        while time.monotonic() < deadline:
+            for w in _new_windows(before, self._top_windows(pid)):
+                try:
+                    dialog = UIAWrapper(UIAElementInfo(w.handle))
+                    texts = [t.window_text() for t in dialog.descendants(control_type='Text')]
+                    buttons = dialog.descendants(control_type='Button')
+                except Exception:  # noqa: BLE001, S112 — 이미 닫힌 창은 건너뛴다
+                    continue
+                named = {b.window_text(): b for b in buttons}
+                confirm = next((named[n] for n in CONFIRM_BUTTONS if n in named), None)
+                if confirm is None:
+                    continue
+                message = ' '.join(t for t in texts if t)
+                count = _SELECTED_COUNT.search(message)
+                if count is None:
+                    # 개수를 묻는 확인 창이 아니다(결과 안내 등) — 여기서는 누르지 않는다
+                    continue
+                if int(count.group(1)) != expected_rows:
+                    cancel = next((named[n] for n in CANCEL_BUTTONS if n in named), None)
+                    if cancel is not None:
+                        cancel.click_input()
+                    raise AdapterReject(
+                        ExportFail.AMBIGUOUS,
+                        f'확인 창의 선택 {count.group(1)}개 ≠ 체크한 {expected_rows}개 — 누르지 않았다',
+                    )
+                pressed = confirm.window_text()
+                confirm.click_input()
+                log.info('샵마인 확인 대화상자(%r) 에서 %r 을 눌렀다', message[:80], pressed)
+                time.sleep(self._poll_s)
+                return
             time.sleep(self._poll_s)
