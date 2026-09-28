@@ -119,6 +119,7 @@ class Worker:
         self._reset_finished_thread(job.id)
         if self.d.tabs is not None:
             self._close_deferred(job)
+            self._close_leftovers(job.order_no)
             self._tab_marks[job.id] = self.d.tabs.snapshot()
         state = {
             'order': order,
@@ -128,6 +129,20 @@ class Worker:
             'dry_run_digits': self.d.dry_run_digits,
         }
         return self._cleanup_tabs(self._invoke(job, state))
+
+    def _close_leftovers(self, label: str) -> None:
+        """작업 시작 직전 — 지난 작업(죽은 하네스·시간 초과)이 남긴 탭을 닫는다. 화면을 남기는 설정이면 건너뛴다."""
+        if self.d.tabs is None or self.d.keep_tabs:
+            return
+        if self._tab_marks:
+            return  # 승인 대기로 멈춘 작업의 주문서가 살아 있어야 한다
+        try:
+            closed = self.d.tabs.close_leftovers()
+        except Exception:  # noqa: BLE001 — 정리 실패가 새 작업을 막으면 안 된다
+            _log.exception('남은 탭 정리 실패 — 그대로 둔다: %s', label)
+            return
+        if closed:
+            _log.info('%s 시작 전 남은 탭 %d개 닫음', label, closed)
 
     def _close_deferred(self, job: Job) -> None:
         """keep_tabs 로 남겨 둔 지난 작업의 탭을 새 작업 시작 직전에 닫는다(옛 주문서 오독 방지)."""
