@@ -11,6 +11,7 @@ import time
 from pywinauto import Desktop
 from pywinauto.findwindows import ElementNotFoundError
 from pywinauto.timings import TimeoutError as PwTimeoutError
+from pywinauto.uia_defines import NoPatternInterfaceError
 
 from samba_agent.export.adapters import AdapterRetry
 from samba_agent.export.failures import ExportFail
@@ -47,12 +48,16 @@ def _guard_pywinauto_errors(fn):
 
     @functools.wraps(fn)
     def wrapper(self, *args, **kwargs):
+        started = time.monotonic()
         try:
             return fn(self, *args, **kwargs)
         except AdapterRetry:
             raise
-        except (ElementNotFoundError, PwTimeoutError) as e:
+        except (ElementNotFoundError, PwTimeoutError, NoPatternInterfaceError) as e:
             raise AdapterRetry(ExportFail.BLOCKED, f'{fn.__name__}: {e}') from e
+        finally:
+            # 단계별 소요 — 실기에서 어느 단계가 느린지 본다
+            log.info('샵마인 %s %.1f초', fn.__name__, time.monotonic() - started)
 
     return wrapper
 
@@ -78,28 +83,99 @@ class PywinautoShopMineUi:
 
     # ---- 창·탭 ----
     def _window(self):
-        """통합주문관리 탭이 있는 ShopMine 창. 없으면 AdapterRetry(WINDOW_MISSING)."""
+        """ShopMine 메인 창(메뉴 막대가 있는 창). 없으면 AdapterRetry(WINDOW_MISSING).
+
+        래퍼(UIAWrapper)를 그대로 쓴다 — WindowSpecification 은 접근할 때마다 창을 다시 찾아
+        느리고 COM 오류("가입자를 불러낼 수 없습니다")가 났다(실기 2026-09-28).
+        """
         for w in Desktop(backend='uia').windows():
             title = w.window_text() or ''
             if not title.startswith(WINDOW_TITLE_MARK):
                 continue
-            if w.descendants(control_type='TabItem', title=ORDER_TAB):
+            # 최소화된 창은 자식 요소를 돌려주지 않는다(실기 2026-09-28) — 먼저 복원한다
+            if w.is_minimized():
+                w.restore()
+                time.sleep(self._poll_s)
+            if w.descendants(control_type='MenuBar'):
                 return w
-        raise AdapterRetry(ExportFail.WINDOW_MISSING, '샵마인 통합주문관리 창이 없다')
+        raise AdapterRetry(ExportFail.WINDOW_MISSING, '샵마인 창이 없다')
+
+    def _open_order_tab(self) -> None:
+        """통합주문관리 탭이 안 열려 있으면(재시작 직후) 메뉴 주문관리(O) → 통합주문관리(I) 로 연다."""
+        if self._win.descendants(control_type='TabItem', title=ORDER_TAB):
+            return
+        menubar = next(
+            (m for m in self._win.descendants(control_type='MenuBar') if m.rectangle().width() > 0),
+            None,
+        )
+        if menubar is None:
+            raise AdapterRetry(ExportFail.BLOCKED, '샵마인 메뉴 막대를 찾지 못했다')
+        top = next(
+            (m for m in menubar.children(control_type='MenuItem') if '주문관리' in m.window_text()),
+            None,
+        )
+        if top is None:
+            raise AdapterRetry(ExportFail.BLOCKED, '샵마인 메뉴에 주문관리 가 없다')
+        top.click_input()
+        time.sleep(self._poll_s)
+        item = next(
+            (
+                m
+                for m in self._win.descendants(control_type='MenuItem')
+                if m.window_text().startswith(ORDER_TAB) and m.rectangle().width() > 0
+            ),
+            None,
+        )
+        if item is None:
+            self._win.type_keys('{ESC}')
+            raise AdapterRetry(
+                ExportFail.BLOCKED, '주문관리 메뉴에서 통합주문관리 항목을 찾지 못했다'
+            )
+        item.click_input()
+        time.sleep(self._poll_s * 4)
+        if not self._win.descendants(control_type='TabItem', title=ORDER_TAB):
+            raise AdapterRetry(ExportFail.BLOCKED, '통합주문관리 탭을 열지 못했다')
+
+    def _find(self, control_type: str, *, auto_id: str | None = None, title: str | None = None):
+        """메인 창 안에서 지금 화면에 보이는 요소 하나.
+
+        child_window 는 창의 모든 요소(주문 500행 × 칸 = 1만 개 이상)를 파이썬으로 훑어 수십 초가
+        걸리고, 다른 탭 화면(신규주문·취소주문…)이 같은 automation id 로 숨어 있어 여러 개가
+        잡힌다(실기 2026-09-28). UIA 조건 검색(descendants 에 조건)은 네이티브라 빠르고, 그중
+        창 사각형 안에 있는 것이 지금 보이는 탭의 요소다.
+        """
+        # UIA 조건은 control_type·title 만 받는다(automation id 조건은 없다) — id 는 파이썬에서 거른다
+        criteria: dict[str, str] = {'control_type': control_type}
+        if title is not None:
+            criteria['title'] = title
+        area = self._win.rectangle()
+        for el in self._win.descendants(**criteria):
+            try:
+                if auto_id is not None and el.element_info.automation_id != auto_id:
+                    continue
+                r = el.rectangle()
+            except Exception:  # noqa: BLE001, S112 — 사라진 요소는 건너뛴다
+                continue
+            if r.width() <= 0 or r.height() <= 0:
+                continue
+            if r.left < area.left or r.top < area.top or r.right > area.right + 1:
+                continue
+            return el
+        what = auto_id or title or control_type
+        raise AdapterRetry(ExportFail.BLOCKED, f'샵마인 화면에서 {what!r} 요소를 찾지 못했다')
 
     @_guard_pywinauto_errors
     def ensure_ready(self) -> None:
         win = self._window()
-        if win.is_minimized():
-            win.restore()
-            time.sleep(self._poll_s)
         self._refuse_if_dialog(win)
-        tab = win.child_window(control_type='TabItem', title=ORDER_TAB)
+        self._win = win
+        self._open_order_tab()
+        tab = self._find('TabItem', title=ORDER_TAB)
         try:
             tab.select()
         except Exception:  # noqa: BLE001 — 일부 탭은 select 패턴이 없어 클릭으로 고른다
             tab.click_input()
-        self._win = win
+        time.sleep(self._poll_s)
 
     def _refuse_if_dialog(self, win) -> None:
         """메인 창이 모달 대화상자에 막혀 있으면 건드리지 않고 물러난다.
@@ -117,28 +193,65 @@ class PywinautoShopMineUi:
                 break
         raise AdapterRetry(ExportFail.BLOCKED, f'샵마인에 대화상자가 떠 있다: {title!r}')
 
+    # ---- 콤보 상자 ----
+    def _select_combo(self, combo, item: str) -> None:
+        """WinForms 콤보 상자에서 항목을 고른다.
+
+        pywinauto 의 select() 는 펼치기 패턴이나 'Open' 버튼을 찾는데, 이 프로그램 콤보는 둘 다
+        없고 '열기' 버튼뿐이다(실기 2026-09-28). 이미 그 값이면 손대지 않는다.
+        """
+        if (combo.selected_text() or '').strip() == item:
+            return
+        opened = False
+        for b in combo.children(control_type='Button'):
+            if b.window_text() in ('열기', 'Open'):
+                b.click_input()
+                opened = True
+                break
+        if not opened:
+            combo.click_input()
+        time.sleep(self._poll_s)
+        # 펼쳐진 목록은 콤보 안의 List 로 잡힌다. 아니면 바탕화면의 팝업 목록에서 찾는다
+        candidates = []
+        for lst in combo.children(control_type='List'):
+            candidates.extend(lst.children(control_type='ListItem'))
+        if not candidates:
+            for w in Desktop(backend='uia').windows():
+                if w.process_id() == self._win.process_id() and w.handle != self._win.handle:
+                    candidates.extend(w.descendants(control_type='ListItem', title=item))
+        target = next((c for c in candidates if c.window_text() == item), None)
+        if target is None:
+            combo.type_keys('{ESC}')
+            raise AdapterRetry(ExportFail.BLOCKED, f'콤보 상자 목록에 {item!r} 이 없다')
+        target.click_input()
+        time.sleep(self._poll_s)
+        if (combo.selected_text() or '').strip() != item:
+            raise AdapterRetry(
+                ExportFail.BLOCKED,
+                f'콤보 상자를 {item!r} 로 바꾸지 못했다({combo.selected_text()!r})',
+            )
+
     # ---- 수집 ----
     @_guard_pywinauto_errors
     def collect(self) -> None:
-        win = self._win
-        win.child_window(auto_id='ComboBoxProcessStatus', control_type='ComboBox').select(
-            NORMAL_ALL
-        )
-        win.child_window(auto_id='ButtonSearch', control_type='Button').click_input()
+        self._select_combo(self._find('ComboBox', auto_id='ComboBoxProcessStatus'), NORMAL_ALL)
+        time.sleep(self._poll_s)
+        self._find('Button', auto_id='ButtonSearch').click_input()
 
     @_guard_pywinauto_errors
     def wait_collected(self, timeout_s: float) -> None:
         """수집 안내 패널이 사라지고 수집 버튼이 다시 눌리게 될 때까지 기다린다."""
-        win = self._win
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
-            loading = win.child_window(auto_id='PanelLoading', control_type='Pane')
-            button = win.child_window(auto_id='ButtonSearch', control_type='Button')
             try:
-                busy = loading.exists(timeout=0.1) and loading.is_visible()
-                if not busy and button.is_enabled():
+                busy = any(
+                    p.is_visible() and p.rectangle().width() > 0
+                    for p in self._win.descendants(control_type='Pane')
+                    if p.element_info.automation_id == 'PanelLoading'
+                )
+                if not busy and self._find('Button', auto_id='ButtonSearch').is_enabled():
                     return
-            except ElementNotFoundError:
+            except (ElementNotFoundError, AdapterRetry):
                 pass
             time.sleep(self._poll_s)
         raise AdapterRetry(ExportFail.TIMEOUT, f'수집이 {timeout_s:g}초 안에 끝나지 않았다')
@@ -146,7 +259,7 @@ class PywinautoShopMineUi:
     # ---- 필터 ----
     def _filter_combo(self, item: str):
         """주문필터 툴바에서 그 항목을 가진 콤보 상자(id 가 숫자라 항목 목록으로 찾는다)."""
-        toolbar = self._win.child_window(auto_id='ToolStripOrderFilter', control_type='ToolBar')
+        toolbar = self._find('ToolBar', auto_id='ToolStripOrderFilter')
         for combo in toolbar.children(control_type='ComboBox'):
             try:
                 if item in combo.texts():
@@ -157,13 +270,13 @@ class PywinautoShopMineUi:
 
     @_guard_pywinauto_errors
     def set_filters(self) -> None:
-        self._filter_combo(FILTER_STATUS).select(FILTER_STATUS)
-        self._filter_combo(FILTER_EXCEL).select(FILTER_EXCEL)
+        self._select_combo(self._filter_combo(FILTER_STATUS), FILTER_STATUS)
+        self._select_combo(self._filter_combo(FILTER_EXCEL), FILTER_EXCEL)
         time.sleep(self._poll_s)
 
     # ---- 그리드 ----
     def _grid(self):
-        return self._win.child_window(auto_id='DataGridView1', control_type='Table')
+        return self._find('Table', auto_id='DataGridView1')
 
     def _grid_rows(self) -> list:
         grid = self._grid()
@@ -218,7 +331,7 @@ class PywinautoShopMineUi:
 
     @_guard_pywinauto_errors
     def select_all(self) -> int:
-        box = self._win.child_window(auto_id='CheckBoxAll', control_type='CheckBox')
+        box = self._find('CheckBox', auto_id='CheckBoxAll')
         if box.get_toggle_state() != 1:
             box.toggle()
             time.sleep(self._poll_s)
@@ -248,9 +361,19 @@ class PywinautoShopMineUi:
     def set_status_done(self) -> None:
         win = self._win
         pid = win.process_id()
-        toolbar = win.child_window(auto_id='ToolStripSub', control_type='ToolBar')
+        toolbar = self._find('ToolBar', auto_id='ToolStripSub')
         before_submenu = self._same_pid_handles(pid, exclude_handle=win.handle)
-        toolbar.child_window(control_type='MenuItem', title=STATUS_MENU).click_input()
+        menu = next(
+            (
+                m
+                for m in toolbar.children(control_type='MenuItem')
+                if m.window_text() == STATUS_MENU
+            ),
+            None,
+        )
+        if menu is None:
+            raise AdapterRetry(ExportFail.BLOCKED, f'{STATUS_MENU!r} 메뉴를 찾지 못했다')
+        menu.click_input()
         time.sleep(self._poll_s)
         done_item = self._find_done_item(win, pid, before_submenu)
         before_confirm = self._same_pid_handles(pid, exclude_handle=win.handle)
@@ -273,11 +396,11 @@ class PywinautoShopMineUi:
                 title = (w.window_text() or '')[:40]
                 text = self._dialog_text(w)
                 for name in CONFIRM_BUTTONS:
-                    try:
-                        w.child_window(control_type='Button', title=name).click_input()
-                        log.info('샵마인 확인 대화상자 %r(%r) 에서 %r 을 눌렀다', title, text, name)
-                        time.sleep(self._poll_s)
-                        return
-                    except (ElementNotFoundError, PwTimeoutError):
+                    buttons = w.descendants(control_type='Button', title=name)
+                    if not buttons:
                         continue
+                    buttons[0].click_input()
+                    log.info('샵마인 확인 대화상자 %r(%r) 에서 %r 을 눌렀다', title, text, name)
+                    time.sleep(self._poll_s)
+                    return
             time.sleep(self._poll_s)
