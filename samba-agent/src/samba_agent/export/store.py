@@ -111,14 +111,19 @@ class ExportQueue:
 
     @contextlib.contextmanager
     def _immediate(self) -> Iterator[None]:
-        """조회 → 쓰기를 한 트랜잭션으로 묶는다. 예외가 나면 되돌린다."""
+        """조회 → 쓰기를 한 트랜잭션으로 묶는다. 예외가 나면 되돌린다.
+
+        ROLLBACK 자체가 실패해도(예: 그 사이 연결이 끊김) 원래 예외를 가리지 않는다 —
+        되돌리기 실패는 부수적인 정보라 로그로만 남긴다(리뷰 지적 — M3).
+        """
         with self._lock:
             self._db.execute('BEGIN IMMEDIATE')
             try:
                 yield
                 self._db.execute('COMMIT')
             except BaseException:
-                self._db.execute('ROLLBACK')
+                with contextlib.suppress(sqlite3.Error):
+                    self._db.execute('ROLLBACK')
                 raise
 
     def _row(self, request_id: int) -> sqlite3.Row | None:
@@ -131,6 +136,8 @@ class ExportQueue:
 
         값이 같으면 기존 행을 그대로 돌려준다. 값이 다르면 — 이미 기입했거나(done) 기입 중(running)
         이면 거절하고, 아직 안 했거나 실패한 요청이면 새 값으로 바꿔 다시 대기시킨다.
+        실패한(failed) 요청을 같은 값으로 다시 요청하면 새로 바꿀 것도 없이 그 행을 그대로
+        돌려준다 — 다시 대기시키려면(requeue) ``requeue()`` 를 따로 부른다.
         """
         now = self._iso()
         with self._immediate():
