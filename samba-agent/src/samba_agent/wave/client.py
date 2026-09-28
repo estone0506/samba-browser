@@ -96,11 +96,15 @@ class WaveShipping(BaseModel):
 #   10자리    → ABC마트 prdtNo  예: '나이키 DV5456 300 코트 버로우 로우 … 1010109335'
 #   5~8자리   → 무신사 상품번호  예: '르무통 LEMOUTON 5009530519 메이트 오렌지 3347853' → 3347853,
 #               '남자데님팬츠 05415547 와이드 쿨 데님 415547 3colo' → 415547
-_PRODUCT_NO_IN_NAME = re.compile(r'(?<!\w)(LE\d{10}|\d{5,10})(?!\w)')
+#   13자리(1000…) → SSG itemId   예: '아레나 포겟미낫 … A4FL1LH08 1000618616029'
+#   9자리     → 패션플러스 상품번호 예: 'QELAX24541CRE 여성 베이직 니삭스 KS0099KEY 376268351'(실측 2026-09-28)
+_PRODUCT_NO_IN_NAME = re.compile(r'(?<!\w)(LE\d{10}|1000\d{9}|\d{5,10})(?!\w)')
 _INFER_URL = {
     'MUSINSA': 'https://www.musinsa.com/products/{}',
     'ABCmart': 'https://abcmart.a-rt.com/product/new?prdtNo={}',
     'LOTTEON': 'https://www.lotteon.com/p/product/{}',
+    'SSG': 'https://www.ssg.com/item/itemView.ssg?itemId={}',
+    'FashionPlus': 'https://www.fashionplus.co.kr/goods/detail/{}',
 }
 
 
@@ -112,8 +116,12 @@ def infer_source(product_name: str | None) -> tuple[str, str] | None:
     last = found[-1]
     if last.startswith('LE'):
         return 'LOTTEON', last
+    if len(last) == 13:
+        return 'SSG', last
     if len(last) == 10:
         return 'ABCmart', last
+    if len(last) == 9:
+        return 'FashionPlus', last
     if len(last) <= 8:
         product_id = last.lstrip('0')
         return ('MUSINSA', product_id) if product_id else None
