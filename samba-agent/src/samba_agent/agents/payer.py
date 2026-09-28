@@ -224,6 +224,7 @@ def order_form_mismatch(
     *,
     site_name: str = '',
     product_no: str = '',
+    trust_site: bool = False,
 ) -> str | None:
     """주문서 글자에 이 주문의 옵션·상품이 맞는가. 다르면 그 사유, 같으면 None(순수 함수).
 
@@ -253,9 +254,21 @@ def order_form_mismatch(
     # 4) 사이트 상품명의 모델 토큰(기호 뺀 영숫자 5자 이상, 예: 'P-6000' → 'p6000')이 주문서 글자에 있다 —
     #    ABC 주문서는 스타일코드 없이 'NIKE P-6000' 만 보인다(실기 2026-09-28 B07648: CN0149 로 못 맞춰 결제 안 됨)
     compact_text = re.sub(r'[^0-9a-z가-힣]', '', low)
-    for tok in re.split(r'\s+', (site_name or '').lower()):
-        c = re.sub(r'[^0-9a-z가-힣]', '', tok)
-        if len(c) >= 5 and not c.isdigit() and tok.upper() not in _GENERIC_WORDS and c in compact_text:
+    compact_name = re.sub(r'[^0-9a-z가-힣]', '', product_name.lower())
+    site_tokens = [
+        re.sub(r'[^0-9a-z가-힣]', '', tok)
+        for tok in re.split(r'\s+', (site_name or '').lower())
+        if tok.upper() not in _GENERIC_WORDS and tok not in _GENERIC_WORDS
+    ]
+    for c in site_tokens:
+        if len(c) >= 5 and not c.isdigit() and c in compact_name and c in compact_text:
+            return None
+    # 5) 구매가 상품번호로 확인한 상품 페이지에서 만든 주문서(trust_site)면 — 주문서에 사이트 상품명 토큰(3자 이상,
+    #    흔한 말 제외)이 대부분 있으면 같은 상품이다. 삼바 상품명은 한글 설명('통기성 커플샌들 빅 로우'), ABC 주문서는
+    #    영문명('BIG NIKE LOW')뿐이라 단어로는 못 맞춘다(실기 2026-09-28 B15960)
+    if trust_site:
+        toks = [c for c in site_tokens if len(c) >= 3 and not c.isdigit()]
+        if toks and sum(1 for c in toks if c in compact_text) >= max(1, (len(toks) + 1) // 2):
             return None
     return f'상품명 단어 {words[:6]} 가 주문서에 없다' + (
         f'(사이트 상품명 {site_words[:6]} 로도 못 맞춤)' if site_words else ''
@@ -679,7 +692,14 @@ class PayerAgent(AgentBase):
         site_name = str(a.handoff.get('product_name') or '')
         product_no = str(a.handoff.get('product_no') or '') or product_no_of(a.order.product_url)
         problem = order_form_mismatch(
-            page, name, option, selected, site_name=site_name if site_name != name else '', product_no=product_no
+            page,
+            name,
+            option,
+            selected,
+            site_name=site_name if site_name != name else '',
+            product_no=product_no,
+            # 구매가 상품번호로 확인한 상품 페이지에서 연 주문서 탭이면 사이트 상품명으로 대조해도 된다
+            trust_site=bool(order_tab and site_name),
         )
         if problem:
             raise AgentFailure(

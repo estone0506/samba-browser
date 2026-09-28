@@ -1020,6 +1020,24 @@ def test_주문서가_다른_상품이면_결제하지_않는다() -> None:
     assert order_form_mismatch(adidas_form, '매장정품 아디다스 ADIDAS KJ8365 아디스타 컨트롤 5 EL 칠드런 신발', '옵션:210', '210') is None
     # 옵션은 같아도 상품명 고유 단어가 하나도 없으면 다른 상품이다
     assert '상품명' in (order_form_mismatch('아디다스 아디스타 240 / 1개', '나이키 코르테즈 스웨이드', '240') or '')
+    # 구매가 상품번호로 확인한 주문서(trust_site)는 사이트 영문명 토큰으로 맞춘다(실기 2026-09-28 B15960 'BIG NIKE LOW')
+    assert (
+        order_form_mismatch(
+            'A-RT 배송 상품 나이키 BIG NIKE LOW 285/ 1 개 82,600 원',
+            '나이키 355152 106 통기성 커플샌들 빅 로우 1010109298',
+            '옵션:285',
+            '285',
+            site_name='빅 나이키 로우 BIG NIKE LOW',
+            product_no='1010109298',
+            trust_site=True,
+        )
+        is None
+    )
+    # trust_site 여도 다른 상품(에어 포스 주문서 ↔ 에어맥스 주문)은 사이트명 토큰이 주문서에 있어도 주문과 안 맞으면 막힌다
+    assert order_form_mismatch(
+        'A-RT 배송 상품 나이키 AIR FORCE 1 07 290/ 1 개', '나이키 우먼스 에어 맥스 인비고', '290', '290',
+        site_name='나이키 에어 포스 1 07 AIR FORCE'
+    )
     # ABC 주문서는 'NIKE P-6000' 만 보인다 — 사이트 상품명의 모델 토큰(p6000)으로 맞춘다(실기 2026-09-28 B07648)
     assert (
         order_form_mismatch(
