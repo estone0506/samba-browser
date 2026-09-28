@@ -14,6 +14,8 @@ log = logging.getLogger(__name__)
 
 # 브릿지에 요구하는 도구 — 진입점이 이 목록으로 scoped() 한다
 TAB_TOOLS = ('list_tabs', 'close_tab')
+# 정리에서 남기는 탭 — 사람이 보는 화면(삼바웨이브 주문관리·네이버 홈·앱 새 탭)
+KEEP_HOSTS = ('samba-wave', 'www.naver.com', 'localhost', 'about:blank')
 
 
 class TabJanitor:
@@ -44,6 +46,25 @@ class TabJanitor:
             # 다른 레인(사람의 수동 작업·계정 비교)이 연 탭은 그 레인이 닫는다 — 하네스가 닫으면 남의 주문서가
             # 사라진다(실기 2026-09-27 패션플러스·SMARKET 수동 진행 중 탭이 닫힘)
             if t.get('lane'):
+                continue
+            try:
+                self._bridge.call('close_tab', id=tab_id)
+                closed += 1
+            except BridgeError as e:
+                log.warning('탭을 닫지 못했다(%s): %s', tab_id, e)
+        return closed
+
+    def close_leftovers(self, keep_hosts: tuple[str, ...] = KEEP_HOSTS) -> int:
+        """남아 있는 작업 탭을 전부 닫는다(남길 호스트 제외). 닫은 개수를 돌려준다.
+
+        하네스가 죽거나 작업이 시간 초과로 끝나면 계정 비교 탭이 남는다 — 실기 2026-09-28: ABC·무신사 탭이
+        30개 쌓여 메모리를 먹고 페이지 호출이 전부 늦어졌다. 작업이 없을 때(기동 직후·작업 시작 직전)만 부른다.
+        """
+        closed = 0
+        for t in self._tabs():
+            tab_id = str(t.get('id') or '')
+            url = str(t.get('url') or '')
+            if not tab_id or any(h in url for h in keep_hosts):
                 continue
             try:
                 self._bridge.call('close_tab', id=tab_id)
