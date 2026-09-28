@@ -27,13 +27,17 @@ export function setExtensionActionListener(fn: ExtensionActionListener | null): 
 export function pickActionIconPath(raw: unknown): string | null {
   if (typeof raw === 'string' && raw) return raw
   if (typeof raw !== 'object' || raw === null) return null
-  const entries = Object.entries(raw as Record<string, unknown>).filter(([, v]) => typeof v === 'string' && v)
+  const entries = Object.entries(raw as Record<string, unknown>).filter(
+    ([, v]) => typeof v === 'string' && v
+  )
   if (entries.length === 0) return null
   entries.sort((a, b) => Number(b[0]) - Number(a[0]))
   return entries[0][1] as string
 }
 // 확장 서비스워커가 이동·탭 리스너를 단 뒤 보내는 준비 신호(preload/extension-sw.ts)
 export const EXT_READY_CHANNEL = 'samba-ext-ready'
+// 워커 오류 보고(error·unhandledrejection·알람 리스너 예외) — preload/extension-sw 가 보낸다
+export const EXT_ERROR_CHANNEL = 'samba-ext-error'
 // 준비 신호가 없을 때 이벤트를 보내기 전 최대 대기(큰 확장은 초기화가 몇 초 걸린다)
 export const SW_READY_TIMEOUT_MS = 5000
 
@@ -54,7 +58,17 @@ export function toNavDetails(
   transitionQualifiers: string[]
   active: boolean
 } {
-  return { tabId, url, frameId: 0, parentFrameId: -1, processId: 0, timeStamp: now, transitionType: 'link', transitionQualifiers: [], active }
+  return {
+    tabId,
+    url,
+    frameId: 0,
+    parentFrameId: -1,
+    processId: 0,
+    timeStamp: now,
+    transitionType: 'link',
+    transitionQualifiers: [],
+    active
+  }
 }
 
 /** 크롬 확장 API 의 Cookie 모양 */
@@ -133,7 +147,12 @@ export async function runCookieOp(ses: Session, op: string, raw: unknown): Promi
       if (typeof d.secure === 'boolean') set.secure = d.secure
       if (typeof d.httpOnly === 'boolean') set.httpOnly = d.httpOnly
       if (typeof d.expirationDate === 'number') set.expirationDate = d.expirationDate
-      if (d.sameSite === 'no_restriction' || d.sameSite === 'lax' || d.sameSite === 'strict' || d.sameSite === 'unspecified') {
+      if (
+        d.sameSite === 'no_restriction' ||
+        d.sameSite === 'lax' ||
+        d.sameSite === 'strict' ||
+        d.sameSite === 'unspecified'
+      ) {
         set.sameSite = d.sameSite
       }
       await ses.cookies.set(set)
@@ -191,7 +210,11 @@ export async function warmExtensionWorkers(ses: Session): Promise<void> {
       const w = await ses.serviceWorkers.startWorkerForScope(`chrome-extension://${ext.id}/`)
       await readyOf(w)
     } catch (e: unknown) {
-      console.warn('확장 서비스워커 깨우기 실패', ext.id, e instanceof Error ? e.message : String(e))
+      console.warn(
+        '확장 서비스워커 깨우기 실패',
+        ext.id,
+        e instanceof Error ? e.message : String(e)
+      )
     }
   }
 }
@@ -219,7 +242,10 @@ function readyOf(worker: object): Promise<void> {
   return p
 }
 // 세션별 쿠키 권한 확장 서비스워커 — 쿠키가 바뀌면 이들에게 알린다
-const cookieWorkers = new WeakMap<Session, Set<{ send: (channel: string, ...args: unknown[]) => void }>>()
+const cookieWorkers = new WeakMap<
+  Session,
+  Set<{ send: (channel: string, ...args: unknown[]) => void }>
+>()
 
 /** 세션의 확장 서비스워커가 뜰 때마다 chrome.cookies 처리기를 건다(세션당 1회 호출) */
 export function installExtensionCookiesBridge(ses: Session): void {
@@ -238,7 +264,11 @@ export function installExtensionCookiesBridge(ses: Session): void {
     navChain = navChain.then(() => deliverNav(kind, details)).catch(() => {})
   }
   tabEventSenders.set(ses, enqueue)
-  const sendNav = (kind: 'committed' | 'domloaded' | 'completed', wc: WebContents, url: string): void => {
+  const sendNav = (
+    kind: 'committed' | 'domloaded' | 'completed',
+    wc: WebContents,
+    url: string
+  ): void => {
     if (!/^https?:/.test(url)) return
     const active = isActiveTabId(wc.id)
     enqueue(kind, toNavDetails(wc.id, url, Date.now(), active))
@@ -256,7 +286,13 @@ export function installExtensionCookiesBridge(ses: Session): void {
         w.send(EXT_NAV_CHANNEL, kind, details)
         // 전달 기록(주소만) — 확장이 탭 주소를 못 따라올 때 어디까지 갔는지 본다(2026-09-27)
         const d = details as { tabId?: number; url?: string }
-        console.log('[ext-nav]', ext.id.slice(0, 8), kind, d.tabId, String(d.url ?? '').slice(0, 80))
+        console.log(
+          '[ext-nav]',
+          ext.id.slice(0, 8),
+          kind,
+          d.tabId,
+          String(d.url ?? '').slice(0, 80)
+        )
       } catch (e: unknown) {
         console.warn('확장 이동 알림 실패', ext.id, e instanceof Error ? e.message : String(e))
       }
@@ -282,6 +318,18 @@ export function installExtensionCookiesBridge(ses: Session): void {
       }
     }
   })
+  // 워커 콘솔(경고·오류만) — 확장이 어디서 막히는지 앱 로그로 본다
+  ses.serviceWorkers.on('console-message', (_e, d) => {
+    if (d.level < 2) return
+    console.log(
+      '[ext-console]',
+      d.versionId,
+      d.level,
+      String(d.message).slice(0, 400),
+      d.source,
+      d.lineNumber
+    )
+  })
   ses.serviceWorkers.on('running-status-changed', ({ versionId, runningStatus }) => {
     if (runningStatus !== 'starting' && runningStatus !== 'running') return
     const worker = ses.serviceWorkers.getWorkerFromVersionID(versionId)
@@ -293,6 +341,9 @@ export function installExtensionCookiesBridge(ses: Session): void {
     worker.ipc.on(EXT_READY_CHANNEL, () => {
       console.log('[ext-ready]', id.slice(0, 8))
       readyResolvers.get(worker)?.()
+    })
+    worker.ipc.on(EXT_ERROR_CHANNEL, (_e, kind: unknown, message: unknown) => {
+      console.log('[ext-error]', id.slice(0, 8), String(kind), String(message).slice(0, 600))
     })
     const ext0 = ses.extensions?.getExtension?.(id) ?? ses.getExtension?.(id)
     if (ext0 && declaresCookies(ext0.manifest)) workers.add(worker)

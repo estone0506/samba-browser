@@ -187,6 +187,8 @@ function build(
           }
         : {}),
     navigate: vi.fn(async () => {}),
+    // OCR 동안 가려진 탭을 맨 위로 올리는 래퍼 — 시험에서는 그대로 실행한다
+    withFront: async <T,>(_id: string, fn: () => Promise<T>): Promise<T> => fn(),
     closeTarget
   } as unknown as TabManager
   const handoff = vi.fn(async (): Promise<HandoffResult> => ({

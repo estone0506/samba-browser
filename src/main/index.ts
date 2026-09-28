@@ -35,6 +35,10 @@ if (userDataOverride) app.setPath('userData', userDataOverride)
 // 개발 모드(electron.exe 직접 실행)에서도 앱 이름이 'Electron' 대신 제품명으로 보이게 한다
 app.setName('SAMBA Browser')
 
+// 창이 다른 창에 가려지면 Windows 가림 감지가 렌더링을 멈춰 capturePage(키패드 OCR)가
+// "Current display surface not available for capture" 로 실패한다(실기 2026-09-28) — 가림 감지를 끈다
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
+
 // 모든 사이트에 순수 크롬 UA 를 보낸다 — Electron 기본 UA 의 `SAMBABrowser/1.0.0 … Electron/39` 토큰은
 // reCAPTCHA Enterprise 같은 점수형 봇 판정에서 점수를 깎아 로그인이 조용히 거부된다(GS샵 실기).
 // userAgentFallback 은 이후 만들어지는 모든 세션·webContents 의 기본값이라 whenReady 이전에 바꿔야 한다

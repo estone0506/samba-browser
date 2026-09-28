@@ -693,7 +693,10 @@ export class TabManager {
         contextIsolation: true,
         // iframe(카카오 우편번호·결제 키패드) 안에도 페이지 preload(__samba)가 돌게 한다.
         // 이 값이 없으면 Electron 은 최상위 프레임에서만 preload 를 실행한다
-        nodeIntegrationInSubFrames: true
+        nodeIntegrationInSubFrames: true,
+        // 창이 가려지거나 뒤로 가도 탭이 계속 그려지게 한다 — 키패드 OCR 캡처(capturePage)가
+        // "Current display surface not available for capture" 로 실패하던 원인(실기 2026-09-28)
+        backgroundThrottling: false
       }
     })
     // WebContentsView 는 네이티브 레이어라 CSS overflow-hidden 으로 잘리지 않는다.

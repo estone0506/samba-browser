@@ -35,6 +35,19 @@ _KST = timezone(timedelta(hours=9))
 _PAYCO_AGREE_PAY_JS = (
     # 동의 체크박스는 숨어 있어 요소 목록에 없다 — 앱의 page.check 가 라벨 글자로 켠다(실기 2026-09-25).
     # 동의가 켜진 게 확인될 때만 '결제'를 누른다
+    # 카드 고르기 — 결제창은 마지막에 쓴 카드를 띄운다(실기 2026-09-28: 떠 있던 삼성카드로 2건 결제, 청구할인 없음).
+    # 견적이 고른 카드(WANT, 차이 없으면 현대카드)가 보일 때까지 '다음'으로 넘기고, 못 찾으면 결제를 누르지 않는다
+    "let picked = null; const seen = []\n"
+    "for (let k = 0; k < 12 && !picked; k++) {\n"
+    "  const t0 = (await page.get({})).tree\n"
+    "  const cards = [...new Set([...t0.matchAll(/([가-힣A-Za-z]+카드)\\s*\\(\\d{4}\\)/g)].map(m => m[1]))]\n"
+    "  seen.push(cards.join('|'))\n"
+    "  if (cards.length === 1 && WANT.some(w => cards[0].includes(w))) { picked = cards[0]; break }\n"
+    "  const nx = (await page.get({ interactive: true })).tree.match(/\\[(\\d+)\\] (?:link|clickable|button) \"다음\"/)\n"
+    "  if (!nx) break\n"
+    "  await page.click(parseInt(nx[1])); await sleep(900)\n"
+    "}\n"
+    "if (!picked) return JSON.stringify({ clicked: false, agreed: null, note: 'card-not-found', seen })\n"
     "const agreed = await page.check('전체 동의')\n"
     "if (agreed !== 'checked' && agreed !== 'already') return JSON.stringify({ clicked: false, agreed })\n"
     "await sleep(500)\n"
@@ -42,8 +55,31 @@ _PAYCO_AGREE_PAY_JS = (
     "const pay = tr.match(/\\[(\\d+)\\] (?:link|clickable|button) \"결제\"/)\n"
     "if (!pay) return JSON.stringify({ clicked: false, agreed, note: 'no pay link' })\n"
     "await page.click(parseInt(pay[1])); await sleep(1500)\n"
-    "return JSON.stringify({ clicked: true, agreed })"
+    "return JSON.stringify({ clicked: true, agreed, card: picked })"
 )
+# 페이코 결제창 카드 이름 조각 — 견적 카드 글자에서 카드사를 찾는다(농협은 'NH농협카드'·'농축협카드' 둘 다)
+_PAYCO_ISSUERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ('현대', ('현대',)),
+    ('삼성', ('삼성',)),
+    ('롯데', ('롯데',)),
+    ('국민', ('국민', 'KB')),
+    ('KB', ('국민', 'KB')),
+    ('신한', ('신한',)),
+    ('농협', ('농협', '농축협')),
+    ('NH', ('농협', '농축협')),
+    ('우리', ('우리',)),
+    ('BC', ('BC',)),
+    ('비씨', ('BC',)),
+    ('하나', ('하나',)),
+)
+
+
+def payco_card_names(card: str) -> tuple[str, ...]:
+    """견적이 고른 카드 글자에서 페이코 결제창에서 찾을 카드 이름 조각. 카드사가 없으면 현대카드(사용자 2026-09-28)."""
+    for key, names in _PAYCO_ISSUERS:
+        if key.lower() in card.lower():
+            return names
+    return ('현대',)
 
 PAY_SUCCESS_MARKERS = ('결제 완료', '결제완료', '주문완료', '주문 완료', '주문이 완료', 'approved')
 # 결제 "전" 검사용 — 결제창·주문서에도 흔한 '결제 완료 시 적립' 같은 글자로 멈추지 않게 좁힌다
@@ -109,6 +145,9 @@ PAY_HOST_PROVIDERS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 # 키패드 입력 뒤 주문 완료 화면이 뜰 때까지 기다리는 시간(ms)
 PAY_RESULT_WAIT_MS = 4000
+# 완료 문구가 아직 없으면 다시 보는 횟수·간격(최대 약 15초 더)
+PAY_RESULT_POLL_TRIES = 5
+PAY_RESULT_POLL_WAIT_MS = 3000
 # 키패드가 뜰 때까지 팝업을 다시 보는 횟수·간격(최대 약 20초)
 KEYPAD_POLL_TRIES = 10
 KEYPAD_POLL_WAIT_MS = 2000
@@ -590,6 +629,12 @@ class PayerAgent(AgentBase):
                 'needs_human', f'결제 직전 SAMBA 재조회 실패(결제하지 않음): {e}', e.reason
             ) from e
         sourcing_no = (current.sourcing_order_number or '').strip()
+        # 재구매 — 소싱처에서 취소한 주문을 다시 사는 경우(작업 옵션 rebuy_of = 취소한 소싱주문번호).
+        # 삼바웨이브에 남은 번호가 그 번호와 같을 때만 통과한다(실기 2026-09-28: 카드 잘못 결제 2건 취소 뒤 재구매)
+        rebuy_of = str(a.options.get('rebuy_of') or '').strip()
+        if rebuy_of and sourcing_no == rebuy_of:
+            self.note('결제 직전 재조회', f'재구매 — 취소한 소싱주문 {rebuy_of} 을 새 주문으로 바꾼다')
+            return
         if sourcing_no:
             raise AgentFailure(
                 'fail', f'이미 소싱주문번호가 있다: {sourcing_no}', FailReason.DUPLICATE
@@ -739,7 +784,9 @@ class PayerAgent(AgentBase):
                 if pay_btn is not None:
                     break
             self.tool('wait', ms=PAY_BUTTON_POLL_WAIT_MS)
-        if pay_btn is None and self._payco_agree_and_pay():
+        if pay_btn is None and self._payco_agree_and_pay(
+            str(a.handoff.get('card') or a.options.get('card') or '')
+        ):
             seen_popup = True
             pay_btn = -1  # 페이코 창의 '결제'는 위에서 눌렀다
         if seen_popup and pay_btn is None:
@@ -858,6 +905,13 @@ class PayerAgent(AgentBase):
         """결제 뒤 성공 확인 — 완료 화면 문구, 없으면(ABC·그랜드스테이지) 주문내역의 방금 생긴 주문으로."""
         self.step('payer: 성공 확인')
         page = self._success_page(a)
+        # 탭 안 키패드(네이버페이 → 롯데온) 는 승인 뒤 주문 완료로 돌아오는 데 4초보다 오래 걸린다
+        # (실기 2026-09-28 컬럼비아: 결제됐는데 '확인되지 않는다') — 완료 문구가 뜰 때까지 몇 번 더 본다
+        for _ in range(PAY_RESULT_POLL_TRIES):
+            if any(m in page for m in PAY_SUCCESS_MARKERS):
+                break
+            self.tool('wait', ms=PAY_RESULT_POLL_WAIT_MS)
+            page = self._success_page(a)
         recent_no = None
         if not any(m in page for m in PAY_SUCCESS_MARKERS):
             # ABC마트·그랜드스테이지는 네이버페이 뒤 완료 화면을 못 잡는 일이 있다 — 주문내역에서 방금(10분 안) 생긴
@@ -932,7 +986,7 @@ class PayerAgent(AgentBase):
             FailReason.PAY_INTERRUPTED,
         )
 
-    def _payco_agree_and_pay(self) -> bool:
+    def _payco_agree_and_pay(self, card: str = '') -> bool:
         """페이코 PC 결제창(bill.payco.com) — 버튼이 '결제하기'가 아니라 '결제' 링크이고 정보제공동의를 켜야 한다.
 
         동의를 켜고 '결제'를 누르면 페이코 결제 비밀번호 키패드가 뜬다(비밀번호 없이는 결제되지 않는다).
@@ -946,13 +1000,24 @@ class PayerAgent(AgentBase):
         ]
         if not payco:
             return False
-        code = f'await tabs.switch({json.dumps(str(payco[-1]["id"]))})\n' + _PAYCO_AGREE_PAY_JS
+        want = json.dumps(list(payco_card_names(card)), ensure_ascii=False)
+        code = (
+            f'await tabs.switch({json.dumps(str(payco[-1]["id"]))})\n'
+            f'const WANT = {want}\n' + _PAYCO_AGREE_PAY_JS
+        )
         try:
             out = self.tool('run_js', code=code)
         except AgentFailure as e:
             self.note('페이코 결제', mask_text(f'동의·결제 누르기 실패({e.reason[:80]})'))
             return False
         self.note('페이코 결제', mask_text(out[:160]))
+        if 'card-not-found' in out:
+            # 결제는 누르지 않았다 — 다른 카드로 내면 청구할인이 없어 견적과 원가가 달라진다
+            raise AgentFailure(
+                'needs_human',
+                mask_text(f'페이코 결제창에서 견적 카드를 못 찾았다 — 결제하지 않았다: {out[:120]}'),
+                FailReason.CARD_MISSING,
+            )
         return '"clicked":true' in out.replace(' ', '')
 
     def _recent_art_order(self, a: Assignment) -> str | None:

@@ -498,6 +498,8 @@ def effective_cost(row: dict[str, object]) -> float:
 # 결제창(토스페이·네이버페이) 안에서 고를 수 있는 카드사. 2026-09-24: 현대·KB·롯데·신한·농협, 2026-09-28 사용자 추가:
 # 우리·BC·삼성(일반 삼성카드 — '무신사 삼성카드' 제휴카드와 다르며 그쪽은 위에서 따로 뺀다). 주문서 단계의
 # '카드 직접 결제'는 쓰지 않는다 — 카드는 간편결제 창 안에서만 고른다. 결제 에이전트가 카드를 고를 때 이 표를 쓴다
+# 무신사 적립금은 보유 5만원 이상일 때만 쓴다(플레이북 §6) — 그 아래면 '적립금 못 쓰는 계정'으로 본다
+POINTS_USE_MIN = 50000
 ALLOWED_CARD_ISSUERS = ('현대', 'KB', '국민', '롯데', '신한', '농협', 'NH', '우리', 'BC', '비씨', '삼성')
 
 
@@ -1046,6 +1048,8 @@ ALREADY_SIGNED_IN = 'already signed in'
 LOGIN_SUBMITTED = 'submitted'
 # 페이지 이동·로그인 제출 뒤 화면이 안정되길 기다리는 시간
 _LOGIN_SETTLE_MS = 2500
+# 앱이 바빠 탭이 덜 떴을 때 login 도구가 돌려주는 일시 오류 — 다시 열어 재시도한다
+_LOGIN_BUSY_WORDS = ('host unknown', 'page did not respond')
 # 앱 로그인 도구가 로그인 상태도 입력칸도 못 찾았을 때의 응답 머리
 LOGIN_FIELDS_NOT_FOUND = 'fields not found'
 # 같은 소싱처에서 다른 계정으로 로그인을 이어 갈 때의 최소 간격(초). 연달아 바꾸면 사이트가 차단한다(실기: SSG)
@@ -1165,11 +1169,18 @@ class BuyerAgent(AgentBase):
         self.tool('new_tab', url=home, profile=account)
         self.tool('wait', ms=_LOGIN_SETTLE_MS)
         out = self.tool('login', accountLabel=account).strip()
-        if out.startswith(LOGIN_FIELDS_NOT_FOUND):
-            # 계정 여럿을 동시에 돌려 앱이 바쁠 때 홈이 다 뜨기 전에 불리면 로그인 상태도 입력칸도 못 본다
-            # (실기 2026-09-26: 로그인된 계정 4개가 모두 'fields not found'). 홈을 다시 열고 한 번 더 본다
-            self.tool('new_tab', url=home, profile=account)
-            self.tool('wait', ms=_LOGIN_SETTLE_MS * 2)
+        # 계정 여럿을 동시에 돌려 앱이 바쁠 때 홈이 다 뜨기 전에 불리면 로그인 상태도 입력칸도 못 본다
+        # (실기 2026-09-26: 로그인된 계정 4개가 모두 'fields not found'. 2026-09-28: 'host unknown'·
+        # 'page did not respond' 로 6계정 전부 실패). 홈을 다시 열고 기다림을 늘려 두 번까지 다시 본다
+        for retry in (1, 2):
+            if not (out.startswith(LOGIN_FIELDS_NOT_FOUND) or any(w in out for w in _LOGIN_BUSY_WORDS)):
+                break
+            self.note('로그인', f'{account}: 페이지가 덜 떠 다시 시도({retry}/2)')
+            # 탭을 새로 열면 같은 로딩을 또 기다린다(실측 2026-09-28: 병렬 첫 호출 7~20초, 둘째 호출 0.7초).
+            # 응답이 없었던 경우는 그 탭이 떠 가는 중이니 그대로 다시 부르고, 탭 자체가 없을 때만 새로 연다
+            if not out.startswith('error: page did not respond'):
+                self.tool('new_tab', url=home, profile=account)
+            self.tool('wait', ms=_LOGIN_SETTLE_MS * 2 * retry)
             out = self.tool('login', accountLabel=account).strip()
         if out.startswith(ALREADY_SIGNED_IN):
             self.note('로그인', '이미 로그인돼 있음')
@@ -2604,6 +2615,7 @@ class BuyerAgent(AgentBase):
             return None
         # sorted 는 안정 정렬 — 같은 값이면 앞(우선순위 높은) 계정이 앞선다
         ranked = [acc for acc, _ in sorted(valid, key=lambda x: x[1])]
+        self._quick_scores = dict(valid)  # 동률 판정(적립금 사용 계정 우선)에 쓴다
         ranked += [acc for acc, v in scores if v is None]
         self.note(
             '빠른 비교',
@@ -2654,6 +2666,49 @@ class BuyerAgent(AgentBase):
             UNPAYABLE_SKIP in x or ORDER_FORM_UNREADABLE_SKIP in x for x in skips
         )
 
+    def _prefer_points_user(
+        self,
+        a: Assignment,
+        quotes: list[tuple[str, dict[str, object]]],
+        ranked: list[str],
+        tried: list[str],
+    ) -> list[tuple[str, dict[str, object]]]:
+        """빠른 비교가 같은 값이고 이긴 계정이 적립금을 못 쓰면(보유 5만원 미만) 같은 값의 다음 계정을 견적해
+        적립금을 쓰는 쪽을 고른다(사용자 2026-09-28: buyer01 적립금 5만 미만이면 buyer02 로).
+
+        원가가 같아야 바꾼다(사용 적립금은 원가에 더하므로 원가 자체는 같다). 견적 하나가 더 든다.
+        """
+        scores: dict[str, float] = getattr(self, '_quick_scores', {}) or {}
+        if len(quotes) != 1 or not scores:
+            return quotes
+        acc, snap = quotes[0]
+        used = _as_float(snap.get('points_used'))
+        balance = _as_float(snap.get('points_balance'))
+        if used > 0 or balance >= POINTS_USE_MIN or acc not in scores:
+            return quotes
+        tied = [b for b in ranked if b != acc and b not in tried and scores.get(b) == scores[acc]]
+        if not tied:
+            return quotes
+        other = tied[0]
+        self.note(
+            '계정 전환',
+            f'{acc}: 적립금 {balance:,.0f}원(5만 미만)이라 못 쓴다 — 같은 값 {other} 의 적립금 사용을 본다',
+        )
+        tried.append(other)
+        try:
+            got = self._payable_only(self._audit_quotes(a, self._quote_batch(a, [other])))
+        except AgentFailure as e:
+            self.note('계정 전환', mask_text(f'{other}: 견적 불가({e.reason[:60]}) — {acc} 로 산다'))
+            return quotes
+        if not got:
+            return quotes
+        acc2, snap2 = got[0]
+        if _as_float(snap2.get('points_used')) > 0 and _as_float(snap2.get('cost')) <= _as_float(snap.get('cost')):
+            self.note('계정 선택', f'{acc2} — 원가 같고 적립금 {_as_float(snap2.get("points_used")):,.0f}원 사용')
+            return got
+        self.note('계정 전환', f'{acc2}: 적립금 사용 없음 또는 더 비쌈 — {acc} 로 산다')
+        return quotes
+
     def _pick_cheapest(self, a: Assignment, accounts: list[str]) -> tuple[str, dict[str, object]]:
         """계정마다 견적을 내고 원가가 가장 낮은 계정(같으면 앞 계정)과 그 스냅샷을 고른다.
 
@@ -2685,7 +2740,7 @@ class BuyerAgent(AgentBase):
             if got:
                 got = self._payable_only(self._audit_quotes(a, got))
                 if got:
-                    quotes = got
+                    quotes = self._prefer_points_user(a, got, ranked or [], tried)
                     break
                 unpayable = True  # 결제 항목 없음도 계정 사유다 — 다음 계정으로 잇는다
                 continue
@@ -2882,8 +2937,16 @@ class BuyerAgent(AgentBase):
         if resolved is not None:
             picked = Decision(choice=resolved, reason=picked.reason)
         if picked.choice not in candidates:
+            # 2단 옵션(색상 + 사이즈)은 후보가 'BLK'·'95(77)' 처럼 단계별로 따로 온다 — 모델이 둘을 합쳐 답하면
+            # 그 조각이 전부 후보에 있을 때 주문 옵션 그대로를 고른 것으로 본다(실기 2026-09-28 SSG 'BLK/95(77)')
+            parts = [t for t in re.split(r'[,/·\s]+', picked.choice) if t]
+            if len(parts) >= 2 and all(t in candidates for t in parts) and a.order.option:
+                picked = Decision(choice=a.order.option, reason=picked.reason)
+                candidates = [*candidates, a.order.option]
+        if picked.choice not in candidates:
+            # 후보 밖을 골랐다 — 품절 확증이 아니라 판정 실패다(사람 확인)
             raise AgentFailure(
-                'fail', f'고른 옵션이 후보에 없다: {picked.choice}', FailReason.OUT_OF_STOCK
+                'needs_human', f'고른 옵션이 후보에 없다: {picked.choice}', FailReason.UNKNOWN
             )
         self.note('옵션 선택', f'{picked.choice} — {picked.reason}')
 

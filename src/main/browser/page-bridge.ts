@@ -219,24 +219,77 @@ function verify<T>(raw: unknown, expr: string, schema: z.ZodType<T>): T {
 // executeJavaScriptInIsolatedWorld 는 영영 돌아오지 않는다 — 기다리다 도구 전체가 멈춘다
 const MAIN_CALL_TIMEOUT_MS = 20_000
 
+// 읽기만 하는 호출(스냅샷·글자 읽기) — 문서가 바뀌는 중이면 새 문서가 뜬 뒤 한 번 다시 읽는다.
+// 클릭·입력은 다시 하지 않는다(내비게이션을 일으킨 클릭을 두 번 하면 주문이 두 번 된다)
+const READ_ONLY_CALL = /^__samba\.(snapshot|textOf)\(/
+// 새 문서를 기다리는 상한 — 결제 사이트 리다이렉트(롯데온 → 네이버페이) 기준
+const NAV_SETTLE_MS = 15_000
+
+function waitLoaded(wc: WebContents, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    if (wc.isDestroyed() || !wc.isLoading()) return resolve()
+    const done = (): void => {
+      clearTimeout(timer)
+      wc.off('did-finish-load', done)
+      wc.off('did-fail-load', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    wc.once('did-finish-load', done)
+    wc.once('did-fail-load', done)
+  })
+}
+
 async function call<T>(wc: WebContents, expr: string, schema: z.ZodType<T>): Promise<T> {
   if (wc.isDestroyed()) throw new Error('page is gone')
-  // webContents.executeJavaScriptInIsolatedWorld 는 메인 프레임의 지정 월드에서 실행한다
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error('page did not respond (busy or blocked by a dialog)')),
-      MAIN_CALL_TIMEOUT_MS
-    )
-  })
-  try {
-    const raw: unknown = await Promise.race([
-      wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code: expr }]),
-      timeout
-    ])
-    return verify(raw, expr, schema)
-  } finally {
-    if (timer) clearTimeout(timer)
+  // 시험 대역(WebContents 흉내)은 이벤트가 없다 — 그때는 예전처럼 시간 제한만 건다
+  const canWatch = typeof (wc as { on?: unknown }).on === 'function'
+  const readOnly = READ_ONLY_CALL.test(expr) && canWatch
+  for (let attempt = 0; ; attempt++) {
+    // webContents.executeJavaScriptInIsolatedWorld 는 메인 프레임의 지정 월드에서 실행한다.
+    // 실기 2026-09-28: 롯데온 주문서가 네이버페이로 넘어가는 동안 부르면 영영 돌아오지 않아 20초씩 멈췄다 —
+    // 읽기 호출은 최상위 프레임 이동을 보면 바로 끊고 새 문서에서 한 번 다시 읽는다
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let navigated = false
+    const onNav = (ev: { isMainFrame?: boolean; isSameDocument?: boolean }): void => {
+      if (ev.isMainFrame === false || ev.isSameDocument) return
+      navigated = true
+    }
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error('page did not respond (busy or blocked by a dialog)')),
+        MAIN_CALL_TIMEOUT_MS
+      )
+    })
+    const nav = new Promise<never>((_, reject) => {
+      if (!canWatch) return
+      const poll = setInterval(() => {
+        if (navigated) {
+          clearInterval(poll)
+          reject(new Error('page navigated'))
+        }
+      }, 100)
+      timeout.catch(() => clearInterval(poll))
+    })
+    if (canWatch) wc.on('did-start-navigation', onNav as never)
+    try {
+      const raw: unknown = await Promise.race([
+        wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code: expr }]),
+        timeout,
+        nav
+      ])
+      return verify(raw, expr, schema)
+    } catch (e) {
+      if (!navigated || !canWatch) throw e
+      // 클릭·입력이 문서를 넘겼다 — 동작은 이미 일어났으니 결과를 '이동함'으로 돌려준다(다시 누르지 않는다).
+      // 실기 2026-09-28: 롯데온 '결제하기' 클릭이 네이버페이로 넘어가며 응답이 안 와 20초 뒤 실패했다
+      if (!readOnly) return verify('ok: page navigated', expr, schema)
+      if (attempt >= 1) throw e
+      await waitLoaded(wc, NAV_SETTLE_MS)
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (canWatch) wc.off('did-start-navigation', onNav as never)
+    }
   }
 }
 
@@ -367,7 +420,9 @@ const HUMAN_TYPING_HOSTS = ['gsshop.com', 'payco.com', 'shoemarker.co.kr']
 function safeHost(wc: WebContents): string {
   try {
     const url =
-      typeof wc.getURL === 'function' ? wc.getURL() : ((wc as { mainFrame?: { url?: string } }).mainFrame?.url ?? '')
+      typeof wc.getURL === 'function'
+        ? wc.getURL()
+        : ((wc as { mainFrame?: { url?: string } }).mainFrame?.url ?? '')
     return new URL(url).hostname.toLowerCase()
   } catch {
     return ''
@@ -658,7 +713,8 @@ export const pageBridge = {
     // 키 입력은 포커스가 다른 칸에 남으면 엉뚱한 칸에 쳐진다(실기 2026-09-25 네이버: 계정 목록이 비밀번호 칸을 가려
     // 클릭이 막히자 비밀번호가 아이디 칸에 쳐져 'snnh6oj7n@4f!@o!rt' 로 섞였고, 자동 제출이 반복돼 계정이 잠겼다)
     if (!needsHumanTyping(safeHost(wc))) return pageBridge.fillValue(tab, id, value)
-    if (isAutomation()) return withAutomationInput(wc, () => pageBridge.typeLoginNow(tab, id, value))
+    if (isAutomation())
+      return withAutomationInput(wc, () => pageBridge.typeLoginNow(tab, id, value))
     return pageBridge.typeLoginNow(tab, id, value)
   },
   /** 입력칸 값의 글자 수(값 자체는 돌려주지 않는다). 못 읽으면 -1 */
