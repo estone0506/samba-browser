@@ -243,7 +243,8 @@ function waitLoaded(wc: WebContents, ms: number): Promise<void> {
 async function call<T>(wc: WebContents, expr: string, schema: z.ZodType<T>): Promise<T> {
   if (wc.isDestroyed()) throw new Error('page is gone')
   // 시험 대역(WebContents 흉내)은 이벤트가 없다 — 그때는 예전처럼 시간 제한만 건다
-  const readOnly = READ_ONLY_CALL.test(expr) && typeof (wc as { on?: unknown }).on === 'function'
+  const canWatch = typeof (wc as { on?: unknown }).on === 'function'
+  const readOnly = READ_ONLY_CALL.test(expr) && canWatch
   for (let attempt = 0; ; attempt++) {
     // webContents.executeJavaScriptInIsolatedWorld 는 메인 프레임의 지정 월드에서 실행한다.
     // 실기 2026-09-28: 롯데온 주문서가 네이버페이로 넘어가는 동안 부르면 영영 돌아오지 않아 20초씩 멈췄다 —
@@ -261,7 +262,7 @@ async function call<T>(wc: WebContents, expr: string, schema: z.ZodType<T>): Pro
       )
     })
     const nav = new Promise<never>((_, reject) => {
-      if (!readOnly) return
+      if (!canWatch) return
       const poll = setInterval(() => {
         if (navigated) {
           clearInterval(poll)
@@ -270,7 +271,7 @@ async function call<T>(wc: WebContents, expr: string, schema: z.ZodType<T>): Pro
       }, 100)
       timeout.catch(() => clearInterval(poll))
     })
-    if (readOnly) wc.on('did-start-navigation', onNav as never)
+    if (canWatch) wc.on('did-start-navigation', onNav as never)
     try {
       const raw: unknown = await Promise.race([
         wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code: expr }]),
@@ -279,11 +280,15 @@ async function call<T>(wc: WebContents, expr: string, schema: z.ZodType<T>): Pro
       ])
       return verify(raw, expr, schema)
     } catch (e) {
-      if (!readOnly || !navigated || attempt >= 1) throw e
+      if (!navigated || !canWatch) throw e
+      // 클릭·입력이 문서를 넘겼다 — 동작은 이미 일어났으니 결과를 '이동함'으로 돌려준다(다시 누르지 않는다).
+      // 실기 2026-09-28: 롯데온 '결제하기' 클릭이 네이버페이로 넘어가며 응답이 안 와 20초 뒤 실패했다
+      if (!readOnly) return verify('ok: page navigated', expr, schema)
+      if (attempt >= 1) throw e
       await waitLoaded(wc, NAV_SETTLE_MS)
     } finally {
       if (timer) clearTimeout(timer)
-      if (readOnly) wc.off('did-start-navigation', onNav as never)
+      if (canWatch) wc.off('did-start-navigation', onNav as never)
     }
   }
 }
