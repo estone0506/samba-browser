@@ -1212,8 +1212,7 @@ def test_결제창_로그인_화면은_앱_login_으로_한번_로그인하고_�
 
     a = _web_pay_agent(reg, monkeypatch)
     respx.post(f'{URL}/tool/list_tabs').mock(
-        side_effect=[_popups(NAVER_LOGIN_POPUP), _popups(NAVER_LOGIN_POPUP)]
-        + [_popups(NAVER_KEYPAD_POPUP)] * 40
+        side_effect=[_popups(NAVER_LOGIN_POPUP)] + [_popups(NAVER_KEYPAD_POPUP)] * 40
     )
     respx.post(f'{URL}/tool/switch_tab').mock(return_value=page('ok'))
     respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
