@@ -109,6 +109,9 @@ PAY_HOST_PROVIDERS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 # 키패드 입력 뒤 주문 완료 화면이 뜰 때까지 기다리는 시간(ms)
 PAY_RESULT_WAIT_MS = 4000
+# 완료 문구가 아직 없으면 다시 보는 횟수·간격(최대 약 15초 더)
+PAY_RESULT_POLL_TRIES = 5
+PAY_RESULT_POLL_WAIT_MS = 3000
 # 키패드가 뜰 때까지 팝업을 다시 보는 횟수·간격(최대 약 20초)
 KEYPAD_POLL_TRIES = 10
 KEYPAD_POLL_WAIT_MS = 2000
@@ -858,6 +861,13 @@ class PayerAgent(AgentBase):
         """결제 뒤 성공 확인 — 완료 화면 문구, 없으면(ABC·그랜드스테이지) 주문내역의 방금 생긴 주문으로."""
         self.step('payer: 성공 확인')
         page = self._success_page(a)
+        # 탭 안 키패드(네이버페이 → 롯데온) 는 승인 뒤 주문 완료로 돌아오는 데 4초보다 오래 걸린다
+        # (실기 2026-09-28 컬럼비아: 결제됐는데 '확인되지 않는다') — 완료 문구가 뜰 때까지 몇 번 더 본다
+        for _ in range(PAY_RESULT_POLL_TRIES):
+            if any(m in page for m in PAY_SUCCESS_MARKERS):
+                break
+            self.tool('wait', ms=PAY_RESULT_POLL_WAIT_MS)
+            page = self._success_page(a)
         recent_no = None
         if not any(m in page for m in PAY_SUCCESS_MARKERS):
             # ABC마트·그랜드스테이지는 네이버페이 뒤 완료 화면을 못 잡는 일이 있다 — 주문내역에서 방금(10분 안) 생긴
