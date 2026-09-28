@@ -90,7 +90,8 @@ sources:
   - id: SSG
     key: ssg
     label: SSG닷컴
-    home: https://www.ssg.com/
+    # 2026-09-28: www.ssg.com 홈은 무거워 로그인 확인이 20~40초 무응답으로 끝난다 → 가벼운 MY SSG 페이지에서 확인
+    home: https://pay.ssg.com/myssg/orderInfo.ssg?viewType=Ssg
     login_host: ssg.com
     compare_accounts: false
     shipping_confirm: true
