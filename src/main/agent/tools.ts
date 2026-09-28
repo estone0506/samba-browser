@@ -2176,9 +2176,19 @@ overlays left: ${after.length}${kept}`
           label = `로그인: ${loginHost}`
           if (wrongPasswordHosts.has(loginHost)) return LOGIN_WRONG_PASSWORD(loginHost)
           // 라벨을 안 주면 탭 프로필과 같은 라벨의 계정을 자동으로 고른다(계정 순회 지원)
+          // 결제 앱 사이트(naver.com·payco …)에서는 프로필 이름으로 계정을 고르지 않는다 — 결제창은 쇼핑몰 계정에
+          // 연결된 앱 계정(linkedAppAccount)으로만, 그 밖은 라벨을 준 경우만. 실기 2026-09-28: 라벨 없이 부르자 프로필
+          // buyer03 과 이름이 같은 네이버 계정(결제 비밀번호 없음)으로 로그인됐다
+          const payAppHost = Object.values(PAYMENT_PROVIDER_ACCOUNT_HOST).some((h) =>
+            sameRegistrableDomain(loginHost, h)
+          )
+          const linked = linkedAppAccount(available, tab, loginHost, accountLabel)
+          if (!linked && payAppHost && !accountLabel) {
+            return `${ACCOUNT_NOT_FOUND}: payment app site — pass accountLabel (profile-name fallback is disabled here)`
+          }
           const account =
             // 결제창 안의 네이버·페이코 로그인이면 결제창을 연 쇼핑몰 계정이 연결해 둔 앱 계정으로 로그인한다
-            linkedAppAccount(available, tab, loginHost, accountLabel) ??
+            linked ??
             resolveAccount(available.listAccounts(loginHost), accountLabel, tab.profile) ??
             // 앞 호출에서 이미 통합 로그인 화면으로 넘어와 있어도(host === loginHost) 라벨 @ 앞부분으로 짝을 찾는다
             movedHostAccount(
