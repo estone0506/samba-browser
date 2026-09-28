@@ -327,7 +327,9 @@ ORDER_WITH_ACCOUNT = ORDER.model_copy(update={'account': 'buyer01'})
 
 
 def assignment_with_account(reg) -> Assignment:
-    return assignment(reg).model_copy(update={'order': ORDER_WITH_ACCOUNT})
+    # 계정 하나로 사는 것은 작업 옵션(account)으로 사람이 정했을 때뿐이다 — 주문계정만으로는 고르지 않는다
+    base = assignment(reg)
+    return base.model_copy(update={'order': ORDER_WITH_ACCOUNT, 'options': {**base.options, 'account': 'buyer01'}})
 
 
 @respx.mock
@@ -566,9 +568,7 @@ def test_스냅샷이_표시_이름을_돌려주면_대조를_건너뛴다(gener
     respx.post(f'{URL}/tool/new_tab').mock(return_value=page('ok'))
     respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
     respx.post(f'{URL}/tool/login').mock(return_value=page('already signed in'))
-    a = assignment(reg).model_copy(
-        update={'order': ORDER.model_copy(update={'account': 'buyer01'})}
-    )
+    a = assignment_with_account(reg)
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(a)
     assert out.status == 'ok'
     assert any('표시 이름이라 대조 불가' in e.detail for e in out.evidence)
@@ -584,9 +584,7 @@ def test_스냅샷이_다른_아이디를_돌려주면_사람에게_넘긴다(ge
     respx.post(f'{URL}/tool/new_tab').mock(return_value=page('ok'))
     respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
     respx.post(f'{URL}/tool/login').mock(return_value=page('already signed in'))
-    a = assignment(reg).model_copy(
-        update={'order': ORDER.model_copy(update={'account': 'buyer01'})}
-    )
+    a = assignment_with_account(reg)
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(a)
     assert (out.status, out.fail_reason) == ('needs_human', FailReason.PERMISSION_DENIED)
 

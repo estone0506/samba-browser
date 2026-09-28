@@ -1219,9 +1219,12 @@ class BuyerAgent(AgentBase):
             ordered = self._by_pay_priority(source, list(source.buy_accounts))
             self.note('계정 후보', f'{source.id}: 비교 계정 {ordered}')
             return ordered
-        if a.order.account:
-            # 비교 계정을 정해 두지 않은 소싱처는 주문이 지정한 계정으로 산다
-            return [a.order.account]
+        requested = str(a.options.get('account') or '').strip()
+        if requested:
+            # 작업 옵션으로 사람이 계정을 정한 주문만 그 계정 하나로 산다
+            return [requested]
+        # 삼바웨이브 주문계정(a.order.account)은 기록용이다 — 구매 계정은 키마스터 우선순위로 고른다
+        # (실기 2026-09-28: 패션플러스 우선순위 1 은 buyer01 인데 주문계정 buyer03 으로 샀다)
         if not source.compare_accounts:
             # 계정 전환이 차단을 부르는 사이트 — 첫 계정 하나로만 산다
             labels, locked = self._first_account(source)
@@ -2736,7 +2739,7 @@ class BuyerAgent(AgentBase):
                 account = accounts[0]
                 self._login_as(account)
                 snap = self._snapshot(a, account)
-                why = '주문 지정 계정' if a.order.account else '키마스터의 유일한 계정'
+                why = '작업 옵션 지정 계정' if a.options.get('account') else '키마스터의 유일한 계정'
                 self.note('계정 선택', f'{account} — {why}')
             else:
                 account, snap = self._pick_cheapest(a, accounts)

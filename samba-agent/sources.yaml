@@ -129,6 +129,9 @@ sources:
     pay_provider: naver   # 패션플러스는 네이버페이로 결제 — 사용자 결정 2026-09-27(키마스터 결제 항목 naver)
     order_prep: true   # fashionplus_order_prep — 쿠폰 최대할인·적립금 모두사용(2026-09-27)
     shipping_confirm: true   # 새 주소는 set_shipping 이 채우고 전화까지 넣은 뒤 fashionplus_confirm_shipping 이 '등록하기'로 반영
+    # 2026-09-28: 키마스터 우선순위 1 은 buyer01. buyer03 프로필은 네이버 로그인이 풀려 결제창에서 막힌다 —
+    # 그 연결이 정리되면 목록에 다시 넣어 두 계정을 비교한다
+    buy_accounts: [buyer01]
     status: active
   # 아래는 아직 스크립트가 없다 — 등록은 하되 구매를 시작하면 '스크립트 미작성' 으로 사람에게 넘긴다.
   # home 을 확인하지 못한 곳은 비워 둔다(스크립트를 쓸 때 실제 주소로 채운다)
