@@ -1,0 +1,106 @@
+"""export 단계 — 검증이 끝난 주문의 원가·배송비를 외부 기입 큐에 넣는다.
+
+이 단계는 주문 결과를 바꾸지 않는다. 기입이 실패하든 늦든 돌려주는 결과는 항상 ok 이고,
+실제 기입 결과는 payload['export'] 에 담는다(실패 알림은 export.notify 가 따로 보낸다).
+"""
+
+import time
+from collections.abc import Callable
+
+from samba_agent.agents.contracts import AgentResult, Evidence
+from samba_agent.export.routing import ExportRouting
+from samba_agent.export.store import ExportConflict, ExportQueue
+from samba_agent.supervisor.state import RunState
+
+ExportFn = Callable[[RunState], AgentResult]
+
+
+def _won(value: object) -> int | None:
+    """금액 → 원 단위 정수. 숫자가 아니면 None(불리언·문자열은 숫자로 치지 않는다)."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return round(float(value))
+
+
+def export_values(state: RunState) -> tuple[int, int] | None:
+    """기록 단계가 삼바웨이브에 적은 (원가, 배송비). 원가가 없으면 None.
+
+    기록 결과만 본다 — 구매 단계의 견적 원가는 실제 결제액과 다를 수 있어 쓰지 않는다.
+    """
+    recorder = state.get('results', {}).get('recorder')
+    if recorder is None:
+        return None
+    values = recorder.payload.get('values') or recorder.payload.get('planned')
+    if not isinstance(values, dict):
+        return None
+    cost = _won(values.get('real_price'))
+    if cost is None or cost <= 0:
+        return None
+    return cost, max(_won(values.get('shipping_fee')) or 0, 0)
+
+
+def _result(reason: str, payload: dict[str, object]) -> AgentResult:
+    return AgentResult(
+        status='ok',
+        reason=reason,
+        payload=payload,
+        evidence=(Evidence(label='외부 기입', detail=reason),),
+    )
+
+
+def make_exporter(
+    queue: ExportQueue,
+    routing: ExportRouting,
+    *,
+    wait_s: float = 60.0,
+    poll_s: float = 1.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> ExportFn:
+    """그래프의 export 노드가 부를 함수를 만든다."""
+
+    def exporter(state: RunState) -> AgentResult:
+        order = state['order']
+        values = export_values(state)
+        if values is None:
+            return _result('외부 기입 건너뜀 — 기록된 원가가 없다', {'export': 'skipped'})
+        cost, shipping_fee = values
+        target = routing.target_for(order.seller)
+        if target is None:
+            return _result(
+                f'외부 기입 건너뜀 — 기입 제외 판매처({order.seller or "판매처 없음"})',
+                {'export': 'skipped'},
+            )
+        plan: dict[str, object] = {'target': target, 'cost': cost, 'shipping_fee': shipping_fee}
+        if state.get('dry_run', True):
+            return _result(
+                f'dry-run: {target} 에 원가 {cost:,} · 배송비 {shipping_fee:,} 기입 예정',
+                {'export': 'planned', **plan},
+            )
+        try:
+            req = queue.enqueue(order.order_no, target, cost, shipping_fee)
+        except ExportConflict as e:
+            return _result(f'외부 기입 충돌({target}) — {e}', {'export': 'conflict', **plan})
+        # 그 대상을 맡은 작업자가 떠 있을 때만 기다린다 — 없으면 주문마다 제한 시간을 통째로 쓴다
+        waited = wait_s if queue.alive(target) else 0
+        final = queue.wait(req.id, waited, poll_s=poll_s, sleep=sleep)
+        if final.status == 'done':
+            return _result(
+                f'{target} 에 원가 {cost:,} · 배송비 {shipping_fee:,} 기입',
+                {'export': 'done', **plan, 'detail': final.detail},
+            )
+        if final.status == 'failed':
+            return _result(
+                f'외부 기입 실패({target}) — {final.fail_reason}: {final.detail}',
+                {
+                    'export': 'failed',
+                    **plan,
+                    'fail_reason': final.fail_reason,
+                    'detail': final.detail,
+                },
+            )
+        return _result(
+            f'외부 기입 대기 중({target}) — 입력 작업자가 처리하면 반영된다',
+            {'export': 'pending', **plan},
+        )
+
+    return exporter
