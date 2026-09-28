@@ -256,45 +256,59 @@ def test_run_forever_는_고리_오류로_죽지_않는다(queue):
 
 
 class FakeBatch:
-    """배치형 어댑터 가짜 — 부를 때마다 정해진 건수를 돌려주거나 예외를 낸다."""
+    """배치형 어댑터 가짜 — 넘겨받은 주문번호 중 `present` 에 있는 것만 처리했다고 답하거나 예외를 낸다."""
 
-    def __init__(self, count: int = 3) -> None:
-        self.count = count
-        self.calls = 0
+    def __init__(self, present: tuple[str, ...] = ()) -> None:
+        self.present = set(present)
+        self.calls: list[list[str]] = []
         self.error: Exception | None = None
 
-    def complete_pending(self) -> int:
-        self.calls += 1
+    def complete_pending(self, order_nos) -> set[str]:
+        self.calls.append(list(order_nos))
         if self.error is not None:
             raise self.error
-        return self.count
+        return {o for o in order_nos if o in self.present}
 
 
 def batch_worker(queue, adapter, idle: float = 999.0, **kw) -> ExportWorker:
     return ExportWorker(queue, {'shopmine': adapter}, user_idle_s=lambda: idle, **kw)
 
 
-def test_배치_어댑터는_한_번_돌리고_대기_요청을_전부_끝낸다(queue):
-    adapter = FakeBatch(count=5)
+def test_배치_어댑터는_대기_주문번호를_모두_넘기고_처리된_것만_끝낸다(queue):
+    adapter = FakeBatch(present=('A1', 'A3'))
     a = queue.enqueue('A1', 'shopmine', 1000, 0)
     b = queue.enqueue('A2', 'shopmine', 2000, 0)
     c = queue.enqueue('A3', 'shopmine', 3000, 0)
     out = batch_worker(queue, adapter).run_once()
     assert out is not None and out.id == a.id
     assert out.status == 'done'
-    assert out.detail == '일괄 완료됨 5건(대기 요청 3건 함께 종료)'
-    assert queue.get(b.id).status == 'done'
+    assert out.detail == '일괄 완료됨 2건'
+    assert adapter.calls == [['A1', 'A2', 'A3']]
+    assert queue.get(b.id).status == 'pending'  # 화면에 없던 주문은 남는다
     assert queue.get(c.id).status == 'done'
-    assert adapter.calls == 1
-    assert batch_worker(queue, adapter).run_once() is None
+    assert queue.get(c.id).detail == '일괄 완료됨 2건'
 
 
-def test_배치_처리_건수_0_도_성공이다(queue):
-    adapter = FakeBatch(count=0)
+def test_집은_주문이_화면에_없으면_나중에_다시_한다(queue):
+    adapter = FakeBatch(present=('A2',))
+    a = queue.enqueue('A1', 'shopmine', 1000, 0)
+    b = queue.enqueue('A2', 'shopmine', 2000, 0)
+    out = batch_worker(queue, adapter, retry_delay_s=0).run_once()
+    assert out.status == 'pending'
+    assert out.fail_reason == 'not_found'
+    assert queue.get(b.id).status == 'done'  # 함께 넘긴 다른 주문은 처리됐다
+    assert queue.get(a.id).attempts == 1
+
+
+def test_집은_주문을_끝내_못_찾으면_실패로_끝낸다(queue):
+    adapter = FakeBatch(present=())
     queue.enqueue('A1', 'shopmine', 1000, 0)
-    out = batch_worker(queue, adapter).run_once()
-    assert out.status == 'done'
-    assert out.detail == '일괄 완료됨 0건(대기 요청 1건 함께 종료)'
+    w = batch_worker(queue, adapter, retry_delay_s=0, max_attempts=2)
+    assert w.run_once().status == 'pending'
+    out = w.run_once()
+    assert out.status == 'failed'
+    assert out.fail_reason == 'not_found'
+    assert out.attempts == 2
 
 
 def test_배치_어댑터의_재시도_사유는_대기_요청을_건드리지_않는다(queue):
@@ -311,7 +325,7 @@ def test_배치_어댑터의_재시도_사유는_대기_요청을_건드리지_�
 
 def test_배치_어댑터의_거절은_집은_요청만_실패시킨다(queue):
     adapter = FakeBatch()
-    adapter.error = AdapterReject(ExportFail.VERIFY_MISMATCH, '재필터 뒤에도 2건 남음')
+    adapter.error = AdapterReject(ExportFail.VERIFY_MISMATCH, '완료됨 뒤에도 2건 남음')
     queue.enqueue('A1', 'shopmine', 1000, 0)
     b = queue.enqueue('A2', 'shopmine', 2000, 0)
     out = batch_worker(queue, adapter).run_once()
@@ -322,7 +336,7 @@ def test_배치_어댑터의_거절은_집은_요청만_실패시킨다(queue):
 
 def test_배치_어댑터와_셀_어댑터가_함께_등록돼도_대상별로_고른다(queue):
     cell = FakeAdapter({'E1': EMPTY})
-    batch = FakeBatch(count=1)
+    batch = FakeBatch(present=('S1',))
     queue.enqueue('E1', 'emp', 62470, 2300)
     queue.enqueue('S1', 'shopmine', 1000, 0)
     w = ExportWorker(queue, {'emp': cell, 'shopmine': batch}, user_idle_s=lambda: 999.0)
@@ -330,4 +344,4 @@ def test_배치_어댑터와_셀_어댑터가_함께_등록돼도_대상별로_�
     second = w.run_once()
     assert {first.target, second.target} == {'emp', 'shopmine'}
     assert cell.rows['E1'] == CellValues(62470, 2300)
-    assert batch.calls == 1
+    assert batch.calls == [['S1']]

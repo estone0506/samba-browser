@@ -1,21 +1,24 @@
-# 샵마인 일괄 '완료됨' 절차 — 화면 드라이버는 가짜, 순서·되읽기·실패 분류를 본다
+# 샵마인 '완료됨' 절차 — 화면 드라이버는 가짜, 순서·주문번호 대조·되읽기·실패 분류를 본다
 import pytest
 
 from samba_agent.export.adapters import AdapterReject, AdapterRetry
-from samba_agent.export.desktop.shopmine import ShopMineAdapter
+from samba_agent.export.desktop.shopmine import ShopMineAdapter, order_matches
 from samba_agent.export.failures import ExportFail
 
 
 class FakeUi:
-    """샵마인 화면 가짜. rows 는 필터에 걸린 행 수, done 을 누르면 0 이 된다."""
+    """샵마인 화면 가짜. rows 는 필터에 걸린 행의 주문번호, done 을 누르면 체크된 행이 사라진다."""
 
-    def __init__(self, rows: int = 3) -> None:
-        self.rows = rows
+    def __init__(self, rows: tuple[str, ...] = ('S1', 'S2', 'S3')) -> None:
+        self.rows = list(rows)
+        self.checked: list[str] = []
         self.calls: list[str] = []
         self.ready_error: Exception | None = None
         self.wait_error: Exception | None = None
-        # 완료됨을 눌러도 남는 행 수(되읽기 불일치 시험용)
-        self.leftover = 0
+        # 완료됨을 눌러도 남는 주문(되읽기 불일치 시험용)
+        self.sticky: set[str] = set()
+        # 체크가 안 되는 주문(부분 선택 시험용)
+        self.uncheckable: set[str] = set()
 
     def ensure_ready(self) -> None:
         self.calls.append('ready')
@@ -33,78 +36,82 @@ class FakeUi:
     def set_filters(self) -> None:
         self.calls.append('filters')
 
-    def row_count(self) -> int:
-        self.calls.append('count')
-        return self.rows
+    def filtered_order_nos(self) -> list[str]:
+        self.calls.append('list')
+        return list(self.rows)
 
-    def select_all(self) -> int:
-        self.calls.append('select_all')
-        return self.rows
+    def select_orders(self, order_nos) -> dict[str, int]:
+        self.calls.append(f'select {",".join(order_nos)}')
+        self.checked = [o for o in order_nos if o in self.rows and o not in self.uncheckable]
+        return {o: (1 if o in self.checked else 0) for o in order_nos}
 
     def set_status_done(self) -> None:
         self.calls.append('done')
-        self.rows = self.leftover
+        self.rows = [r for r in self.rows if r not in self.checked or r in self.sticky]
 
 
-def test_필터_결과를_전부_완료됨으로_바꾸고_되읽어_0을_확인한다():
-    ui = FakeUi(rows=3)
-    n = ShopMineAdapter(ui, collect_timeout_s=90).complete_pending()
-    assert n == 3
+def test_넘긴_주문_중_화면에_있는_것만_체크해_완료됨으로_바꾸고_되읽는다():
+    ui = FakeUi(rows=('S1', 'S2', 'S3'))
+    done = ShopMineAdapter(ui, collect_timeout_s=90).complete_pending(['S1', 'S3', 'X9'])
+    assert done == {'S1', 'S3'}
     assert ui.calls == [
         'ready',
         'collect',
         'wait 90',
         'filters',
-        'count',
-        'select_all',
+        'list',
+        'select S1,S3',
         'done',
         'filters',
-        'count',
+        'list',
     ]
+    assert ui.rows == ['S2']  # 넘기지 않은 주문은 건드리지 않는다
 
 
-def test_필터_결과가_0이면_아무것도_누르지_않는다():
-    ui = FakeUi(rows=0)
-    assert ShopMineAdapter(ui).complete_pending() == 0
-    assert 'select_all' not in ui.calls
+def test_넘긴_주문이_화면에_하나도_없으면_아무것도_누르지_않는다():
+    ui = FakeUi(rows=('S1',))
+    assert ShopMineAdapter(ui).complete_pending(['X1', 'X2']) == set()
     assert 'done' not in ui.calls
+    assert not any(c.startswith('select') for c in ui.calls)
 
 
-def test_dry_run_은_전체_선택까지만_한다():
-    ui = FakeUi(rows=4)
-    assert ShopMineAdapter(ui, dry_run=True).complete_pending() == 4
-    assert ui.calls[-1] == 'select_all'
+def test_주문번호가_비어_있으면_화면을_건드리지_않는다():
+    ui = FakeUi()
+    assert ShopMineAdapter(ui).complete_pending([]) == set()
+    assert ui.calls == []
+
+
+def test_dry_run_은_체크까지만_한다():
+    ui = FakeUi(rows=('S1', 'S2'))
+    assert ShopMineAdapter(ui, dry_run=True).complete_pending(['S2']) == {'S2'}
+    assert ui.calls[-1] == 'select S2'
     assert 'done' not in ui.calls
-    assert ui.rows == 4
+    assert ui.rows == ['S1', 'S2']
 
 
-def test_전체_선택_수가_행_수와_다르면_누르지_않고_거절한다():
-    class Partial(FakeUi):
-        def select_all(self) -> int:
-            self.calls.append('select_all')
-            return self.rows - 1
-
-    ui = Partial(rows=3)
+def test_체크가_안_된_행이_있으면_누르지_않고_거절한다():
+    ui = FakeUi(rows=('S1', 'S2'))
+    ui.uncheckable = {'S2'}
     with pytest.raises(AdapterReject) as e:
-        ShopMineAdapter(ui).complete_pending()
+        ShopMineAdapter(ui).complete_pending(['S1', 'S2'])
     assert e.value.reason is ExportFail.AMBIGUOUS
     assert 'done' not in ui.calls
 
 
-def test_완료됨_뒤에도_행이_남으면_verify_mismatch():
-    ui = FakeUi(rows=3)
-    ui.leftover = 2
+def test_완료됨_뒤에도_남으면_verify_mismatch():
+    ui = FakeUi(rows=('S1', 'S2'))
+    ui.sticky = {'S2'}
     with pytest.raises(AdapterReject) as e:
-        ShopMineAdapter(ui).complete_pending()
+        ShopMineAdapter(ui).complete_pending(['S1', 'S2'])
     assert e.value.reason is ExportFail.VERIFY_MISMATCH
-    assert '2' in e.value.detail
+    assert '1건' in e.value.detail
 
 
 def test_창이_없으면_AdapterRetry_가_그대로_나간다():
     ui = FakeUi()
     ui.ready_error = AdapterRetry(ExportFail.WINDOW_MISSING, '샵마인 창 없음')
     with pytest.raises(AdapterRetry) as e:
-        ShopMineAdapter(ui).complete_pending()
+        ShopMineAdapter(ui).complete_pending(['S1'])
     assert e.value.reason is ExportFail.WINDOW_MISSING
     assert ui.calls == ['ready']
 
@@ -113,6 +120,24 @@ def test_수집_시간_초과는_AdapterRetry_timeout():
     ui = FakeUi()
     ui.wait_error = AdapterRetry(ExportFail.TIMEOUT, '수집 120초 초과')
     with pytest.raises(AdapterRetry) as e:
-        ShopMineAdapter(ui).complete_pending()
+        ShopMineAdapter(ui).complete_pending(['S1'])
     assert e.value.reason is ExportFail.TIMEOUT
     assert 'filters' not in ui.calls
+
+
+@pytest.mark.parametrize(
+    ('order_no', 'cell', 'want'),
+    [
+        ('20260928C6B437', '20260928C6B437', True),
+        ('20260928B68241:1136399342', '20260928B68241', True),  # SSG — ':' 앞
+        ('3474596476 2904713019', '2904713019', True),  # GS이숍 — 토큰
+        ('3474596476 2904713019', '3474596476', True),
+        ('10103253087873', '10103253087873', True),
+        ('10103253087873', '1010325308787', False),  # 앞부분만 같은 것은 아니다
+        ('20260928C6B437', '20260928C6B9E4', False),
+        ('', '20260928C6B437', False),
+        ('20260928C6B437', '', False),
+    ],
+)
+def test_주문번호_대조_규칙(order_no, cell, want):
+    assert order_matches(order_no, cell) is want

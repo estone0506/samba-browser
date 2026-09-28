@@ -3,7 +3,7 @@
 worker                   입력 작업자를 띄운다(관리자 권한으로 실행해야 EMP 에 입력된다)
 list [--limit N]         최근 요청을 본다
 requeue ORDER_NO TARGET  실패한 요청을 같은 값으로 다시 대기시킨다
-shopmine [--dry]        샵마인 일괄 완료됨을 큐 없이 한 번 돌린다(--dry 는 완료됨을 누르지 않는다)
+shopmine [--dry] [주문번호…]  샵마인 완료됨 지정을 큐 갱신 없이 한 번 돌린다(--dry 는 체크까지만)
 """
 
 import argparse
@@ -59,15 +59,23 @@ def _shopmine_ui():
 PywinautoShopMineUi = _shopmine_ui
 
 
-def _shopmine(dry: bool) -> int:
-    """샵마인 일괄 완료됨을 큐 없이 한 번 돌린다 — 실기 시험용."""
+def _shopmine(dry: bool, order_nos: list[str], queue: ExportQueue) -> int:
+    """샵마인 완료됨 지정을 큐 갱신 없이 한 번 돌린다 — 실기 시험용.
+
+    주문번호를 주지 않으면 큐에 대기 중인 샵마인 요청의 주문번호를 쓴다(큐 상태는 바꾸지 않는다).
+    """
+    wanted = order_nos or queue.pending_order_nos('shopmine')
+    if not wanted:
+        print('샵마인에 넘길 주문번호가 없다(인자로 주거나 큐에 대기 요청이 있어야 한다)')
+        return 1
     adapter = ShopMineAdapter(PywinautoShopMineUi(), dry_run=dry)
     try:
-        n = adapter.complete_pending()
+        done = adapter.complete_pending(wanted)
     except (AdapterRetry, AdapterReject) as e:
         print(f'샵마인 처리 못 함 — {e.reason.value}: {e.detail}')
         return 2
-    print(f'샵마인 {"필터 행(누르지 않음)" if dry else "완료됨 처리"} {n}건')
+    label = '찾아서 체크(누르지 않음)' if dry else '완료됨 처리'
+    print(f'샵마인 {label} {len(done)}건 / 요청 {len(wanted)}건: {", ".join(sorted(done)) or "-"}')
     return 0
 
 
@@ -104,7 +112,8 @@ def main(argv: list[str] | None = None) -> int:
     p_requeue.add_argument('order_no')
     p_requeue.add_argument('target', choices=list(get_args(Target)))
     p_shop = sub.add_parser('shopmine', help='샵마인 일괄 완료됨을 한 번 돌린다')
-    p_shop.add_argument('--dry', action='store_true', help='완료됨을 누르지 않고 행 수만 본다')
+    p_shop.add_argument('--dry', action='store_true', help='완료됨을 누르지 않고 행 체크까지만')
+    p_shop.add_argument('order_nos', nargs='*', help='대상 주문번호(없으면 큐의 샵마인 대기 요청)')
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -112,11 +121,11 @@ def main(argv: list[str] | None = None) -> int:
         format='%(asctime)s.%(msecs)03d %(levelname)s:%(name)s:%(message)s',
         datefmt='%H:%M:%S',
     )
-    if args.cmd == 'shopmine':
-        return _shopmine(args.dry)
     settings = load_settings(DEFAULT_ROOT / '.env')
     db_path = args.db if args.db is not None else settings.export_db_path
     queue = ExportQueue(db_path)
+    if args.cmd == 'shopmine':
+        return _shopmine(args.dry, list(args.order_nos), queue)
     if args.cmd == 'list':
         return _list(queue, args.limit)
     if args.cmd == 'requeue':

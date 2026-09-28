@@ -146,14 +146,45 @@ def test_shopmine_명령은_드라이버를_만들어_한_번_돌린다(monkeypa
         def __init__(self, ui, *, dry_run=False, **_kw):
             made['dry_run'] = dry_run
 
-        def complete_pending(self):
-            return 4
+        def complete_pending(self, order_nos):
+            made['order_nos'] = list(order_nos)
+            return {'A1', 'A2'}
 
     monkeypatch.setattr(cli, 'PywinautoShopMineUi', lambda: object())
     monkeypatch.setattr(cli, 'ShopMineAdapter', FakeAdapter)
-    assert export_main(['shopmine', '--dry']) == 0
+    assert export_main(['shopmine', '--dry', 'A1', 'A2', 'A3']) == 0
     assert made['dry_run'] is True
-    assert '4' in capsys.readouterr().out
+    assert made['order_nos'] == ['A1', 'A2', 'A3']
+    assert '2건 / 요청 3건' in capsys.readouterr().out
+
+
+def test_shopmine_명령은_주문번호가_없으면_큐의_대기_요청을_쓴다(monkeypatch, tmp_path, capsys):
+    settings(monkeypatch, tmp_path)
+    import samba_agent.export.__main__ as cli
+
+    queue = ExportQueue(tmp_path / 'exports.sqlite')
+    queue.enqueue('S1', 'shopmine', 1000, 0)
+    got: dict[str, object] = {}
+
+    class FakeAdapter:
+        def __init__(self, ui, **_kw):
+            pass
+
+        def complete_pending(self, order_nos):
+            got['order_nos'] = list(order_nos)
+            return set()
+
+    monkeypatch.setattr(cli, 'PywinautoShopMineUi', lambda: object())
+    monkeypatch.setattr(cli, 'ShopMineAdapter', FakeAdapter)
+    assert export_main(['shopmine']) == 0
+    assert got['order_nos'] == ['S1']
+    assert queue.find('S1', 'shopmine').status == 'pending'  # 큐는 건드리지 않는다
+
+
+def test_shopmine_명령은_넘길_주문번호가_없으면_1(monkeypatch, tmp_path, capsys):
+    settings(monkeypatch, tmp_path)
+    assert export_main(['shopmine', '--dry']) == 1
+    assert '주문번호가 없다' in capsys.readouterr().out
 
 
 def test_shopmine_명령은_재시도_사유를_출력하고_2를_돌려준다(monkeypatch, tmp_path, capsys):
@@ -165,10 +196,10 @@ def test_shopmine_명령은_재시도_사유를_출력하고_2를_돌려준다(m
         def __init__(self, ui, **_kw):
             pass
 
-        def complete_pending(self):
+        def complete_pending(self, order_nos):
             raise AdapterRetry(ExportFail.WINDOW_MISSING, '샵마인 창 없음')
 
     monkeypatch.setattr(cli, 'PywinautoShopMineUi', lambda: object())
     monkeypatch.setattr(cli, 'ShopMineAdapter', Failing)
-    assert export_main(['shopmine']) == 2
+    assert export_main(['shopmine', 'A1']) == 2
     assert 'window_missing' in capsys.readouterr().out

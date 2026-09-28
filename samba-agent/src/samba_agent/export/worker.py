@@ -90,18 +90,22 @@ class ExportWorker:
 
     def _process(self, req: ExportRequest, adapter: Adapter | BatchAdapter) -> None:
         batch = isinstance(adapter, BatchAdapter)
-        outcome = self._decide_batch(req, adapter) if batch else self._decide(req, adapter)
+        completed: set[str] = set()
+        if batch:
+            outcome, completed = self._decide_batch(req, adapter)
+        else:
+            outcome = self._decide(req, adapter)
         # 큐 기록은 어댑터 try 바깥에서 한 번만 한다 — 기입은 성공했는데 그 뒤 큐 쓰기가
         # 실패하면(예: sqlite 오류) 리뷰 지적 M2 이전에는 UNKNOWN 실패로 잘못 남았다.
         # 여기서 나는 예외는 run_once 밖으로 그대로 나가고, running 인 행은 재시작 때
         # recover_running 이 되돌린다(같은 값이면 다시 입력하지 않으니 안전하다).
+        if batch and completed:
+            # 일괄 처리가 찾아서 끝낸 다른 대기 요청도 함께 성공으로 적는다(집은 요청은 아래서)
+            self._queue.done_orders(
+                req.target, sorted(completed - {req.order_no}), outcome.detail, except_id=req.id
+            )
         if outcome.kind == 'done':
-            detail = outcome.detail
-            if batch:
-                # 일괄 처리 한 번이 그때 대기 중이던 같은 대상 요청을 전부 덮었다
-                others = self._queue.done_pending(req.target, detail, except_id=req.id)
-                detail = f'{detail}(대기 요청 {others + 1}건 함께 종료)'
-            self._queue.done(req.id, detail)
+            self._queue.done(req.id, outcome.detail)
         elif outcome.kind == 'retry':
             assert outcome.reason is not None
             self._queue.retry_later(req.id, outcome.reason, outcome.detail, self._retry_delay_s)
@@ -140,20 +144,42 @@ class ExportWorker:
             log.exception('외부 기입 중 오류: %s(%s)', req.order_no, req.target)
             return _Outcome('fail', f'{type(e).__name__}: {e}'[:200], ExportFail.UNKNOWN)
 
-    def _decide_batch(self, req: ExportRequest, adapter: BatchAdapter) -> _Outcome:
-        """일괄형 어댑터 — 한 번 돌리고 건수만 받는다. 실패 분류는 _decide 와 같다."""
+    def _decide_batch(self, req: ExportRequest, adapter: BatchAdapter) -> tuple[_Outcome, set[str]]:
+        """일괄형 어댑터 — 집은 요청과 같은 대상의 대기 주문번호를 모두 넘기고, 처리된 집합을 받는다.
+
+        집은 요청의 주문번호가 처리 집합에 없으면(아직 화면에 수집되지 않음) 시간을 두고 다시 한다.
+        실패 분류는 _decide 와 같다. 돌려주는 집합은 호출부가 다른 대기 요청을 끝내는 데 쓴다.
+        """
+        order_nos = [req.order_no, *self._queue.pending_order_nos(req.target)]
         try:
-            count = adapter.complete_pending()
-            return _Outcome('done', f'일괄 완료됨 {count}건')
+            completed = set(adapter.complete_pending(order_nos))
         except AdapterRetry as e:
             if req.attempts >= self._max_attempts:
-                return _Outcome('fail', f'재시도 {req.attempts}회 모두 실패 — {e.detail}', e.reason)
-            return _Outcome('retry', e.detail, e.reason)
+                return _Outcome(
+                    'fail', f'재시도 {req.attempts}회 모두 실패 — {e.detail}', e.reason
+                ), set()
+            return _Outcome('retry', e.detail, e.reason), set()
         except AdapterReject as e:
-            return _Outcome('fail', e.detail, e.reason)
+            return _Outcome('fail', e.detail, e.reason), set()
         except Exception as e:
             log.exception('외부 일괄 처리 중 오류: %s(%s)', req.order_no, req.target)
-            return _Outcome('fail', f'{type(e).__name__}: {e}'[:200], ExportFail.UNKNOWN)
+            return _Outcome('fail', f'{type(e).__name__}: {e}'[:200], ExportFail.UNKNOWN), set()
+        detail = f'일괄 완료됨 {len(completed)}건'
+        if req.order_no in completed:
+            return _Outcome('done', detail), completed
+        # 화면(필터)에 아직 없는 주문 — 수집이 늦을 수 있으니 시간을 두고 다시 본다
+        if req.attempts >= self._max_attempts:
+            return (
+                _Outcome(
+                    'fail',
+                    f'재시도 {req.attempts}회 동안 화면에서 주문을 찾지 못했다',
+                    ExportFail.NOT_FOUND,
+                ),
+                completed,
+            )
+        return _Outcome(
+            'retry', '화면(필터)에 아직 없다 — 나중에 다시', ExportFail.NOT_FOUND
+        ), completed
 
     def run_forever(
         self,

@@ -215,17 +215,34 @@ class ExportQueue:
                 (detail, self._iso(), request_id),
             )
 
-    def done_pending(self, target: str, detail: str, *, except_id: int) -> int:
-        """그 대상의 대기(pending) 요청을 전부 성공으로 끝낸다 — 일괄형 어댑터가 한 번에 덮은 것들.
+    def pending_order_nos(self, target: str) -> list[str]:
+        """그 대상의 대기(pending) 요청 주문번호(오래된 순) — 일괄형 어댑터에 한꺼번에 넘긴다."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT order_no FROM export_requests WHERE target=? AND status='pending' "
+                'ORDER BY created_at, id',
+                (target,),
+            ).fetchall()
+        return [r['order_no'] for r in rows]
 
-        except_id(집어서 running 인 행)는 호출부가 따로 끝낸다. 바꾼 행 수를 돌려준다.
+    def done_orders(
+        self, target: str, order_nos: Sequence[str], detail: str, *, except_id: int
+    ) -> int:
+        """그 대상의 대기(pending) 요청 중 주문번호가 목록에 있는 것을 성공으로 끝낸다.
+
+        일괄형 어댑터가 한 번에 처리한 주문들이다. except_id(집어서 running 인 행)는 호출부가
+        따로 끝낸다. 바꾼 행 수를 돌려준다.
         """
+        if not order_nos:
+            return 0
+        marks = ','.join('?' for _ in order_nos)
         now = self._iso()
         with self._immediate():
             cur = self._db.execute(
-                "UPDATE export_requests SET status='done', fail_reason=NULL, detail=?, "
-                "updated_at=? WHERE target=? AND status='pending' AND id<>?",
-                (detail, now, target, except_id),
+                f"UPDATE export_requests SET status='done', fail_reason=NULL, detail=?, "
+                f"updated_at=? WHERE target=? AND status='pending' AND id<>? "
+                f'AND order_no IN ({marks})',
+                (detail, now, target, except_id, *order_nos),
             )
         return int(cur.rowcount)
 

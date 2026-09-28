@@ -7,6 +7,7 @@
 import functools
 import logging
 import time
+from collections.abc import Sequence
 
 from pywinauto import Desktop
 from pywinauto.findwindows import ElementNotFoundError
@@ -14,6 +15,7 @@ from pywinauto.timings import TimeoutError as PwTimeoutError
 from pywinauto.uia_defines import NoPatternInterfaceError
 
 from samba_agent.export.adapters import AdapterRetry
+from samba_agent.export.desktop.shopmine import order_matches
 from samba_agent.export.failures import ExportFail
 
 log = logging.getLogger(__name__)
@@ -25,6 +27,7 @@ FILTER_STATUS = '미지정'
 FILTER_EXCEL = '엑셀생성안됨'
 STATUS_MENU = '작업상태지정'
 STATUS_DONE = '완료됨'
+ORDER_NO_COLUMN = '주문번호'
 # 우리가 완료됨을 누른 뒤 뜨는 확인 대화상자에서 눌러도 되는 버튼 이름
 CONFIRM_BUTTONS = ('예(Y)', '확인', 'OK', 'Yes')
 # 행별 선택 상태 셀 값이 '체크됨'으로 보이는 표시들(텍스트로만 읽을 수 있을 때)
@@ -166,16 +169,37 @@ class PywinautoShopMineUi:
 
     @_guard_pywinauto_errors
     def ensure_ready(self) -> None:
+        t0 = time.monotonic()
         win = self._window()
+        log.info('샵마인 창 찾기 %.1f초', time.monotonic() - t0)
         self._refuse_if_dialog(win)
         self._win = win
+        t1 = time.monotonic()
         self._open_order_tab()
+        log.info('샵마인 탭 확인 %.1f초', time.monotonic() - t1)
         tab = self._find('TabItem', title=ORDER_TAB)
+        # select() 가 예외 없이 조용히 실패한다(실기: 홈 탭 그대로) — 선택 여부를 확인하고 클릭한다
         try:
             tab.select()
-        except Exception:  # noqa: BLE001 — 일부 탭은 select 패턴이 없어 클릭으로 고른다
-            tab.click_input()
+        except Exception:  # noqa: BLE001, S110 — 일부 탭은 select 패턴이 없다
+            pass
         time.sleep(self._poll_s)
+        if not self._order_page_shown():
+            tab.click_input()
+            time.sleep(self._poll_s * 2)
+        if not self._order_page_shown():
+            raise AdapterRetry(ExportFail.BLOCKED, '통합주문관리 탭으로 전환하지 못했다')
+
+    def _order_page_shown(self) -> bool:
+        """통합주문관리 페이지가 앞에 있는가 — TabItem.is_selected() 는 항상 0 이라(실기) 페이지 제목표로 본다.
+
+        숨은 탭 페이지의 요소는 창 밖 좌표(예: x=691)를 돌려주므로 _find 의 창 안 필터로 걸러진다.
+        """
+        try:
+            self._find('Text', auto_id='LabelTitle', title=ORDER_TAB)
+        except AdapterRetry:
+            return False
+        return True
 
     def _refuse_if_dialog(self, win) -> None:
         """메인 창이 모달 대화상자에 막혀 있으면 건드리지 않고 물러난다.
@@ -278,17 +302,44 @@ class PywinautoShopMineUi:
     def _grid(self):
         return self._find('Table', auto_id='DataGridView1')
 
-    def _grid_rows(self) -> list:
-        grid = self._grid()
-        return [c for c in grid.children() if c.element_info.control_type in ('DataItem', 'Custom')]
+    def _grid_rows(self, grid=None) -> list:
+        """데이터 행(헤더 행 '상위 행' 제외). 실기: 행은 Custom, 첫 행이 헤더다."""
+        grid = grid if grid is not None else self._grid()
+        rows = []
+        for c in grid.children():
+            if c.element_info.control_type not in ('DataItem', 'Custom'):
+                continue
+            cells = c.children()
+            if cells and cells[0].element_info.control_type == 'Header':
+                continue
+            rows.append(c)
+        return rows
 
-    @_guard_pywinauto_errors
-    def row_count(self) -> int:
-        grid = self._grid()
+    def _column_index(self, grid, name: str) -> int:
+        """헤더 행에서 열 이름의 위치."""
+        for c in grid.children():
+            if c.element_info.control_type not in ('DataItem', 'Custom'):
+                continue
+            cells = c.children()
+            if cells and cells[0].element_info.control_type == 'Header':
+                for i, h in enumerate(cells):
+                    if h.window_text() == name:
+                        return i
+                break
+        raise AdapterRetry(ExportFail.BLOCKED, f'그리드에 {name!r} 열이 없다')
+
+    def _cell_value(self, cell) -> str:
+        """셀 값 — window_text 는 '주문번호 행 0' 같은 이름표라 legacy Value 를 먼저 본다(실기)."""
         try:
-            return int(grid.iface_grid.CurrentRowCount)
-        except Exception:  # noqa: BLE001 — GridPattern 이 없으면 행 요소를 센다
-            return len(self._grid_rows())
+            value = cell.legacy_properties().get('Value')
+        except Exception:  # noqa: BLE001
+            value = None
+        if value is None:
+            try:
+                value = cell.window_text()
+            except Exception:  # noqa: BLE001
+                value = ''
+        return str(value or '').strip()
 
     def _cell_checked(self, cell) -> bool | None:
         """그 셀(행의 첫째 칸 = 체크박스 칸)이 체크됐는지. 읽을 방법이 없으면 None."""
@@ -296,48 +347,56 @@ class PywinautoShopMineUi:
             return cell.iface_toggle.CurrentToggleState == 1
         except Exception:  # noqa: BLE001, S110 — TogglePattern 이 없는 칸도 있다
             pass
-        value = None
-        try:
-            value = cell.legacy_properties().get('Value')
-        except Exception:  # noqa: BLE001, S110
-            pass
-        if not value:
-            try:
-                value = cell.window_text()
-            except Exception:  # noqa: BLE001
-                value = None
+        value = self._cell_value(cell)
         if not value:
             return None
-        return str(value).strip().lower() in _CHECKED_MARKERS
-
-    def _count_checked_rows(self) -> int:
-        """헤더 전체 선택을 믿지 않고, 행마다 첫째 칸의 체크 상태를 직접 센다."""
-        any_checkable = False
-        checked = 0
-        for row in self._grid_rows():
-            cells = row.children()
-            if not cells:
-                continue
-            state = self._cell_checked(cells[0])
-            if state is None:
-                continue
-            any_checkable = True
-            if state:
-                checked += 1
-        if not any_checkable:
-            log.warning('행별 선택 상태를 읽지 못해 헤더 체크 상태로 대신한다')
-            return self.row_count()
-        return checked
+        return value.lower() in _CHECKED_MARKERS
 
     @_guard_pywinauto_errors
-    def select_all(self) -> int:
+    def filtered_order_nos(self) -> list[str]:
+        grid = self._grid()
+        col = self._column_index(grid, ORDER_NO_COLUMN)
+        out = []
+        for row in self._grid_rows(grid):
+            cells = row.children()
+            out.append(self._cell_value(cells[col]) if col < len(cells) else '')
+        return out
+
+    def _uncheck_all(self) -> None:
+        """헤더 전체 선택을 끈다 — 이전 실행이 켜 둔 체크가 남아 있을 수 있다."""
         box = self._find('CheckBox', auto_id='CheckBoxAll')
-        if box.get_toggle_state() != 1:
+        if box.get_toggle_state() == 1:
             box.toggle()
             time.sleep(self._poll_s)
-        if box.get_toggle_state() != 1:
-            return 0
-        return self._count_checked_rows()
+        for row in self._grid_rows():
+            cells = row.children()
+            if cells and self._cell_checked(cells[0]):
+                cells[0].click_input()
+                time.sleep(self._poll_s / 2)
+
+    @_guard_pywinauto_errors
+    def select_orders(self, order_nos: Sequence[str]) -> dict[str, int]:
+        """목록의 주문번호와 맞는 행만 체크한다(첫째 칸 클릭 → 체크 확인)."""
+        self._uncheck_all()
+        grid = self._grid()
+        col = self._column_index(grid, ORDER_NO_COLUMN)
+        checked: dict[str, int] = dict.fromkeys(order_nos, 0)
+        for row in self._grid_rows(grid):
+            cells = row.children()
+            if col >= len(cells):
+                continue
+            value = self._cell_value(cells[col])
+            hit = next((o for o in order_nos if order_matches(o, value)), None)
+            if hit is None:
+                continue
+            for _ in range(2):
+                if self._cell_checked(cells[0]):
+                    break
+                cells[0].click_input()
+                time.sleep(self._poll_s)
+            if self._cell_checked(cells[0]):
+                checked[hit] += 1
+        return checked
 
     # ---- 완료됨 ----
     def _find_done_item(self, win, pid: int, before: set[int]):
