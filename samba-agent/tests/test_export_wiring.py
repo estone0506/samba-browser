@@ -98,3 +98,17 @@ def test_requeue_할_실패_요청이_없으면_1(monkeypatch, tmp_path, capsys)
     settings(monkeypatch, tmp_path)
     assert export_main(['requeue', 'A9', 'emp']) == 1
     assert '없다' in capsys.readouterr().out
+
+
+def test_db_옵션이_설정값을_덮어쓴다(monkeypatch, tmp_path, capsys):
+    # 리뷰 지적 — I3: 예약 작업은 cwd 의 .env 를 못 찾는다 — --db 로 직접 지정할 수 있어야 한다
+    settings(monkeypatch, tmp_path)  # SAMBA_EXPORT_DB_PATH 를 가리키는 기본 큐
+    other_path = tmp_path / 'other.sqlite'
+    other = ExportQueue(other_path)
+    req = other.enqueue('B1', 'emp', 1000, 0)
+    other.claim_next(['emp'])
+    other.fail(req.id, ExportFail.NOT_FOUND, '주문 없음')
+
+    assert export_main(['--db', str(other_path), 'list']) == 0
+    out = capsys.readouterr().out
+    assert 'B1' in out
