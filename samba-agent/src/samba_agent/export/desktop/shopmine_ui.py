@@ -111,8 +111,19 @@ class PywinautoShopMineUi:
 
     # ---- 창·색인 ----
     def _top_windows(self, pid: int) -> list:
-        """같은 프로세스의 최상위 창들(win32 — 빠르다)."""
-        return [w for w in Desktop(backend='win32').windows() if w.process_id() == pid]
+        """같은 프로세스의 **보이는** 최상위 창들(win32 — 빠르다).
+
+        이 프로그램은 숨은 최상위 창(툴팁·콤보 목록·메뉴)이 수백 개라, 숨은 것까지 하나씩
+        UIA 로 열면 대화상자에 닿기 전에 시간이 다 간다(실기 2026-09-28: 결과 안내창을 놓침).
+        """
+        found = []
+        for w in Desktop(backend='win32').windows():
+            try:
+                if w.process_id() == pid and w.is_visible():
+                    found.append(w)
+            except Exception:  # noqa: BLE001, S112 — 열거 사이에 사라진 창
+                continue
+        return found
 
     def _find_main(self):
         """ShopMine 메인 창. 없으면 AdapterRetry(WINDOW_MISSING)."""
@@ -158,7 +169,7 @@ class PywinautoShopMineUi:
             return
         title = '(제목 없음)'
         for w in self._top_windows(self._main.process_id()):
-            if w.handle != self._main.handle and w.is_enabled() and w.is_visible():
+            if w.handle != self._main.handle and w.is_enabled():
                 title = w.window_text() or '(제목 없음)'
                 break
         raise AdapterRetry(ExportFail.BLOCKED, f'샵마인에 대화상자가 떠 있다: {title[:40]!r}')
