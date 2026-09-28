@@ -1048,6 +1048,8 @@ ALREADY_SIGNED_IN = 'already signed in'
 LOGIN_SUBMITTED = 'submitted'
 # 페이지 이동·로그인 제출 뒤 화면이 안정되길 기다리는 시간
 _LOGIN_SETTLE_MS = 2500
+# 앱이 바빠 탭이 덜 떴을 때 login 도구가 돌려주는 일시 오류 — 다시 열어 재시도한다
+_LOGIN_BUSY_WORDS = ('host unknown', 'page did not respond')
 # 앱 로그인 도구가 로그인 상태도 입력칸도 못 찾았을 때의 응답 머리
 LOGIN_FIELDS_NOT_FOUND = 'fields not found'
 # 같은 소싱처에서 다른 계정으로 로그인을 이어 갈 때의 최소 간격(초). 연달아 바꾸면 사이트가 차단한다(실기: SSG)
@@ -1167,11 +1169,15 @@ class BuyerAgent(AgentBase):
         self.tool('new_tab', url=home, profile=account)
         self.tool('wait', ms=_LOGIN_SETTLE_MS)
         out = self.tool('login', accountLabel=account).strip()
-        if out.startswith(LOGIN_FIELDS_NOT_FOUND):
-            # 계정 여럿을 동시에 돌려 앱이 바쁠 때 홈이 다 뜨기 전에 불리면 로그인 상태도 입력칸도 못 본다
-            # (실기 2026-09-26: 로그인된 계정 4개가 모두 'fields not found'). 홈을 다시 열고 한 번 더 본다
+        # 계정 여럿을 동시에 돌려 앱이 바쁠 때 홈이 다 뜨기 전에 불리면 로그인 상태도 입력칸도 못 본다
+        # (실기 2026-09-26: 로그인된 계정 4개가 모두 'fields not found'. 2026-09-28: 'host unknown'·
+        # 'page did not respond' 로 6계정 전부 실패). 홈을 다시 열고 기다림을 늘려 두 번까지 다시 본다
+        for retry in (1, 2):
+            if not (out.startswith(LOGIN_FIELDS_NOT_FOUND) or any(w in out for w in _LOGIN_BUSY_WORDS)):
+                break
+            self.note('로그인', f'{account}: 페이지가 덜 떠 다시 시도({retry}/2)')
             self.tool('new_tab', url=home, profile=account)
-            self.tool('wait', ms=_LOGIN_SETTLE_MS * 2)
+            self.tool('wait', ms=_LOGIN_SETTLE_MS * 2 * retry)
             out = self.tool('login', accountLabel=account).strip()
         if out.startswith(ALREADY_SIGNED_IN):
             self.note('로그인', '이미 로그인돼 있음')
