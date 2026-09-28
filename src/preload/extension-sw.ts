@@ -432,6 +432,23 @@ contextBridge.executeInMainWorld({
     } catch {
       // 리스너 등록 실패는 무시
     }
+    // fetch 실패 진단 — 워커의 fetch 만 "Failed to fetch" 로 끝나는 일(2026-09-28: 레시피 버전 체크)을 주소·사유와 함께 남긴다
+    const gf = globalThis as unknown as {
+      fetch?: (input: unknown, init?: unknown) => Promise<unknown>
+    }
+    const origFetch = gf.fetch
+    if (typeof origFetch === 'function') {
+      gf.fetch = (input: unknown, init?: unknown): Promise<unknown> => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : ((input as { url?: string } | null)?.url ?? String(input))
+        return origFetch.call(globalThis, input, init).catch((e: unknown) => {
+          report('fetch-fail', `${String(url).slice(0, 120)} — ${describe(e)}`)
+          throw e
+        })
+      }
+    }
     // chrome.alarms — 워커 안 타이머로 흉내 낸다. 워커가 쉬면(Electron 이 멈추면) 타이머도 멈추지만 앱이 이동마다 다시 깨운다
     if (!c.alarms) {
       type Alarm = { name: string; scheduledTime: number; periodInMinutes?: number }
