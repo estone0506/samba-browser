@@ -15,6 +15,7 @@ from samba_agent.settings import DEFAULT_ROOT, Settings
 def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **env: str) -> Settings:
     monkeypatch.setenv('SAMBA_BRIDGE_TOKEN', 'test-token')
     monkeypatch.setenv('SAMBA_EXPORT_DB_PATH', str(tmp_path / 'exports.sqlite'))
+    monkeypatch.delenv('SAMBA_EXPORT_TARGETS', raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     return Settings()  # type: ignore[call-arg]
@@ -59,8 +60,29 @@ def test_켜면_큐와_export_함수를_만든다(monkeypatch, tmp_path):
     assert queue.find('A1', 'emp') is not None
 
 
-def test_이_계획에서는_등록된_어댑터가_없다():
-    assert build_adapters() == {}
+def test_대상을_주지_않으면_어댑터가_없다():
+    assert build_adapters(()) == {}
+
+
+def test_shopmine_대상은_샵마인_어댑터를_만든다(monkeypatch):
+    from samba_agent.export import desktop
+    from samba_agent.export.adapters import BatchAdapter
+
+    monkeypatch.setattr(desktop, '_shopmine_ui', lambda: object())
+    made = build_adapters(('shopmine',))
+    assert set(made) == {'shopmine'}
+    assert isinstance(made['shopmine'], BatchAdapter)
+
+
+def test_모르는_대상은_거부한다():
+    with pytest.raises(ValueError):
+        build_adapters(('emp',))
+
+
+def test_export_targets_설정은_쉼표_목록이다(monkeypatch, tmp_path):
+    s = settings(monkeypatch, tmp_path, SAMBA_EXPORT_TARGETS='shopmine, emp')
+    assert s.export_target_list == ('shopmine', 'emp')
+    assert settings(monkeypatch, tmp_path).export_target_list == ()
 
 
 def test_list_는_최근_요청을_보여_준다(monkeypatch, tmp_path, capsys):

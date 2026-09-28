@@ -71,8 +71,8 @@ def _shopmine(dry: bool) -> int:
     return 0
 
 
-def _worker(queue: ExportQueue) -> int:
-    adapters = build_adapters()
+def _worker(queue: ExportQueue, targets: tuple[str, ...]) -> int:
+    adapters = build_adapters(targets)
     if not adapters:
         log.warning('등록된 어댑터가 없다 — 요청은 큐에 대기로 남는다')
     recovered = queue.recover_running(tuple(adapters))
@@ -114,15 +114,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.cmd == 'shopmine':
         return _shopmine(args.dry)
-    db_path = (
-        args.db if args.db is not None else load_settings(DEFAULT_ROOT / '.env').export_db_path
-    )
+    settings = load_settings(DEFAULT_ROOT / '.env')
+    db_path = args.db if args.db is not None else settings.export_db_path
     queue = ExportQueue(db_path)
     if args.cmd == 'list':
         return _list(queue, args.limit)
     if args.cmd == 'requeue':
         return _requeue(queue, args.order_no, args.target)
-    return _worker(queue)
+    return _worker(queue, settings.export_target_list)
 
 
 if __name__ == '__main__':

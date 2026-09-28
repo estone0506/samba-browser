@@ -88,6 +88,12 @@ class Settings(BaseSettings):
     )
     # export 단계가 기입 결과를 기다리는 시간(초). 지나면 주문은 완료로 끝내고 결과는 나중에 알린다
     export_wait_s: float = Field(default=60.0, ge=0, alias='SAMBA_EXPORT_WAIT_S')
+    # 입력 작업자가 맡을 대상(쉼표). 비우면 어댑터를 만들지 않는다. 예: shopmine
+    export_targets: str = Field(default='', alias='SAMBA_EXPORT_TARGETS')
+
+    @property
+    def export_target_list(self) -> tuple[str, ...]:
+        return tuple(x.strip() for x in self.export_targets.split(',') if x.strip())
 
     @field_validator('slack_allowed_users', mode='before')
     @classmethod
