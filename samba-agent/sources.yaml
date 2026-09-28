@@ -48,7 +48,7 @@ sources:
     order_prep: true   # abc_order_prep — 쿠폰적용 창에서 일반·플러스 쿠폰 최대 적용(2026-09-25, 없어서 쿠폰을 놓쳤다)
     coupon_download: true   # abc_coupon_download — 이벤트 페이지 '전체 쿠폰 다운로드'로 받을 수 있는 쿠폰을 먼저 받는다(2026-09-28)
     # 키마스터의 ABC(a-rt.com) 계정만 비교한다 — 삼바 주문계정(buyer05 등)이 키마스터에 없는데 그 계정으로 로그인했다(2026-09-25)
-    buy_accounts: [buyer01, buyer02, buyer03, buyer04, buyer07]   # 사용자 2026-09-28: ABC 계정 6개 전부 비교(buyer06 는 결제 항목 없음)
+    buy_accounts: [buyer01, buyer02, buyer03, buyer04, buyer06, buyer07]   # 사용자 2026-09-28: ABC 계정 6개 전부 비교
   - id: LOTTEON
     key: lotteon
     payment_quotes: true  # 2026-09-23 lotteon_payment_quotes
@@ -71,7 +71,7 @@ sources:
     order_prep: true   # abc_order_prep — 쿠폰적용 창에서 일반·플러스 쿠폰 최대 적용(2026-09-25, 없어서 쿠폰을 놓쳤다)
     coupon_download: true   # abc_coupon_download — 이벤트 페이지 '전체 쿠폰 다운로드'로 받을 수 있는 쿠폰을 먼저 받는다(2026-09-28)
     # 키마스터의 ABC(a-rt.com) 계정만 비교한다 — 삼바 주문계정(buyer05 등)이 키마스터에 없는데 그 계정으로 로그인했다(2026-09-25)
-    buy_accounts: [buyer01, buyer02, buyer03, buyer04, buyer07]   # 사용자 2026-09-28: ABC 계정 6개 전부 비교(buyer06 는 결제 항목 없음)
+    buy_accounts: [buyer01, buyer02, buyer03, buyer04, buyer06, buyer07]   # 사용자 2026-09-28: ABC 계정 6개 전부 비교
 
   - id: GSShop
     key: gsshop
