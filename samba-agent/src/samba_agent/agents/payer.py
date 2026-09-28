@@ -159,13 +159,13 @@ def _is_login_url(url: str) -> bool:
 # 휴대폰 네이버 앱 경로라 폰이 없어 시간 초과로 끊겼다(실기 2026-09-25 ABC 반스)
 PC_PAY_PROVIDERS = frozenset({'payco', 'naverpay'})
 
+# 결제창 로그인 화면에서 앱 login 뒤 결제창이 다시 그려질 때까지 기다리는 시간(ms)
+POPUP_LOGIN_SETTLE_MS = 5000
+
 
 # 상품명에서 대조에 쓰지 않는 흔한 말(브랜드·계절·분류) — 이것만 겹쳐서는 같은 상품이라고 보지 않는다
 _GENERIC_WORDS = frozenset(
-    '매장정품 정품 봄신발 가을신발 여름신발 겨울신발 신발 운동화 스니커즈 스니커 남성 여성 남녀공용 공용 커플 키즈 아동 '
-    '나이키 아디다스 뉴발란스 푸마 반스 컨버스 리복 아식스 휠라 스케쳐스 크록스 머렐 노스페이스 NIKE ADIDAS PUMA VANS '
-    'CONVERSE REEBOK ASICS FILA SKECHERS CROCS MERRELL 캐주얼화 스포츠화 조깅화 러닝화 슬리퍼 샌들 모자 가방 티셔츠 '
-    '블랙 화이트 그레이 네이비 BLACK WHITE GREY GRAY NAVY'.split()
+    ['매장정품', '정품', '봄신발', '가을신발', '여름신발', '겨울신발', '신발', '운동화', '스니커즈', '스니커', '남성', '여성', '남녀공용', '공용', '커플', '키즈', '아동', '나이키', '아디다스', '뉴발란스', '푸마', '반스', '컨버스', '리복', '아식스', '휠라', '스케쳐스', '크록스', '머렐', '노스페이스', 'NIKE', 'ADIDAS', 'PUMA', 'VANS', 'CONVERSE', 'REEBOK', 'ASICS', 'FILA', 'SKECHERS', 'CROCS', 'MERRELL', '캐주얼화', '스포츠화', '조깅화', '러닝화', '슬리퍼', '샌들', '모자', '가방', '티셔츠', '블랙', '화이트', '그레이', '네이비', 'BLACK', 'WHITE', 'GREY', 'GRAY', 'NAVY']
 )
 
 
@@ -736,6 +736,9 @@ class PayerAgent(AgentBase):
             )
         self.tool('wait', ms=PAY_RESULT_WAIT_MS)
 
+    # 결제창 로그인 화면에서 앱 login 을 시도했는가 — 작업당 한 번만(반복하면 계정 잠김·캡차)
+    _popup_login_tried: bool = False
+
     def _stop_if_login_popup(self, popups: list[dict[str, object]], a: Assignment) -> None:
         """결제창이 로그인 화면이면 멈춘다 — 결제 비밀번호를 로그인 칸에 넣거나 헛되이 반복하지 않는다.
 
@@ -746,6 +749,22 @@ class PayerAgent(AgentBase):
             if _is_login_url(url):
                 profile = str(a.handoff.get('account') or a.order.account or '')
                 self.note('결제창', mask_text(f'로그인 화면: {_host_of(url)}'))
+                # 앱의 login 은 결제창을 연 쇼핑몰 계정에 연결된 앱 계정(네이버 등)으로 로그인한다 — 한 번만 시도하고
+                # (2단계 인증·캡차면 그대로 사람 확인), 로그인 화면이 사라졌으면 결제를 이어 간다(실기 2026-09-28
+                # ABC 5계정 비교: buyer02·buyer04 프로필의 네이버 세션이 풀려 있었다)
+                if p.get('id') and not self._popup_login_tried:
+                    self._popup_login_tried = True
+                    try:
+                        self.tool('switch_tab', id=str(p['id']))
+                        out = self.tool('login').strip()
+                    except AgentFailure as e:
+                        out = f'error: {e.reason}'
+                    self.note('결제창 로그인', mask_text(out[:80]))
+                    if out.lower().startswith(('submitted', 'ok', 'filled')):
+                        self.tool('wait', ms=POPUP_LOGIN_SETTLE_MS)
+                        popups_now, _active = self._list_tabs_popups()
+                        if not any(_is_login_url(str(q.get('url') or '')) for q in popups_now):
+                            return
                 raise AgentFailure(
                     'needs_human',
                     f'결제창이 로그인 화면이다({_host_of(url)}) — 프로필 {profile or "-"} 에서 결제 앱(네이버 등)에 '

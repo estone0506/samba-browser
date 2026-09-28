@@ -1191,14 +1191,42 @@ def test_결제창이_네이버_로그인_화면이면_비밀번호를_넣지_�
     a = _web_pay_agent(reg, monkeypatch)
     respx.post(f'{URL}/tool/list_tabs').mock(return_value=_popups(NAVER_LOGIN_POPUP))
     respx.post(f'{URL}/tool/find_elements').mock(return_value=page('[4] link "비밀번호 찾기"'))
+    respx.post(f'{URL}/tool/switch_tab').mock(return_value=page('ok'))
+    # 앱 login 이 연결된 앱 계정을 못 찾으면(2단계 인증·계정 없음) 그대로 사람 확인 — 한 번만 부른다
+    login = respx.post(f'{URL}/tool/login').mock(return_value=page('account not found: use list_accounts'))
     fill = respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('refused: target is not a secret input'))
     get_page = respx.post(f'{URL}/tool/get_page').mock(return_value=page(''))
     with pytest.raises(AgentFailure) as e:
         a._web_pay(assignment(reg, dry_run=False, card='네이버페이', handoff={'account': 'buyer02'}))
     assert e.value.status == 'needs_human'
     assert '로그인' in e.value.reason and 'buyer02' in e.value.reason
+    assert login.call_count == 1
     assert not fill.called
     assert not get_page.called
+
+
+@respx.mock
+def test_결제창_로그인_화면은_앱_login_으로_한번_로그인하고_이어간다(reg, monkeypatch):
+    """쇼핑몰 계정에 연결된 네이버 계정으로 결제창에 로그인되면 키패드로 이어 간다(실기 2026-09-28)."""
+    from samba_agent.agents.payer import KEYPAD_FILL_MAX_CALLS
+
+    a = _web_pay_agent(reg, monkeypatch)
+    respx.post(f'{URL}/tool/list_tabs').mock(
+        side_effect=[_popups(NAVER_LOGIN_POPUP), _popups(NAVER_LOGIN_POPUP)]
+        + [_popups(NAVER_KEYPAD_POPUP)] * 40
+    )
+    respx.post(f'{URL}/tool/switch_tab').mock(return_value=page('ok'))
+    respx.post(f'{URL}/tool/wait').mock(return_value=page('ok'))
+    login = respx.post(f'{URL}/tool/login').mock(return_value=page('submitted: check the page'))
+    respx.post(f'{URL}/tool/find_elements').mock(return_value=page(''))
+    fill = respx.post(f'{URL}/tool/fill_secret').mock(return_value=page('refused: target is not a secret input'))
+    respx.post(f'{URL}/tool/get_page').mock(return_value=page(''))
+    with pytest.raises(AgentFailure) as e:
+        a._web_pay(assignment(reg, dry_run=False, card='네이버페이', handoff={'account': 'buyer02'}))
+    # 로그인은 한 번, 그 뒤 로그인 화면으로 멈추지 않고 결제 단계로 넘어갔다
+    assert login.call_count == 1
+    assert '로그인 화면' not in e.value.reason
+    assert fill.call_count <= KEYPAD_FILL_MAX_CALLS
 
 
 @respx.mock

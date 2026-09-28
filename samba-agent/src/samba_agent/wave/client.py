@@ -360,11 +360,12 @@ class WaveClient:
         return body if isinstance(body, dict) else {}
 
     def set_cancel_requested(self, order_no: str, reason: str, flag: str | None = None) -> bool:
-        """이행하지 못한 발주 전 주문을 취소요청으로 바꾼다(flag 를 주면 가격X·재고X 태그도 붙인다).
+        """이행하지 못한 발주 전 주문을 '취소중'(cancelling)으로 바꾼다(flag 를 주면 가격X·재고X 태그도 붙인다).
 
-        바뀌었으면 True, 이미 취소요청이면 False.
+        사용자 2026-09-28: 미이행은 취소요청이 아니라 취소중. reason 은 삼바웨이브가 주문 메모에 [취소근거] 로 남긴다.
+        바뀌었으면 True, 이미 취소중이면 False.
         """
-        payload: dict[str, object] = {'status': 'cancel_requested', 'reason': reason}
+        payload: dict[str, object] = {'status': 'cancelling', 'reason': reason}
         if flag:
             payload['flag'] = flag
         body = self._request('PUT', f'/orders/{order_no}/status', json=payload)
