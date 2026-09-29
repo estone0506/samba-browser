@@ -13,6 +13,7 @@ class FakeUi:
         self.rows = list(rows)
         self.checked: list[str] = []
         self.calls: list[str] = []
+        self.statuses: list[str] = []
         self.ready_error: Exception | None = None
         self.wait_error: Exception | None = None
         # 완료됨을 눌러도 남는 주문(되읽기 불일치 시험용)
@@ -48,8 +49,9 @@ class FakeUi:
         self.checked = [o for o in order_nos if o in self.rows and o not in self.uncheckable]
         return {o: (1 if o in self.checked else 0) for o in order_nos}
 
-    def set_status_done(self, expected_rows: int) -> None:
+    def set_status(self, status: str, expected_rows: int) -> None:
         self.calls.append(f'done {expected_rows}')
+        self.statuses.append(status)
         self.rows = [r for r in self.rows if r not in self.checked or r in self.sticky]
 
 
@@ -145,3 +147,10 @@ def test_수집_시간_초과는_AdapterRetry_timeout():
 )
 def test_주문번호_대조_규칙(order_no, cell, want):
     assert order_matches(order_no, cell) is want
+
+
+def test_기본은_완료됨_취소_어댑터는_지연됨으로_바꾼다():
+    ui = FakeUi(rows=('S1', 'S2'))
+    ShopMineAdapter(ui).complete_pending(['S1'])
+    ShopMineAdapter(ui, status='지연됨').complete_pending(['S2'])
+    assert ui.statuses == ['완료됨', '지연됨']

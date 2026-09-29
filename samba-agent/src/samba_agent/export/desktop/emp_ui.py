@@ -56,12 +56,22 @@ END_DATE = 'OrderEdate'
 TWO_WEEKS_BUTTON = 'ribbonToggleButton1511'
 SEARCH_BUTTON = 'OrderSearchBT'
 DIALOG_CLASS = '#32770'
+COL_STATE = '상태'
+STATE_CANCELLED = '취소'
+# 행 메뉴(우클릭 메뉴) 항목 — 이름 뒤에 단축 글자가 붙는다('상태변경 (Q)')
+MENU_STATE = '상태변경'
+MENU_CANCEL = '취소'
+# 주문 상세 미리보기의 주문번호 칸 — 지금 고른 행이 무엇인지 여기서 확인한다
+PREVIEW_ORDER_NO = 'ocode1'
+_WM_MOUSEMOVE = 0x0200
+_VK_APPS = 0x5D
 NO_BUTTONS = ('아니요(N)', '아니오(N)', 'No')
+YES_BUTTONS = ('예(Y)', 'Yes')
 
 _WM_SETTEXT, _WM_GETTEXT = 0x000C, 0x000D
 _WM_KEYDOWN, _WM_KEYUP, _WM_CHAR = 0x0100, 0x0101, 0x0102
 _WM_LBUTTONDOWN, _WM_LBUTTONUP, _WM_LBUTTONDBLCLK = 0x0201, 0x0202, 0x0203
-_BM_CLICK = 0x00F5
+_WM_COMMAND = 0x0111
 _VK_RETURN, _VK_ESCAPE = 0x0D, 0x1B
 
 _user32 = ctypes.windll.user32
@@ -317,6 +327,125 @@ class PywinautoEmpUi:
             time.sleep(self._poll_s * 2)
         raise AdapterRetry(ExportFail.TIMEOUT, 'EMP 검색 결과가 자리 잡지 않았다')
 
+    # ---- 취소 ----
+    def _post_click(self, hwnd: int, rect) -> None:
+        point = wintypes.POINT((rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2)
+        _user32.ScreenToClient(hwnd, ctypes.byref(point))
+        lparam = (point.y << 16) | (point.x & 0xFFFF)
+        for message, wparam in ((_WM_MOUSEMOVE, 0), (_WM_LBUTTONDOWN, 1), (_WM_LBUTTONUP, 0)):
+            _user32.PostMessageW(hwnd, message, wparam, lparam)
+            time.sleep(0.05)
+
+    def _select_row(self, order_no: str) -> GridRow:
+        """그 주문 행을 고르고, 상세 미리보기의 주문번호로 고른 행이 맞는지 확인한다."""
+        row = self.find_row(order_no)
+        area = self._el(GRID_ID).rectangle()
+        cell = None
+        for candidate in row.element.children():
+            rect = candidate.rectangle()
+            inside = area.left < rect.left and rect.right < area.right
+            if rect.width() > 30 and inside and area.top < rect.top and rect.bottom < area.bottom:
+                cell = candidate
+                break
+        if cell is None:
+            raise AdapterRetry(ExportFail.BLOCKED, 'EMP 그리드에서 그 주문 행이 화면 밖이다')
+        self._post_click(self._el(GRID_ID).element_info.handle, cell.rectangle())
+        time.sleep(self._poll_s * 2)
+        self._index.pop(PREVIEW_ORDER_NO, None)
+        shown = self._window_text(self._el(PREVIEW_ORDER_NO).element_info.handle)
+        if not order_matches(order_no, shown.strip()):
+            raise AdapterRetry(
+                ExportFail.BLOCKED, f'EMP 에서 고른 행이 그 주문이 아니다({shown.strip()[:24]!r})'
+            )
+        return row
+
+    def _popups(self, before: set[int]) -> list[int]:
+        pid = self._main.process_id()
+        return [h for h, _title, _kind in _process_windows(pid) if h not in before]
+
+    def _menu_items(self, before: set[int], name: str) -> list:
+        """새로 뜬 메뉴 창들에서 이름이 name 으로 시작하는 켜진 항목들."""
+        found = []
+        for handle in self._popups(before):
+            try:
+                items = UIAWrapper(UIAElementInfo(handle)).descendants(control_type='MenuItem')
+            except Exception:  # noqa: BLE001, S112 — 이미 닫힌 창
+                continue
+            for item in items:
+                text = (item.element_info.name or '').strip()
+                if text.split(' (')[0] == name and item.is_enabled():
+                    found.append((handle, item))
+        return found
+
+    def _close_menus(self, before: set[int]) -> None:
+        for handle in self._popups(before):
+            _user32.PostMessageW(handle, _WM_KEYDOWN, _VK_ESCAPE, 0)
+            _user32.PostMessageW(handle, _WM_KEYUP, _VK_ESCAPE, 0)
+
+    def cancel(self, order_no: str, *, dry_run: bool = False) -> None:
+        """행 메뉴 → 상태변경 → 취소. 창 메시지로만 한다(실제 마우스·키보드는 쓰지 않는다)."""
+        if (self.find_row(order_no).values.get(COL_STATE) or '').strip() == STATE_CANCELLED:
+            return
+        self._select_row(order_no)
+        grid = self._el(GRID_ID).element_info.handle
+        before = {h for h, _title, _kind in _process_windows(self._main.process_id())}
+        _user32.PostMessageW(grid, _WM_KEYDOWN, _VK_APPS, 0)
+        _user32.PostMessageW(grid, _WM_KEYUP, _VK_APPS, 0xC0000001)
+        time.sleep(self._poll_s * 2)
+        try:
+            state = self._menu_items(before, MENU_STATE)
+            if not state:
+                raise AdapterRetry(ExportFail.BLOCKED, 'EMP 행 메뉴에 상태변경 이 없다')
+            menu_handle, state_item = state[0]
+            first = {menu_handle}
+            self._post_click(menu_handle, state_item.rectangle())
+            time.sleep(self._poll_s * 2)
+            targets = [
+                (h, item) for h, item in self._menu_items(before, MENU_CANCEL) if h not in first
+            ]
+            if not targets:
+                raise AdapterRetry(
+                    ExportFail.BLOCKED, 'EMP 상태변경 메뉴에 취소 가 없다(또는 꺼져 있다)'
+                )
+            if dry_run:
+                log.info('EMP 취소 항목까지 확인(누르지 않음): %s', order_no)
+                return
+            handle, item = targets[0]
+            self._post_click(handle, item.rectangle())
+        finally:
+            if dry_run:
+                self._close_menus(before)
+        time.sleep(self._poll_s * 2)
+        self._settle_after_cancel()
+        self.reload()
+        got = (self.find_row(order_no).values.get(COL_STATE) or '').strip()
+        if got != STATE_CANCELLED:
+            raise AdapterReject(
+                ExportFail.VERIFY_MISMATCH, f'EMP 상태를 취소로 바꿨는데 {got!r} 로 읽힌다'
+            )
+
+    def _settle_after_cancel(self, timeout_s: float = 30.0) -> None:
+        """취소 뒤 뜨는 창을 처리한다 — 아는 문구(취소·변경 확인, 완료 안내)만 누르고 나머지는 거절한다."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            found = self.dialogs()
+            if not found:
+                if self._main.is_enabled():
+                    return
+                time.sleep(self._poll_s)
+                continue
+            _handle, title, message, buttons = found[0]
+            known = ('취소' in message or '변경' in message) and UNSAVED_MARK not in message
+            if not known:
+                raise AdapterReject(
+                    ExportFail.UNKNOWN,
+                    f'EMP 취소 뒤 모르는 창이 떴다: {title[:20]!r} {message[:60]!r}',
+                )
+            pressed = self._click_dialog_button(buttons, (*YES_BUTTONS, *OK_BUTTONS))
+            log.info('EMP 취소 확인 창(%r) 에서 %r 을 눌렀다', message[:60], pressed)
+            time.sleep(self._poll_s * 2)
+        raise AdapterRetry(ExportFail.BLOCKED, 'EMP 취소 뒤 창이 닫히지 않았다')
+
     # ---- 쓰기 ----
     def _focus(self) -> tuple[int, str]:
         """EMP 화면 스레드에서 키보드 포커스를 가진 창과 그 창 종류."""
@@ -394,6 +523,9 @@ class PywinautoEmpUi:
         time.sleep(self._poll_s)
         got = parse_won(self.find_row(order_no).values.get(column))
         if got != value:
+            # 값이 다른 칸에 들어갔을 수 있다(실기 2026-09-29: 다른 주문 행에 찍힘) — 저장하지 않고
+            # 그리드를 서버 값으로 되돌린다. 남겨 두면 사람이 저장을 누를 때 함께 저장된다
+            self.reload()
             raise AdapterReject(
                 ExportFail.VERIFY_MISMATCH,
                 f'EMP {column} 칸에 {value:,} 을 넣었는데 {got} 로 읽힌다',
@@ -439,7 +571,12 @@ class PywinautoEmpUi:
         for b in buttons:
             if b.window_text() in names:
                 label = b.window_text()
-                _user32.PostMessageW(b.element_info.handle, _BM_CLICK, 0, 0)
+                # 버튼에 직접 보내는 누름 메시지는 뒤에 있는 대화상자에서 먹지 않는다(실기 2026-09-29) —
+                # 대화상자에 '이 버튼이 눌렸다'를 보낸다
+                hwnd = b.element_info.handle
+                _user32.PostMessageW(
+                    _user32.GetParent(hwnd), _WM_COMMAND, _user32.GetDlgCtrlID(hwnd), hwnd
+                )
                 return label
         return None
 

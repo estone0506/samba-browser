@@ -43,7 +43,6 @@ NORMAL_ALL = '(정상전체)'
 FILTER_STATUS = '미지정'
 FILTER_EXCEL = '엑셀생성안됨'
 STATUS_MENU = '작업상태지정'
-STATUS_DONE = '완료됨'
 ORDER_NO_COLUMN = '주문번호'
 # 쿠팡은 삼바웨이브 주문번호가 샵마인의 배송번호 칸에 있다(실기 2026-09-29: 736… ↔ 배송번호)
 SHIPMENT_NO_COLUMN = '배송번호'
@@ -556,7 +555,7 @@ class PywinautoShopMineUi:
 
     # ---- 완료됨 ----
     @_guard_pywinauto_errors
-    def set_status_done(self, expected_rows: int) -> None:
+    def set_status(self, status: str, expected_rows: int) -> None:
         pid = self._main.process_id()
         toolbar = self._el('ToolStripSub')
         menu = next(
@@ -572,10 +571,10 @@ class PywinautoShopMineUi:
         before_menu = {w.handle for w in self._top_windows(pid)}
         _invoke(menu)
         time.sleep(self._poll_s)
-        done_item = self._menu_item(menu, STATUS_DONE, before_menu)
+        done_item = self._menu_item(menu, status, before_menu)
         if done_item is None:
             raise AdapterRetry(
-                ExportFail.BLOCKED, '작업상태지정 메뉴에서 완료됨 항목을 찾지 못했다'
+                ExportFail.BLOCKED, f'작업상태지정 메뉴에서 {status} 항목을 찾지 못했다'
             )
         before_confirm = {w.handle for w in self._top_windows(pid)}
         # 확인 창을 띄우는 항목이다 — UIA 동작으로 누르면 창이 닫힐 때까지 UIA 가 통째로 멈춘다
@@ -586,7 +585,7 @@ class PywinautoShopMineUi:
         owner = wintypes.DWORD()
         _user32.GetWindowThreadProcessId(popup, ctypes.byref(owner))
         if owner.value != pid:
-            raise AdapterRetry(ExportFail.BLOCKED, '완료됨 항목이 다른 창에 가려 있다')
+            raise AdapterRetry(ExportFail.BLOCKED, f'{status} 항목이 다른 창에 가려 있다')
         _post_click(popup, done_item.rectangle())
         self._confirm_own_dialog(pid, before_confirm, expected_rows)
         self._dismiss_result_dialog(pid, before_confirm)

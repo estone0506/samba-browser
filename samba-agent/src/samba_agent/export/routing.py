@@ -8,6 +8,16 @@ import yaml
 from pydantic import BaseModel, ConfigDict
 
 Target = Literal['emp', 'shopmine']
+# 취소 연동은 같은 프로그램의 다른 작업이라 대상 이름을 따로 둔다 — 큐의 (주문번호, 대상)
+# 유일 조건과 작업자의 대상별 처리를 그대로 쓴다
+CANCEL_SUFFIX = '_cancel'
+QueueTarget = Literal['emp', 'shopmine', 'emp_cancel', 'shopmine_cancel']
+
+
+def cancel_target(target: str) -> str:
+    """기입 대상 → 그 프로그램의 취소 대상 이름."""
+    return f'{target}{CANCEL_SUFFIX}'
+
 
 _SPACES = re.compile(r'\s+')
 

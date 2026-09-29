@@ -4,15 +4,18 @@
 실제 기입 결과는 payload['export'] 에 담는다(실패 알림은 export.notify 가 따로 보낸다).
 """
 
+import logging
 import time
 from collections.abc import Callable
 
 from samba_agent.agents.contracts import AgentResult, Evidence
-from samba_agent.export.routing import ExportRouting
+from samba_agent.export.routing import ExportRouting, cancel_target
 from samba_agent.export.store import ExportConflict, ExportQueue
 from samba_agent.supervisor.state import RunState
 
 ExportFn = Callable[[RunState], AgentResult]
+
+log = logging.getLogger(__name__)
 
 
 def _won(value: object) -> int | None:
@@ -107,3 +110,26 @@ def make_exporter(
         )
 
     return exporter
+
+
+def make_cancel_exporter(
+    queue: ExportQueue, routing: ExportRouting, seller_of: Callable[[str], str | None]
+) -> Callable[[str], str | None]:
+    """취소중으로 바꾼 주문을 외부 프로그램에도 알리는 함수(사용자 지시 2026-09-29).
+
+    샵마인은 작업상태 '지연됨', EMP 는 상태 '취소'. 결과 한 줄을 돌려준다(해당 없으면 None).
+    실패해도 예외를 내지 않는다 — 주문 처리 결과는 이미 정해졌다.
+    """
+
+    def export_cancel(order_no: str) -> str | None:
+        try:
+            target = routing.target_for(seller_of(order_no))
+            if target is None:
+                return None
+            queue.enqueue(order_no, cancel_target(target), 0, 0)
+        except Exception as e:  # 취소 처리 자체는 끝났다 — 작업 결과에 영향을 주지 않는다
+            log.exception('외부 취소 연동 요청 실패')
+            return f'외부 취소 연동 요청 실패: {type(e).__name__}'
+        return f'{target} 취소 연동 요청함'
+
+    return export_cancel

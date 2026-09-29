@@ -25,7 +25,7 @@ from samba_agent.api.server import build_app, serve
 from samba_agent.bridge.client import BridgeClient, BridgeError
 from samba_agent.export.notify import ExportNotifier
 from samba_agent.export.routing import ExportRouting
-from samba_agent.export.stage import ExportFn, make_exporter
+from samba_agent.export.stage import ExportFn, make_cancel_exporter, make_exporter
 from samba_agent.export.store import ExportQueue
 from samba_agent.gateway.slack_bot import SambaBot
 from samba_agent.llm.decide import make_decide
@@ -96,6 +96,17 @@ def make_export(settings: 'Settings') -> tuple[ExportQueue, ExportFn] | None:
     return queue, make_exporter(queue, routing, wait_s=settings.export_wait_s)
 
 
+def make_cancel_export(
+    settings: 'Settings', wave: WaveClient
+) -> Callable[[str], str | None] | None:
+    """취소중으로 바꾼 주문을 샵마인·EMP 에도 알리는 함수. 외부 기입이 꺼져 있으면 None."""
+    if not settings.export_enabled:
+        return None
+    queue = ExportQueue(settings.export_db_path)
+    routing = ExportRouting.load(settings.export_routing_file)
+    return make_cancel_exporter(queue, routing, lambda order_no: wave.get_order(order_no).seller)
+
+
 def _bridge_ready(bridge: BridgeClient) -> bool:
     """브릿지 /health 가 200 이면 참. busy(409)·연결 실패는 거짓 — 작업을 실패시키지 말고 기다린다."""
     try:
@@ -144,6 +155,7 @@ def main() -> None:
             lambda name, args: flag_bridge.call(
                 'run_script', name=name, args=json.dumps(args, ensure_ascii=False)
             ).result,
+            on_cancelled=make_cancel_export(settings, wave),
         )
         if wave is not None
         else None

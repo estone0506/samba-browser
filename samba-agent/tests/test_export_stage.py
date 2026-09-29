@@ -182,3 +182,26 @@ def test_근거를_남긴다(queue):
     out = make_exporter(queue, ROUTING, wait_s=0)(state())
     assert [e.label for e in out.evidence] == ['외부 기입']
     assert 'emp' in out.evidence[0].detail
+
+
+def test_취소한_주문은_판매처에_맞는_취소_대상으로_넣는다(queue):
+    from samba_agent.export.stage import make_cancel_exporter
+
+    sellers = {'A1': '쿠팡(seller02)', 'G1': 'GS이숍(캐논)', 'P1': 'poison(x@y)'}
+    routing = ExportRouting(emp=['GS이숍'], skip=['poison'])
+    export_cancel = make_cancel_exporter(queue, routing, sellers.get)
+    assert export_cancel('A1') == 'shopmine 취소 연동 요청함'
+    assert export_cancel('G1') == 'emp 취소 연동 요청함'
+    assert export_cancel('P1') is None
+    assert queue.pending_order_nos('shopmine_cancel') == ['A1']
+    assert queue.pending_order_nos('emp_cancel') == ['G1']
+
+
+def test_취소_연동_요청이_실패해도_예외를_내지_않는다(queue):
+    from samba_agent.export.stage import make_cancel_exporter
+
+    def broken(_order_no: str) -> str:
+        raise RuntimeError('조회 실패')
+
+    export_cancel = make_cancel_exporter(queue, ExportRouting(), broken)
+    assert export_cancel('A1') == '외부 취소 연동 요청 실패: RuntimeError'

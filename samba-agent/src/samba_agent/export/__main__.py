@@ -18,7 +18,7 @@ from samba_agent.export.adapters import AdapterReject, AdapterRetry
 from samba_agent.export.desktop import build_adapters
 from samba_agent.export.desktop.shopmine import ShopMineAdapter
 from samba_agent.export.idle import user_idle_seconds
-from samba_agent.export.routing import Target
+from samba_agent.export.routing import QueueTarget
 from samba_agent.export.store import ExportQueue
 from samba_agent.export.worker import ExportWorker
 from samba_agent.settings import DEFAULT_ROOT, load_settings
@@ -116,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     p_list.add_argument('--limit', type=int, default=20)
     p_requeue = sub.add_parser('requeue', help='실패한 요청을 다시 대기시킨다')
     p_requeue.add_argument('order_no')
-    p_requeue.add_argument('target', choices=list(get_args(Target)))
+    p_requeue.add_argument('target', choices=list(get_args(QueueTarget)))
     p_shop = sub.add_parser('shopmine', help='샵마인 일괄 완료됨을 한 번 돌린다')
     p_shop.add_argument('--dry', action='store_true', help='완료됨을 누르지 않고 행 체크까지만')
     p_shop.add_argument('order_nos', nargs='*', help='대상 주문번호(없으면 큐의 샵마인 대기 요청)')

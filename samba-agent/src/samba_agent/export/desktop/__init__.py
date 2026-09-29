@@ -7,8 +7,9 @@
 from collections.abc import Collection
 
 from samba_agent.export.adapters import Adapter, BatchAdapter
-from samba_agent.export.desktop.emp import EmpAdapter
-from samba_agent.export.desktop.shopmine import ShopMineAdapter
+from samba_agent.export.desktop.emp import EmpAdapter, EmpCancelAdapter
+from samba_agent.export.desktop.shopmine import STATUS_DELAYED, ShopMineAdapter
+from samba_agent.export.routing import cancel_target
 
 
 def _shopmine_ui():
@@ -28,10 +29,15 @@ def build_adapters(targets: Collection[str]) -> dict[str, Adapter | BatchAdapter
     made: dict[str, Adapter | BatchAdapter] = {}
     for target in targets:
         if target == 'shopmine':
-            made[target] = ShopMineAdapter(_shopmine_ui())
+            ui = _shopmine_ui()
+            made[target] = ShopMineAdapter(ui)
+            # 취소한 주문은 같은 화면에서 지연됨으로 바꾼다
+            made[cancel_target(target)] = ShopMineAdapter(ui, status=STATUS_DELAYED)
         elif target == 'emp':
             # EMP 는 관리자 권한으로 돈다 — 작업자도 관리자 권한으로 띄워야 한다
-            made[target] = EmpAdapter(_emp_ui())
+            emp_ui = _emp_ui()
+            made[target] = EmpAdapter(emp_ui)
+            made[cancel_target(target)] = EmpCancelAdapter(emp_ui)
         else:
             raise ValueError(f'모르는 외부 기입 대상: {target!r}')
     return made

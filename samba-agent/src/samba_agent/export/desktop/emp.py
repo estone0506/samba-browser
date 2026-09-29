@@ -4,9 +4,14 @@
 화면을 만지는 일은 드라이버(emp_ui.py)가 한다. 관리자 권한 프로세스에서만 동작한다.
 """
 
+import logging
+from collections.abc import Sequence
 from typing import Protocol
 
-from samba_agent.export.adapters import CellValues
+from samba_agent.export.adapters import AdapterRetry, CellValues
+from samba_agent.export.failures import ExportFail
+
+log = logging.getLogger(__name__)
 
 
 def parse_won(text: str | None) -> int | None:
@@ -30,6 +35,10 @@ class EmpUi(Protocol):
 
     def write(self, order_no: str, cost: int, shipping_fee: int) -> None: ...
 
+    def cancel(self, order_no: str) -> None:
+        """그 주문 행의 상태를 취소로 바꾸고 되읽는다. 이미 취소면 아무것도 하지 않는다."""
+        ...
+
 
 class EmpAdapter:
     """Adapter 구현 — 부를 때마다 창 상태를 다시 확인한다(사이에 최소화·대화상자가 생길 수 있다)."""
@@ -46,3 +55,29 @@ class EmpAdapter:
     def write(self, order_no: str, cost: int, shipping_fee: int) -> None:
         self._ui.ensure_ready()
         self._ui.write(order_no, cost, shipping_fee)
+
+
+class EmpCancelAdapter:
+    """BatchAdapter 구현 — 하네스가 취소한 주문을 EMP 에서 상태 '취소'로 바꾼다(사용자 지시 2026-09-29)."""
+
+    def __init__(self, ui: EmpUi) -> None:
+        self._ui = ui
+
+    def complete_pending(self, order_nos: Sequence[str]) -> set[str]:
+        wanted = [o for o in dict.fromkeys(order_nos) if o]
+        if not wanted:
+            return set()
+        self._ui.ensure_ready()
+        self._ui.search()
+        done: set[str] = set()
+        for order_no in wanted:
+            try:
+                self._ui.cancel(order_no)
+            except AdapterRetry as e:
+                if e.reason is not ExportFail.NOT_FOUND:
+                    raise
+                # 아직 EMP 에 수집되지 않은 주문이다 — 나머지는 계속한다
+                log.info('EMP 에 아직 없는 주문: %s', order_no)
+                continue
+            done.add(order_no)
+        return done

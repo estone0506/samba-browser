@@ -26,6 +26,10 @@ def order_matches(order_no: str, cell: str) -> bool:
     return c in o.split()
 
 
+STATUS_DONE = '완료됨'
+STATUS_DELAYED = '지연됨'
+
+
 class ShopMineUi(Protocol):
     """샵마인 통합주문관리 화면 조작. 못 하는 상황은 AdapterRetry 로 던진다."""
 
@@ -57,8 +61,8 @@ class ShopMineUi(Protocol):
         """전체 선택을 풀고, 목록의 주문번호와 맞는 행만 체크한다. 주문번호 → 체크한 행 수."""
         ...
 
-    def set_status_done(self, expected_rows: int) -> None:
-        """작업상태지정 → 완료됨. 확인 대화상자의 '선택한 N개' 가 expected_rows 와 같을 때만 누른다."""
+    def set_status(self, status: str, expected_rows: int) -> None:
+        """작업상태지정 → status(완료됨·지연됨). 확인 대화상자의 '선택한 N개' 가 expected_rows 와 같을 때만 누른다."""
         ...
 
 
@@ -70,10 +74,13 @@ class ShopMineAdapter:
         ui: ShopMineUi,
         *,
         collect_timeout_s: float = 300.0,
+        status: str = STATUS_DONE,
         dry_run: bool = False,
     ) -> None:
         self._ui = ui
         self._collect_timeout_s = collect_timeout_s
+        # 이행한 주문은 완료됨, 취소한 주문은 지연됨(사용자 지시 2026-09-29)
+        self._status = status
         # 실기 시험용 — 행 체크까지만 하고 완료됨은 누르지 않는다
         self._dry_run = dry_run
 
@@ -101,7 +108,7 @@ class ShopMineAdapter:
             )
         if self._dry_run:
             return set(found)
-        ui.set_status_done(sum(checked.get(o, 0) for o in found))
+        ui.set_status(self._status, sum(checked.get(o, 0) for o in found))
         # 되읽기 — 처리한 주문은 같은 필터에 남아 있으면 안 된다
         ui.set_filters()
         after = ui.filtered_order_nos()
@@ -109,6 +116,6 @@ class ShopMineAdapter:
         if left:
             raise AdapterReject(
                 ExportFail.VERIFY_MISMATCH,
-                f'완료됨 지정 뒤에도 {len(left)}건이 필터에 남음(처리 대상 {len(found)}건)',
+                f'{self._status} 지정 뒤에도 {len(left)}건이 필터에 남음(처리 대상 {len(found)}건)',
             )
         return set(found)
