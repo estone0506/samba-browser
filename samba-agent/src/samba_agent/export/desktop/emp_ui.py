@@ -20,8 +20,7 @@ import time
 from collections.abc import Callable, Iterator
 from ctypes import wintypes
 
-from pywinauto import Desktop
-from pywinauto.controls.hwndwrapper import InvalidWindowHandle
+from pywinauto.controls.hwndwrapper import HwndWrapper
 from pywinauto.controls.uiawrapper import UIAWrapper
 from pywinauto.uia_element_info import UIAElementInfo
 
@@ -108,6 +107,23 @@ def _visible_children(hwnd: int) -> list[int]:
     return found
 
 
+def _all_windows() -> list[tuple[int, str, str]]:
+    """보이는 최상위 창 전부 — (핸들, 제목, 창 종류)."""
+    found: list[tuple[int, str, str]] = []
+
+    def collect(hwnd, _lparam):
+        if _user32.IsWindowVisible(hwnd):
+            title = ctypes.create_unicode_buffer(256)
+            kind = ctypes.create_unicode_buffer(256)
+            _user32.GetWindowTextW(hwnd, title, 256)
+            _user32.GetClassNameW(hwnd, kind, 256)
+            found.append((hwnd, title.value, kind.value))
+        return True
+
+    _user32.EnumWindows(_ENUM_PROC(collect), 0)
+    return found
+
+
 def _process_windows(pid: int) -> list[tuple[int, str, str]]:
     """그 프로세스의 보이는 최상위 창 — (핸들, 제목, 창 종류).
 
@@ -159,15 +175,10 @@ class PywinautoEmpUi:
 
     # ---- 창·색인 ----
     def _find_main(self):
-        try:
-            windows = Desktop(backend='win32').windows()
-        except InvalidWindowHandle as e:
-            # 창 목록을 읽는 사이 창이 사라졌다 — 다음에 다시 하면 된다
-            raise AdapterRetry(ExportFail.BLOCKED, f'창 목록을 읽지 못했다: {e}') from e
-        for w in windows:
-            title = w.window_text() or ''
+        # pywinauto 의 창 목록은 읽는 사이 창 하나가 사라지면 통째로 실패한다 — 직접 열거한다
+        for hwnd, title, _kind in _all_windows():
             if WINDOW_TITLE_MARK in title and LOGIN_MARK not in title:
-                return w
+                return HwndWrapper(hwnd)
         raise AdapterRetry(ExportFail.WINDOW_MISSING, 'EMP 창이 없다')
 
     def _refresh(self) -> None:
@@ -526,6 +537,12 @@ class PywinautoEmpUi:
                 time.sleep(self._poll_s)
         return []
 
+    def _press_quietly(self, item) -> None:
+        try:
+            item.invoke()
+        except Exception:  # noqa: BLE001 — 눌렸는지는 뒤의 상태 되읽기로 확인한다
+            log.info('EMP 메뉴 항목 누르기가 오류로 끝났다')
+
     def cancel(self, order_no: str, *, dry_run: bool = False) -> None:
         """행 메뉴 → 상태변경 → 취소. 창 메시지로만 한다(실제 마우스·키보드는 쓰지 않는다)."""
         if (self.find_row(order_no).values.get(COL_STATE) or '').strip() == STATE_CANCELLED:
@@ -550,8 +567,10 @@ class PywinautoEmpUi:
                 return
             # 취소를 누르기 직전이 마지막 확인이다 — 누른 뒤에는 확인 창을 닫는 데까지 끝낸다
             self._stop_if_user_back()
-            handle, item = targets[0]
-            self._post_click(handle, item.rectangle())
+            _handle, item = targets[0]
+            # 메뉴 창에 보낸 클릭은 먹지 않았다(실기 2026-09-29: 상태가 그대로) — UIA 동작으로 누른다.
+            # 누르면 확인 창이 떠서 호출이 돌아오지 않으므로 따로 돌리고 기다리지 않는다
+            threading.Thread(target=self._press_quietly, args=(item,), daemon=True).start()
         except AdapterRetry:
             # 열어 둔 메뉴를 남기지 않는다
             with self._cleanup():
@@ -665,23 +684,32 @@ class PywinautoEmpUi:
             time.sleep(0.05)
         time.sleep(self._poll_s)
         hwnd, cls = self._focus()
-        if hwnd != grid:
-            raise AdapterRetry(ExportFail.BLOCKED, f'EMP 그리드가 포커스를 받지 못했다({cls})')
         text = str(value)
-        _user32.PostMessageW(grid, _WM_CHAR, ord(text[0]), 0)
-        editor = self._wait_focus(want_edit=True)
+        if hwnd == grid:
+            # 칸만 골라졌다 — 숫자 한 글자를 보내 편집 상자를 연다
+            _user32.PostMessageW(grid, _WM_CHAR, ord(text[0]), 0)
+            editor = self._wait_focus(want_edit=True)
+        elif 'EDIT' in cls.upper():
+            # 더블클릭으로 편집 상자가 바로 열렸다(창이 앞에 있을 때, 실기 2026-09-29) —
+            # 검색어 칸 같은 다른 편집 상자일 수도 있으니 아래 위치 확인으로 가린다
+            editor = hwnd
+        else:
+            raise AdapterRetry(ExportFail.BLOCKED, f'EMP 그리드가 포커스를 받지 못했다({cls})')
         # 편집 상자가 대상 칸 위에 열렸는지 본다 — 다른 칸(다른 주문 행·배송방법 등)에 열렸으면
         # 아무것도 넣지 않고 닫는다(실기 2026-09-29: 값이 다른 행에 찍혔다)
         box = wintypes.RECT()
         _user32.GetWindowRect(editor, ctypes.byref(box))
         middle_x, middle_y = (box.left + box.right) // 2, (box.top + box.bottom) // 2
         if not (rect.left <= middle_x <= rect.right and rect.top <= middle_y <= rect.bottom):
-            _user32.PostMessageW(editor, _WM_KEYDOWN, _VK_ESCAPE, 0)
-            _user32.PostMessageW(editor, _WM_KEYUP, _VK_ESCAPE, 0)
-            self._wait_focus(want_edit=False)
-            self.reload()
+            if _user32.GetParent(editor) == grid:
+                # 그리드의 편집 상자가 다른 칸에 열렸다 — 값 없이 닫고 그리드를 되돌린다
+                _user32.PostMessageW(editor, _WM_KEYDOWN, _VK_ESCAPE, 0)
+                _user32.PostMessageW(editor, _WM_KEYUP, _VK_ESCAPE, 0)
+                time.sleep(self._poll_s)
+                with self._cleanup():
+                    self.reload()
             raise AdapterRetry(
-                ExportFail.BLOCKED, f'EMP {column} 칸이 아닌 곳에 편집 상자가 열렸다'
+                ExportFail.BLOCKED, f'EMP {column} 칸이 아닌 곳에 편집 상자가 열렸다({cls})'
             )
         _user32.SendMessageW(editor, _WM_SETTEXT, 0, ctypes.c_wchar_p(text))
         if self._window_text(editor) != text:
