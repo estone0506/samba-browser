@@ -2113,7 +2113,14 @@ class BuyerAgent(AgentBase):
         if not any(quote_provider(m, None, src.direct_card) for m in offered):
             self.note('결제수단 견적', f'견적할 수단 없음(주문서 {offered}) — 스냅샷 원가로 진행')
             return
-        # 결제 가능한 수단을 먼저 정한다 — 그 수단만 시험한다(카드사 12개를 전부 돌리는 낭비·화면 소란 방지)
+        # 결제 가능한 수단을 먼저 정한다 — 그 수단만 시험한다(카드사 12개를 전부 돌리는 낭비·화면 소란 방지).
+        # 키마스터 조회는 활성 탭 사이트 기준이다 — 경유 사이트(샵백·교차 비교 29CM)가 앞에 있으면 거절돼
+        # 비밀번호 없는 수단(무신사머니)으로 견적했다(실기 2026-09-29) — 주문서 탭을 앞에 두고 묻는다
+        if snap.get('order_tab'):
+            try:
+                self.tool('switch_tab', id=str(snap.get('order_tab')))
+            except AgentFailure:
+                pass
         payable = self._payable_providers(account)
         allowed = self._allowed_providers(account)
         if payable is not None and allowed is not None:
