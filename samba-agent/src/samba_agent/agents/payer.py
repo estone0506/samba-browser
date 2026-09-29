@@ -895,6 +895,17 @@ class PayerAgent(AgentBase):
                     out = e.reason
                 if not _keypad_not_ready(out):
                     entered = True
+                    if out.lstrip().startswith('handoff'):
+                        # 앱이 사람에게 넘겼다 — 왜 못 눌렀는지(배치 인식·금고 잠김)는 단계 기록에만 있다
+                        failed = [label for label, ok in getattr(self, 'last_steps', ()) if not ok]
+                        self.note('키패드 넘김 사유', mask_text(' / '.join(failed)[:300]) or '기록 없음')
+                        try:
+                            # 어떤 화면에서 넘겼는지(키패드가 아닌 안내·오류 화면일 수 있다) 앞부분만 남긴다
+                            seen = self.tool('get_page')
+                            text = seen[seen.find('PAGE TEXT') :] if 'PAGE TEXT' in seen else seen
+                            self.note('키패드 넘김 화면', mask_text(seen[:120] + ' … ' + text[:400]))
+                        except AgentFailure as e:
+                            self.note('키패드 넘김 화면', mask_text(f'못 읽음: {e.reason}'[:160]))
                     break
             if entered or calls >= KEYPAD_FILL_MAX_CALLS:
                 break

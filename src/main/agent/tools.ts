@@ -178,7 +178,11 @@ export const PAYMENT_KEYPAD_REFUSAL =
 // 숫자 배치를 모델에게 보여 주지 않는다
 export const SECRET_SCREEN_REFUSAL = 'refused: secret screen'
 // 비밀 키패드 화면에서 fill_secret 이 사람에게 넘길 때의 안내
-export const KEYPAD_HANDOFF_MESSAGE = '결제 비밀번호는 직접 눌러 주세요'
+// 글자 없는 키패드 버튼이 늦게 뜰 때 다시 찾는 횟수·간격(합쳐 약 6초)
+const KEYPAD_CELLS_RETRIES = 8
+// 시험에서는 기다리지 않는다(VITEST)
+const KEYPAD_CELLS_WAIT_MS = process.env['VITEST'] ? 0 : 750
+export const KEYPAD_HANDOFF_MESSAGE ='결제 비밀번호는 직접 눌러 주세요'
 // 사용자가 키패드 넘김을 건너뛴 뒤 모델이 할 일(같은 키패드에 다시 시도하지 않게)
 export const KEYPAD_SKIPPED_NEXT =
   'user skipped: they will enter the payment password themselves later. Do NOT call fill_secret, ' +
@@ -1212,7 +1216,13 @@ ${raw}`
     ctx.tabs.withFront(tab.id, () => ocrKeypadLayoutInner(tab))
 
   const ocrKeypadLayoutInner = async (tab: Tab): Promise<KeypadLayout | null> => {
-    const cells = await pageBridge.keypadUnlabeled(tab).catch(() => null)
+    // 비밀번호 화면 글이 먼저 뜨고 키패드 버튼은 늦게 그려진다(실기 2026-09-29 롯데온 바로구매:
+    // 결제하기 8초 뒤엔 버튼이 아직 없어 사람에게 넘겼다) — 몇 초 동안 다시 찾아본다
+    let cells = await pageBridge.keypadUnlabeled(tab).catch(() => null)
+    for (let i = 0; i < KEYPAD_CELLS_RETRIES && !cells; i++) {
+      await new Promise((resolve) => setTimeout(resolve, KEYPAD_CELLS_WAIT_MS))
+      cells = await pageBridge.keypadUnlabeled(tab).catch(() => null)
+    }
     if (!cells) {
       ctx.onStep('키패드 배치(OCR): 글자 없는 버튼 10~14개를 못 찾음', false)
       return null
