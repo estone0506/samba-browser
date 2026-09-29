@@ -337,6 +337,19 @@ class ExportQueue:
             ).fetchall()
         return [_to_request(r) for r in rows]
 
+    def unnotified_done(self, targets: Sequence[str], since: str) -> list[ExportRequest]:
+        """그 대상들에서 since 뒤에 들어와 성공으로 끝났고 아직 알리지 않은 요청."""
+        if not targets:
+            return []
+        marks = ','.join('?' for _ in targets)
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT * FROM export_requests WHERE status='done' AND notified=0 "
+                f'AND created_at>=? AND target IN ({marks}) ORDER BY id',
+                (since, *targets),
+            ).fetchall()
+        return [_to_request(r) for r in rows]
+
     def mark_notified(self, request_id: int) -> None:
         with self._immediate():
             self._db.execute(
@@ -366,13 +379,15 @@ class ExportQueue:
     def has_older_pending(self, target: str, before_id: int) -> bool:
         """이 대상에 ``before_id`` 보다 먼저 들어온 대기 요청이 있는가.
 
-        있으면 이 요청은 한참 뒤에나 집힐 테니 export 단계가 기다려도 소용없다
+        있으면 이 요청은 한참 뒤에나 집힐 테니 export 단계가 기다려도 소용없다.
+        한 번 시도하고 다시 대기 중인 요청(화면에 아직 없음 등)은 세지 않는다 — 그런 요청은
+        정해진 시각까지 집히지 않아 이 요청을 막지 않는다
         (리뷰 지적 — I4 (b): alive() 만 보면 대기열이 밀려 있어도 주문마다 대기 시간을 다 쓴다).
         """
         with self._lock:
             row = self._db.execute(
                 "SELECT 1 FROM export_requests WHERE target=? AND status='pending' "
-                'AND id<? LIMIT 1',
+                'AND attempts=0 AND id<? LIMIT 1',
                 (target, before_id),
             ).fetchone()
         return row is not None

@@ -282,11 +282,11 @@ def test_배치_어댑터는_대기_주문번호를_모두_넘기고_처리된_�
     out = batch_worker(queue, adapter).run_once()
     assert out is not None and out.id == a.id
     assert out.status == 'done'
-    assert out.detail == '일괄 완료됨 2건'
+    assert out.detail == '처리 2건'
     assert adapter.calls == [['A1', 'A2', 'A3']]
     assert queue.get(b.id).status == 'pending'  # 화면에 없던 주문은 남는다
     assert queue.get(c.id).status == 'done'
-    assert queue.get(c.id).detail == '일괄 완료됨 2건'
+    assert queue.get(c.id).detail == '처리 2건'
 
 
 def test_집은_주문이_화면에_없으면_나중에_다시_한다(queue):

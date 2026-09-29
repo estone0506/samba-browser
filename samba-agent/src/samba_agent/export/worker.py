@@ -167,7 +167,12 @@ class ExportWorker:
         집은 요청의 주문번호가 처리 집합에 없으면(아직 화면에 수집되지 않음) 시간을 두고 다시 한다.
         실패 분류는 _decide 와 같다. 돌려주는 집합은 호출부가 다른 대기 요청을 끝내는 데 쓴다.
         """
-        order_nos = [req.order_no, *self._queue.pending_order_nos(req.target)]
+        # 주문 1건 단위로 도는 어댑터는 집은 주문만 넘긴다 — 하네스가 그 주문의 결과를 기다리고,
+        # 한 건 때문에 묶음 전체가 실패하지 않는다(사용자 결정 2026-09-29)
+        if getattr(adapter, 'one_at_a_time', False):
+            order_nos = [req.order_no]
+        else:
+            order_nos = [req.order_no, *self._queue.pending_order_nos(req.target)]
         try:
             completed = set(adapter.complete_pending(order_nos))
         except AdapterRetry as e:
@@ -181,7 +186,7 @@ class ExportWorker:
         except Exception as e:
             log.exception('외부 일괄 처리 중 오류: %s(%s)', req.order_no, req.target)
             return _Outcome('fail', f'{type(e).__name__}: {e}'[:200], ExportFail.UNKNOWN), set()
-        detail = f'일괄 완료됨 {len(completed)}건'
+        detail = f'처리 {len(completed)}건'
         if req.order_no in completed:
             return _Outcome('done', detail), completed
         # 화면(필터)에 아직 없는 주문 — 수집이 늦을 수 있으니 시간을 두고 다시 본다

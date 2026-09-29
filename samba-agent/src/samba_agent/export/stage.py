@@ -6,7 +6,7 @@
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 
 from samba_agent.agents.contracts import AgentResult, Evidence
 from samba_agent.export.routing import ExportRouting, cancel_target
@@ -58,8 +58,13 @@ def make_exporter(
     wait_s: float = 60.0,
     poll_s: float = 1.0,
     sleep: Callable[[float], None] = time.sleep,
+    deferred: Collection[str] = (),
 ) -> ExportFn:
-    """그래프의 export 노드가 부를 함수를 만든다."""
+    """그래프의 export 노드가 부를 함수를 만든다.
+
+    deferred 에 든 대상은 기다리지 않는다 — 사람이 PC 를 쓰지 않을 때만 만지는 프로그램(EMP)이라
+    언제 끝날지 모른다. 결과는 알림 고리가 주문 스레드에 덧붙인다.
+    """
 
     def exporter(state: RunState) -> AgentResult:
         order = state['order']
@@ -86,6 +91,11 @@ def make_exporter(
         # 그 대상을 맡은 작업자가 떠 있고, 이 요청보다 먼저 온 대기 건이 없을 때만 기다린다 —
         # 작업자가 죽었거나(alive 거짓) 대기열이 밀려 있으면(먼저 온 pending 이 있으면)
         # 어차피 못 받으니 주문마다 제한 시간을 통째로 쓰지 않는다
+        if target in deferred:
+            return _result(
+                f'{target} 기입 예약 — PC 를 쓰지 않을 때 넣고 결과를 이 스레드에 알린다',
+                {'export': 'pending', **plan},
+            )
         can_wait = queue.alive(target) and not queue.has_older_pending(target, req.id)
         waited = wait_s if can_wait else 0
         final = queue.wait(req.id, waited, poll_s=poll_s, sleep=sleep)
@@ -113,7 +123,14 @@ def make_exporter(
 
 
 def make_cancel_exporter(
-    queue: ExportQueue, routing: ExportRouting, seller_of: Callable[[str], str | None]
+    queue: ExportQueue,
+    routing: ExportRouting,
+    seller_of: Callable[[str], str | None],
+    *,
+    wait_s: float = 0.0,
+    poll_s: float = 1.0,
+    sleep: Callable[[float], None] = time.sleep,
+    deferred: Collection[str] = (),
 ) -> Callable[[str], str | None]:
     """취소중으로 바꾼 주문을 외부 프로그램에도 알리는 함수(사용자 지시 2026-09-29).
 
@@ -130,7 +147,16 @@ def make_cancel_exporter(
                 # 구매까지 끝내 기입 요청이 있는 주문이다 — 취소 상태가 됐어도 완료됨으로 둔다
                 # (사용자 지시 2026-09-29). 지연됨·취소로 덮지 않는다
                 return '구매까지 끝낸 주문 — 취소 연동하지 않음'
-            queue.enqueue(order_no, cancel_target(target), 0, 0)
+            name = cancel_target(target)
+            req = queue.enqueue(order_no, name, 0, 0)
+            if target in deferred:
+                return f'{target} 취소 연동 예약 — PC 를 쓰지 않을 때 바꾸고 결과를 알린다'
+            waited = wait_s if queue.alive(name) else 0
+            final = queue.wait(req.id, waited, poll_s=poll_s, sleep=sleep)
+            if final.status == 'done':
+                return f'{target} 취소 연동 완료'
+            if final.status == 'failed':
+                return f'{target} 취소 연동 실패 — {final.fail_reason}: {final.detail}'
         except Exception as e:  # 취소 처리 자체는 끝났다 — 작업 결과에 영향을 주지 않는다
             log.exception('외부 취소 연동 요청 실패')
             return f'외부 취소 연동 요청 실패: {type(e).__name__}'

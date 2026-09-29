@@ -81,6 +81,9 @@ class ShopMineUi(Protocol):
 
 
 class ShopMineAdapter:
+    # 작업자가 집은 주문 1건만 넘긴다(주문 처리와 1건 단위로 묶는다)
+    one_at_a_time = True
+
     """BatchAdapter 구현. complete_pending 한 번이 넘겨받은 주문 중 화면에 있는 것을 처리한다."""
 
     def __init__(

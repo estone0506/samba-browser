@@ -10,6 +10,7 @@ import logging
 import signal
 import sqlite3
 import threading
+from datetime import UTC, datetime
 from collections.abc import Callable
 
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -54,6 +55,9 @@ from samba_agent.wave.flags import FlagMarker
 
 log = logging.getLogger(__name__)
 
+# 하네스가 결과를 기다리지 않는 외부 프로그램 — 사람이 PC 를 쓰지 않을 때만 만진다
+EXPORT_DEFERRED = ('emp',)
+
 ReportFn = Callable[[Job, str], None]
 ApprovalReportFn = Callable[[Job, str, str, str], None]
 
@@ -94,7 +98,9 @@ def make_export(settings: 'Settings') -> tuple[ExportQueue, ExportFn] | None:
         return None
     queue = ExportQueue(settings.export_db_path)
     routing = ExportRouting.load(settings.export_routing_file)
-    return queue, make_exporter(queue, routing, wait_s=settings.export_wait_s)
+    return queue, make_exporter(
+        queue, routing, wait_s=settings.export_wait_s, deferred=EXPORT_DEFERRED
+    )
 
 
 def make_cancel_export(
@@ -105,7 +111,13 @@ def make_cancel_export(
         return None
     queue = ExportQueue(settings.export_db_path)
     routing = ExportRouting.load(settings.export_routing_file)
-    return make_cancel_exporter(queue, routing, lambda order_no: wave.get_order(order_no).seller)
+    return make_cancel_exporter(
+        queue,
+        routing,
+        lambda order_no: wave.get_order(order_no).seller,
+        wait_s=settings.export_wait_s,
+        deferred=EXPORT_DEFERRED,
+    )
 
 
 def _bridge_ready(bridge: BridgeClient) -> bool:
@@ -367,6 +379,8 @@ def main() -> None:
             _thread_of,
             lambda ts, text: bot.post(ts, text),
             post_new=bot.post_new,
+            done_targets=[t for d in EXPORT_DEFERRED for t in (d, f'{d}_cancel')],
+            since=datetime.now(UTC).isoformat(timespec='seconds'),
         )
         threading.Thread(
             target=notifier.run_forever, args=(stop.is_set,), daemon=True, name='export-notify'
