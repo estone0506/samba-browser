@@ -7,6 +7,7 @@
 
 import json
 import logging
+import os
 
 from samba_agent.bridge.client import BridgeClient, BridgeError
 
@@ -16,6 +17,20 @@ log = logging.getLogger(__name__)
 TAB_TOOLS = ('list_tabs', 'close_tab')
 # 정리에서 남기는 탭 — 사람이 보는 화면(삼바웨이브 주문관리·네이버 홈·앱 새 탭)
 KEEP_HOSTS = ('samba-wave', 'www.naver.com', 'nid.naver.com', 'localhost', 'about:blank')
+
+
+def _env(key: str) -> str:
+    """환경변수, 없으면 작업 폴더의 .env 에서 읽는다(설정 모델은 .env 를 환경변수로 올리지 않는다)."""
+    if os.environ.get(key):
+        return os.environ[key]
+    try:
+        for line in open('.env', encoding='utf-8'):
+            k, _, v = line.partition('=')
+            if k.strip() == key:
+                return v.strip().strip('"')
+    except OSError:
+        pass
+    return ''
 
 
 class TabJanitor:
@@ -60,6 +75,10 @@ class TabJanitor:
         하네스가 죽거나 작업이 시간 초과로 끝나면 계정 비교 탭이 남는다 — 실기 2026-09-28: ABC·무신사 탭이
         30개 쌓여 메모리를 먹고 페이지 호출이 전부 늦어졌다. 작업이 없을 때(기동 직후·작업 시작 직전)만 부른다.
         """
+        # 수동 작업 중인 사이트는 SAMBA_KEEP_TAB_HOSTS(쉼표 구분)로 남긴다 — 목록에 레인 정보가 없어 사람·다른 세션의
+        # 탭을 구분할 수 없다(실기 2026-09-29: 수동으로 보던 SSG 탭이 닫혔다)
+        extra = tuple(h.strip() for h in _env('SAMBA_KEEP_TAB_HOSTS').split(',') if h.strip())
+        keep_hosts = keep_hosts + extra
         closed = 0
         for t in self._tabs():
             tab_id = str(t.get('id') or '')
