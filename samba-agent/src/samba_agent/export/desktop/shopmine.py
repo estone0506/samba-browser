@@ -4,26 +4,36 @@
 그래서 절차는 가짜 드라이버로 시험하고, 드라이버는 실기로 시험한다.
 """
 
+import re
 from collections.abc import Mapping, Sequence
 from typing import Protocol
 
 from samba_agent.export.adapters import AdapterReject
 from samba_agent.export.failures import ExportFail
 
+_SEPARATORS = re.compile(r'[:\s]+')
+
+
+def _tokens(text: str) -> list[str]:
+    """주문번호를 토막으로 나눈다 — 프로그램마다 구분 글자가 다르다(':' · 공백)."""
+    return [t for t in _SEPARATORS.split(text.strip()) if t]
+
 
 def order_matches(order_no: str, cell: str) -> bool:
-    """하네스 주문번호와 샵마인 주문번호 칸이 같은 주문인가.
+    """하네스 주문번호와 프로그램의 주문번호 칸이 같은 주문인가.
 
     실기 2026-09-28: SSG 는 하네스 `20260928B68241:1136399342` ↔ 샵마인 `20260928B68241`(`:` 앞),
-    GS이숍은 하네스가 두 토큰 `3474596476 2904713019`. 그 밖은 정확히 같아야 한다.
+    GS이숍은 하네스가 두 토막 `3474596476 2904713019` 이고 화면에는 그중 하나가 보인다.
+    실기 2026-09-29: 롯데홈쇼핑은 하네스 `20260929B92579:1136441910` ↔ EMP `20260929B92579 1136441910`
+    (구분 글자만 다르다). 토막이 모두 같거나, 화면 값이 한 토막이고 그것이 하네스 토막 중 하나면 같다.
     """
-    o = (order_no or '').strip()
-    c = (cell or '').strip()
-    if not o or not c:
+    wanted = _tokens(order_no or '')
+    shown = _tokens(cell or '')
+    if not wanted or not shown:
         return False
-    if o == c or o.split(':', 1)[0] == c:
+    if shown == wanted:
         return True
-    return c in o.split()
+    return len(shown) == 1 and shown[0] in wanted
 
 
 STATUS_DONE = '완료됨'

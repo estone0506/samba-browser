@@ -367,7 +367,8 @@ class PywinautoEmpUi:
 
         주문번호가 두 토막이면(GS이숍) 토막마다 검색해 본다. 끝나면 clear_keyword() 로 되돌린다.
         """
-        for word in dict.fromkeys([order_no.split(':', 1)[0], *order_no.split()]):
+        # 구분 글자(':' · 공백)로 나눈 토막마다 검색한다 — EMP 검색은 한 토막만 받는다
+        for word in dict.fromkeys(t for t in re.split(r'[:\s]+', order_no.strip()) if t):
             self.set_keyword(word)
             self.search()
             if any(order_matches(order_no, r.values.get(COL_ORDER_NO, '')) for r in self.rows()):
