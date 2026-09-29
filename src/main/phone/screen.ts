@@ -93,12 +93,17 @@ export const DISPLAY_DUMP_ARGS = ['dumpsys', 'window', 'displays']
  * 가로로 눕히면 여기가 이미 뒤집혀 있어 `wm size`(물리 해상도)보다 정확하다
  */
 export function parseDisplayCurrentSize(stdout: string): PhysicalSize | null {
-  const m = /\bcur=(\d+)x(\d+)/.exec(stdout)
-  if (!m) return null
-  const width = Number(m[1])
-  const height = Number(m[2])
-  if (!width || !height) return null
-  return { width, height }
+  // 디스플레이가 여럿이면 `cur=` 도 여럿이다 — 화면 녹화·미러링이 만든 가상 디스플레이(cur=1x1)가
+  // 먼저 나오는 폰이 있다(실기 2026-09-29 SM-A426N: 첫 값 1x1 을 써서 탭이 전부 (0,0) 에 찍혔다).
+  // 가장 넓은 것이 실제 화면이다
+  let best: PhysicalSize | null = null
+  for (const m of stdout.matchAll(/\bcur=(\d+)x(\d+)/g)) {
+    const width = Number(m[1])
+    const height = Number(m[2])
+    if (!width || !height) continue
+    if (!best || width * height > best.width * best.height) best = { width, height }
+  }
+  return best
 }
 
 /**
