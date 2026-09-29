@@ -1585,3 +1585,16 @@ def test_롯데온은_포이즌_외_전부_선물하기_포이즌은_까대기�
     assert a.order_type_of(other, None) == 'gift'
     poison = other.model_copy(update={'order_no': 'P1', 'seller': '포이즌'})
     assert a.order_type_of(poison, None) == 'kkadaegi'
+
+
+def test_matching_options_letter_number_size_uses_product_code() -> None:
+    """'S-3'(라코스테 숫자 사이즈)은 선택지의 세 자리 코드 003 에 맞춘다 — 글자로 95·100 을 짐작하지 않는다."""
+    from samba_agent.agents.buyer import matching_options
+
+    options = [
+        '003(95) 143,400 3개 남음 (품절임박)',
+        '004(100) 143,400 4개 남음 (품절임박)',
+        '005(105) 143,400 4개 남음 (품절임박)',
+    ]
+    assert matching_options(options, '블랙/031 S-3') == [options[0]]
+    assert matching_options(options, '블랙/031 XL-6') == []

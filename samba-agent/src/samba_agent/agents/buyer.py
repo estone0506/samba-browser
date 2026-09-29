@@ -606,6 +606,15 @@ def matching_options(options: list[str], wanted: str | None) -> list[str]:
             by_tok = [o for o in live if nt in _norm(o)]
             if by_tok:
                 return by_tok
+    # 글자-숫자 사이즈('S-3'·'M-4' — 라코스테 숫자 사이즈)는 숫자가 선택지의 세 자리 코드다('003(95)').
+    # 상품 자체 표기로 맞춘다(사용자 2026-09-29: 사이즈는 그 상품의 사이즈표 기준) — 글자만으로 95·100 을 짐작하지 않는다
+    for tok in re.split(r'[\s/]+', w):
+        m = re.fullmatch(r'(?:XXS|XS|S|M|L|XL|XXL|XXXL)-(\d)', tok.strip(), re.IGNORECASE)
+        if m:
+            code = f'00{m.group(1)}'
+            by_code = [o for o in live if re.match(rf'{code}(?!\d)', o.strip())]
+            if by_code:
+                return by_code
     digits = re.findall(r'\d+', w)
     if len(digits) == 1:
         by_digit = [o for o in live if re.findall(r'\d+', o) == digits]
