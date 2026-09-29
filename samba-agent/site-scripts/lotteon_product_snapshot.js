@@ -41,7 +41,7 @@ if(args.required_seller&&!(r.seller||'').includes(String(args.required_seller)))
 try{let am=(await tx('님')).match(/([\w가-힣*]{2,20})\s*님/);r.account=(am&&am[1])||args.account||null;}catch(e){r.account=args.account||null;}
 
 let picked=[],proceed=true;const seen=new Set();
-const wantsColor=/[가-힣]{2,}|[A-Za-z]{3,}/.test(String(args.size||''));
+const wantsColor=/[가-힣]{2,}|[A-Za-z]{3,}/.test(String(args.size||'').replace(/옵션\d*|사이즈|색상|컬러|선택|FREE|ONE ?SIZE|X{2,}L|X{2,}S/gi,' '));
 for(let step=0;step<5;step++){
   let combos=[];
   for(let w=0;w<6&&!combos.length;w++){let g=await page.get({selector:'[role="combobox"], select'});combos=pe(g.tree).filter(x=>x.role==='combobox');if(!combos.length)await sleep(700);}
