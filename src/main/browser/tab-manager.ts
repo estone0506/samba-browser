@@ -530,12 +530,19 @@ export class TabManager {
 
   /** 탭과 살아 있는 팝업을 한 목록으로. AI 의 list_tabs 와 사이드바 목록이 같이 쓴다 */
   listTargets(): AgentTarget[] {
-    const tabs = this.list().map((t) => ({ id: t.id, title: t.title, url: t.url }))
+    // 프로필을 함께 준다 — 계정 비교를 동시에 돌리면 같은 주문서 주소의 탭이 계정마다 열린다
+    const tabs = this.list().map((t) => ({
+      id: t.id,
+      title: t.title,
+      url: t.url,
+      profile: t.profile
+    }))
     const popups = this.popups.alive().map((p) => ({
       id: p.id,
       title: p.win.isDestroyed() ? '' : p.win.webContents.getTitle(),
       url: p.win.isDestroyed() ? '' : p.win.webContents.getURL(),
-      openerId: p.openerId
+      openerId: p.openerId,
+      profile: p.profile
     }))
     // AI 가 보는 '활성' 표시는 자동화 대상 탭 기준이다(보이는 탭과 다를 수 있다)
     return buildTargets(tabs, popups, this.workingTabId(), this.focusedPopupId)
