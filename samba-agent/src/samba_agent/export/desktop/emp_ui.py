@@ -147,17 +147,6 @@ def _process_windows(pid: int) -> list[tuple[int, str, str]]:
     return found
 
 
-class _DialogButton:
-    """대화상자 버튼 — 창 핸들과 글자."""
-
-    def __init__(self, handle: int, label: str) -> None:
-        self.handle = handle
-        self._label = label
-
-    def window_text(self) -> str:
-        return self._label
-
-
 class GridRow:
     """그리드 한 행 — 요소와 열 이름 → 값."""
 
@@ -768,47 +757,44 @@ class PywinautoEmpUi:
         _user32.PostMessageW(toolbar, _WM_LBUTTONUP, 0, lparam)
 
     def dialogs(self) -> list[tuple[int, str, str, list]]:
-        """EMP 가 띄운 보이는 대화상자들 — (핸들, 제목, 문구, 버튼들).
+        """EMP 가 띄운 보이는 대화상자들 — (핸들, 제목, 문구, 버튼 요소들).
 
-        자식 창을 직접 읽는다. UIA 로 읽으면 메뉴 항목을 누르는 호출이 끝나지 않은 동안 문구·버튼이
-        빈 채로 온다(실기 2026-09-29: 취소 확인 창을 '모르는 창'으로 보고 물러났다).
+        EMP 의 확인 창은 자식 창에 글자가 없는 새 모양 대화상자라 UIA 로 읽어야 한다(자식 창을
+        직접 읽으면 문구·버튼이 비어 온다, 실기 2026-09-29). 메뉴 항목을 누르는 호출이 끝나지 않은
+        동안에는 UIA 도 빈 값을 주므로, 부르는 쪽이 빈 문구를 '아직 못 읽음'으로 보고 다시 읽는다.
         """
         found = []
         pid = self._main.process_id()
         for handle, title, kind in _process_windows(pid):
             if kind != DIALOG_CLASS:
                 continue
-            texts: list[str] = []
-            buttons: list[_DialogButton] = []
-            for child in _visible_children(handle):
-                name = ctypes.create_unicode_buffer(64)
-                _user32.GetClassNameW(child, name, 64)
-                label = self._window_text(child, 512)
-                if name.value.upper() == 'BUTTON':
-                    buttons.append(_DialogButton(child, label))
-                elif label:
-                    texts.append(label)
-            found.append((handle, title, ' '.join(texts), buttons))
+            try:
+                dialog = UIAWrapper(UIAElementInfo(handle))
+                message = ' '.join(t.window_text() for t in dialog.descendants(control_type='Text'))
+                buttons = dialog.descendants(control_type='Button')
+            except Exception:  # noqa: BLE001 — 읽지 못했다(닫히는 중이거나 UIA 가 바쁘다)
+                message, buttons = '', []
+            found.append((handle, title, message, buttons))
         return found
 
     def _click_dialog_button(self, buttons: list, names: tuple[str, ...]) -> str | None:
         for b in buttons:
             if b.window_text() in names:
+                label = b.window_text()
                 # 버튼에 직접 보내는 누름 메시지는 뒤에 있는 대화상자에서 먹지 않는다(실기 2026-09-29) —
                 # 대화상자에 '이 버튼이 눌렸다'를 보낸다
+                hwnd = b.element_info.handle
                 _user32.PostMessageW(
-                    _user32.GetParent(b.handle),
-                    _WM_COMMAND,
-                    _user32.GetDlgCtrlID(b.handle),
-                    b.handle,
+                    _user32.GetParent(hwnd), _WM_COMMAND, _user32.GetDlgCtrlID(hwnd), hwnd
                 )
-                return b.window_text()
+                return label
         return None
 
     def _wait_dialog(self, timeout_s: float) -> tuple[int, str, str, list] | None:
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
-            found = self.dialogs()
+            # 문구를 읽은 창만 돌려준다 — 빈 문구는 아직 못 읽은 것이라 다시 읽는다
+            found = [d for d in self.dialogs() if d[2].strip()]
             if found:
                 return found[0]
             time.sleep(self._poll_s)
