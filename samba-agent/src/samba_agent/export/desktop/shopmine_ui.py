@@ -191,7 +191,7 @@ class PywinautoShopMineUi:
         UIA 로 열면 대화상자에 닿기 전에 시간이 다 간다(실기 2026-09-28: 결과 안내창을 놓침).
         """
         found = []
-        for w in Desktop(backend='win32').windows():
+        for w in self._all_windows():
             try:
                 if w.process_id() == pid and w.is_visible():
                     found.append(w)
@@ -199,9 +199,19 @@ class PywinautoShopMineUi:
                 continue
         return found
 
+    def _all_windows(self) -> list:
+        """최상위 창 목록. 읽는 사이 창 하나가 사라지면 목록 읽기가 통째로 실패한다(실기
+        2026-09-29: 확인 창이 닫히는 순간) — 몇 번 다시 읽는다."""
+        for _ in range(4):
+            try:
+                return Desktop(backend='win32').windows()
+            except InvalidWindowHandle:
+                time.sleep(0.2)
+        return Desktop(backend='win32').windows()
+
     def _find_main(self):
         """ShopMine 메인 창. 없으면 AdapterRetry(WINDOW_MISSING)."""
-        for w in Desktop(backend='win32').windows():
+        for w in self._all_windows():
             if (w.window_text() or '').startswith(WINDOW_TITLE_MARK):
                 return w
         raise AdapterRetry(ExportFail.WINDOW_MISSING, '샵마인 창이 없다')
