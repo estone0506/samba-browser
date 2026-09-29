@@ -163,6 +163,10 @@ export const DEFAULT_SETTINGS = {
   extensionSources: {} as Record<string, ExtensionSource>,
   // 꺼 둔 확장의 id. 목록·경로는 그대로 두고 세션에만 올리지 않는다
   disabledExtensionIds: [] as string[],
+  // 확장별로 올릴 프로필. 적혀 있지 않은 확장은 모든 프로필에 올린다. 빈 목록이면 일반 탭(default)에만,
+  // 이름이 있으면 일반 탭 + 그 프로필에만 올린다. 삼바웨이브 확장은 삼바 페이지에서 설정을 받으므로
+  // 그 페이지를 열지 않는 계정 프로필에서는 API 호출이 전부 실패한다(실기 2026-09-28) — 기본은 일반 탭만
+  extensionProfiles: { ojfcneljbbajgcmpmklgglhenieehicb: [] } as Record<string, string[]>,
   // 주소창 툴바에 고정한 확장의 id(왼쪽부터 이 순서대로 놓인다).
   // 툴바를 이 기기에서 어떻게 보여 줄지에 대한 값이라 동기화하지 않는다
   extensionsPinned: [] as string[],
@@ -355,6 +359,9 @@ export const settingsSchema = z.object({
     .record(z.string(), z.enum(EXTENSION_SOURCES))
     .catch(DEFAULT_SETTINGS.extensionSources),
   disabledExtensionIds: z.array(z.string()).catch(DEFAULT_SETTINGS.disabledExtensionIds),
+  extensionProfiles: z
+    .record(z.string(), z.array(z.string()))
+    .catch(DEFAULT_SETTINGS.extensionProfiles),
   extensionsPinned: z.array(z.string()).catch(DEFAULT_SETTINGS.extensionsPinned),
   // 모양 — 범위를 벗어나거나 타입이 틀리면 기본값으로 되돌린다
   theme: z.enum(THEME_MODES).catch(DEFAULT_SETTINGS.theme),
