@@ -402,6 +402,8 @@ function opToCode(op: AgentOp): string {
       return `__samba.hasFocus(${op.id})`
     case 'focusEl':
       return `__samba.focusEl(${op.id})`
+    case 'idOfRowCell':
+      return `__samba.idOfRowCell(${op.id},${op.index})`
     case 'idOfExactText':
       return `__samba.idOfExactText(${JSON.stringify(op.text)},${op.nth})`
     case 'keypadSignals':
@@ -734,6 +736,12 @@ export const pageBridge = {
     const wc = tab.view.webContents
     if (wc.isDestroyed()) return -1
     return call(wc, opToCode({ op: 'idOfExactText', text, nth }), z.number()).catch(() => -1)
+  },
+  /** 같은 줄의 index 번째 칸(왼쪽부터)에 번호를 매겨 돌려준다. 없으면 -1. 최상위 문서만 본다 */
+  idOfRowCell: async (tab: Tab, id: number, index: number): Promise<number> => {
+    const wc = tab.view.webContents
+    if (wc.isDestroyed()) return -1
+    return call(wc, opToCode({ op: 'idOfRowCell', id, index }), z.number()).catch(() => -1)
   },
   /** 입력칸 값의 글자 수(값 자체는 돌려주지 않는다). 못 읽으면 -1 */
   valueLength: async (tab: Tab, id: number): Promise<number> => {

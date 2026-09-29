@@ -41,3 +41,32 @@ describe('idOfExactText — 요소 목록에 안 잡히는 칸을 글자로 찾�
     expect(idOfExactText('  ')).toBe(-1)
   })
 })
+
+describe('idOfRowCell — 같은 줄의 다른 칸', () => {
+  it('주문번호 칸의 줄에서 왼쪽 첫 칸을 고른다', async () => {
+    const { idOfRowCell } = await import('../src/preload/page-core')
+    document.body.innerHTML = `
+      <div class="body">
+        <div class="row" id="r0"><div id="c0"></div><div id="c1">1</div><div id="c2"><div class="t">20260101-000001</div></div></div>
+      </div>`
+    const place = (id: string, left: number): void => {
+      const el = document.getElementById(id) as HTMLElement
+      el.getBoundingClientRect = () =>
+        ({ left, top: 100, right: left + 40, bottom: 120, width: 40, height: 20, x: left, y: 100 }) as DOMRect
+    }
+    place('c0', 0)
+    place('c1', 40)
+    place('c2', 80)
+    const t = document.querySelector('.t') as HTMLElement
+    t.getBoundingClientRect = () =>
+      ({ left: 80, top: 100, right: 120, bottom: 120, width: 40, height: 20, x: 80, y: 100 }) as DOMRect
+    const row = document.getElementById('r0') as HTMLElement
+    row.getBoundingClientRect = () =>
+      ({ left: 0, top: 100, right: 120, bottom: 120, width: 120, height: 20, x: 0, y: 100 }) as DOMRect
+    const id = idOfExactText('20260101-000001')
+    const first = idOfRowCell(id, 0)
+    expect(first).toBeGreaterThan(0)
+    expect(first).not.toBe(id)
+    expect(idOfRowCell(id, 9)).toBe(-1)
+  })
+})

@@ -35,6 +35,7 @@ import {
   hasFocus,
   focusEl,
   idOfExactText,
+  idOfRowCell,
   fillValue,
   findLoginFields,
   signedInHint,
@@ -126,7 +127,8 @@ if (!isExtensionDocument) {
     valueLength: (id: number) => valueLength(id),
     hasFocus: (id: number) => hasFocus(id),
     focusEl: (id: number) => focusEl(id),
-    idOfExactText: (text: string, nth: number) => idOfExactText(text, nth)
+    idOfExactText: (text: string, nth: number) => idOfExactText(text, nth),
+    idOfRowCell: (id: number, index: number) => idOfRowCell(id, index)
   }
 
   // globalThis 에 직접 대입(any 없이 타입 안전하게)

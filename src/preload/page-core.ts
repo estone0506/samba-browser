@@ -1203,6 +1203,34 @@ export function idOfExactText(text: string, nth = 0): number {
   return el ? ensureId(el) : -1
 }
 
+/**
+ * 같은 줄(행)의 다른 칸에 번호를 매겨 돌려준다 — 그리드에서 글자로 찾은 칸(주문번호)의 줄에 있는 체크 칸을
+ * 누르려는 용도다. 기준 요소에서 위로 올라가며 형제 칸이 여럿인 첫 조상을 '줄'로 보고, 그 줄의 칸들을
+ * 화면 왼쪽부터 세어 index 번째 칸을 고른다. 없으면 -1
+ */
+export function idOfRowCell(id: number, index: number): number {
+  let el = get(id)
+  if (!el) return -1
+  const top = (e: Element): number => Math.round(e.getBoundingClientRect().top)
+  for (let depth = 0; depth < 6 && el?.parentElement; depth++) {
+    const parent: HTMLElement = el.parentElement
+    const line = top(el)
+    // 같은 높이에 나란히 놓인 형제들이 그 줄의 칸이다(Nexacro 는 칸을 절대 위치로 놓는다)
+    const cells = (Array.from(parent.children) as HTMLElement[])
+      .filter((c) => {
+        const r = c.getBoundingClientRect()
+        return r.width > 0 && r.height > 0 && Math.abs(top(c) - line) <= 2
+      })
+      .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)
+    if (cells.length >= 3) {
+      const cell = cells[index]
+      return cell ? ensureId(cell) : -1
+    }
+    el = parent
+  }
+  return -1
+}
+
 /** 이 요소에 id 가 없으면 매겨 registry 에 넣는다(스냅샷을 다시 찍지 않고 누를 수 있게) */
 function ensureId(el: HTMLElement): number {
   if (idDoc !== document) resetElementIds()
