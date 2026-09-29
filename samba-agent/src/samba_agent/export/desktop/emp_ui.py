@@ -432,6 +432,7 @@ class PywinautoEmpUi:
                 break
         if cell is None:
             raise AdapterRetry(ExportFail.BLOCKED, 'EMP 그리드에서 그 주문 행이 화면 밖이다')
+        self._focus_grid()
         self._selected_cell = cell.rectangle()
         self._post_click(self._el(GRID_ID).element_info.handle, cell.rectangle())
         # 상세 미리보기는 조금 늦게 바뀐다 — 그 주문번호가 보일 때까지 기다린다
@@ -617,6 +618,21 @@ class PywinautoEmpUi:
         what = '편집 상자가 열리지' if want_edit else '편집이 끝나지'
         raise AdapterRetry(ExportFail.TIMEOUT, f'EMP 칸 {what} 않았다')
 
+    def _focus_grid(self) -> None:
+        """키보드 포커스를 그리드로 옮긴다.
+
+        주문번호로 검색한 뒤에는 포커스가 검색어 칸에 남아, 그리드에 보낸 클릭·글자가 먹지 않았다
+        (실기 2026-09-29: '그리드가 포커스를 받지 못했다(…EDIT…)').
+        """
+        grid = self._el(GRID_ID)
+        if self._focus()[0] == grid.element_info.handle:
+            return
+        try:
+            grid.set_focus()
+        except Exception:  # noqa: BLE001 — 못 옮겼으면 아래 확인에서 걸린다
+            log.info('EMP 그리드로 포커스를 옮기지 못했다')
+        time.sleep(self._poll_s)
+
     def _edit_cell(self, order_no: str, prefix: str, column: str, value: int) -> None:
         """그리드 칸 하나에 값을 넣는다(저장 전).
 
@@ -635,6 +651,7 @@ class PywinautoEmpUi:
             raise AdapterRetry(ExportFail.BLOCKED, f'EMP 그리드에서 {column} 칸이 화면 밖이다')
         if rect.bottom > area.bottom:
             raise AdapterRetry(ExportFail.BLOCKED, 'EMP 그리드에서 그 주문 행이 화면 밖이다')
+        self._focus_grid()
         point = wintypes.POINT((rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2)
         _user32.ScreenToClient(grid, ctypes.byref(point))
         lparam = (point.y << 16) | (point.x & 0xFFFF)
