@@ -205,3 +205,12 @@ def test_취소_연동_요청이_실패해도_예외를_내지_않는다(queue):
 
     export_cancel = make_cancel_exporter(queue, ExportRouting(), broken)
     assert export_cancel('A1') == '외부 취소 연동 요청 실패: RuntimeError'
+
+
+def test_구매까지_끝낸_주문은_취소_연동하지_않는다(queue):
+    from samba_agent.export.stage import make_cancel_exporter
+
+    queue.enqueue('A1', 'shopmine', 50000, 0)
+    export_cancel = make_cancel_exporter(queue, ExportRouting(), lambda _o: '쿠팡(unclehg)')
+    assert export_cancel('A1') == '구매까지 끝낸 주문 — 취소 연동하지 않음'
+    assert queue.find('A1', 'shopmine_cancel') is None

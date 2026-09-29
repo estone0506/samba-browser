@@ -36,7 +36,8 @@ def build_adapters(targets: Collection[str]) -> dict[str, Adapter | BatchAdapter
     for target in (t for t in targets if not t.startswith('no_')):
         if target == 'shopmine':
             ui = _shopmine_ui()
-            made[target] = ShopMineAdapter(ui)
+            # 구매까지 끝낸 주문은 취소 상태가 됐어도 완료됨으로 바꾼다 — 클레임 주문까지 찾는다
+            made[target] = ShopMineAdapter(ui, include_claims=True)
             # 취소한 주문은 같은 화면에서 지연됨으로 바꾼다
             made[cancel_target(target)] = ShopMineAdapter(ui, status=STATUS_DELAYED)
         elif target == 'emp':

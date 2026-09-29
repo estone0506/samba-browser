@@ -433,8 +433,8 @@ class PywinautoShopMineUi:
 
     # ---- 수집 ----
     @_guard_pywinauto_errors
-    def collect(self) -> None:
-        self._select_combo(self._el('ComboBoxProcessStatus'), NORMAL_ALL)
+    def collect(self, scope: str = NORMAL_ALL) -> None:
+        self._select_combo(self._el('ComboBoxProcessStatus'), scope)
         time.sleep(self._poll_s)
         _press_button(self._el('ButtonSearch'))
         # 수집 중 표시가 뜰 틈을 준다 — 바로 보면 '이미 끝남'으로 잘못 읽는다

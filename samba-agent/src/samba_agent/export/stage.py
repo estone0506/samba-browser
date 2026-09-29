@@ -126,6 +126,10 @@ def make_cancel_exporter(
             target = routing.target_for(seller_of(order_no))
             if target is None:
                 return None
+            if queue.find(order_no, target) is not None:
+                # 구매까지 끝내 기입 요청이 있는 주문이다 — 취소 상태가 됐어도 완료됨으로 둔다
+                # (사용자 지시 2026-09-29). 지연됨·취소로 덮지 않는다
+                return '구매까지 끝낸 주문 — 취소 연동하지 않음'
             queue.enqueue(order_no, cancel_target(target), 0, 0)
         except Exception as e:  # 취소 처리 자체는 끝났다 — 작업 결과에 영향을 주지 않는다
             log.exception('외부 취소 연동 요청 실패')
