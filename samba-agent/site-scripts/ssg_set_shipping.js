@@ -1,9 +1,6 @@
-// SSG 배송지 입력(2026-09-27, 로그인 실측): 주문서 '배송지 변경'(name=btnChangeShpploc) → 목록 팝업(shpplocList)
-// → '새 배송지 추가'(같은 팝업이 shpplocForm 으로 바뀜) → '우편번호 검색'(zipcd 팝업: 검색 → 첫 도로명 → 상세주소 → 팝업 '저장'=폼으로 옮기기) → 받는분 이름.
-// 셀렉터는 확장앱 background-sourcing.js _handleSsgShippingPopup·_handleSsgNewAddress·_handleSsgZipcdPopup 에서 옮겼다.
-// 전화는 비워 두고 칸 번호를 돌려준다(하네스 fill_secret, 010 은 select). 폼은 저장하지 않는다 — ssg_confirm_shipping 이 저장·선택·반영한다.
-// 인자 {name, address, address_detail?, postal_code?, profile?, tab?}
-// 반환 {ok, name, address, address_detail, phone_field_ids, phone_formats, form_popup, note}
+// SSG 배송지 입력(2026-09-27): 주문서 '배송지 변경' → 목록(shpplocList) → '새 배송지 추가'(shpplocForm) → 우편번호(zipcd: 검색 → 도로명 → 상세 → 저장) → 받는분.
+// 선물하기(args.gift, 2026-09-29)는 이미 열린 목록 팝업을 쓴다. 전화는 비워 두고 칸 번호를 돌려준다(하네스 fill_secret). 폼 저장은 다른 스크립트.
+// 인자 {name, address, address_detail?, gift?, tab?}  반환 {ok, name, address, address_detail, phone_field_ids, phone_formats, form_popup, note}
 const nz = s => String(s || '').replace(/\s+/g, ' ').trim()
 const OF = /pay\.ssg\.com\/(order|payment)|ssg\.com\/order\//
 const tree = async o => { for (let i = 0; i < 4; i++) { try { const g = await page.get(o || {}); if (g && g.tree) return g.tree } catch (e) {} await sleep(500) } return '' }
@@ -11,7 +8,6 @@ const first = async sel => { const l = (await tree({ selector: sel })).split('\n
 const R = { ok: false, name: null, address: null, address_detail: null, phone_field_ids: [], phone_formats: ['phone-rest'], form_popup: null, note: null }
 if (!args.name || !args.address) return { ...R, note: 'name·address 필요' }
 const waitPopup = async (re, ms) => { for (let i = 0; i < ms / 400; i++) { const p = (await tabs.list()).find(t => t.kind === 'popup' && re.test(t.url || '')); if (p) return p; await sleep(400) } return null }
-// 선물하기(2026-09-29): 선물 정보 화면 '배송지 대신 입력하기' → 주소록 팝업 '배송지 추가' 로 목록 팝업이 이미 열려 있다 — 그걸 쓴다
 let list = args.gift ? (await tabs.list()).find(t => t.kind === 'popup' && /shpplocList/.test(t.url || '')) : null
 if (!list) {
   const ofs = (await tabs.list()).filter(t => t.kind === 'tab' && OF.test(t.url || ''))
@@ -75,7 +71,9 @@ if (pickBtn < 0) return { ...R, note: '주소 검색 결과 없음' }
 await page.click(pickBtn)
 await sleep(700)
 const dtl = await first('#addrDtlInput, input[name="dtlAddr"]')
-const dtlText = nz(args.address_detail) || nz((nz(args.address).split(',')[1] || '').replace(/\([^)]*\)/g, ' '))
+// 상세 칸이 비면 주소 끝의 호·동·층(실기 2026-09-29)
+const tl = nz((nz(args.address).match(/^.*(?:로|길)\s*\d+(?:-\d+)?\s*(?:\([^)]*\))?\s*(.*)$/) || [])[1])
+const dtlText = nz(args.address_detail) || nz((nz(args.address).split(',')[1] || '').replace(/\([^)]*\)/g, ' ')) || (/^[\dA-Za-z]|[호층동]$/.test(tl) ? tl : '')
 if (dtl >= 0 && dtlText) await page.type(dtl, dtlText, false)
 if (!/zipcd\.ssg/.test(await page.url())) return { ...R, note: '우편번호 팝업이 아닌 곳에서 저장 버튼을 찾으려 했다 — 멈춤' }
 let ok = await first('#addrDtlBtn')
@@ -93,7 +91,7 @@ let h1 = await first('#hpno1')
 if (h1 < 0) h1 = parseInt((((await tree({ interactive: true })).split('\n').find(l => /combobox "010 011/.test(l))) || '[-1]').slice(1))
 if (h1 >= 0) await page.select(h1, '010')
 let h2 = await first('#hpno2')
-if (h2 < 0) h2 = await page.idOf('- 없이 번호만 입력해주세요.', 0) // 첫 칸이 휴대폰(둘째는 일반전화)
+if (h2 < 0) h2 = await page.idOf('- 없이 번호만 입력해주세요.', 0)
 if (h2 < 0) return { ...R, note: '휴대폰 번호칸 없음' }
 R.phone_field_ids = [h2]
 const tr = await tree({ interactive: true })

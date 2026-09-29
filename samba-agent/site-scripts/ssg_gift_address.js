@@ -28,7 +28,9 @@ await tabs.switch(pop.id)
 try { await page.waitFor(/선택완료/, 8000) } catch (e) {}
 await sleep(800)
 const blocks = async () => (await tree({})).split('PAGE TEXT')[0].split(/\n(?=\[\d+\] checkbox)/).filter(x => /^\[\d+\] checkbox/.test(x))
+// 주소록은 늦게 그려진다(실기: 저장 직후 다시 열면 0개로 읽혔다) — 항목이 보일 때까지 몇 번 더 읽는다
 let bs = await blocks()
+for (let i = 0; i < 8 && !bs.length; i++) { await sleep(1000); bs = await blocks() }
 R.entries = bs.length
 let hit = bs.filter(mine)
 R.matched = hit.length
@@ -40,20 +42,39 @@ if (!hit.length) {
   return { ...R, need_address: true, note: lp ? '주소록에 없음 — 배송지 추가 목록을 열어 둠' : '배송지 추가 목록이 안 뜸' }
 }
 if (hit.length > 1) return { ...R, note: '주소록에 같은 고객 항목이 ' + hit.length + '개 — 하나로 못 정함' }
-await page.click(idL(hit[0]))
-await sleep(1000)
+// 체크박스라 여러 명이 동시에 체크될 수 있다(실기: 지난 선물 받는 분이 체크된 채 남아 있었다) — 고객 것만 켜고 나머지는 끈다
+// 체크박스 이름이 여러 줄이라 value 는 첫 줄이 아니라 이름 끝 따옴표 뒤에 있다(실기)
+const isOn = b => /^\[\d+\] checkbox "[\s\S]*?" value="on"/.test(b)
+// 한 번 눌러서 안 켜지는 때가 있다(실기) — 켜질 때까지 다시 누르고, 두 번째부터는 실제 마우스 클릭으로 누른다
+for (let k = 0; k < 3; k++) {
+  const cur = (await blocks()).find(mine)
+  if (!cur || isOn(cur)) break
+  if (k === 0) await page.click(idL(cur)); else await page.clickNative(idL(cur))
+  await sleep(1000)
+}
+for (let k = 0; k < 3; k++) {
+  bs = await blocks()
+  const extra = bs.filter(b => isOn(b) && !mine(b))
+  if (!extra.length) break
+  for (const b of extra) { await page.click(idL(b)); await sleep(700) }
+}
 bs = await blocks()
-const on = bs.map((b, i) => /value="on"/.test(b.split('\n')[0]) ? i : -1).filter(i => i >= 0)
+const on = bs.map((b, i) => isOn(b) ? i : -1).filter(i => i >= 0)
 const me = bs.map((b, i) => mine(b) ? i : -1).filter(i => i >= 0)
-if (on.length !== 1 || on[0] !== me[0]) return { ...R, note: '체크된 항목이 고객 항목이 아님' }
+if (on.length !== 1 || on[0] !== me[0]) return { ...R, note: '체크된 항목이 고객 항목이 아님(체크 ' + on.join(',') + ' / 고객 ' + me.join(',') + ' / 첫 줄 ' + String(bs[me[0]] || '').split(String.fromCharCode(10))[0].replace(/"[^"]*"/, '"…"').slice(0, 60) + ')' }
 const done = (await tree({ query: '선택완료' })).split('\n').find(l => /^\[\d+\] button "선택완료"/.test(l))
 if (!done) return { ...R, note: '선택완료 버튼 없음' }
 await Promise.race([page.click(idL(done)).catch(() => {}), sleep(3000)])
 for (let i = 0; i < 12 && await findTab(/selectShpploc/); i++) await sleep(400)
 await tabs.switch(gift.id)
-await sleep(1200)
-const gt = sq((await tree({})).split('PAGE TEXT')[1])
-if (!(gt.includes(base) && (!road || gt.includes(road)) && (!det || gt.includes(det)))) return { ...R, note: '선물 화면에 받는 분이 안 들어감' }
+// 선물 화면은 받는 분 칸이 늦게 채워진다 — 채워질 때까지 몇 번 읽는다(글자 전체 = 요소 목록 + 본문)
+let filled = false
+for (let i = 0; i < 10 && !filled; i++) {
+  await sleep(1000)
+  const gt = sq(await tree({}))
+  filled = gt.includes(base) && (!road || gt.includes(road)) && (!det || gt.includes(det))
+}
+if (!filled) return { ...R, note: '선물 화면에 받는 분이 안 들어감' + ((await findTab(/selectShpploc/)) ? '(주소록 창이 안 닫힘)' : '') }
 const go = (await tree({ interactive: true })).split('\n').find(l => /^\[\d+\] button "계속하기"/.test(l))
 if (!go) return { ...R, note: '계속하기 버튼 없음' }
 await page.click(idL(go))
