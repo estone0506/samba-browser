@@ -24,10 +24,11 @@ def _env(key: str) -> str:
     if os.environ.get(key):
         return os.environ[key]
     try:
-        for line in open('.env', encoding='utf-8'):
-            k, _, v = line.partition('=')
-            if k.strip() == key:
-                return v.strip().strip('"')
+        with open('.env', encoding='utf-8') as f:
+            for line in f:
+                k, _, v = line.partition('=')
+                if k.strip() == key:
+                    return v.strip().strip('"')
     except OSError:
         pass
     return ''
