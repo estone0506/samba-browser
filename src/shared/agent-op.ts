@@ -25,6 +25,7 @@ export type AgentOp =
   | { op: 'focusEl'; id: number }
   | { op: 'idOfExactText'; text: string; nth: number }
   | { op: 'idOfRowCell'; id: number; index: number }
+  | { op: 'ancestorsOf'; id: number }
   | { op: 'keypadSignals' }
   // 결제 비밀번호 키패드의 숫자 버튼 배치(앱이 키마스터 값을 넣을 때 쓴다). 값은 오가지 않는다
   | { op: 'keypadLayout' }

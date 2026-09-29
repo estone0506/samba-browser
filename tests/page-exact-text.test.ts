@@ -62,7 +62,10 @@ describe('idOfRowCell — 같은 줄의 다른 칸', () => {
       ({ left: 80, top: 100, right: 120, bottom: 120, width: 40, height: 20, x: 80, y: 100 }) as DOMRect
     const row = document.getElementById('r0') as HTMLElement
     row.getBoundingClientRect = () =>
-      ({ left: 0, top: 100, right: 120, bottom: 120, width: 120, height: 20, x: 0, y: 100 }) as DOMRect
+      ({ left: 0, top: 100, right: 900, bottom: 120, width: 900, height: 20, x: 0, y: 100 }) as DOMRect
+    const body = document.querySelector('.body') as HTMLElement
+    body.getBoundingClientRect = () =>
+      ({ left: 0, top: 80, right: 900, bottom: 400, width: 900, height: 320, x: 0, y: 80 }) as DOMRect
     const id = idOfExactText('20260101-000001')
     const first = idOfRowCell(id, 0)
     expect(first).toBeGreaterThan(0)

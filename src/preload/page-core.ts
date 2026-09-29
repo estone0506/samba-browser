@@ -1209,26 +1209,64 @@ export function idOfExactText(text: string, nth = 0): number {
  * 화면 왼쪽부터 세어 index 번째 칸을 고른다. 없으면 -1
  */
 export function idOfRowCell(id: number, index: number): number {
-  let el = get(id)
-  if (!el) return -1
-  const top = (e: Element): number => Math.round(e.getBoundingClientRect().top)
-  for (let depth = 0; depth < 6 && el?.parentElement; depth++) {
-    const parent: HTMLElement = el.parentElement
-    const line = top(el)
-    // 같은 높이에 나란히 놓인 형제들이 그 줄의 칸이다(Nexacro 는 칸을 절대 위치로 놓는다)
-    const cells = (Array.from(parent.children) as HTMLElement[])
-      .filter((c) => {
-        const r = c.getBoundingClientRect()
-        return r.width > 0 && r.height > 0 && Math.abs(top(c) - line) <= 2
-      })
-      .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)
-    if (cells.length >= 3) {
-      const cell = cells[index]
-      return cell ? ensureId(cell) : -1
-    }
-    el = parent
+  const base = get(id)
+  if (!base) return -1
+  const ref = base.getBoundingClientRect()
+  if (ref.height <= 0) return -1
+  // 기준 칸을 감싼 칸(글자 요소의 부모)이 줄 높이를 정한다 — 글자 요소는 칸보다 작을 수 있다
+  const line = Math.round(ref.top + ref.height / 2)
+  const onLine = (el: Element): boolean => {
+    const r = el.getBoundingClientRect()
+    if (r.width < 8 || r.height < 8 || r.width > ROW_CELL_MAX_WIDTH || r.height > ROW_CELL_MAX_HEIGHT) return false
+    return r.top <= line && r.bottom >= line
   }
-  return -1
+  // 그리드는 고정 열(체크·번호)과 스크롤 열을 다른 상자에 그린다 — 문서 전체에서 같은 높이의 칸을 모은다.
+  // 겹친 요소는 가장 바깥 것(칸)만 센다
+  // 같은 높이에 있는 다른 화면(가려진 탭)의 요소가 섞이지 않게, 기준 칸을 감싼 표(넓고 높은 첫 조상) 안만 본다
+  let grid: HTMLElement | null = base.parentElement
+  while (grid) {
+    const g = grid.getBoundingClientRect()
+    if (g.width >= GRID_MIN_WIDTH && g.height >= GRID_MIN_HEIGHT) break
+    grid = grid.parentElement
+  }
+  if (!grid) return -1
+  const inGrid = Array.from(grid.querySelectorAll<HTMLElement>('*')).filter((el) => isVisible(el))
+  // Nexacro 그리드는 칸 id 가 '…gridrow_0.cell_0_3' 꼴이다 — 있으면 그것만 칸으로 센다(고정 열 상자를 칸으로 세지 않게)
+  const named = inGrid.filter((el) => NEXACRO_CELL_ID_RE.test(el.id) && onLine(el))
+  const cells = (
+    named.length >= 3
+      ? named
+      : inGrid.filter((el) => onLine(el) && !(el.parentElement && onLine(el.parentElement)))
+  )
+    .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)
+  const cell = cells[index]
+  return cell ? ensureId(cell) : -1
+}
+
+// 줄의 칸으로 볼 최대 크기(px) — 줄 전체를 감싼 상자·화면 레이어는 뺀다
+const ROW_CELL_MAX_WIDTH = 500
+const ROW_CELL_MAX_HEIGHT = 60
+const NEXACRO_CELL_ID_RE = /gridrow_\d+\.cell_\d+_\d+$/
+// 표로 볼 최소 크기(px)
+const GRID_MIN_WIDTH = 600
+const GRID_MIN_HEIGHT = 100
+
+/**
+ * 요소의 조상들을 안쪽부터 적는다 — DOM id 의 끝 두 마디와 크기·위치만(글자는 싣지 않는다).
+ * 화면 구조를 몰라 어느 상자가 표인지 가를 때 쓰는 진단용이다
+ */
+export function ancestorsOf(id: number): string {
+  let el: HTMLElement | null = get(id) ?? null
+  const out: string[] = []
+  for (let depth = 0; el && depth < 12; depth++) {
+    const r = el.getBoundingClientRect()
+    const tail = (el.id || '').split('.').slice(-2).join('.')
+    out.push(
+      `${el.tagName.toLowerCase()}#${tail} ${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)} kids=${el.children.length}`
+    )
+    el = el.parentElement
+  }
+  return out.join(' | ')
 }
 
 /** 이 요소에 id 가 없으면 매겨 registry 에 넣는다(스냅샷을 다시 찍지 않고 누를 수 있게) */

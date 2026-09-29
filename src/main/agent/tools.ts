@@ -1747,6 +1747,11 @@ overlays left: ${after.length}${kept}`
         }
         case 'page.idOf':
           return idOfText(asText(args[0]), asId(args[1]))
+        case 'page.ancestorsOf': {
+          const tab = activeOr(ctx)
+          if (!tab) return ''
+          return pageBridge.ancestorsOf(tab, asId(args[0]))
+        }
         case 'page.idOfRowCell': {
           const tab = activeOr(ctx)
           if (!tab) return -1
