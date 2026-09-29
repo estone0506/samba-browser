@@ -3,7 +3,12 @@
 import json
 from pathlib import Path
 
-from samba_agent.ops.site_scripts import export_bundle, load_app_scripts, read_bundle
+from samba_agent.ops.site_scripts import (
+    export_bundle,
+    load_app_scripts,
+    missing_in_app,
+    read_bundle,
+)
 
 
 def _app_file(tmp_path: Path, scripts: object) -> Path:
@@ -62,3 +67,16 @@ def test_export_skips_unsafe_names(tmp_path: Path) -> None:
 
     assert export_bundle(source, target) == 1
     assert [p.name for p in target.glob('*.js')] == ['ok.js']
+
+
+def test_missing_in_app_keeps_local_edits(tmp_path: Path) -> None:
+    bundle = [{'name': 'a', 'code': 'new'}, {'name': 'b', 'code': 'x'}]
+    app = _app_file(tmp_path, [{'name': 'a', 'code': 'edited here'}])
+
+    assert [s['name'] for s in missing_in_app(bundle, app)] == ['b']
+
+
+def test_missing_in_app_without_app_file_is_everything(tmp_path: Path) -> None:
+    bundle = [{'name': 'a', 'code': 'x'}]
+
+    assert missing_in_app(bundle, tmp_path / 'none.json') == bundle

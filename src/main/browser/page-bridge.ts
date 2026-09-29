@@ -415,7 +415,9 @@ function opToCode(op: AgentOp): string {
 // 진짜 키 입력(typeLogin)이 필요한 사이트 — 점수형 reCAPTCHA 가 합성 입력을 봇으로 보는 곳(실기 GS샵),
 // 값만 넣으면 로그인 버튼이 먹지 않는 곳(실기 2026-09-25 페이코: 값은 채워졌는데 로그인 화면 그대로)
 // 슈마커: 비밀번호 칸(NPwd)에 값만 넣으면 제출돼도 로그인되지 않았다(실기 2026-09-26)
-const HUMAN_TYPING_HOSTS = ['gsshop.com', 'payco.com', 'shoemarker.co.kr']
+// 현대홈쇼핑 파트너센터(Nexacro): 비밀번호 칸은 컴포넌트가 키 입력으로만 값을 받는다 — 값만 넣으면 화면에는
+// 글자가 보이는데(가려지지도 않는다) 컴포넌트 값은 비어 로그인이 안 된다(실기 2026-09-29)
+const HUMAN_TYPING_HOSTS = ['gsshop.com', 'payco.com', 'shoemarker.co.kr', 'partner.hmall.com']
 
 function safeHost(wc: WebContents): string {
   try {

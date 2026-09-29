@@ -78,7 +78,7 @@ describe('값 비노출 — 렌더러로 가는 확인 바 정보', () => {
     })
     expect(prompt).toEqual({
       host: 'www.shop.com',
-      username: 'ca*******t@naver.com',
+      username: 'bu****2@naver.com',
       isNew: true,
       locked: false
     })

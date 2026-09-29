@@ -209,8 +209,18 @@ function isLoginPasswordField(el: HTMLInputElement): boolean {
   return true
 }
 
+// Nexacro 화면의 비밀번호 칸은 비어 있는 동안 type=text 다(안내 글자를 보여 주려고) — 포커스를 받아 글자가
+// 들어오면 password 로 바뀐다. 요소 id 가 '…edt_password:input' 꼴이다(실기 2026-09-29 현대홈쇼핑 파트너센터)
+const NEXACRO_PASSWORD_ID_RE = /(^|[._])[a-z]*_?(password|passwd|pwd)[a-z0-9_]*:input$/i
+
+export function isNexacroPasswordField(el: HTMLInputElement): boolean {
+  return el.type === 'text' && NEXACRO_PASSWORD_ID_RE.test(el.id)
+}
+
 export function passwordElement(): HTMLInputElement | undefined {
-  const pws = allInputs().filter((el) => el.type === 'password' && !isHoneypot(el))
+  const pws = allInputs().filter(
+    (el) => (el.type === 'password' || isNexacroPasswordField(el)) && !isHoneypot(el)
+  )
   if (pws.length === 0) return undefined
   const current = pws.find((el) => autocompleteOf(el).includes('current-password'))
   if (current) return current

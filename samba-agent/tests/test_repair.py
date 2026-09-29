@@ -457,10 +457,10 @@ def test_quote_parallel_uses_one_lane_per_account(buyer, monkeypatch) -> None:
     buyer._quote_skips = []
     out = buyer._quote_parallel(a, ['buyer01', 'buyer02'])
     assert [acc for acc, _ in out] == ['buyer01', 'buyer02']
-    assert sorted(lanes) == ['musinsa-buyer02', 'musinsa-buyer01']
+    assert sorted(lanes) == ['musinsa-buyer01', 'musinsa-buyer02']
     assert sorted(c.request.headers['X-Samba-Lane'] for c in closed.calls) == [
-        'musinsa-buyer02',
         'musinsa-buyer01',
+        'musinsa-buyer02',
     ]
     assert [e.detail for e in buyer.evidence if e.label == '계정 견적'] == [
         'buyer01: 원가',

@@ -113,6 +113,41 @@ def import_bundle(token: str, source: Path = BUNDLE_DIR, url: str = BRIDGE_URL) 
     return done, failed
 
 
+def missing_in_app(bundle: list[dict[str, object]], app_path: Path) -> list[dict[str, object]]:
+    """묶음에는 있고 앱에는 없는 스크립트. 앱 파일을 못 읽으면(첫 실행) 묶음 전부다."""
+    try:
+        have = {str(s['name']) for s in load_app_scripts(app_path)}
+    except (OSError, ValueError):
+        have = set()
+    return [s for s in bundle if str(s['name']) not in have]
+
+
+def install_missing(token: str, url: str = BRIDGE_URL, source: Path = BUNDLE_DIR) -> int:
+    """앱에 없는 스크립트만 넣는다(있는 것은 이 PC 에서 고쳤을 수 있어 덮어쓰지 않는다). 넣은 개수를 돌려준다.
+
+    하네스가 시작할 때 부른다 — 저장소를 받아 앱과 하네스만 켜면 스크립트가 채워진다.
+    """
+    if not (source / INDEX_NAME).exists():
+        return 0
+    todo = missing_in_app(read_bundle(source), app_scripts_path())
+    if not todo:
+        return 0
+    headers = {'X-Samba-Token': token, 'X-Samba-Lane': 'save'}
+    done = 0
+    with httpx.Client(timeout=60) as client:
+        for s in todo:
+            args = {k: s.get(k) for k in ('name', 'host', 'description', 'params')}
+            args['code'] = local_aliases.apply(str(s['code']))
+            for _ in range(BUSY_RETRIES):
+                r = client.post(f'{url}/tool/save_script', json={'args': args}, headers=headers)
+                if r.status_code != 409:
+                    if str(r.json().get('result') or '').startswith(('saved', 'updated')):
+                        done += 1
+                    break
+                time.sleep(1)
+    return done
+
+
 def _bridge_token() -> str:
     """브릿지 토큰 — 환경변수, 없으면 작업 폴더 .env."""
     token = os.environ.get('SAMBA_BRIDGE_TOKEN', '')

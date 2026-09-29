@@ -2724,6 +2724,8 @@ class BuyerAgent(AgentBase):
         if len(quotes) != 1 or not scores:
             return quotes
         acc, snap = quotes[0]
+        if snap.get('points_balance') is None:
+            return quotes  # 보유 적립금을 못 읽었으면 판단하지 않는다(모르는 값을 0 으로 보지 않는다)
         used = _as_float(snap.get('points_used'))
         balance = _as_float(snap.get('points_balance'))
         if used > 0 or balance >= POINTS_USE_MIN or acc not in scores:
