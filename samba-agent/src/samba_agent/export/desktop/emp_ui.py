@@ -58,6 +58,8 @@ END_DATE = 'OrderEdate'
 TWO_WEEKS_BUTTON = 'ribbonToggleButton1511'
 SEARCH_BUTTON = 'OrderSearchBT'
 KEYWORD_BOX = 'OrderKeyword'
+# 취소 확인 창은 30초 뒤 스스로 실행된다 — 여유를 두고 기다린다
+AUTO_RUN_WAIT_S = 50.0
 _WM_RBUTTONDOWN, _WM_RBUTTONUP = 0x0204, 0x0205
 DIALOG_CLASS = '#32770'
 COL_STATE = '상태'
@@ -597,6 +599,15 @@ class PywinautoEmpUi:
         실행된다(실기 2026-09-29). 메뉴 누름 호출이 끝나지 않은 동안에는 문구를 읽을 수 없어,
         못 읽으면 누르지 않고 스스로 실행될 때까지 기다린다. 읽었는데 1건이 아니면 물러난다.
         """
+        # 1) 확인 창이 스스로 실행돼 닫힐 때까지 기다린다. 이 동안 UIA 는 쓰지 않는다 — 메뉴 누름
+        #    호출이 끝나지 않은 채 UIA 로 창을 읽으면 작업자가 통째로 멈춘다(실기 2026-09-29: 10분 넘게 무응답)
+        pid = self._main.process_id()
+        auto_run = time.monotonic() + AUTO_RUN_WAIT_S
+        while time.monotonic() < auto_run:
+            if not any(kind == DIALOG_CLASS for _h, _t, kind in _process_windows(pid)):
+                break
+            time.sleep(self._poll_s)
+        # 2) 그 뒤에 남았거나 새로 뜬 창(완료 안내 등)을 읽어 처리한다
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             found = self.dialogs()

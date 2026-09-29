@@ -472,6 +472,20 @@ class PywinautoShopMineUi:
         time.sleep(self._poll_s * 2)
         self._refresh()
 
+    @_guard_pywinauto_errors
+    def order_nos_with_status(self, status: str) -> list[str]:
+        """작업상태 필터를 status 로, 엑셀 필터를 전체로 두고 목록을 읽는다. 필터는 부른 쪽이 되돌린다."""
+        excel = self._filter_combo(FILTER_EXCEL)
+        self._select_combo(excel, excel.texts()[0].strip())
+        self._select_combo(self._filter_combo(FILTER_STATUS), status)
+        time.sleep(self._poll_s * 2)
+        self._refresh()
+        header, rows = self._rows()
+        if not rows:
+            return []
+        cols = self._key_columns(header)
+        return [key for cells in rows for key in self._row_keys(cells, cols)]
+
     # ---- 그리드 ----
     def _rows(self) -> tuple[list, list]:
         """(헤더 행의 칸들, 데이터 행들). 실기: 행은 Custom 이고 첫 행 '상위 행' 이 헤더다."""

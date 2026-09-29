@@ -57,6 +57,10 @@ class ShopMineUi(Protocol):
         """지금 필터에 걸린 행들을 알아보는 값들 — 주문번호, 쿠팡은 배송번호도(헤더 제외)."""
         ...
 
+    def order_nos_with_status(self, status: str) -> list[str]:
+        """작업상태가 status 인 행들을 알아보는 값들(엑셀 생성 여부와 상관없이)."""
+        ...
+
     def select_orders(self, order_nos: Sequence[str]) -> Mapping[str, int]:
         """전체 선택을 풀고, 목록의 주문번호와 맞는 행만 체크한다. 주문번호 → 체크한 행 수."""
         ...
@@ -97,8 +101,17 @@ class ShopMineAdapter:
         ui.set_filters()
         present = ui.filtered_order_nos()
         found = [o for o in wanted if any(order_matches(o, c) for c in present)]
+        # 목록에 없는 주문은 이미 그 작업상태일 수 있다(사람이 먼저 바꿨거나 앞선 시도가 바꿨다) —
+        # 그러면 끝난 것이다. 못 찾았다고 되풀이하지 않는다(실기 2026-09-29: 20260927C6134A)
+        already: set[str] = set()
+        if len(found) < len(wanted):
+            marked = ui.order_nos_with_status(self._status)
+            already = {
+                o for o in wanted if o not in found and any(order_matches(o, c) for c in marked)
+            }
+            ui.set_filters()
         if not found:
-            return set()
+            return already
         checked = ui.select_orders(found)
         missing = [o for o in found if not checked.get(o)]
         if missing:
@@ -107,7 +120,7 @@ class ShopMineAdapter:
                 ExportFail.AMBIGUOUS, f'{len(missing)}건은 행을 체크하지 못했다 — 누르지 않았다'
             )
         if self._dry_run:
-            return set(found)
+            return set(found) | already
         ui.set_status(self._status, sum(checked.get(o, 0) for o in found))
         # 되읽기 — 처리한 주문은 같은 필터에 남아 있으면 안 된다
         ui.set_filters()
@@ -118,4 +131,4 @@ class ShopMineAdapter:
                 ExportFail.VERIFY_MISMATCH,
                 f'{self._status} 지정 뒤에도 {len(left)}건이 필터에 남음(처리 대상 {len(found)}건)',
             )
-        return set(found)
+        return set(found) | already
