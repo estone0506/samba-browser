@@ -36,9 +36,9 @@ try{
   if(rm){
     if(!/value="on"/.test(rm[0])){await page.click(parseInt(rm[1]));await sleep(900);}
     receipt='지출증빙용';
-    const it=(await page.get({interactive:true})).tree.split('\n');
-    const ri=it.findIndex(l=>/radio "지출증빙용"/.test(l));
-    const tb=it.find(l=>/^\[\d+\] textbox "[^"]*10자리/.test(l));
+    // 번호 칸은 라디오를 누른 뒤 늦게 뜬다(실기 2026-09-29: 바로 읽으면 없음) — 뜰 때까지 기다린다. 전체 목록은 긴 주문서에서 잘려 검색으로 찾는다
+    let tb=null;
+    for(let k=0;k<8&&!tb;k++){tb=(await page.get({query:'10자리'})).tree.split('\n').find(l=>/^\[\d+\] textbox "[^"]*10자리/.test(l))||null;if(!tb)await sleep(700);}
     if(!tb)receipt='지출증빙용(번호 칸 못 찾음)';
     // 칸에 다른 번호(소득공제용 휴대폰 번호 등)가 미리 들어 있으면 지우고 사업자등록번호로 바꾼다(실기 2026-09-29)
     const cur=tb?((tb.match(/value="([^"]*)"/)||[])[1]||'').replace(/\D/g,''):'';
@@ -53,7 +53,7 @@ await sleep(3000);
 if (/네이버페이/.test(method)) {
   for (let i = 0; i < 8; i++) { const ag = await page.idOf('동의하고 결제하기'); if (ag >= 0) { await page.click(ag); await sleep(3000); break; } await sleep(1000); }
 }
-try{const T=String((await page.get({})).tree||'');if(/^URL: [^\n]*orderSheet/.test(T)){const m=T.match(/사업자등록번호[^\n]{0,25}입력해 ?주세요/)||T.match(/[^\n.]{0,30}(입력해 ?주세요|선택해 ?주세요|동의해 ?주세요)/);after='주문서에 그대로: '+(m?m[0].replace(/\d{6,}/g,'#'):'안내 문구 없음')}}catch(e){}
+try{const T=String((await page.get({})).tree||'');if(/^URL: [^\n]*orderSheet/.test(T)){const m=T.match(/사업자등록번호[^\n]{0,25}입력해 ?주세요/);if(m)after='주문서에서 막힘: '+m[0]}}catch(e){}
 if(after)return{ok:false,error:after,method,receipt};
 const tbs = await tabs.list();
 const popup = tbs.find(t=>t.kind==='popup');
