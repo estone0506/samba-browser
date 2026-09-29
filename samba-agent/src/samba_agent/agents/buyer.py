@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 from urllib.parse import urlparse
 
+from samba_agent import local_aliases
 from samba_agent.agents.base import (
     PAGE_DIALOGS_KEY,
     AgentBase,
@@ -338,9 +339,9 @@ def cheapest_quotes(
 # 포이즌 외 마켓의 까대기 건 배송비(삼바웨이브 기록, 원). 사무실 경유 재발송비 — poizon-sourcing 스킬 규칙
 KKADAEGI_SHIPPING_FEE = 2300
 # 사무실 주소 표식 — 까대기의 기본 배송지가 이 주소여야 한다(경북 가상시 사무실길 58)
-OFFICE_ADDRESS_HINT = '사무실길 58'
+OFFICE_ADDRESS_HINT = local_aliases.apply('사무실길 58')
 # 사무실 수령인 — 주소가 사무실이어도 이름이 다르면 사무실 배송지로 보지 않는다(사용자 2026-09-24)
-OFFICE_NAME = '김사무'
+OFFICE_NAME = local_aliases.apply('김사무')
 # 까대기 주문 배송지(사무실). 기본 배송지가 사무실이 아닐 때 이번 주문에만 넣는다 — poizon-sourcing 스킬 "사무실 배송"
 OFFICE_DETAIL = '1층 102호'
 # 계정별 결제수단 제한 — 비어 있으면 모든 계정이 허용 수단(SAMBA_ALLOWED_PAY_PROVIDERS) 전부로 비교한다.
@@ -348,9 +349,9 @@ OFFICE_DETAIL = '1층 102호'
 ACCOUNT_PAY_ONLY: dict[str, frozenset[str]] = {}
 OFFICE_SHIPPING: dict[str, object] = {
     'name': OFFICE_NAME,
-    'address': '경북 가상시 사무실길 58',
+    'address': local_aliases.apply('경북 가상시 사무실길 58'),
     'address_detail': OFFICE_DETAIL,
-    'postal_code': '38069',
+    'postal_code': local_aliases.apply('postal:99999').removeprefix('postal:'),
 }
 # 포인트로 전액 결제할 때의 결제수단 이름 — 결제 진입 스크립트가 이 이름을 보고 수단을 고르지 않고 결제하기만 누른다
 POINTS_ONLY_METHOD = '포인트전액'
