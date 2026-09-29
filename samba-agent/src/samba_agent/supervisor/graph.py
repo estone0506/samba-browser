@@ -24,8 +24,10 @@ _log = logging.getLogger(__name__)
 
 AgentFn = Callable[..., AgentResult]
 
-# 외부 시스템을 실제로 바꾸는 단계 — 사람 승인 없이는 들어가지 않는다(스펙 §10-1)
-EXTERNAL_STAGES = ('pay', 'record')
+# 사람 승인 없이는 들어가지 않는 단계 — 돈이 나가는 결제 하나뿐이다(계획 Task D).
+# 기록은 삼바웨이브 우리 DB 에 소싱주문번호를 적는 것이라 되돌릴 수 있고, 매 건 승인을 받으면
+# 자동 수집이 사람 손에 다시 묶인다. 잘못 적힌 값은 검증 단계가 잡는다
+EXTERNAL_STAGES = ('pay',)
 # 단계 진입을 밖(큐)에 알리는 콜백. 결제 진입 표시를 큐에 남겨 재시작 재결제를 막는다
 StageHook = Callable[[RunState, str], None]
 
@@ -91,7 +93,7 @@ def _run_stage(
         except BridgeError as e:
             result = AgentResult(status='fail', reason=f'브릿지 오류: {e}', fail_reason=e.reason)
         if stage == 'buy':
-            result = check_buyer(result)
+            result = check_buyer(result, state['order'].seller)
         if on_agent_result is not None:
             elapsed_ms = int((time.monotonic() - started) * 1000)
             try:
@@ -110,6 +112,54 @@ def _run_stage(
         'attempts': attempts,
         'evidence': [*state.get('evidence', []), *result.evidence],
         'stage': stage,
+    }
+
+
+# 외부 기입 결과가 state 에 담기는 이름
+EXPORTER_NAME = 'exporter'
+# export 노드 함수 — 검증까지 끝난 state 를 받아 결과 하나를 돌려준다
+ExportFn = Callable[[RunState], AgentResult]
+
+
+def _run_export(
+    exporter: ExportFn,
+    state: RunState,
+    on_agent_result: 'AgentResultHook | None' = None,
+) -> RunState:
+    """외부 기입 — 주문 결과를 바꾸지 않는다.
+
+    결제·기록·검증이 끝난 주문이다. 외부 프로그램 기입이 실패하거나 예외가 나도 outcome 은
+    건드리지 않는다 — 여기서 멈추면 이미 산 주문이 사람 대기로 남는다.
+    """
+    started = time.monotonic()
+    try:
+        result = exporter(state)
+    except Exception:  # noqa: BLE001 — 외부 기입 오류가 주문 처리를 막으면 안 된다
+        _log.exception('외부 기입 요청 실패 — 주문은 완료로 둔다')
+        result = AgentResult(
+            status='ok',
+            reason='외부 기입 요청 중 오류 — 주문은 완료로 둔다',
+            payload={'export': 'error'},
+        )
+    if result.status != 'ok':
+        # 계약 위반(export 는 항상 ok 를 돌려준다) — 주문을 멈추지 않고 사유만 남긴다
+        result = AgentResult(
+            status='ok',
+            reason=f'외부 기입 결과 이상 — {result.reason}',
+            payload={'export': 'error'},
+            evidence=result.evidence,
+        )
+    if on_agent_result is not None:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        try:
+            on_agent_result(state, 'export', EXPORTER_NAME, result, elapsed_ms, 1)
+        except Exception:  # noqa: BLE001 — 기록 실패가 주문 처리를 막으면 안 된다
+            _log.exception('에이전트 결과 기록 실패 — 계속한다: %s', EXPORTER_NAME)
+    result = sanitize_result(result)
+    return {
+        **state,
+        'results': {**state.get('results', {}), EXPORTER_NAME: result},
+        'evidence': [*state.get('evidence', []), *result.evidence],
     }
 
 
@@ -182,8 +232,12 @@ def build_supervisor(
     gate: bool = False,
     on_stage_start: 'StageHook | None' = None,
     on_agent_result: 'AgentResultHook | None' = None,
+    exporter: 'ExportFn | None' = None,
 ):
-    """감독자 그래프를 만든다. agents 는 이름 → 함수(실제 에이전트 또는 테스트용 가짜)."""
+    """감독자 그래프를 만든다. agents 는 이름 → 함수(실제 에이전트 또는 테스트용 가짜).
+
+    exporter 를 주면 검증 뒤에 외부 기입 노드가 붙는다(verify → export → finish).
+    """
     if gate and checkpointer is None:
         raise ValueError('게이트를 쓰려면 체크포인터가 필요하다')
 
@@ -233,9 +287,21 @@ def build_supervisor(
     for stage in STAGES:
         graph.add_node(stage, make(stage))
     graph.add_node('finish', _finish)
+    # 마지막 단계 다음 — 외부 기입이 있으면 거쳐 가고, 없으면 바로 끝낸다
+    after_last = 'finish'
+    if exporter is not None:
+
+        def export_node(state: RunState) -> RunState:
+            if state.get('outcome') is not None:
+                return state
+            return _run_export(exporter, state, on_agent_result)
+
+        graph.add_node('export', export_node)
+        graph.add_edge('export', 'finish')
+        after_last = 'export'
     graph.set_entry_point(STAGES[0])
     for i, stage in enumerate(STAGES):
-        nxt = STAGES[i + 1] if i + 1 < len(STAGES) else 'finish'
+        nxt = STAGES[i + 1] if i + 1 < len(STAGES) else after_last
         graph.add_conditional_edges(
             stage,
             lambda s, nxt=nxt: 'finish' if s.get('outcome') is not None else nxt,

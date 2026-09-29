@@ -71,6 +71,8 @@ export function sharedCredentialDomains(host: string): string[] {
 export const KNOWN_LOGIN_URLS: Record<string, string> = {
   // --- 국내 포털 ---
   'naver.com': 'https://nid.naver.com/nidlogin.login',
+  // 페이코 PC 결제창이 먼저 띄우는 로그인(실기 2026-09-25: id.payco.com/login.nhn — 아이디 name=id, 비밀번호 name=pw)
+  'payco.com': 'https://id.payco.com/login.nhn',
   'kakao.com': 'https://accounts.kakao.com/login',
   'daum.net': 'https://logins.daum.net/accounts/signinform.do',
   // --- 국내 쇼핑/커머스 ---

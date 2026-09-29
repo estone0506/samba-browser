@@ -2,11 +2,31 @@
 // 새 탭 페이지는 electron-vite 의 렌더러 다중 엔트리(src/renderer/newtab.html)로 빌드되고,
 // 여기서 out/renderer 아래 파일로 서빙된다. 개발 모드에서는 vite 개발 서버로 넘긴다.
 
-import { net, protocol } from 'electron'
+import { protocol } from 'electron'
+import { readFile } from 'node:fs/promises'
 import type { Session } from 'electron'
-import { join, normalize, resolve, sep } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { extname, join, normalize, resolve, sep } from 'node:path'
 import { INTERNAL_SCHEME } from '../../shared/url'
+
+// 내부 페이지 파일 응답의 content-type
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.map': 'application/json'
+}
 
 // 스킴별 문서 루트(out/renderer 기준 파일명). host 이름이 곧 페이지 이름이다
 const PAGES: Record<string, string> = {
@@ -74,13 +94,21 @@ export function registerInternalProtocol(opts: {
     const url = new URL(request.url)
     const page = PAGES[url.hostname]
     if (!page) return new Response('not found', { status: 404 })
+    // Electron net.fetch 는 쓰지 않는다 — webRequest 권한 확장이 켜져 있으면 프레임 없는 요청에서 Electron 이 죽는다
     if (opts.devServerUrl) {
-      return net.fetch(devTarget(opts.devServerUrl, page, url.pathname, url.search))
+      return globalThis.fetch(devTarget(opts.devServerUrl, page, url.pathname, url.search))
     }
     const pathname = url.pathname === '/' || url.pathname === '' ? `/${page}` : url.pathname
     const file = safeJoin(opts.rendererDir, pathname)
     if (!file) return new Response('forbidden', { status: 403 })
-    return net.fetch(pathToFileURL(file).toString())
+    try {
+      const body = await readFile(file)
+      return new Response(body, {
+        headers: { 'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream' }
+      })
+    } catch {
+      return new Response('not found', { status: 404 })
+    }
   }
   installed = handler
   protocol.handle(INTERNAL_SCHEME, handler)

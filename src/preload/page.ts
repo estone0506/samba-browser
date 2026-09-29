@@ -31,6 +31,7 @@ import {
   performSelect,
   performScroll,
   rectOf,
+  valueLength,
   fillValue,
   findLoginFields,
   signedInHint,
@@ -39,7 +40,9 @@ import {
   submitForm,
   isSecretField,
   keypadSignals,
+  checkByLabel,
   keypadLayout,
+  keypadUnlabeled,
   pressOnce,
   detectOverlays,
   runAgentOp,
@@ -54,6 +57,7 @@ import { installRegionPicker, REGION_HINTS } from './page-capture'
 import { installWebstoreHook, isWebstoreHost, type WebstoreInstallResult } from './page-webstore'
 import type { NewTabInitDto } from '../shared/newtab'
 import { installPageTranslate, type ImageOverlayDto } from './page-translate'
+import { installExtensionPageApi } from './extension-page'
 
 // 이 preload 는 세션 단위(registerPreloadScript type:'frame')로 등록돼 모든 프레임에서 돈다.
 // 탭의 webPreferences.preload 로만 걸면 window.open 으로 열린 팝업(결제창 등)에는 붙지 않기 때문이다.
@@ -70,6 +74,9 @@ const isTopFrame = window.self === window.top
 // 크롬에서 확장 UI 는 브라우저 기능이 손대지 않는 자리이고, 제스처·번역·자동 채움이
 // 그 위에서 돌면 확장이 만든 화면을 우리가 바꿔 버리는 셈이 된다
 const isExtensionDocument = location.protocol === 'chrome-extension:'
+
+// 확장 팝업·옵션 문서에는 Electron 에 없는 chrome.windows·cookies·tabs 동작만 보충한다(최상위 문서)
+if (isExtensionDocument && isTopFrame) installExtensionPageApi()
 
 if (!isExtensionDocument) {
   // AI 실행기. contextIsolation 이 켜져 있으면 preload 는 격리 월드(WorldId 999)에서 실행되므로
@@ -100,14 +107,20 @@ if (!isExtensionDocument) {
     isSecretField: (id: number) => isSecretField(id),
     // 결제 비밀번호 키패드 판정용 신호(값은 담기지 않는다)
     keypadSignals: () => keypadSignals(),
+    // 라벨 글자로 체크박스 켜기(숨은 동의 칸)
+    checkByLabel: (text: string) => checkByLabel(text),
     // 결제 키패드 숫자 버튼 배치(앱이 키마스터 값을 넣을 때). 값은 담기지 않는다
     keypadLayout: () => keypadLayout(),
+    // 글자 없는 키패드 버튼들의 뷰포트 사각형(앱이 OCR 로 숫자를 읽는다). 값은 담기지 않는다
+    keypadUnlabeled: () => keypadUnlabeled(),
     // 키패드 버튼 단발 누름(폴백 없음)
     pressOnce: (id: number) => pressOnce(id),
     // 화면을 덮고 있는 레이어(공지·쿠폰·앱 설치 배너·결제 확인창) 목록
     overlays: () => detectOverlays(),
     // 요소 가운데의 뷰포트 좌표. 메인 프로세스가 실제 마우스 클릭을 보낼 자리다
-    rectOf: (id: number) => rectOf(id)
+    rectOf: (id: number) => rectOf(id),
+    // 입력칸 값의 글자 수만(값은 안 돌려준다) — 진짜 키 입력이 들어갔는지 확인용
+    valueLength: (id: number) => valueLength(id)
   }
 
   // globalThis 에 직접 대입(any 없이 타입 안전하게)
@@ -133,13 +146,20 @@ if (!isExtensionDocument) {
   })
 }
 
+// 로그인 제출 감지(저장 제안·자동 저장) → 메인의 vault:capture 로 전달(비밀번호는 이 채널로만 나간다).
+// **모든 프레임**에 건다 — 로그인 폼을 iframe 에 두는 사이트가 있다. 메인(VaultCaptureGate)이 발신 프레임이
+// 탭 최상위 문서와 같은 등록 도메인일 때만 받는다(광고·제3자 iframe 의 제출은 버린다).
+// 격리 월드 preload 는 contextIsolation 하에서도 ipcRenderer 를 직접 사용할 수 있다.
+// allowUntrusted 없이 호출 → 합성(스크립트 생성) 이벤트는 무시하고 신뢰된(isTrusted) 사용자 이벤트만 처리한다.
+// trace 는 감지 단계 이름만 보낸다(값·아이디 없음) — 바가 안 뜰 때 앱 로그로 원인을 찾는다
+if (!isExtensionDocument) {
+  installCaptureListener((payload) => ipcRenderer.send(PAGE_IPC.vaultCapture, payload), {
+    trace: (stage) => ipcRenderer.send(PAGE_IPC.vaultCaptureTrace, stage)
+  })
+}
+
 // === 여기부터는 최상위 문서 전용 ============================================
 if (isTopFrame && !isExtensionDocument) {
-  // 폼 제출 감지 → 메인의 vault:capture 로 전달(비밀번호는 이 채널로만, pendingCapture 에만 잠깐 머문다)
-  // 격리 월드 preload 는 contextIsolation 하에서도 ipcRenderer 를 직접 사용할 수 있다
-  // 옵션 없이 호출 → 합성(스크립트 생성) 이벤트는 무시하고 신뢰된(isTrusted) 사용자 이벤트만 처리한다
-  installCaptureListener((payload) => ipcRenderer.send(PAGE_IPC.vaultCapture, payload))
-
   // 페이지 내 자동 채움 피커. 계정 목록에는 값이 없고, 채우기는 메인이 수행한다.
   // 문구는 페이지 언어가 아니라 앱 언어를 따라야 하므로, settings:get 으로 현재 언어를
   // 물어본 뒤 page-constants 의 ko/en 표에서 골라 쓴다(격리 월드에는 i18n 모듈을 쓸 수 없다).

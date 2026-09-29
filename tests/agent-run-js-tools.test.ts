@@ -64,6 +64,7 @@ function build(
     mode?: ToolContext['mode']
     confirmResult?: boolean
     limit?: number
+    safety?: 'no_pay' | 'probe'
   } = {}
 ): {
   run: (code: string) => Promise<string>
@@ -97,7 +98,9 @@ function build(
   const server = createSambaTools(ctx) as unknown as { tools: ToolStub[] }
   const runJs = server.tools.find((t) => t.name === 'run_js')!
   return {
-    run: async (code) => (await runJs.handler({ code })).content[0].text,
+    run: async (code) =>
+      (await runJs.handler({ code, ...(opts.safety ? { safety: opts.safety } : {}) })).content[0]
+        .text,
     confirm,
     steps,
     ticks: () => ticked
@@ -155,6 +158,34 @@ describe('run_js 는 도구와 같은 가드를 지난다', () => {
     const { run } = build({ confirmResult: false })
     expect(await run("return await page.click(3, '결제')")).toContain('denied by user')
     expect(pageBridge.click).not.toHaveBeenCalled()
+  })
+
+  it('safety no_pay 면 full 모드에서도 결제 버튼(글자 조각 포함)을 누르지 않는다', async () => {
+    // 결제하기 버튼 안의 가격 글자 — textOf 가 감싸는 버튼 글자까지 돌려준다
+    pageBridge.textOf.mockResolvedValue('37,850원 37,850원 결제하기')
+    const { run } = build({ mode: 'full', safety: 'no_pay' })
+    expect(await run('return await page.click(3)')).toContain('safety no_pay')
+    expect(await run('return await page.clickNative(3)')).toContain('safety no_pay')
+    expect(pageBridge.click).not.toHaveBeenCalled()
+  })
+
+  it('safety probe 는 코드를 돌리지 않고 지원 여부만 답한다', async () => {
+    const { run } = build({ safety: 'probe' })
+    expect(await run('return "probe-ran"')).toBe('safety: no_pay supported')
+  })
+
+  it('safety no_pay 는 주문 취소·반품 요청 버튼도 누르지 않는다', async () => {
+    pageBridge.textOf.mockResolvedValue('취소 요청')
+    const { run } = build({ mode: 'full', safety: 'no_pay' })
+    expect(await run('return await page.click(3)')).toContain('safety no_pay')
+    expect(pageBridge.click).not.toHaveBeenCalled()
+  })
+
+  it('safety no_pay 여도 결제 버튼이 아니면 누른다', async () => {
+    pageBridge.textOf.mockResolvedValue('무신사페이')
+    const { run } = build({ mode: 'full', safety: 'no_pay' })
+    await run('await page.click(3)')
+    expect(pageBridge.click).toHaveBeenCalled()
   })
 
   it('full 모드는 위험 단어 확인을 건너뛴다', async () => {

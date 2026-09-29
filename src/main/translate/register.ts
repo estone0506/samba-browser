@@ -171,7 +171,8 @@ export function registerTranslate(deps: RegisterTranslateDeps): TranslateHandle 
     // 글자를 읽는 동안 번역용 예비 프로세스를 띄워 둔다
     sdkAsk.prewarm()
     try {
-      const response = await wc.session.fetch(srcUrl)
+      // 탭 세션 fetch 는 확장(webRequest)이 켜져 있으면 Electron 이 죽는다 — Node fetch 로 받는다
+      const response = await globalThis.fetch(srcUrl)
       if (!response.ok) {
         emit({ error: 'translate:failed' })
         return

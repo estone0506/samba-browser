@@ -12,3 +12,8 @@ ops/reports/*.approval.json
 src/samba_agent/ops/reports/*.md
 src/samba_agent/ops/reports/*.eval.json
 !src/samba_agent/ops/reports/.gitkeep
+# 스크립트 자가 수리 이력(교체 전·후 코드) — 기기 로컬 산출물
+script-history/
+# 감시자 점검 중지 표시(scripts/samba-watchdog.ps1)
+PAUSE
+PAUSE_APP

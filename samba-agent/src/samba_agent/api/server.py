@@ -30,8 +30,13 @@ def build_app(
     root: Path,
     version: Callable[[], str],
     report_dir: Path | None = None,
+    approve: Callable[[str, bool, str, str | None], object] | None = None,
 ) -> Callable:
-    """WSGI 앱. 라우팅이 4개뿐이라 프레임워크를 들이지 않는다."""
+    """WSGI 앱. 라우팅이 몇 개뿐이라 프레임워크를 들이지 않는다.
+
+    approve 는 승인 대기 중인 주문을 깨우는 콜러블(worker.resume) — 슬랙이 없을 때 사람이 승인/거절을
+    넣는 유일한 경로다(POST /approve). 127.0.0.1 에서만 받는다.
+    """
     # 판정 산출물 위치는 gate·eval 과 같은 설정 하나로 정해진다(리뷰 지적 — I4)
     reports = report_dir if report_dir is not None else root / 'ops' / 'reports'
 
@@ -48,6 +53,8 @@ def build_app(
             resp = _get_rules(reg, root, version, path[len('/graph/rules/') :])
         elif req.method == 'PUT' and path.startswith('/graph/rules/'):
             resp = _put_rules(reg, root, version, path[len('/graph/rules/') :], req)
+        elif req.method == 'POST' and path == '/approve':
+            resp = _post_approve(approve, req)
         else:
             resp = _json({'error': 'not found'}, 404)
         return resp(environ, start_response)
@@ -206,6 +213,34 @@ def _candidate(reports: Path, version: str) -> dict[str, object] | None:
     if not path.exists():
         return None
     return {'version': version, 'report': path.read_text(encoding='utf-8')}
+
+
+def _post_approve(
+    approve: Callable[[str, bool, str, str | None], object] | None, req: Request
+) -> Response:
+    """승인/거절 — 본문 {"order_no", "approved": true|false, "by", "stage"(선택)}.
+
+    슬랙 승인 버튼과 같은 일을 한다(worker.resume). 대기 중이 아니거나 이미 다른 단계면 409.
+    """
+    if approve is None:
+        return _json({'error': 'approval channel not wired'}, 503)
+    try:
+        body = json.loads(req.get_data(as_text=True) or '{}')
+    except ValueError:
+        return _json({'error': 'invalid json'}, 400)
+    if not isinstance(body, dict):
+        return _json({'error': 'invalid body'}, 400)
+    order_no = str(body.get('order_no') or '').strip()
+    by = str(body.get('by') or '').strip()
+    approved = body.get('approved')
+    stage = body.get('stage')
+    if not order_no or not by or not isinstance(approved, bool):
+        return _json({'error': 'order_no, approved(bool), by are required'}, 400)
+    job = approve(order_no, approved, by, str(stage) if stage else None)
+    if job is None:
+        return _json({'error': 'not waiting for approval', 'order_no': order_no}, 409)
+    state = getattr(job, 'state', None)
+    return _json({'ok': True, 'order_no': order_no, 'approved': approved, 'state': state})
 
 
 def _json(body: object, status: int = 200) -> Response:

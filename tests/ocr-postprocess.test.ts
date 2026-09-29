@@ -272,3 +272,61 @@ describe.runIf(modelsReady)('OcrEngine (모델이 있을 때만)', () => {
     await engine.dispose()
   }, 120_000)
 })
+
+describe('normalizeDigit — 키패드 한 자리 숫자 정규화', () => {
+  it('숫자는 그대로, 닮은 글자는 숫자로, 나머지는 null', async () => {
+    const { normalizeDigit } = await import('../src/main/agent/tools-ocr')
+    expect(normalizeDigit('7')).toBe('7')
+    expect(normalizeDigit(' 4 ')).toBe('4')
+    expect(normalizeDigit('I')).toBe('1')
+    expect(normalizeDigit('O')).toBe('0')
+    expect(normalizeDigit('12')).toBeNull()
+    expect(normalizeDigit('')).toBeNull()
+    expect(normalizeDigit('가')).toBeNull()
+  })
+})
+
+describe('resolveKeypadDigits — 키패드 칸 판독 → 숫자 표', () => {
+  const read = (
+    cellId: number,
+    digit: string,
+    score = 1
+  ): { cellId: number; digit: string; score: number } => ({
+    cellId,
+    digit,
+    score
+  })
+  it('0~9 를 한 번씩 읽었으면 그대로', async () => {
+    const { resolveKeypadDigits } = await import('../src/main/agent/tools-ocr')
+    const reads = '0123456789'.split('').map((d, i) => read(100 + i, d))
+    const r = resolveKeypadDigits(reads)
+    expect(r?.inferred).toBeNull()
+    expect(r?.digits['7']).toBe(107)
+  })
+  it('7 이 두 칸이고 1 이 빠졌으면 덜 확신한 칸이 1 이다(실측: 네이버페이 글꼴)', async () => {
+    const { resolveKeypadDigits } = await import('../src/main/agent/tools-ocr')
+    const reads = [
+      ...'02345689'.split('').map((d, i) => read(100 + i, d)),
+      read(200, '7', 0.99),
+      read(201, '7', 0.5)
+    ]
+    const r = resolveKeypadDigits(reads)
+    expect(r?.inferred).toBe('1')
+    expect(r?.digits['1']).toBe(201)
+    expect(r?.digits['7']).toBe(200)
+  })
+  it('혼동 짝이 아니거나 확신도가 같거나 둘 이상 빠지면 추측하지 않는다', async () => {
+    const { resolveKeypadDigits } = await import('../src/main/agent/tools-ocr')
+    const base = '02345689'.split('').map((d, i) => read(100 + i, d))
+    // 2 가 두 칸, 1 이 빠짐 — 2↔1 은 혼동 짝이 아니다
+    expect(
+      resolveKeypadDigits([
+        ...'03456789'.split('').map((d, i) => read(100 + i, d)),
+        read(200, '2', 0.9),
+        read(201, '2', 0.4)
+      ])
+    ).toBeNull()
+    expect(resolveKeypadDigits([...base, read(200, '7', 0.9), read(201, '7', 0.9)])).toBeNull()
+    expect(resolveKeypadDigits(base)).toBeNull()
+  })
+})

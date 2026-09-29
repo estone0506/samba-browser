@@ -15,7 +15,7 @@ import { cn } from '@renderer/lib/utils'
 import { useVaultStore } from '@renderer/stores/vaultStore'
 import { useBrowserStore } from '@renderer/stores/browserStore'
 import { normalizeHost } from '@shared/host'
-import { VAULT_ITEM_TYPES } from '@shared/vault'
+import { VAULT_ITEM_TYPES, payPriorityOf, visibleTags } from '@shared/vault'
 import type { AccountDto, VaultItemMeta, VaultItemType } from '@shared/ipc'
 import { groupByDomain, type DomainGroup } from '@renderer/lib/vault-groups'
 import { AddItemMenu } from './AddItemMenu'
@@ -161,7 +161,12 @@ export function ItemList({ onAdd, onImport, onSettings }: Props): React.JSX.Elem
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-1">
-          {a.tags.slice(0, 2).map((tag) => (
+          {payPriorityOf(a.tags) !== null && (
+            <span className="rounded-full bg-[var(--accent-soft,#e8f0ff)] px-1.5 py-0.5 text-[10.5px] text-[var(--text2)]">
+              {t('vault.payPriority.badge', { n: payPriorityOf(a.tags) })}
+            </span>
+          )}
+          {visibleTags(a.tags).slice(0, 2).map((tag) => (
             <span
               key={tag}
               className="rounded-full bg-[var(--bg)] px-1.5 py-0.5 text-[10.5px] text-[var(--text2)]"

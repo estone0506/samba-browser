@@ -19,7 +19,8 @@ import {
   type AuditRow,
   type AccountRow,
   type AccountSnapshot,
-  type VaultItemRow
+  type VaultItemRow,
+  type PaymentItemLookup
 } from './repo'
 import {
   DEFAULT_FIELD_KEY,
@@ -33,6 +34,7 @@ import {
   type StoredSection
 } from './fields'
 import type { ExportRow } from './export'
+import { toCapturePrompt } from './login-capture'
 import {
   randomBytes,
   deriveKey,
@@ -170,6 +172,8 @@ export interface PendingCapture {
   isNew: boolean
   // 감지 시점에 금고가 잠겨 있었는가(UI 문구 분기용)
   locked: boolean
+  // 제출이 일어난 탭의 프로필 이름(새 계정 라벨용). 모르면 undefined
+  profile?: string
 }
 
 const META_SALT = 'salt'
@@ -908,6 +912,7 @@ export class VaultService {
   listAccounts(host?: string): AccountDto[] {
     const normalizedHost = host === undefined ? undefined : normalizeHost(host) || host
     const types = this.repo.itemTypesByAccount()
+    const providers = this.repo.paymentProvidersByAccount()
     return this.matchAccountRows(normalizedHost).map((a) => ({
       id: a.id,
       siteId: a.siteId,
@@ -916,6 +921,7 @@ export class VaultService {
       username: a.username,
       isDefault: a.isDefault,
       itemTypes: types.get(a.id) ?? [],
+      paymentProviders: providers.get(a.id) ?? [],
       urls: a.urls,
       agentAccess: a.agentAccess,
       tags: a.tags
@@ -1350,9 +1356,24 @@ export class VaultService {
     return null
   }
 
+  /**
+   * 계정의 결제 비밀번호 항목을 찾는다. 앱 계정 자신(naver.com 계정)에 저장된 항목은 결제 수단이 "이 사이트"(site)로
+   * 돼 있어도 그 앱의 결제 비밀번호다(실기 13차: 네이버 계정의 항목이 site 라 네이버페이 조회가 not-found) —
+   * 결제 수단으로 못 찾으면 그 계정이 그 결제 수단의 앱 계정일 때만 site 항목으로 다시 찾는다
+   */
+  private findPaymentRowFor(accountId: number, provider?: PaymentProvider): PaymentItemLookup {
+    const found = this.repo.findPaymentItemRow(accountId, provider)
+    if (found.row || !provider || provider === 'site') return found
+    const appHost = PAYMENT_PROVIDER_ACCOUNT_HOST[provider]
+    if (!appHost) return found
+    const account = this.repo.getAccount(accountId)
+    if (!account || accountGroupKey(account.host) !== appHost) return found
+    return this.repo.findPaymentItemRow(accountId, 'site')
+  }
+
   /** 계정에 그 결제 수단의 결제 비밀번호 항목(직접 값 또는 앱 계정 연결)이 있는가. 복호화하지 않는다 */
   hasPaymentItem(accountId: number, provider: PaymentProvider): boolean {
-    return this.repo.findPaymentItemRow(accountId, provider).row !== null
+    return this.findPaymentRowFor(accountId, provider).row !== null
   }
 
   /**
@@ -1366,7 +1387,7 @@ export class VaultService {
     const account = this.repo.getAccount(accountId)
     if (!account) return null
     if (accountGroupKey(account.host) === appHost) return account.username
-    const found = this.repo.findPaymentItemRow(accountId, provider)
+    const found = this.findPaymentRowFor(accountId, provider)
     if (!found.row) return null
     return paymentAccountOfSections(found.row.sections)
   }
@@ -1388,7 +1409,7 @@ export class VaultService {
     // 네이버는 서브도메인마다 다른 계정(nid / accounts.commerce / mail)이 같은 아이디일 수 있다 —
     // 그 아이디 중 이 결제 수단의 비밀번호를 실제로 가진 계정을 고른다
     for (const target of this.matchAccountRows(appHost).filter((a) => a.username === username)) {
-      const found = this.repo.findPaymentItemRow(target.id, provider)
+      const found = this.findPaymentRowFor(target.id, provider)
       if (!found.row) continue
       const targetSecret = findField(found.row.sections, DEFAULT_FIELD_KEY)
       if (targetSecret && isSecretField(targetSecret)) return found.row
@@ -1409,7 +1430,7 @@ export class VaultService {
     source?: 'ai' | 'user'
   }): PaymentSecretResult {
     if (!this.key) return { value: null, reason: 'locked' }
-    const found = this.repo.findPaymentItemRow(args.accountId, args.provider)
+    const found = this.findPaymentRowFor(args.accountId, args.provider)
     if (!found.row) return { value: null, reason: found.reason }
     // 쇼핑몰 계정의 항목이 "네이버 계정 mjkim88 의 비밀번호를 쓴다"는 연결이면 그 앱 계정의 항목으로 간다
     const linked = this.linkedPaymentRow(found.row)
@@ -1682,15 +1703,10 @@ export class VaultService {
     if (prompt) for (const cb of this.captureListeners) cb(prompt)
   }
 
-  // 렌더러에 보여줄 정보(비밀번호 제외)
+  // 렌더러에 보여줄 정보(비밀번호 제외, 아이디는 가린 값)
   pendingCapturePrompt(): CapturePromptDto | null {
     if (!this.pending || Date.now() > this.pending.expiresAt) return null
-    return {
-      host: this.pending.host,
-      username: this.pending.username,
-      isNew: this.pending.isNew,
-      locked: this.pending.locked
-    }
+    return toCapturePrompt(this.pending)
   }
 
   // 한 번 가져가면 즉시 비운다(메모리에 남기지 않는다)
@@ -1703,8 +1719,8 @@ export class VaultService {
     }
     if (!pending) return null
     if (Date.now() > pending.expiresAt) return null
-    const { host, username, password, isNew, locked } = pending
-    return { host, username, password, isNew, locked }
+    const { host, username, password, isNew, locked, profile } = pending
+    return { host, username, password, isNew, locked, ...(profile ? { profile } : {}) }
   }
 }
 

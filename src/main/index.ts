@@ -3,6 +3,8 @@ import { app, BrowserWindow, crashReporter } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { createMainWindow } from './window'
 import { TabManager } from './browser/tab-manager'
+import { setExtensionTabsProvider } from './extensions/tabs-bridge'
+import { installExtensionPageApi } from './extensions/page-api'
 import { markQuitting } from './browser/popups'
 import { registerInternalProtocol, registerInternalScheme } from './browser/internal-protocol'
 import { registerIpc } from './ipc/handlers'
@@ -11,6 +13,8 @@ import { openDatabase, type Db } from './db/client'
 import type { VaultService } from './vault/service'
 import type { SyncEngineHolder } from './sync/engine'
 import { runLoginHarness, writeVaultLocked } from './e2e/login-harness'
+import { chromeUserAgent } from './browser/webstore-ua'
+import { humanBusyInWindow } from './browser/human-activity'
 
 // 브라우저 프로세스 크래시 덤프를 로컬에 남긴다(서버 업로드 없음). 원인 추적용
 crashReporter.start({ uploadToServer: false, compress: false })
@@ -31,6 +35,15 @@ if (userDataOverride) app.setPath('userData', userDataOverride)
 // 개발 모드(electron.exe 직접 실행)에서도 앱 이름이 'Electron' 대신 제품명으로 보이게 한다
 app.setName('SAMBA Browser')
 
+// 창이 다른 창에 가려지면 Windows 가림 감지가 렌더링을 멈춰 capturePage(키패드 OCR)가
+// "Current display surface not available for capture" 로 실패한다(실기 2026-09-28) — 가림 감지를 끈다
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
+
+// 모든 사이트에 순수 크롬 UA 를 보낸다 — Electron 기본 UA 의 `SAMBABrowser/1.0.0 … Electron/39` 토큰은
+// reCAPTCHA Enterprise 같은 점수형 봇 판정에서 점수를 깎아 로그인이 조용히 거부된다(GS샵 실기).
+// userAgentFallback 은 이후 만들어지는 모든 세션·webContents 의 기본값이라 whenReady 이전에 바꿔야 한다
+app.userAgentFallback = chromeUserAgent(app.userAgentFallback)
+
 // 같은 userData 로 두 번째 인스턴스가 뜨면 data.db 저장이 서로 충돌한다(rename EPERM).
 // 락은 userData 경로별이라 SAMBA_USER_DATA 를 나눈 E2E·검증 인스턴스는 나란히 뜰 수 있다
 if (!app.requestSingleInstanceLock()) {
@@ -39,6 +52,9 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => {
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return
+    // 사람이 방금(HUMAN_BUSY_MS 안) 이 창에 입력 중이면 앞으로 끌어오지 않는다 — 그 사이의 두 번째 실행은
+    // 사람이 아니라 스크립트(워치독·하네스)가 띄운 것이라, 로그인하던 창의 포커스를 빼앗으면 안 된다
+    if (humanBusyInWindow(win)) return
     if (win.isMinimized()) win.restore()
     win.focus()
   })
@@ -102,6 +118,9 @@ app
     // 첫 탭의 page-favicon-updated 도 캐시에 들어간다
     registerFaviconIpc(win)
     const tabs = new TabManager(win)
+    // 확장 팝업·서비스워커의 탭·창 API(tabs.create·windows 등)를 이 창의 탭으로 처리한다
+    setExtensionTabsProvider(tabs.extensionTabsProvider())
+    installExtensionPageApi()
     db = await openDatabase(join(app.getPath('userData'), 'data.db'))
     const ipc = registerIpc(win, tabs, db)
     vault = ipc.vault

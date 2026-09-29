@@ -88,8 +88,7 @@ def test_승인하면_이어서_끝난다(setup):
     q.enqueue('A1', 'U1', {}, 'ts1')
     w = make(gate=True)
     w.tick()
-    w.resume('A1', approved=True, by='U9')  # 결제 승인
-    job = w.resume('A1', approved=True, by='U9')  # 기록 승인
+    job = w.resume('A1', approved=True, by='U9')  # 결제 승인 하나로 끝까지 간다
     assert job.state == 'done'
     assert log == ['buy', 'pay', 'record', 'verify']
 
@@ -422,3 +421,207 @@ def test_승인_대기로_멈춘_스레드는_지우지_않는다(setup):
     wiped.clear()
     w._reset_finished_thread(1)  # 다음 노드(승인 뒤 결제)가 남아 있다
     assert wiped == []
+
+
+class _FakeTabs:
+    """열린 탭 집합을 흉내 낸다. 작업 중 새 탭이 생겼다고 치고, 닫힌 것을 기록한다."""
+
+    def __init__(self) -> None:
+        self.open = {'t-samba'}
+        self.closed: list[str] = []
+
+    def snapshot(self):
+        return frozenset(self.open)
+
+    def close_new(self, before):
+        new = [t for t in self.open if t not in before]
+        self.closed.extend(new)
+        self.open -= set(new)
+        return len(new)
+
+
+def test_작업이_끝나면_그_작업이_연_탭을_닫는다(setup):
+    q, _log, _sent, make = setup
+    w = make(gate=False)
+    tabs = _FakeTabs()
+    w.d.tabs = tabs
+    orig = w.d.graph.invoke
+
+    def invoke_and_open_tab(*a, **k):
+        tabs.open.add('t-order')  # 구매 에이전트가 주문서 탭을 열었다
+        return orig(*a, **k)
+
+    w.d.graph.invoke = invoke_and_open_tab  # type: ignore[method-assign]
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    assert w.tick().state == 'done'
+    assert tabs.closed == ['t-order'] and 't-samba' in tabs.open
+
+
+def test_승인_대기_중에는_탭을_닫지_않고_재개_뒤에_닫는다(setup):
+    q, _log, _sent, make = setup
+    w = make(gate=True)
+    tabs = _FakeTabs()
+    w.d.tabs = tabs
+    orig = w.d.graph.invoke
+
+    def invoke_and_open_tab(*a, **k):
+        tabs.open.add('t-order')
+        return orig(*a, **k)
+
+    w.d.graph.invoke = invoke_and_open_tab  # type: ignore[method-assign]
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    job = w.tick()
+    assert '승인 대기' in (job.step or '') and tabs.closed == []
+    done = w.resume('A1', True, 'U1', stage='pay')
+    assert done is not None and done.state == 'done'
+    assert tabs.closed == ['t-order']
+
+
+def test_브릿지가_바쁘면_큐를_집지_않는다(setup):
+    q, log, _sent, make = setup
+    w = make(gate=False)
+    ready = {'v': False}
+    w.d.ready = lambda: ready['v']
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    assert w.tick() is None and q.get('A1').state == 'queued' and log == []
+    ready['v'] = True
+    assert w.tick().state == 'done'
+
+
+def test_소싱처가_범위_밖으로_바뀐_주문은_돌리지_않는다(tmp_path):
+    """무신사로 접수됐다가 삼바웨이브에서 롯데온으로 바뀐 주문 — 시작 직전에 건너뛴다(실기 2026-09-25)."""
+    reg = Registry.load(DEFAULT_ROOT)
+    q = JobQueue(tmp_path / 'jobs.sqlite')
+    log: list[str] = []
+    sent: list[str] = []
+    graph = build_supervisor(reg, agents(log, None), checkpointer=MemorySaver(), gate=False)
+    w = Worker(
+        WorkerDeps(
+            queue=q,
+            graph=graph,
+            version='vtest',
+            report=lambda job, line: sent.append(line),
+            parse_order=lambda job: OrderRef(order_no=job.order_no, source='LOTTEON', seller='포이즌', sku='티셔츠', qty=1),
+            sources=frozenset({'MUSINSA', '29CM'}),
+        )
+    )
+    q.enqueue('L1', 'U1', {}, 'ts1')
+    job = w.tick()
+    assert job.state == 'needs_human'
+    assert log == []
+    assert '범위 밖' in (job.error or '')
+
+
+def test_마진_미달로_멈춰도_가격X_표시를_부르지_않는다(setup):
+    """마진 미달은 쿠폰·적립 빠진 견적일 수 있다 — 자동 가격X·취소요청 금지(실기 2026-09-28)."""
+    q, log, sent, _make = setup
+    reg = Registry.load(DEFAULT_ROOT)
+    marked: list[tuple[str, str | None]] = []
+    graph = build_supervisor(reg, agents(log, None), checkpointer=MemorySaver(), gate=False)
+    w = Worker(
+        WorkerDeps(
+            queue=q,
+            graph=graph,
+            version='vtest',
+            report=lambda job, line: sent.append(line),
+            parse_order=order_of,
+            dry_run=False,
+            flag_order=lambda no, err: marked.append((no, err)) or '가격X 표시함',
+        )
+    )
+    job, _ = q.enqueue('A1', 'U1', {}, 'ts1')
+    w._apply(job, {'outcome': 'needs_human', 'fail_reason': 'margin'})
+    assert marked == []
+    assert any('가격X 보류' in s for s in sent)
+
+
+@pytest.mark.parametrize(
+    ('reason', 'flagged'),
+    [
+        ('확정 품절: buyer01 — buyer01: 주문 옵션 품절 표시 [...]', False),
+        ('판매 종료 및 중지된 상품', False),
+        ("모든 계정에서 살 수 없다(품절·실패): a — a: 옵션 불일치 ['65838704']", False),
+        ('모든 계정에서 살 수 없다(품절·실패): a — a: 원가 못 읽음(None)', False),
+    ],
+)
+def test_품절_실패는_자동으로_재고X_를_붙이지_않는다(setup, reason, flagged):
+    """품절로 보여도 워커가 재고X·취소요청을 자동으로 찍지 않는다 — 검수자가 페이지 근거를 보고 적는다(2026-09-28)."""
+    q, log, sent, _make = setup
+    reg = Registry.load(DEFAULT_ROOT)
+    marked: list[tuple[str, str | None]] = []
+    graph = build_supervisor(reg, agents(log, None), checkpointer=MemorySaver(), gate=False)
+    w = Worker(
+        WorkerDeps(
+            queue=q,
+            graph=graph,
+            version='vtest',
+            report=lambda job, line: sent.append(line),
+            parse_order=order_of,
+            dry_run=False,
+            flag_order=lambda no, err: marked.append((no, err)) or '재고X 표시함',
+        )
+    )
+    job, _ = q.enqueue('S1', 'U1', {}, 'ts1')
+    result = AgentResult(status='fail', reason=reason, fail_reason=FailReason.OUT_OF_STOCK)
+    w._apply(job, {'outcome': 'needs_human', 'fail_reason': 'out_of_stock', 'results': {'buyer.musinsa': result}})
+    assert (marked == [('S1', 'out_of_stock')]) is flagged
+    if not flagged:
+        assert any('재고X 보류' in s for s in sent)
+
+
+@pytest.mark.parametrize(
+    ('export_status', 'expect_alert'),
+    [
+        ('conflict', True),
+        ('error', True),
+        ('done', False),
+        ('pending', False),
+        ('skipped', False),
+    ],
+)
+def test_외부_기입_conflict_error는_보고에_남는다(setup, export_status, expect_alert):
+    # 리뷰 지적 — I1: conflict·error 는 report 만으로 완료 문구에 묻혀 운영자에게 안 보였다
+    q, _log, sent, _make = setup
+    reg = Registry.load(DEFAULT_ROOT)
+    graph = build_supervisor(reg, agents([], None), checkpointer=MemorySaver(), gate=False)
+    w = Worker(
+        WorkerDeps(
+            queue=q,
+            graph=graph,
+            version='vtest',
+            report=lambda job, line: sent.append(line),
+            parse_order=order_of,
+        )
+    )
+    job, _ = q.enqueue('A1', 'U1', {}, 'ts1')
+    exporter_result = AgentResult(
+        status='ok', reason=f'외부 기입 {export_status} 사유', payload={'export': export_status}
+    )
+    w._apply(job, {'outcome': 'done', 'results': {'exporter': exporter_result}})
+    alerts = [s for s in sent if '외부 기입' in s and export_status in s]
+    assert (len(alerts) == 1) is expect_alert
+
+
+def test_검증_전_결제수단은_자동_승인하지_않는다(tmp_path):
+    """페이코처럼 실결제 검증 전 수단이 뽑히면 사람 승인을 기다린다(2026-09-25)."""
+    reg = Registry.load(DEFAULT_ROOT)
+    q = JobQueue(tmp_path / 'jobs.sqlite')
+    log: list[str] = []
+    sent: list[str] = []
+    graph = build_supervisor(reg, agents(log, None), checkpointer=MemorySaver(), gate=True)
+    w = Worker(
+        WorkerDeps(
+            queue=q,
+            graph=graph,
+            version='vtest',
+            report=lambda job, line: sent.append(line),
+            parse_order=order_of,
+            auto_approve=True,
+            manual_approve_methods=('현대',),
+        )
+    )
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    job = w.tick()
+    assert job.state == 'needs_human'
+    assert 'pay' not in log
+    assert any('수동 승인 필요' in s for s in sent)

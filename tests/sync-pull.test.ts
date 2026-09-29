@@ -143,6 +143,24 @@ describe('pullAll', () => {
     expect(vault.listAccounts('a-rt.com').map((a) => a.id)).toEqual([kept.id])
   })
 
+  it('로컬에서 지운 계정은 원격의 더 늦은 살아 있는 갱신으로 되살리지 않는다', async () => {
+    // 실기: 병렬 인스턴스(옛 복제본)가 지운 계정을 만지고 upsert → LWW 로 삭제가 뒤집혀 키마스터에 계정이 원복
+    backend.seed('accounts_sync', [accountRow({ id: 'acc-del' })])
+    await pullAll(deps)
+    const id = local.accountIdByRemote('acc-del')!
+    vault.deleteAccounts([id])
+    expect(local.accountIdByRemote('acc-del')).toBeNull()
+    // 삭제 기록이 원격 id 를 메모해 둔다(outbox.record → rememberTombstoneFromPayload)
+    expect(local.tombstoneAt('accounts', 'acc-del')).not.toBeNull()
+    backend.seed('accounts_sync', [
+      accountRow({ id: 'acc-del', label: '되살아난 이름', updated_at: new Date(Date.now() + 60_000).toISOString() })
+    ])
+    const result = await pullAll(deps)
+    expect(result.conflicts).toBe(1)
+    expect(local.accountIdByRemote('acc-del')).toBeNull()
+    expect(vault.listAccounts('example.com')).toEqual([])
+  })
+
   it('원격이 더 최신이면 덮어쓰고, 로컬이 더 최신이면 유지한다', async () => {
     const account = vault.upsertAccount({ host: 'example.com', username: 'me', label: '로컬 이름' })
     const localUpdatedAt = local.accountForSync(account.id)!.updatedAt
@@ -177,6 +195,8 @@ describe('pullAll', () => {
     const remoteId = local.vaultItemForSync(item.id)!.remoteId!
     vault.deleteItem(item.id)
     outbox.clear(outbox.pending().map((r) => r.id))
+    // 다른 기기 흉내이므로 이 PC 의 삭제 메모(되살리기 방지)도 지운다
+    local.forgetTombstone('vault_items', remoteId)
     local.setStateNumber('pullCursor', 0)
 
     const result = await pullAll(deps)

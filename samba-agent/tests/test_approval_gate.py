@@ -57,14 +57,14 @@ def test_결제_직전에_멈추고_요약을_내놓는다(reg):
 
 
 def test_승인하면_결제_기록까지_이어진다(reg):
+    # 승인은 결제 한 번뿐이다(계획 Task D) — 기록·검증은 그대로 이어진다
     log: list[str] = []
     g = graph_of(reg, log)
     g.invoke({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG)
-    g.invoke(Command(resume={'approved': True, 'by': 'U1'}), CFG)  # 결제 승인
-    out = g.invoke(Command(resume={'approved': True, 'by': 'U1'}), CFG)  # 기록 승인
+    out = g.invoke(Command(resume={'approved': True, 'by': 'U1'}), CFG)  # 결제 승인
     assert log == ['buy', 'pay', 'record', 'verify']
     assert out['outcome'] == 'done'
-    assert out['approvals'] == {'pay': 'U1', 'record': 'U1'}
+    assert out['approvals'] == {'pay': 'U1'}
 
 
 def test_거부하면_외부를_바꾸지_않고_사람에게_넘긴다(reg):
@@ -77,13 +77,20 @@ def test_거부하면_외부를_바꾸지_않고_사람에게_넘긴다(reg):
     assert out['fail_reason'] is FailReason.PERMISSION_DENIED
 
 
-def test_기록_단계에도_따로_승인을_받는다(reg):
+def test_기록_단계는_승인_없이_지나간다(reg):
+    # 기록은 우리 DB 에 소싱주문번호를 적는 되돌릴 수 있는 일이다 — 매 건 승인을 받지 않는다
     log: list[str] = []
     g = graph_of(reg, log)
     g.invoke({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG)
     out = g.invoke(Command(resume={'approved': True, 'by': 'U1'}), CFG)
-    assert log == ['buy', 'pay']
-    assert out['__interrupt__'][0].value['stage'] == 'record'
+    assert '__interrupt__' not in out
+    assert log == ['buy', 'pay', 'record', 'verify']
+
+
+def test_승인이_필요한_단계는_결제_하나뿐이다():
+    from samba_agent.supervisor.graph import EXTERNAL_STAGES
+
+    assert EXTERNAL_STAGES == ('pay',)
 
 
 def test_dry_run_이어도_게이트는_뜬다(reg):
@@ -158,3 +165,22 @@ def test_전화번호는_가리고_카드_브랜드명은_남긴다():
     out = sanitize_payload({'phone': '010-1234-5678', 'card': '현대'})
     assert out['phone'] == '***'
     assert out['card'] == '현대'
+
+
+def test_플래그가_있으면_승인_요약_첫_줄에_표시한다(reg):
+    # 가격X·재고X 등은 오류일 수 있어 제외하지 않고 결제 승인에서 사람이 본다(계획 P2-4)
+    log: list[str] = []
+    flagged = ORDER.model_copy(update={'flags': ('no_price', 'no_stock', 'staff_a', 'weird')})
+    out = graph_of(reg, log).invoke(
+        {'order': flagged, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG
+    )
+    summary = out['__interrupt__'][0].value['summary']
+    assert summary.splitlines()[0] == '⚠ 플래그: 가격X, 재고X, 직원A, weird'
+
+
+def test_플래그가_없으면_경고_줄도_없다(reg):
+    log: list[str] = []
+    out = graph_of(reg, log).invoke(
+        {'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True}, CFG
+    )
+    assert '⚠' not in out['__interrupt__'][0].value['summary']

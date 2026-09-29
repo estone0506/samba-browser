@@ -31,11 +31,35 @@ def should_retry(spec: AgentSpec, result: AgentResult, attempts: int) -> bool:
         return False  # 결제 에이전트 — 재결제 위험
     if result.fail_reason in NO_RETRY_REASONS:
         return False
+    # 확정 품절(모든 계정에서 선택지는 읽혔는데 주문 사이즈가 없다)은 다시 돌려도 같다(실기: 재시도로 1건 10~20분)
+    if result.fail_reason is FailReason.OUT_OF_STOCK and result.reason.startswith('확정 품절'):
+        return False
     return attempts <= spec.retry
 
 
-def check_buyer(result: AgentResult) -> AgentResult:
-    """구매 결과를 감독자가 검사한다 — 카드가 있고 마진이 통과해야 결제로 넘어간다."""
+# 판매처별 마진 하한(사용자 지시 2026-09-23): 포이즌은 −3% 까지 감수하고 산다(마진 ≥ −3%),
+# 나머지 판매처는 0% 이하면 이행하지 않는다(마진 > 0%). 판매처 문자열에 아래 표식이 들어 있으면 포이즌이다
+POISON_SELLER_MARKERS = ('포이즌', 'poison', 'poizon')
+POISON_MARGIN_MIN = -3.0
+
+
+def is_poison_seller(seller: str | None) -> bool:
+    """판매처 문자열이 포이즌(삼바웨이브 마켓 poison)인가."""
+    s = (seller or '').lower()
+    return any(m in s for m in POISON_SELLER_MARKERS)
+
+
+def margin_ok(margin: object, seller: str | None) -> bool:
+    """마진율(%)이 판매처 기준을 넘는가. 숫자가 아니면 거짓."""
+    if not isinstance(margin, (int, float)) or isinstance(margin, bool):
+        return False
+    if is_poison_seller(seller):
+        return float(margin) >= POISON_MARGIN_MIN
+    return float(margin) > 0
+
+
+def check_buyer(result: AgentResult, seller: str | None = None) -> AgentResult:
+    """구매 결과를 감독자가 검사한다 — 카드가 있고 마진이 판매처 기준을 넘어야 결제로 넘어간다."""
     if result.status != 'ok':
         return result
     payload = result.payload
@@ -48,10 +72,11 @@ def check_buyer(result: AgentResult) -> AgentResult:
             evidence=result.evidence,
         )
     margin = payload.get('margin_pct')
-    if not isinstance(margin, (int, float)) or margin <= 0:
+    if not margin_ok(margin, seller):
+        floor = f'{POISON_MARGIN_MIN:g}% 이상' if is_poison_seller(seller) else '0% 초과'
         return AgentResult(
             status='fail',
-            reason=f'감독자 검사: 마진 미달({margin})',
+            reason=f'감독자 검사: 마진 미달({margin}, 기준 {floor})',
             fail_reason=FailReason.MARGIN,
             payload=payload,
             evidence=result.evidence,

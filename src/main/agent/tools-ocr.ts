@@ -4,6 +4,7 @@ import { OcrEngine } from '../ocr/engine'
 import { clipText } from '../ocr/postprocess'
 // 순환 import 를 피하려고 타입만 가져온다(런타임 코드는 남지 않는다)
 import type { ToolContext } from './tools'
+import type { Tab } from '../browser/tab-manager'
 import { secretKeypadGate } from './secret-page'
 import { agentTargetOf } from './target'
 
@@ -33,6 +34,167 @@ export function setOcrEnabled(value: boolean): void {
 function getEngine(): OcrEngine {
   if (!engine) engine = new OcrEngine()
   return engine
+}
+
+/** 모델이 없으면 뒤에서 내려받기를 시작한다(이미 받는 중이면 그대로 둔다) */
+function startModelDownload(ocr: OcrEngine): void {
+  if (ocr.isDownloading()) return
+  lastDownloadError = ''
+  void ocr.ensureModels().catch((e: unknown) => {
+    lastDownloadError = e instanceof Error ? e.message : String(e)
+  })
+}
+
+// 한 자리 숫자 판독 결과로 인정하는 모양
+const SINGLE_DIGIT_RE = /^[0-9]$/
+
+// 숫자 하나를 글자로 잘못 읽는 흔한 경우(실측: Arial 의 1 을 I 로). 키패드는 0~9 가 한 번씩 나와야 하므로
+// 잘못 바꿔도 중복·누락으로 걸러진다
+const DIGIT_LOOKALIKES: Record<string, string> = {
+  I: '1',
+  l: '1',
+  '|': '1',
+  O: '0',
+  o: '0',
+  D: '0',
+  S: '5',
+  s: '5',
+  B: '8',
+  Z: '2',
+  z: '2',
+  g: '9',
+  q: '9',
+  b: '6'
+}
+
+/** 판독 글자를 한 자리 숫자로 정규화한다. 숫자 하나로 볼 수 없으면 null */
+export function normalizeDigit(text: string): string | null {
+  // 공백·구두점(숫자 옆에 붙는 '.'·','·'-' 같은 잡음)은 버리고 글자만 본다
+  const t = text.replace(/[^0-9A-Za-z|]/g, '')
+  if (SINGLE_DIGIT_RE.test(t)) return t
+  if (t.length === 1 && DIGIT_LOOKALIKES[t] !== undefined) return DIGIT_LOOKALIKES[t]
+  return null
+}
+
+// 캡처를 인식 전에 키우는 배율 — 화면 배율 1 에서 숫자 한 칸은 20×25px 정도라 모델이 놓친다
+const DIGIT_UPSCALE = 3
+
+// 모델이 서로 헷갈리는 숫자 쌍(실측: 네이버페이 글꼴의 1 은 7 로 읽힌다). 키패드는 0~9 가 한 번씩이므로
+// "같은 숫자가 두 칸, 그 짝 숫자가 빠짐" 이면 덜 확신한 칸이 빠진 숫자다
+const DIGIT_CONFUSIONS: Record<string, string[]> = {
+  '7': ['1'],
+  '1': ['7'],
+  '0': ['6', '8', '9'],
+  '6': ['0', '5', '8'],
+  '8': ['0', '3', '6'],
+  '3': ['8'],
+  '5': ['6'],
+  '9': ['0', '4'],
+  '4': ['9']
+}
+
+export interface DigitRead {
+  cellId: number
+  digit: string
+  score: number
+}
+
+/**
+ * 키패드 칸별 판독을 숫자→칸 표로 만든다. 10칸이 0~9 를 한 번씩 읽었으면 그대로,
+ * 9개만 구분되고 한 숫자가 두 칸에서 읽혔으며 빠진 숫자가 그 숫자의 혼동 짝이면 덜 확신한 칸을 빠진 숫자로 본다.
+ * 그 밖(둘 이상 빠짐·혼동 짝 아님·확신도 같음)은 null — 잘못 누르면 결제 수단이 잠기므로 추측하지 않는다
+ */
+export function resolveKeypadDigits(
+  reads: readonly DigitRead[]
+): { digits: Record<string, number>; inferred: string | null } | null {
+  const byDigit = new Map<string, DigitRead[]>()
+  for (const r of reads) byDigit.set(r.digit, [...(byDigit.get(r.digit) ?? []), r])
+  const missing = '0123456789'.split('').filter((d) => !byDigit.has(d))
+  const dups = [...byDigit.entries()].filter(([, cells]) => cells.length > 1)
+  const digits: Record<string, number> = {}
+  if (missing.length === 0 && dups.length === 0 && reads.length === 10) {
+    for (const r of reads) digits[r.digit] = r.cellId
+    return { digits, inferred: null }
+  }
+  if (missing.length !== 1 || dups.length !== 1 || reads.length !== 10) return null
+  const [dupDigit, cells] = dups[0]
+  if (cells.length !== 2 || !(DIGIT_CONFUSIONS[dupDigit] ?? []).includes(missing[0])) return null
+  const [a, b] = cells
+  if (a.score === b.score) return null
+  const weaker = a.score < b.score ? a : b
+  for (const r of reads) digits[r === weaker ? missing[0] : r.digit] = r.cellId
+  return { digits, inferred: missing[0] }
+}
+
+// 키패드 판독 직전 모델 내려받기를 기다리는 상한(rec.onnx 13MB 기준)
+const MODEL_WAIT_MS = 90_000
+
+/**
+ * 탭의 한 영역(뷰 좌표)을 캡처해 한 자리 숫자로 읽는다. 앱 내부 전용이다 —
+ * 글자 없는 보안 키패드(네이버페이)의 숫자 배치를 앱이 스스로 알아낼 때만 쓰고,
+ * 결과를 모델에게 넘기지 않는다. OCR 이 꺼져 있거나 모델이 아직 없거나(내려받기는 시작한다),
+ * 읽은 글자가 정확히 숫자 하나가 아니면 null
+ */
+export async function ocrDigitInRegion(
+  tab: Tab,
+  rect: { x: number; y: number; width: number; height: number },
+  // 못 읽은 사유를 모으는 곳(진행 라벨용). 숫자·좌표는 담지 않는다
+  reasons?: string[],
+  // 읽은 숫자의 확신도(0~1)를 돌려받는 곳. 숫자를 돌려줄 때만 push 한다
+  scores?: number[]
+): Promise<string | null> {
+  const fail = (why: string): null => {
+    reasons?.push(why)
+    return null
+  }
+  if (!enabled) return fail('disabled')
+  try {
+    const bounds = tab.view.getBounds()
+    if (bounds.width === 0 || bounds.height === 0) return fail('bounds0')
+    const ocr = getEngine()
+    if (!ocr.hasModels()) {
+      // 모델이 없으면 내려받기를 시작하고 잠시 기다린다 — 첫 호출에서 바로 포기하면 키패드가 사람에게 넘어간다
+      // (실기 10차: rec.onnx 하나가 빠져 있어 배치 실패). 상한 안에 못 받으면 못 읽음으로 본다
+      startModelDownload(ocr)
+      await Promise.race([
+        ocr.ensureModels().catch(() => undefined),
+        new Promise<void>((resolve) => setTimeout(resolve, MODEL_WAIT_MS))
+      ])
+      if (!ocr.hasModels()) return fail('no-models')
+    }
+    const clamped = clampRect(rect, bounds.width, bounds.height)
+    if (clamped.width < 1 || clamped.height < 1) return fail('rect0')
+    const image = await tab.view.webContents.capturePage(clamped)
+    const size = image.getSize()
+    if (size.width === 0 || size.height === 0) return fail('capture0')
+    // 작은 캡처는 키워서 넣는다(실기 12차: 원본 크기로는 10칸 중 6칸만 읽힘)
+    const png = image
+      .resize({
+        width: size.width * DIGIT_UPSCALE,
+        height: size.height * DIGIT_UPSCALE,
+        quality: 'best'
+      })
+      .toPNG()
+    const result = await ocr.recognize(png)
+    const text = result.lines.map((l) => l.text).join('')
+    const fromDet = normalizeDigit(text)
+    if (fromDet !== null) {
+      scores?.push(Math.min(...result.lines.map((l) => l.score)))
+      return fromDet
+    }
+    // 검출 모델이 작은 숫자 하나를 못 잡으면(빈 결과) 칸 전체를 한 줄로 다시 읽는다
+    const whole = await ocr.recognizeWhole(png)
+    const wholeText = whole?.text ?? ''
+    const fromWhole = normalizeDigit(wholeText)
+    if (fromWhole !== null) {
+      scores?.push(whole?.score ?? 0)
+      return fromWhole
+    }
+    return fail(`text:${text.length}/${wholeText.length}`)
+  } catch (e: unknown) {
+    // 캡처·인식 실패는 "못 읽음"으로 본다 — 호출부가 사람에게 넘긴다
+    return fail(`error:${(e instanceof Error ? e.message : String(e)).slice(0, 60)}`)
+  }
 }
 
 const regionSchema = z.object({
@@ -82,12 +244,7 @@ export function createOcrTool(ctx: ToolContext): SdkMcpToolDefinition<typeof ocr
         const ocr = getEngine()
         if (!ocr.hasModels()) {
           // 첫 호출은 즉시 돌려주고 다운로드는 뒤에서 돈다(모델 합계 약 18MB)
-          if (!ocr.isDownloading()) {
-            lastDownloadError = ''
-            void ocr.ensureModels().catch((e: unknown) => {
-              lastDownloadError = e instanceof Error ? e.message : String(e)
-            })
-          }
+          startModelDownload(ocr)
           ctx.onStep(STEP_LABEL, false)
           return textResult(lastDownloadError ? `error: ${lastDownloadError}` : DOWNLOADING)
         }

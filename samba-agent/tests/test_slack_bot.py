@@ -76,7 +76,7 @@ def test_승인_버튼이_그래프를_이어간다(bot):
     assert q.get('A1').state == 'needs_human'
     out = b.handle_approval('A1', approved=True, user='U1')
     assert '승인' in out
-    assert q.get('A1').state in ('needs_human', 'done')  # 다음 게이트(기록)에서 다시 멈춘다
+    assert q.get('A1').state == 'done'  # 결제 승인 뒤에는 기록·검증까지 이어진다
 
 
 def test_미등록_사용자의_승인은_무시한다(bot):
@@ -111,7 +111,7 @@ def test_승인_블록에_두_버튼이_있다():
     assert all('A1' in str(b) or True for b in blocks)
 
 
-def test_같은_승인_버튼_두번_눌러도_record_게이트를_통과시키지_않는다(bot):
+def test_같은_승인_버튼_두번_눌러도_한_번만_먹는다(bot):
     # 리뷰 지적 — Critical 2: 중복 승인 클릭은 한 번만 먹어야 한다
     b, q, w = bot
     b.handle_mention('<@BOT> A1 처리해', 'U1', 'ts1')
@@ -129,11 +129,10 @@ def test_같은_승인_버튼_두번_눌러도_record_게이트를_통과시키�
 
     out1 = b.handle_approval('A1', True, 'U1', stage='pay')
     assert '승인' in out1
-    assert q.get('A1').step == '승인 대기: record'  # 다음 게이트로 정상 진행
+    assert q.get('A1').state == 'done'  # 결제 승인 하나로 기록·검증까지 간다
 
     out2 = b.handle_approval('A1', True, 'U1', stage='pay')  # 같은 버튼 재클릭
-    assert '이미' in out2
-    assert q.get('A1').step == '승인 대기: record'  # record 게이트는 건드리지 않았다
+    assert '승인 대기 상태가 아닙니다' in out2
     assert calls == ['resume']  # 실제 재개는 첫 클릭 한 번뿐
 
 
@@ -254,3 +253,75 @@ def test_버전_승인_명령은_승인자를_파일에_남긴다(tmp_path, bot)
     out = b.handle_mention('<@BOT> 승인 vab12cd34ef56', 'U1', None)
     assert 'vab12cd34ef56' in out
     assert read_approval(tmp_path, 'vab12cd34ef56') == 'U1'
+
+
+# ---- 자동 수집 명령 배선(Task D) ----
+
+
+class _FakeIntake:
+    """Intake 의 세 메서드만 흉내 낸다."""
+
+    def __init__(self) -> None:
+        from samba_agent.queue.intake import IntakeReport
+
+        self.paused = False
+        self.runs = 0
+        self._report = IntakeReport(seen=3, enqueued=2, skipped_live=1, unsupported=0)
+
+    def run_once(self):
+        self.runs += 1
+        return self._report
+
+    def pause(self) -> None:
+        self.paused = True
+
+    def resume(self) -> None:
+        self.paused = False
+
+
+def test_주문처리_전체는_수집을_한_바퀴_돌리고_요약한다(bot):
+    b, _q, _w = bot
+    b.intake = _FakeIntake()
+    out = b.handle_mention('<@BOT> 주문처리 전체', 'U1', 'ts1')
+    assert b.intake.runs == 1
+    assert '수집 3건' in out and '접수 2건' in out
+
+
+def test_수집_중지와_재개가_깃발을_바꾼다(bot):
+    b, _q, _w = bot
+    b.intake = _FakeIntake()
+    assert '중지' in b.handle_mention('<@BOT> 수집 중지', 'U1', None)
+    assert b.intake.paused is True
+    assert '재개' in b.handle_mention('<@BOT> 수집 재개', 'U1', None)
+    assert b.intake.paused is False
+
+
+def test_수집이_배선되지_않았으면_안내만_한다(bot):
+    b, _q, _w = bot
+    assert '꺼져' in b.handle_mention('<@BOT> 주문처리 전체', 'U1', None)
+
+
+def test_post_new_는_최상위_메시지_ts_를_준다(bot):
+    b, _q, _w = bot
+
+    calls: list[dict] = []
+
+    class _Client:
+        @staticmethod
+        def chat_postMessage(**kw):
+            calls.append(kw)
+            return {'ok': True, 'ts': '1700.1'}
+
+    class _App:
+        client = _Client()
+
+    b.app = _App()
+    b._channel_id = 'C1'
+    assert b.post_new('접수: A1 · MUSINSA · 신발 · 1개') == '1700.1'
+    kw = calls[-1]
+    assert kw['channel'] == 'C1' and 'thread_ts' not in kw
+
+
+def test_슬랙이_없으면_post_new_는_None(bot):
+    b, _q, _w = bot
+    assert b.post_new('접수: A1') is None

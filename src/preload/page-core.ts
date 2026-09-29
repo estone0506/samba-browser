@@ -2,12 +2,14 @@
 // src/shared/* 에서 **값(value)** 을 import 하지 말 것 — Rollup 청크 분리로 require() 가 생겨
 // preload 로드가 실패한다. 타입은 `import type` 만 사용(번들에 남지 않음), 값은 ./page-constants 에서.
 import type {
+  KeypadCellDto,
   KeypadLayoutDto,
   KeypadSignals,
   PageElement,
   PageOverlay,
   PageSnapshot
 } from '../shared/snapshot'
+import type { CaptureTraceStage } from '../shared/vault'
 import { MAX_ELEMENTS } from './page-constants'
 import {
   isCloseLabel,
@@ -21,6 +23,10 @@ import {
   detectSignedInHint,
   detectCaptchaHint,
   labelTextOf,
+  passwordElement as detectPasswordElement,
+  standaloneUsernameElement,
+  SOCIAL_RE,
+  SUBMIT_TEXT_RE,
   usernameElementFor as detectUsernameElementFor,
   type CaptchaHint,
   type LoginFields,
@@ -252,6 +258,51 @@ function isInViewport(el: HTMLElement): boolean {
   return rect.bottom > 0 && rect.right > 0 && rect.top < height && rect.left < width
 }
 
+/** 요소 자신이나 조상이 position fixed/sticky 인가(하단 고정 구매 바 등). 조상 판정은 cache 로 한 번만 한다 */
+function isPinned(el: HTMLElement, cache: Map<Element, boolean>): boolean {
+  const path: Element[] = []
+  let node: Element | null = el
+  let pinned = false
+  while (node && node !== document.body && node !== document.documentElement) {
+    const known = cache.get(node)
+    if (known !== undefined) {
+      pinned = known
+      break
+    }
+    path.push(node)
+    const position = window.getComputedStyle(node).position
+    if (position === 'fixed' || position === 'sticky') {
+      pinned = true
+      break
+    }
+    node = node.parentElement
+  }
+  for (const n of path) cache.set(n, pinned)
+  return pinned
+}
+
+const FORM_CONTROL_TAGS = new Set(['BUTTON', 'SELECT', 'INPUT'])
+
+/**
+ * 뷰포트 안 요소가 하나도 없을 때의 대체 순서.
+ * 창에 붙지 않은 탭(뒤에서 도는 자동화 탭)은 뷰포트 판정이 전부 false 라 문서 순으로만 나열되고,
+ * 페이지 끝의 구매 버튼·옵션칸이 MAX_ELEMENTS 밖으로 밀렸다(실기: 무신사 'buy button not found').
+ * fixed/sticky 조상을 가진 요소 → button/select/input → 나머지 순서로, 각 묶음 안은 문서 순서를 지킨다
+ */
+function fallbackOrder(items: PageElement[], nodes: HTMLElement[]): PageElement[] {
+  const cache = new Map<Element, boolean>()
+  const pinned: PageElement[] = []
+  const controls: PageElement[] = []
+  const rest: PageElement[] = []
+  items.forEach((item, i) => {
+    const el = nodes[i]
+    if (isPinned(el, cache)) pinned.push(item)
+    else if (FORM_CONTROL_TAGS.has(el.tagName)) controls.push(item)
+    else rest.push(item)
+  })
+  return pinned.concat(controls, rest)
+}
+
 /** 검색어가 요소의 라벨·name·href·placeholder 에 들어 있는가(대소문자 무시 부분일치) */
 function matchesQuery(el: HTMLElement, item: PageElement, query: string): boolean {
   const haystack = [
@@ -423,7 +474,12 @@ export function buildSnapshot(options: SnapshotOptions = {}): PageSnapshot {
     const rest: PageElement[] = []
     scoped.forEach((item, i) => (isInViewport(scopedNodes[i]) ? inView : rest).push(item))
     total = scoped.length
-    picked = inView.concat(rest).slice(0, MAX_ELEMENTS)
+    // 뷰포트 안이 0개인데 잘려야 하면(창에 안 붙은 탭 등) 고정 바·폼 컨트롤을 먼저 둔다
+    const ordered =
+      inView.length === 0 && scoped.length > MAX_ELEMENTS
+        ? fallbackOrder(scoped, scopedNodes)
+        : inView.concat(rest)
+    picked = ordered.slice(0, MAX_ELEMENTS)
   }
   // selector 를 주면 본문 텍스트도 그 범위 안만 모은다(전체 페이지 텍스트를 다시 보내지 않게)
   const body =
@@ -473,6 +529,10 @@ export function textOf(id: number): string {
   const el = get(id)
   if (!el) return ''
   const parts = [labelOf(el)]
+  // 버튼·링크 안의 글자 조각(예: 결제하기 버튼 안의 '37,850원')을 누르면 그 버튼이 눌린다 —
+  // 감싸는 버튼·링크의 글자도 함께 봐야 위험 판정(결제 버튼 차단)이 새지 않는다
+  const actionable = el.parentElement?.closest('button, a, [role="button"], [role="link"]')
+  if (actionable && actionable !== el) parts.push(labelOf(actionable as HTMLElement))
   // 입력칸은 라벨이 비는 경우가 많아 name/placeholder 도 함께 본다
   if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
     const name = el.getAttribute('name')
@@ -643,6 +703,17 @@ export function rectOf(id: number): ClickPoint | null {
   const point = centerPointOf(el)
   if (!point) return null
   return { x: Math.round(point.x), y: Math.round(point.y) }
+}
+
+/**
+ * 입력칸 값의 글자 수. 메인 프로세스가 진짜 키 입력(typeLogin)으로 넣은 값이 들어갔는지 확인할 때 쓴다 —
+ * 값 자체는 돌려주지 않는다(비밀 칸). 요소가 없거나 입력칸이 아니면 -1
+ */
+export function valueLength(id: number): number {
+  const el = get(id)
+  if (!el) return -1
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value.length
+  return -1
 }
 
 function sleep(ms: number): Promise<void> {
@@ -968,11 +1039,6 @@ function formOf(el: HTMLElement): HTMLFormElement | null {
   return null
 }
 
-// username 후보 선택은 login-detect 모듈(Chromium/Bitwarden 규칙 이식)에 위임한다
-function usernameElementFor(passwordEl: HTMLInputElement): HTMLInputElement | undefined {
-  return detectUsernameElementFor(passwordEl)
-}
-
 function isSubmitLike(el: HTMLElement): boolean {
   if (el.tagName === 'INPUT') return (el as HTMLInputElement).type === 'submit'
   if (el.tagName === 'BUTTON') return (el as HTMLButtonElement).type !== 'button'
@@ -1129,6 +1195,75 @@ export function keypadLayout(): KeypadLayoutDto | null {
   return { digits, filled: pin ? pin.value.length : null }
 }
 
+// 글자 없는 키패드 버튼 후보
+const KEYPAD_UNLABELED_SELECTOR = 'button, [role="button"], a'
+// 보안 키패드 한 칸으로 볼 크기(px). 아이콘·전체 화면 레이어는 빼낸다
+const KEYPAD_CELL_MIN = 16
+const KEYPAD_CELL_MAX = 200
+// 숫자 10개 + 재배열·빈칸 같은 여분 버튼까지
+const KEYPAD_UNLABELED_MIN = 10
+const KEYPAD_UNLABELED_MAX = 14
+
+/**
+ * 글자도 접근성 이름도 없는 키패드 버튼들(네이버페이 결제 비밀번호 창 — 숫자가 이미지로 그려진다).
+ * 보이는 button·[role=button]·a 중 글자가 비어 있고 크기가 키 한 칸 정도인 것을 위→아래, 왼→오른
+ * 순으로 돌려준다. 보안 키패드 모양(10~14개)이 아니면 null. 어느 칸이 어느 숫자인지는
+ * 여기서 알 수 없다 — 앱(메인 프로세스)이 각 칸을 OCR 로 읽는다. 값은 어디에서도 읽지 않는다
+ */
+// 숫자 그림 요소 주변 여백(px). 글자 가장자리가 잘리지 않을 만큼만
+const KEYPAD_GLYPH_PAD = 6
+
+/** 버튼 안의 숫자 그림 요소(배경 이미지 span·img·svg)의 사각형(여백 포함). 없으면 버튼 사각형 */
+function glyphRectOf(
+  button: HTMLElement,
+  fallback: DOMRect
+): { left: number; top: number; width: number; height: number } {
+  const inner = Array.from(button.querySelectorAll<HTMLElement>('span, i, img, svg, em, b')).filter(
+    (child) => {
+      const cr = child.getBoundingClientRect()
+      if (cr.width < 4 || cr.height < 4) return false
+      if (cr.width >= fallback.width - 2 && cr.height >= fallback.height - 2) return false
+      if (child instanceof HTMLImageElement || child instanceof SVGElement) return true
+      return getComputedStyle(child).backgroundImage !== 'none'
+    }
+  )
+  if (inner.length !== 1) return fallback
+  const g = inner[0].getBoundingClientRect()
+  const left = Math.max(fallback.left, g.left - KEYPAD_GLYPH_PAD)
+  const top = Math.max(fallback.top, g.top - KEYPAD_GLYPH_PAD)
+  const right = Math.min(fallback.right, g.right + KEYPAD_GLYPH_PAD)
+  const bottom = Math.min(fallback.bottom, g.bottom + KEYPAD_GLYPH_PAD)
+  return { left, top, width: right - left, height: bottom - top }
+}
+
+export function keypadUnlabeled(): KeypadCellDto[] | null {
+  const visible: VisibilityCache = new Map()
+  const cells: { el: HTMLElement; x: number; y: number; width: number; height: number }[] = []
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>(KEYPAD_UNLABELED_SELECTOR))) {
+    if (singleDigitOf(el) !== null) continue
+    if ((el.textContent ?? '').trim() !== '') continue
+    // <a><button></button></a> 처럼 겹친 경우 안쪽 하나만 센다
+    if (el.querySelector(KEYPAD_UNLABELED_SELECTOR) !== null) continue
+    if (!isVisible(el, visible)) continue
+    const r = el.getBoundingClientRect()
+    if (r.width < KEYPAD_CELL_MIN || r.height < KEYPAD_CELL_MIN) continue
+    if (r.width > KEYPAD_CELL_MAX || r.height > KEYPAD_CELL_MAX) continue
+    // OCR 은 숫자 그림 주변만 읽는 편이 정확하다(130×63 칸 전체를 주면 작은 숫자를 검출 모델이 놓친다 — 실기).
+    // 버튼 안에 그림을 담은 작은 요소(스프라이트 span·img·svg)가 하나 있으면 그 사각형에 여백을 둬 쓴다
+    const glyph = glyphRectOf(el, r)
+    cells.push({ el, x: glyph.left, y: glyph.top, width: glyph.width, height: glyph.height })
+  }
+  if (cells.length < KEYPAD_UNLABELED_MIN || cells.length > KEYPAD_UNLABELED_MAX) return null
+  cells.sort((a, b) => a.y - b.y || a.x - b.x)
+  return cells.map((c) => ({
+    id: ensureId(c.el),
+    x: c.x,
+    y: c.y,
+    width: c.width,
+    height: c.height
+  }))
+}
+
 // --- 로그인 상태 유지 체크박스 ---------------------------------------------
 
 // "로그인 상태 유지" 류 체크박스 라벨(ko/en). 같은 세션을 오래 유지해 캡차 발생을 줄인다
@@ -1168,13 +1303,86 @@ export function checkKeepSignedIn(anchorId?: number): string {
   return 'none'
 }
 
-// 요소의 form 이 있으면 requestSubmit, 없으면 click 으로 제출(둘 다 실제 제출 동작을 유발)
+/** 폼의 제출 버튼(button[type=submit]·type 없는 button·input[type=submit|image]). 없으면 null */
+function submitButtonOf(form: HTMLFormElement): HTMLElement | null {
+  return form.querySelector<HTMLElement>(
+    'button[type="submit"], button:not([type]), input[type="submit"], input[type="image"]'
+  )
+}
+
+function isSubmitControl(el: HTMLElement): boolean {
+  if (el instanceof HTMLButtonElement) return el.type === 'submit'
+  if (el instanceof HTMLInputElement) return el.type === 'submit' || el.type === 'image'
+  return false
+}
+
+/** 입력칸이 아니라 누르는 요소인가(button·input[type=button|submit|image|reset]·role=button·링크) */
+function isPressable(el: HTMLElement): boolean {
+  if (el instanceof HTMLButtonElement || el instanceof HTMLAnchorElement) return true
+  if (el instanceof HTMLInputElement) return /^(button|submit|image|reset)$/.test(el.type)
+  return el.getAttribute('role') === 'button'
+}
+
+/**
+ * 폼 안의 로그인 글자 버튼(type="button" 포함). 패션플러스처럼 제출 버튼 없이
+ * <button type="button" v-on:click="login"> 으로 로그인하는 폼용 — 찾기·가입·소셜 버튼은 뺀다
+ */
+function loginButtonOf(form: HTMLFormElement): HTMLElement | null {
+  const buttons = Array.from(
+    form.querySelectorAll<HTMLElement>('button, input[type="button"], [role="button"]')
+  )
+  for (const button of buttons) {
+    if (button instanceof HTMLButtonElement && button.disabled) continue
+    const text = loginButtonText(button)
+    if (!SUBMIT_TEXT_RE.test(text)) continue
+    if (NOT_LOGIN_TEXT.test(text) || SOCIAL_RE.test(text)) continue
+    return button
+  }
+  return null
+}
+
+/**
+ * 입력칸에 Enter 를 누른 것처럼 keydown·keypress·keyup 을 보낸다 — Vue keyup.enter="login"·React onKeyDown
+ * 핸들러로 로그인하는 칸용. 합성 이벤트라 브라우저의 암묵적 폼 제출은 일어나지 않는다
+ */
+function pressEnter(el: HTMLElement): void {
+  const init: KeyboardEventInit = {
+    key: 'Enter',
+    code: 'Enter',
+    keyCode: 13,
+    which: 13,
+    bubbles: true,
+    cancelable: true
+  }
+  el.dispatchEvent(new KeyboardEvent('keydown', init))
+  el.dispatchEvent(new KeyboardEvent('keypress', init))
+  el.dispatchEvent(new KeyboardEvent('keyup', init))
+}
+
+/**
+ * 로그인 폼 제출. **버튼 클릭이 먼저다** — 사이트의 로그인 버튼 핸들러가 reCAPTCHA 토큰을 받아 폼에 붙인 뒤
+ * 제출하는데(실기: GS샵), form.requestSubmit() 은 그 핸들러를 건너뛰어 토큰 없는 요청이 나가 조용히 거부됐다.
+ * - 버튼(type="button" 포함)을 받으면 그 버튼을 누른다 — type="button" 을 폼 제출로 바꾸면 Vue 폼(action 없음)이
+ *   같은 주소로 새로고침돼 로그인 요청이 나가지 않는다(실기: 패션플러스)
+ * - 입력칸을 받으면 폼의 제출 버튼 → 폼 안 로그인 글자 버튼(type="button") → Enter 키(+ requestSubmit) 순
+ */
 export function submitForm(id: number): string {
   const el = get(id)
   if (!el) return missingMessage(id)
+  if (isSubmitControl(el) || isPressable(el)) {
+    el.click()
+    return 'ok'
+  }
   const form = formOf(el)
+  const button = form ? (submitButtonOf(form) ?? loginButtonOf(form)) : null
+  if (button) {
+    button.click()
+    return 'ok'
+  }
+  // 누를 버튼이 없으면 Enter 로 칸의 키 핸들러를 부른 뒤, 폼이면 제출까지 한다(예전 동작 유지)
+  pressEnter(el)
   if (form && typeof form.requestSubmit === 'function') form.requestSubmit()
-  else el.click()
+  else if (!form) el.click()
   return 'ok'
 }
 
@@ -1184,10 +1392,85 @@ export interface InstallCaptureListenerOptions {
   // 테스트 전용: jsdom 의 dispatchEvent 는 isTrusted=false 이므로 합성 이벤트도 허용한다.
   // 실제 page.ts 는 이 옵션 없이(옵션 생략 = 신뢰된 이벤트만) 호출해야 한다.
   allowUntrusted?: boolean
+  // 원인 파악용 단계 기록(값·아이디 없이 단계 이름만). page.ts 가 메인 로그로 보낸다
+  trace?: (stage: CaptureTraceStage) => void
 }
 
 const CAPTURE_WINDOW_MS = 30_000
 const CAPTURE_MAX_PER_WINDOW = 3
+// 2단계 로그인(아이디 화면 → 비밀번호 화면)에서 앞 단계 아이디를 기억해 두는 시간
+export const CAPTURE_USERNAME_STEP_MS = 5 * 60_000
+
+export interface CapturedCredentials {
+  username: string
+  password: string
+}
+
+/**
+ * 지금 화면의 로그인 칸에서 아이디·비밀번호를 읽는다(저장 제안용 — 메인으로만 보낸다).
+ * 비밀번호 칸은 로그인 탐지 엔진과 같은 기준(current-password 우선, 새 비밀번호·확인칸·허니팟 제외)으로 고르고,
+ * 제출된 폼(form)을 알면 그 폼 안의 칸을 먼저 쓴다. 값이 비어 있으면 null.
+ * 아이디 칸이 없거나 비어 있으면 앞 단계에서 기억한 아이디(rememberedUsername)를 쓴다
+ */
+export function readLoginCredentials(
+  form: HTMLFormElement | null,
+  rememberedUsername = ''
+): CapturedCredentials | null {
+  const inForm = form
+    ? Array.from(form.querySelectorAll<HTMLInputElement>('input[type="password"]')).find(
+        (el) => isVisible(el) && el.value
+      )
+    : undefined
+  const pw = inForm ?? detectPasswordElement()
+  if (!pw || !pw.value) return null
+  // username 후보 선택은 login-detect 모듈에 위임한다
+  const typed = (detectUsernameElementFor(pw)?.value ?? '').trim()
+  return { username: typed || rememberedUsername.trim(), password: pw.value }
+}
+
+/** 비밀번호 칸이 없는 화면(2단계 로그인의 아이디 단계)에서 입력된 아이디. 없으면 빈 문자열 */
+export function readUsernameStep(): string {
+  if (detectPasswordElement()) return ''
+  return (standaloneUsernameElement()?.value ?? '').trim()
+}
+
+// 로그인 제출로 볼 수 있는 클릭 대상. 한국 쇼핑몰은 form 안이어도 type="button" 버튼(패션플러스 v-on:click="login"),
+// 디자인 시스템 버튼 컴포넌트(현대H몰), <a href="javascript:..."> 링크로 로그인을 보내는 경우가 많다
+const CAPTURE_CLICK_TARGET =
+  'button, input[type="submit"], input[type="button"], input[type="image"], [role="button"], a'
+// 로그인 버튼 글자로 보지 않는 문구 — 아이디·비밀번호 찾기, 회원가입 등(로그인 낱말이 섞여도 제출이 아니다)
+const NOT_LOGIN_TEXT =
+  /찾기|회원\s?가입|가입하기|비회원|find|forgot|reset|join|sign\s?up|register|로그인\s?상태|유지|자동\s?로그인|로그아웃|logout|log\s?out/i
+// 버튼 글자가 이보다 길면 버튼이 아니라 안내문을 감싼 링크일 가능성이 크다
+const LOGIN_BUTTON_TEXT_MAX = 30
+
+/** 클릭한 요소에서 로그인 버튼 판정에 쓰는 글자 — 보이는 글자, 없으면 value·title·이미지 alt·aria-label */
+export function loginButtonText(el: HTMLElement): string {
+  const own = labelOf(el)
+  if (own) return own
+  const input = el instanceof HTMLInputElement ? el.value || el.alt : ''
+  const img = el.querySelector('img')?.getAttribute('alt') ?? ''
+  return `${input} ${el.getAttribute('title') ?? ''} ${img}`.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * 클릭이 비밀번호 칸(pw)의 로그인 제출인가(순수 판정 — 테스트 대상).
+ * - pw 가 폼 안이고 그 폼의 submit 버튼이면 제출이다
+ * - 그 밖에는(폼 안의 type="button" 도, 폼 밖 SPA 버튼·링크도) 글자가 '로그인'류이고
+ *   찾기·가입·소셜 로그인 버튼이 아닐 때만 제출이다
+ */
+export function isLoginSubmitClick(clicked: HTMLElement, pw: HTMLInputElement): boolean {
+  const pwForm = formOf(pw)
+  if (pwForm && isSubmitLike(clicked) && formOf(clicked) === pwForm) return true
+  const text = loginButtonText(clicked)
+  if (!text || text.length > LOGIN_BUTTON_TEXT_MAX) return false
+  if (!LOGIN_TEXT.test(text)) return false
+  if (NOT_LOGIN_TEXT.test(text) || SOCIAL_RE.test(text)) return false
+  // 다른 폼의 버튼이면(예: 헤더 검색 폼) 이 비밀번호의 제출이 아니다
+  const clickedForm = formOf(clicked) ?? clicked.closest('form')
+  if (pwForm && clickedForm && clickedForm !== pwForm) return false
+  return true
+}
 
 // ipcRenderer.send 등 실제 전송 함수는 주입받는다(테스트에서 스텁 가능하도록)
 export function installCaptureListener(
@@ -1195,10 +1478,20 @@ export function installCaptureListener(
   options: InstallCaptureListenerOptions = {}
 ): void {
   const allowUntrusted = options.allowUntrusted === true
+  const trace = (stage: CaptureTraceStage): void => {
+    try {
+      options.trace?.(stage)
+    } catch {
+      // 원인 파악용 기록이 실패해도 감지는 계속한다
+    }
+  }
 
-  // 같은 제출이 submit 과 click 양쪽에서 잡혀 중복 전송되는 것을 짧게 막는다
+  // 같은 제출이 submit 과 click·Enter 양쪽에서 잡혀 중복 전송되는 것을 짧게 막는다
   let lastSignature = ''
   let lastSentAt = 0
+  // 2단계 로그인의 앞 단계 아이디(같은 문서 안에서만 — SPA 로그인)
+  let stepUsername = ''
+  let stepUsernameAt = 0
 
   // 시그니처와 무관하게, 적대 페이지가 서로 다른 값을 반복 주입/제출해 플러딩하는 것을 막는다
   // (호스트당 30초 최대 3회)
@@ -1210,60 +1503,81 @@ export function installCaptureListener(
     return sentTimestamps.length < CAPTURE_MAX_PER_WINDOW
   }
 
-  const attempt = (): void => {
-    const pwEls = Array.from(
-      document.querySelectorAll<HTMLInputElement>('input[type="password"]')
-    ).filter((el) => isVisible(el))
-    const pw = pwEls[0]
-    if (!pw || !pw.value) return // 값이 없으면 저장 제안을 띄우지 않는다
-    const userEl = usernameElementFor(pw)
-    const username = userEl?.value ?? ''
-    const signature = `${username}:${pw.value}`
+  const attempt = (form: HTMLFormElement | null): void => {
     const now = Date.now()
-    if (signature === lastSignature && now - lastSentAt < 1000) return
-    if (!withinRateLimit(now)) return
+    const remembered = now - stepUsernameAt < CAPTURE_USERNAME_STEP_MS ? stepUsername : ''
+    const creds = readLoginCredentials(form, remembered)
+    if (!creds) {
+      // 비밀번호 칸이 없는 화면이면 아이디 단계일 수 있다 — 다음 단계에서 쓰려고 기억만 한다(보내지 않는다)
+      const step = readUsernameStep()
+      if (step) {
+        stepUsername = step
+        stepUsernameAt = now
+        trace('username-step')
+      } else {
+        trace('no-password-value')
+      }
+      return // 비밀번호 값이 없으면 저장 제안을 띄우지 않는다
+    }
+    const signature = `${creds.username}:${creds.password}`
+    if (signature === lastSignature && now - lastSentAt < 1000) {
+      trace('duplicate')
+      return
+    }
+    if (!withinRateLimit(now)) {
+      trace('rate-limited')
+      return
+    }
     lastSignature = signature
     lastSentAt = now
     sentTimestamps.push(now)
-    send({ host: location.host, username, password: pw.value })
+    send({ host: location.host, username: creds.username, password: creds.password })
   }
 
-  // click 이 감지된 password 와 관련된 제출 액션인지 판정한다.
-  // - password 가 form 안에 있으면: 그 form 소속의 submit 성격 버튼일 때만
-  // - password 가 form 밖이면: findSubmit() 이 로그인 텍스트로 고르는 것과 같은 기준(같은 요소)일 때만
-  function isRelevantSubmitClick(clicked: HTMLElement, pw: HTMLInputElement): boolean {
-    const pwForm = formOf(pw)
-    if (pwForm) {
-      return isSubmitLike(clicked) && formOf(clicked) === pwForm
-    }
-    return isButtonish(clicked) && LOGIN_TEXT.test(labelOf(clicked))
-  }
-
-  // 일반적인 폼 제출(캡처 단계 — 페이지 핸들러의 preventDefault 와 무관하게 이벤트는 도달한다)
+  // 일반적인 폼 제출(캡처 단계 — 페이지 핸들러의 preventDefault 와 무관하게 이벤트는 도달한다).
+  // 페이지 스크립트의 form.submit() 은 submit 이벤트를 일으키지 않는다 — 그 경우는 아래 클릭·Enter 가 잡는다
   document.addEventListener(
     'submit',
     (ev) => {
       if (!allowUntrusted && ev.isTrusted !== true) return
-      attempt()
+      attempt(ev.target instanceof HTMLFormElement ? ev.target : null)
     },
     true
   )
-  // SPA 대비: 페이지가 submit 을 아예 막고 클릭만으로 처리하는 경우도 감지
+  // 로그인 버튼 클릭. 페이지가 submit 을 막거나(SPA) type="button" 버튼·링크의 JS 로 로그인하는 경우도 잡는다
   document.addEventListener(
     'click',
     (ev) => {
       if (!allowUntrusted && ev.isTrusted !== true) return
       const target = ev.target
-      if (!(target instanceof HTMLElement)) return
-      const clicked = target.closest('button, input[type="submit"]')
+      if (!(target instanceof Element)) return
+      const clicked = target.closest(CAPTURE_CLICK_TARGET)
       if (!(clicked instanceof HTMLElement)) return
-      const pwEls = Array.from(
-        document.querySelectorAll<HTMLInputElement>('input[type="password"]')
-      ).filter((el) => isVisible(el))
-      const pw = pwEls[0]
-      if (!pw) return
-      if (!isRelevantSubmitClick(clicked, pw)) return
-      attempt()
+      const pw = detectPasswordElement()
+      if (!pw) {
+        // 아이디 단계의 '다음' 버튼 — 아이디만 기억한다
+        if (isButtonish(clicked) || clicked.getAttribute('role') === 'button') attempt(null)
+        return
+      }
+      if (!isLoginSubmitClick(clicked, pw)) {
+        // 비밀번호가 채워진 화면의 다른 클릭만 기록한다(빈 로그인 화면의 클릭은 소음이다)
+        if (pw.value) trace('click-not-login')
+        return
+      }
+      attempt(formOf(pw))
+    },
+    true
+  )
+  // 비밀번호 칸에서 Enter. 폼 안이어도 페이지가 Enter 를 가로채 JS 로 로그인하면(현대H몰·패션플러스)
+  // submit 이 일어나지 않으므로 여기서 직접 잡는다. 브라우저가 submit 도 일으키면 중복 방지가 거른다
+  document.addEventListener(
+    'keydown',
+    (ev) => {
+      if (!allowUntrusted && ev.isTrusted !== true) return
+      if (ev.key !== 'Enter' || ev.isComposing) return
+      const target = ev.target
+      if (!(target instanceof HTMLInputElement) || target.type !== 'password') return
+      attempt(formOf(target))
     },
     true
   )
@@ -1399,6 +1713,38 @@ export function detectOverlays(): PageOverlay[] {
     .map((el) => describeOverlay(el, index))
 }
 
+// --- 라벨 글자로 체크박스 켜기 ---------------------------------------------
+
+/**
+ * 라벨 글자가 text 와 같은 체크박스를 켠다. 체크박스가 화면에 숨어 있고(커스텀 모양) 라벨만 눌러야 켜지는
+ * 동의 칸(페이코 PC 결제창 '전체 동의')을 위한 것이다 — 요소 목록에 안 잡혀 번호로 누를 수 없었다(실기 2026-09-25).
+ * 이미 켜져 있으면 누르지 않는다(누르면 꺼진다).
+ */
+export function checkByLabel(text: string): string {
+  const want = text.replace(/\s+/g, '')
+  if (!want) return 'not-found'
+  const labels = Array.from(document.querySelectorAll<HTMLLabelElement>('label'))
+  for (const label of labels) {
+    if ((label.textContent ?? '').replace(/\s+/g, '') !== want) continue
+    const target =
+      (label.htmlFor ? document.getElementById(label.htmlFor) : null) ??
+      label.querySelector('input')
+    if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') continue
+    if (target.checked) return 'already'
+    label.click()
+    // 커스텀 체크박스는 라벨 클릭을 자기 처리기로 되돌리기도 한다(실기: 페이코 '전체 동의'가 failed) —
+    // 안 켜졌으면 체크박스 자체를 누르고, 그래도 안 되면 값을 켜고 변경 알림을 보낸다
+    if (!target.checked) target.click()
+    if (!target.checked) {
+      target.checked = true
+      target.dispatchEvent(new Event('input', { bubbles: true }))
+      target.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    return target.checked ? 'checked' : 'failed'
+  }
+  return 'not-found'
+}
+
 // --- 프레임 채널 동작 실행 -------------------------------------------------
 //
 // 메인 프로세스는 하위 프레임(iframe)의 격리 월드를 직접 실행할 수 없어서,
@@ -1452,10 +1798,14 @@ export function runAgentOp(raw: unknown): unknown {
       return keypadSignals()
     case 'keypadLayout':
       return keypadLayout()
+    case 'keypadUnlabeled':
+      return keypadUnlabeled()
     case 'pressOnce':
       return pressOnce(id)
     case 'overlays':
       return detectOverlays()
+    case 'checkByLabel':
+      return checkByLabel(text)
     default:
       return null
   }

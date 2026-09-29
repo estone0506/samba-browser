@@ -23,6 +23,7 @@ const { pageBridge } = vi.hoisted(() => ({
     keypadSignals: vi.fn(),
     keypadSignalsAll: undefined as unknown,
     keypadLayout: vi.fn(),
+    keypadUnlabeled: vi.fn(),
     keypadFilled: vi.fn(),
     snapshot: vi.fn(async () => ({ url: '', title: '', text: '', elements: [], total: 0 })),
     textOf: vi.fn(async () => ''),
@@ -32,11 +33,24 @@ const { pageBridge } = vi.hoisted(() => ({
     select: vi.fn(async () => 'ok'),
     scroll: vi.fn(async () => 'ok'),
     fillValue: vi.fn(async () => 'ok'),
+    // 로그인 칸 진짜 키 입력 — 테스트에서는 fillValue 와 같은 목으로 흘려 기존 기대를 그대로 둔다
+    typeLogin: vi.fn(async (tab: unknown, id: number, value: string) =>
+      pageBridge.fillValue(tab, id, value)
+    ),
     isSecretField: vi.fn(async () => true),
     waitForLoad: vi.fn(async () => {})
   }
 }))
 vi.mock('../src/main/browser/page-bridge', () => ({ pageBridge }))
+
+// 글자 없는 키패드(네이버페이)의 칸별 OCR. 실제 캡처·모델 대신 칸 좌표로 숫자를 정한다
+const { ocrDigitInRegion } = vi.hoisted(() => ({
+  ocrDigitInRegion: vi.fn<(tab: unknown, rect: { x: number }) => Promise<string | null>>()
+}))
+vi.mock('../src/main/agent/tools-ocr', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/main/agent/tools-ocr')>()),
+  ocrDigitInRegion
+}))
 
 const { createSambaTools, KEYPAD_DRY_RUN, KEYPAD_ENTERED_NEXT, KEYPAD_HANDOFF_MESSAGE } =
   await import('../src/main/agent/tools')
@@ -110,10 +124,16 @@ function build(
     vaultExcludedHosts?: string[]
     /** 키패드 창의 프로필(파티션) — 계정 라벨 자동 선택에 쓰인다 */
     tabProfile?: string
+    /** 계정별로 결제될 네이버 아이디(네이버페이 창 계정 검사·창 표시로 계정 고르기) */
+    paymentAccountUsername?: (accountId: number) => string | null
     /** 키패드 창을 연 대상 id(openerUrl 대신 targets 로 사슬을 준다) */
     openerId?: string
     /** 탭+팝업 전체 목록(opener 사슬 검사용) */
     targets?: AgentTarget[]
+    /** 도구 세션을 넘어 공유하는 키패드 입력 기록(브릿지) */
+    keypadEntered?: Set<string>
+    /** 키패드 창 id(기본 pay-1) */
+    tabId?: string
   } = {}
 ): Built {
   const confirm = vi.fn(async () => opts.confirmResult ?? true)
@@ -130,11 +150,15 @@ function build(
     listAccounts,
     getSecretForFill: vi.fn(),
     getPaymentSecretForFill,
-    ensureUnlockedByDevice: vi.fn(async () => false)
+    ensureUnlockedByDevice: vi.fn(async () => false),
+    // 네이버페이 창 계정 확인 — 기대 아이디가 없으면 확인을 건너뛴다
+    paymentAccountUsername: vi.fn(
+      (accountId: number) => opts.paymentAccountUsername?.(accountId) ?? null
+    )
   } as unknown as VaultService
   const tabUrl = opts.tabUrl ?? SHOP
   const tab = {
-    id: 'pay-1',
+    id: opts.tabId ?? 'pay-1',
     view: { webContents: { getURL: () => tabUrl, isDestroyed: () => false } },
     profile: opts.tabProfile ?? 'default',
     mobile: false,
@@ -163,6 +187,8 @@ function build(
           }
         : {}),
     navigate: vi.fn(async () => {}),
+    // OCR 동안 가려진 탭을 맨 위로 올리는 래퍼 — 시험에서는 그대로 실행한다
+    withFront: async <T,>(_id: string, fn: () => Promise<T>): Promise<T> => fn(),
     closeTarget
   } as unknown as TabManager
   const handoff = vi.fn(async (): Promise<HandoffResult> => ({
@@ -180,7 +206,8 @@ function build(
     ...(opts.withVault === false ? {} : { vault }),
     jobId: 'job-1',
     handoff,
-    vaultExcludedHosts: opts.vaultExcludedHosts
+    vaultExcludedHosts: opts.vaultExcludedHosts,
+    ...(opts.keypadEntered ? { keypadEntered: opts.keypadEntered } : {})
   }
   const server = createSambaTools(ctx) as unknown as { tools: ToolStub[] }
   return {
@@ -211,6 +238,10 @@ beforeEach(() => {
   pageBridge.keypadSignals.mockResolvedValue(keypadSignals(SHOP))
   pageBridge.keypadLayout.mockReset()
   pageBridge.keypadLayout.mockResolvedValue(layoutOf())
+  pageBridge.keypadUnlabeled.mockReset()
+  pageBridge.keypadUnlabeled.mockResolvedValue(null)
+  ocrDigitInRegion.mockReset()
+  ocrDigitInRegion.mockResolvedValue(null)
   pageBridge.keypadFilled.mockReset()
   // 누를 때마다 자리수가 하나씩 늘어난다
   let n = 0
@@ -282,6 +313,76 @@ describe('fill_secret — 키패드 화면에서 앱이 결제 비밀번호를 �
     expect(b.getPaymentSecretForFill).toHaveBeenCalledWith(
       expect.objectContaining({ accountId: 3 })
     )
+  })
+
+  it('라벨도 프로필도 없으면(기본 프로필 탭) 결제창을 연 쇼핑몰 계정 중 결제 비밀번호 항목이 있는 하나를 고른다(실기 7차)', async () => {
+    pageBridge.keypadSignals.mockResolvedValue(keypadSignals(PG))
+    const b = build({
+      tabUrl: PG,
+      openerUrl: SHOP,
+      tabProfile: 'default',
+      accounts: [
+        account({
+          id: 11,
+          host: 'niceepay.com',
+          label: 'pg-a',
+          isDefault: false,
+          itemTypes: ['login', 'password']
+        }),
+        account({
+          id: 12,
+          host: 'niceepay.com',
+          label: 'pg-b',
+          isDefault: false,
+          itemTypes: ['login', 'password']
+        }),
+        account({
+          id: 21,
+          host: 'musinsa.com',
+          label: 'shop-login-only',
+          isDefault: false,
+          itemTypes: ['login']
+        }),
+        account({
+          id: 22,
+          host: 'musinsa.com',
+          label: 'shop-with-pw',
+          isDefault: false,
+          itemTypes: ['login', 'password']
+        })
+      ]
+    })
+    expect(await fill(b)).toBe(KEYPAD_ENTERED_NEXT)
+    expect(b.getPaymentSecretForFill).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 22 })
+    )
+  })
+
+  it('쇼핑몰 쪽 후보가 둘 이상이면 고르지 않는다', async () => {
+    pageBridge.keypadSignals.mockResolvedValue(keypadSignals(PG))
+    const b = build({
+      tabUrl: PG,
+      openerUrl: SHOP,
+      tabProfile: 'default',
+      accounts: [
+        account({
+          id: 21,
+          host: 'musinsa.com',
+          label: 'a',
+          isDefault: false,
+          itemTypes: ['login', 'password']
+        }),
+        account({
+          id: 22,
+          host: 'musinsa.com',
+          label: 'b',
+          isDefault: false,
+          itemTypes: ['login', 'password']
+        })
+      ]
+    })
+    expect(await fill(b)).toContain('not linked to a saved account')
+    expect(b.steps.some((s) => s.label.startsWith('키패드 계정 못 고름('))).toBe(true)
   })
 
   it('팝업 안에서 열린 팝업(무신사머니 창 → ePAY)도 opener 사슬을 따라 계정 사이트를 찾는다', async () => {
@@ -412,9 +513,201 @@ describe('fill_secret — 시험 입력(dry-run)', () => {
     expect(b.closeTarget).not.toHaveBeenCalled()
   })
 
+  it('브릿지처럼 요청마다 새 세션이어도 같은 결제창에는 두 번 넣지 않는다(새 창은 넣는다)', async () => {
+    // 실기 2026-09-27: 브릿지는 요청마다 도구 세션을 새로 열어 세션 안의 1회 제한이 반복 호출을 못 막았다
+    const shared = new Set<string>()
+    expect(await fill(build({ keypadEntered: shared }))).toBe(KEYPAD_ENTERED_NEXT)
+    const pressed = pageBridge.pressOnce.mock.calls.length
+    const again = await fill(build({ keypadEntered: shared }))
+    expect(again).toContain('already entered the payment password once')
+    expect(pageBridge.pressOnce.mock.calls.length).toBe(pressed)
+    // 다음 주문의 새 결제창(창 id 가 다르다)은 막지 않는다
+    expect(await fill(build({ keypadEntered: shared, tabId: 'pay-2' }))).toBe(KEYPAD_ENTERED_NEXT)
+  })
+
   it('시험 입력은 키패드 1회 제한을 쓰지 않는다(뒤이은 진짜 입력이 통한다)', async () => {
     const b = build()
     expect(await fill(b, { dryRunDigits: 1 })).toContain('DRY_RUN')
     expect(await fill(b)).toBe(KEYPAD_ENTERED_NEXT)
+  })
+})
+
+describe('fill_secret — 글자 없는 키패드(네이버페이)는 OCR 로 배치를 만든다', () => {
+  const NAVER = 'https://pay.naver.com/authentication/pw/check?token=abc'
+  const SHOP_NAVER = 'https://smartstore.naver.com/shop/order'
+  const naverAccount = account({ host: 'naver.com' })
+  const popupTargets = [
+    { id: 'shop-1', kind: 'tab' as const, url: SHOP_NAVER, title: '주문서', active: true },
+    {
+      id: 'pay-1',
+      kind: 'popup' as const,
+      url: NAVER,
+      title: '네이버페이',
+      openerId: 'shop-1',
+      active: false
+    }
+  ]
+  // 칸 i 의 id 는 200+i, x 는 i*50. 화면 숫자는 (i+3)%10 으로 섞여 있다
+  const cells = Array.from({ length: 10 }, (_, i) => ({
+    id: 200 + i,
+    x: i * 50,
+    y: 0,
+    width: 50,
+    height: 50
+  }))
+  const digitOfCell = (rect: { x: number }): string => String((rect.x / 50 + 3) % 10)
+  const idOfDigit = (d: string): number => 200 + ((Number(d) + 7) % 10)
+
+  beforeEach(() => {
+    pageBridge.keypadSignals.mockResolvedValue({
+      url: NAVER,
+      text: '비밀번호는 6자리 입니다',
+      digitButtons: 0,
+      pinField: false
+    })
+    pageBridge.keypadLayout.mockResolvedValue(null)
+    pageBridge.keypadUnlabeled.mockResolvedValue(cells)
+    // 입력칸이 없는 화면이라 자리수를 셀 수 없다
+    pageBridge.keypadFilled.mockResolvedValue(null)
+  })
+
+  it('칸마다 읽은 숫자로 배치를 만들어 순서대로 한 번씩 누른다(검증 없음)', async () => {
+    ocrDigitInRegion.mockImplementation(async (_tab, rect) => digitOfCell(rect))
+    const b = build({ tabUrl: NAVER, accounts: [naverAccount], openerUrl: SHOP_NAVER })
+    const r = await fill(b)
+
+    expect(r).toBe(KEYPAD_ENTERED_NEXT)
+    expect(pageBridge.pressOnce.mock.calls.map((c) => c[1])).toEqual(
+      SECRET.split('').map(idOfDigit)
+    )
+    expect(pageBridge.keypadFilled).not.toHaveBeenCalled()
+    expect(b.handoff).not.toHaveBeenCalled()
+    expect(b.steps).toContainEqual({ label: '키패드 배치(OCR)', ok: true })
+    // 값도 배치도 결과·라벨에 없다
+    expect(SECRET_RE.test(r)).toBe(false)
+    expect(b.steps.some((x) => SECRET_RE.test(x.label) || /\b2\d\d\b/.test(x.label))).toBe(false)
+  })
+
+  it('시험 입력은 지정한 자리수만 누르고 결제창(팝업)을 닫는다', async () => {
+    ocrDigitInRegion.mockImplementation(async (_tab, rect) => digitOfCell(rect))
+    const b = build({ tabUrl: NAVER, accounts: [naverAccount], targets: popupTargets })
+    const r = await fill(b, { dryRunDigits: 3 })
+
+    expect(r).toBe(KEYPAD_DRY_RUN(3, 'popup closed'))
+    expect(pageBridge.pressOnce.mock.calls.map((c) => c[1])).toEqual(
+      SECRET.slice(0, 3).split('').map(idOfDigit)
+    )
+    expect(b.closeTarget).toHaveBeenCalledWith('pay-1')
+  })
+
+  it('라벨·프로필 없이 쇼핑몰 계정 여럿이 결제 비밀번호를 가지면 창에 표시된 아이디로 고른다(실기 8차)', async () => {
+    ocrDigitInRegion.mockImplementation(async (_tab, rect) => digitOfCell(rect))
+    pageBridge.snapshot.mockResolvedValue({
+      url: NAVER,
+      title: '네이버페이',
+      text: '네이버페이 인증 김사무 ( ) buyer01 님의 비밀번호 입력 비밀번호는 6자리 입니다.',
+      elements: [],
+      total: 0
+    })
+    const shop = 'https://abcmart.a-rt.com/order'
+    const linked: Record<number, string> = { 5: 'buyer02', 6: 'buyer01', 8: 'buyer03' }
+    // 실기 9차: 쇼핑몰 계정 여럿이 같은 네이버 계정에 연결돼 있으면 어느 것이든 같은 비밀번호다 — 하나를 고른다
+    linked[9] = 'buyer01'
+    const b = build({
+      tabUrl: NAVER,
+      openerUrl: shop,
+      tabProfile: 'default',
+      paymentAccountUsername: (id) => linked[id] ?? null,
+      accounts: [
+        account({ id: 5, host: 'a-rt.com', label: 'buyer02', isDefault: false }),
+        account({ id: 6, host: 'a-rt.com', label: 'buyer01', isDefault: false }),
+        account({ id: 8, host: 'a-rt.com', label: 'buyer03', isDefault: false }),
+        account({ id: 9, host: 'a-rt.com', label: 'buyer06', isDefault: false }),
+        account({
+          id: 10,
+          host: 'a-rt.com',
+          label: 'buyer04',
+          isDefault: false,
+          itemTypes: ['login']
+        })
+      ]
+    })
+    const r = await fill(b, { dryRunDigits: 3 })
+    // openerUrl 빌더는 팝업 대상을 등록하지 않아 닫기 문구는 보지 않는다 — 시험 입력 3자리가 들어갔는지만 본다
+    expect(r).toContain('typed 3 digits')
+    expect(b.getPaymentSecretForFill).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 6 })
+    )
+    expect(b.steps).toContainEqual({ label: '네이버페이 창 계정 확인: buyer01', ok: true })
+  })
+
+  it('라벨(buyer02)을 줘도 네이버페이 창이면 창에 로그인된 네이버 계정에 연결된 항목으로 넣는다(실기 2026-09-25 V36)', async () => {
+    ocrDigitInRegion.mockImplementation(async (_tab, rect) => digitOfCell(rect))
+    pageBridge.snapshot.mockResolvedValue({
+      url: NAVER,
+      title: '네이버페이',
+      text: '네이버페이 인증 김사무 ( ) buyer01 님의 비밀번호 입력 비밀번호는 6자리 입니다.',
+      elements: [],
+      total: 0
+    })
+    const linked: Record<number, string> = { 5: 'buyer02', 6: 'buyer01' }
+    const b = build({
+      tabUrl: NAVER,
+      openerUrl: 'https://abcmart.a-rt.com/order',
+      tabProfile: 'buyer02',
+      paymentAccountUsername: (id) => linked[id] ?? null,
+      accounts: [
+        account({ id: 5, host: 'a-rt.com', label: 'buyer02', isDefault: false }),
+        account({ id: 6, host: 'a-rt.com', label: 'buyer01', isDefault: false })
+      ]
+    })
+    const r = await fill(b, { dryRunDigits: 3, accountLabel: 'buyer02' })
+    expect(r).toContain('typed 3 digits')
+    expect(b.getPaymentSecretForFill).toHaveBeenCalledWith(expect.objectContaining({ accountId: 6 }))
+  })
+
+  it('0~9 중 하나라도 못 읽으면(9개만 읽힘) 누르지 않고 사람에게 넘긴다', async () => {
+    ocrDigitInRegion.mockImplementation(async (_tab, rect) =>
+      rect.x === 0 ? null : digitOfCell(rect)
+    )
+    const b = build({ tabUrl: NAVER, accounts: [naverAccount], openerUrl: SHOP_NAVER })
+    expect(await fill(b)).toContain(KEYPAD_HANDOFF_MESSAGE)
+    expect(pageBridge.pressOnce).not.toHaveBeenCalled()
+    expect(b.handoff).toHaveBeenCalledTimes(1)
+    expect(b.steps).toContainEqual({ label: '키패드 배치(OCR)', ok: false })
+  })
+
+  it('같은 숫자가 두 칸에서 읽히면 배치를 버리고 넘긴다', async () => {
+    ocrDigitInRegion.mockImplementation(async (_tab, rect) =>
+      rect.x === 0 ? '4' : digitOfCell(rect)
+    )
+    const b = build({ tabUrl: NAVER, accounts: [naverAccount], openerUrl: SHOP_NAVER })
+    expect(await fill(b)).toContain(KEYPAD_HANDOFF_MESSAGE)
+    expect(pageBridge.pressOnce).not.toHaveBeenCalled()
+  })
+
+  it('OCR 이 꺼져 있거나 모델이 없으면(null) 넘긴다', async () => {
+    const b = build({ tabUrl: NAVER, accounts: [naverAccount], openerUrl: SHOP_NAVER })
+    expect(await fill(b)).toContain(KEYPAD_HANDOFF_MESSAGE)
+    expect(ocrDigitInRegion).toHaveBeenCalled()
+    expect(pageBridge.pressOnce).not.toHaveBeenCalled()
+    expect(b.handoff).toHaveBeenCalledTimes(1)
+  })
+
+  it('글자 있는 키패드는 예전처럼 OCR 을 쓰지 않는다', async () => {
+    pageBridge.keypadLayout.mockResolvedValue(layoutOf())
+    pageBridge.keypadSignals.mockResolvedValue(keypadSignals(SHOP))
+    pageBridge.keypadFilled.mockReset()
+    let n = 0
+    pageBridge.keypadFilled.mockImplementation(async () => n)
+    pageBridge.pressOnce.mockImplementation(async () => {
+      n += 1
+      return 'ok'
+    })
+    const b = build()
+    expect(await fill(b)).toBe(KEYPAD_ENTERED_NEXT)
+    expect(pageBridge.keypadUnlabeled).not.toHaveBeenCalled()
+    expect(ocrDigitInRegion).not.toHaveBeenCalled()
+    expect(b.steps.some((x) => x.label === '키패드 배치(OCR)')).toBe(false)
   })
 })

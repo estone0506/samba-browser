@@ -180,3 +180,23 @@ def test_로그인_제출_응답의_captcha_글자는_캡차가_아니다():
     )
     b = base(allowed=('login',))
     assert b.tool('login', accountLabel='x').startswith('submitted')
+
+
+@respx.mock
+def test_결과_앞의_페이지_대화상자_줄은_떼고_JSON_을_읽는다():
+    # 실기: 앱이 자동으로 닫은 alert 를 'page dialog: "…"' 로 결과 앞에 붙여 JSON 파싱이 깨졌다
+    respx.post(f'{URL}/tool/run_script').mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                'ok': True,
+                'result': 'page dialog: "옵션을 선택해주세요."\n{"options": [], "cost": null}',
+                'steps': [],
+            },
+        )
+    )
+    b = base(allowed=('run_script',))
+    out = b.json_tool('run_script', name='abc_product_snapshot', args='{}')
+    # 알림 문구는 결과 객체에도 실린다 — 호출부가 사유(구매 한도 등)를 가를 수 있게
+    assert out == {'options': [], 'cost': None, '_page_dialogs': ['옵션을 선택해주세요.']}
+    assert [e.label for e in b.evidence] == ['페이지 알림']

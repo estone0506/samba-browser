@@ -131,7 +131,9 @@ def test_카드가_없으면_재시도하지_않는다(reg):
 
 def test_마진이_미달이면_결제로_넘기지_않는다(reg):
     def thin(_a):
-        return ok('buyer', account='a***@x.com', card='현대', cost=89000, margin_pct=-1.0)
+        return ok(
+            'buyer', account='a***@x.com', card='현대', cost=89000, margin_pct=-5.0
+        )  # 포이즌 기준(-3%) 미달
 
     out = run(reg, agents(**{'buyer.musinsa': thin}))
     assert out['fail_reason'] is FailReason.MARGIN
@@ -294,3 +296,27 @@ def test_결과_훅이_예외를_던져도_실행은_계속된다(reg):
     graph = build_supervisor(reg, agents(), on_agent_result=hook)
     out = graph.invoke({'order': ORDER, 'options': {}, 'job_id': 1, 'dry_run': True})
     assert out['outcome'] == 'done'
+
+
+@pytest.mark.parametrize(
+    ('seller', 'margin', 'ok'),
+    [
+        ('포이즌', -3.0, True),
+        ('poison(마놀)', -2.9, True),
+        ('POIZON', -3.1, False),
+        ('신세계몰(seller01)', 0.0, False),
+        ('신세계몰(seller01)', 0.1, True),
+        ('쿠팡', -1.0, False),
+    ],
+)
+def test_마진_기준은_판매처에_따라_다르다(seller, margin, ok):
+    # 사용자 지시(2026-09-23): 포이즌만 −3% 이상이면 구매, 나머지는 0% 이하면 이행하지 않는다
+    from samba_agent.supervisor.policy import check_buyer
+
+    result = AgentResult(
+        status='ok', reason='r', payload={'card': '현대', 'margin_pct': margin, 'account': 'a'}
+    )
+    out = check_buyer(result, seller)
+    assert (out.status == 'ok') is ok
+    if not ok:
+        assert out.fail_reason is FailReason.MARGIN

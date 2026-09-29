@@ -7,6 +7,11 @@
 // 세션 쿠키가 생기면 같은 값에 만료만 얹어 다시 저장한다.
 //
 // 값은 읽어 그대로 되쓰기만 한다 — 로그·IPC·렌더러 어디에도 나가지 않는다.
+//
+// host-only 쿠키(도메인 속성 없이 받은 쿠키)는 domain 을 넘기지 않고 되써야 한다. domain 을 넘기면
+// 크로미움이 '.호스트' 도메인 쿠키를 **따로** 만들어 같은 이름이 두 벌이 된다. 사이트가 1회용 토큰
+// 쿠키를 지워도 복제본이 남아 옛 토큰을 계속 보내고, 슈마커는 그 요청마다 history.back() 을 돌려줘
+// 검색·클릭·구매하기가 전부 이전 페이지로 튕겼다(실기 2026-09-26, 웨일에는 복제본 없음).
 
 import type { Cookie, CookiesSetDetails, Session } from 'electron'
 
@@ -36,6 +41,10 @@ export function persistedCookie(
 ): CookiesSetDetails | null {
   if (!cookie.session) return null
   if (!cookie.domain) return null
+  // host-only 세션 쿠키는 건드리지 않는다. 같은 쿠키를 덮어쓰면 사이트가 곧바로 바꾼 새 값을 비동기 되쓰기가
+  // 옛 값으로 되돌린다 — 무신사머니 결제창이 "로그인 세션을 찾을 수 없습니다"로 튕겼다(실기 2026-09-26).
+  // 로그인 유지가 필요한 토큰(무신사 app_atk 등)은 도메인 쿠키라 그대로 남긴다
+  if (cookie.hostOnly) return null
   return {
     url: cookieUrl(cookie),
     name: cookie.name,
@@ -65,8 +74,89 @@ export function keepSessionCookies(
   })
 }
 
+/** 복제본 정리에 쓰는 쿠키 저장소 부분(테스트 대역용) */
+export interface CookieStoreLike {
+  get(filter: Record<string, never>): Promise<Cookie[]>
+  set(details: CookiesSetDetails): Promise<void>
+  remove(url: string, name: string): Promise<void>
+}
+
+// 두 단계 공개 접미사(이 아래 한 단계가 등록 도메인이다). 쓰는 사이트 기준으로만 둔다
+const TWO_LEVEL_SUFFIXES = new Set(['co.kr', 'or.kr', 'ne.kr', 'go.kr', 'ac.kr', 're.kr', 'pe.kr', 'com.cn', 'co.jp', 'com.tw', 'com.au', 'co.uk'])
+
+/** 등록 도메인(예: api.musinsapayments.com → musinsapayments.com, www.shoemarker.co.kr → shoemarker.co.kr) */
+export function registrableDomain(host: string): string {
+  const parts = host.toLowerCase().split('.').filter(Boolean)
+  if (parts.length <= 2) return parts.join('.')
+  const lastTwo = parts.slice(-2).join('.')
+  return parts.slice(TWO_LEVEL_SUFFIXES.has(lastTwo) ? -3 : -2).join('.')
+}
+
+/**
+ * 예전 코드가 만든 '.하위호스트' 복제본인가(순수 함수). 도메인 쿠키인데 그 도메인이 등록 도메인이 아닌
+ * 하위 주소(api.·www.·fin-auth.…)면 복제본으로 본다 — 사이트가 Domain=api.example.com 처럼 하위 주소를
+ * 도메인으로 주는 일은 사실상 없다. 등록 도메인(.naver.com·.musinsa.com)은 사이트가 준 진짜 로그인 쿠키라 건드리지 않는다.
+ *
+ * 실기 2026-09-26: '.api.musinsapayments.com' JSESSIONID 복제본(옛 값)이 새 세션 쿠키와 함께 가서
+ * 무신사머니 결제창이 "로그인 세션을 찾을 수 없습니다"로 튕겼다. 슈마커 '.www.' 복제본과 같은 원인
+ */
+export function isStaleHostCopy(c: Cookie): boolean {
+  if (c.hostOnly || c.session || !c.domain?.startsWith('.')) return false
+  const host = c.domain.slice(1)
+  return registrableDomain(host) !== host.toLowerCase()
+}
+
+/** 쿠키를 원래 모양대로 다시 쓰는 요청(host-only 는 domain 없이, 세션 쿠키는 만료 없이) */
+function restoreDetails(c: Cookie): CookiesSetDetails {
+  return {
+    url: cookieUrl(c),
+    name: c.name,
+    value: c.value,
+    path: c.path ?? '/',
+    ...(c.hostOnly ? {} : { domain: c.domain }),
+    secure: c.secure ?? false,
+    httpOnly: c.httpOnly ?? false,
+    ...(c.sameSite ? { sameSite: c.sameSite } : {}),
+    ...(c.session || c.expirationDate === undefined ? {} : { expirationDate: c.expirationDate })
+  }
+}
+
+/** 그 주소·이름으로 remove 하면 같이 지워지는 쿠키인가(도메인·경로가 그 주소에 붙는 것) */
+function sentTo(c: Cookie, host: string, path: string, name: string): boolean {
+  if (c.name !== name || !c.domain) return false
+  const d = c.domain.toLowerCase()
+  const domainOk = c.hostOnly ? d === host : host === d.replace(/^\./, '') || host.endsWith(d.startsWith('.') ? d : `.${d}`)
+  const p = c.path ?? '/'
+  return domainOk && (path === p || path.startsWith(p.endsWith('/') ? p : `${p}/`))
+}
+
+/**
+ * 예전 코드가 만든 하위 주소 복제본을 지운다(원본·다른 쿠키는 그대로).
+ * remove(url, name) 은 그 주소에 붙는 같은 이름 쿠키를 모두 지우므로, 복제본이 아닌 것은 원래 모양대로 다시 쓴다
+ */
+export async function removeStaleHostCopies(store: CookieStoreLike): Promise<number> {
+  const all = await store.get({})
+  let removed = 0
+  for (const c of all) {
+    if (!isStaleHostCopy(c)) continue
+    const host = (c.domain ?? '').slice(1).toLowerCase()
+    const path = c.path ?? '/'
+    const keep = all.filter((o) => o !== c && sentTo(o, host, path, c.name) && !isStaleHostCopy(o))
+    await store.remove(cookieUrl(c), c.name)
+    for (const o of keep) await store.set(restoreDetails(o))
+    removed++
+  }
+  return removed
+}
+
 /** 앱의 파티션 세션에 붙인다 */
 export function installSessionCookieKeeper(ses: Session): void {
+  // 예전 코드가 남긴 복제본부터 정리(실패해도 앱은 계속 — 이름·값은 남기지 않는다)
+  void removeStaleHostCopies(ses.cookies as unknown as CookieStoreLike)
+    .then((n) => {
+      if (n) console.log(`세션 쿠키 복제본 ${n}개 정리`)
+    })
+    .catch((e: unknown) => console.warn('세션 쿠키 복제본 정리 실패', e instanceof Error ? e.message : String(e)))
   keepSessionCookies(ses.cookies, {
     // 값은 남기지 않는다 — 어느 쿠키인지 이름만
     onError: (name) => console.warn(`세션 쿠키 유지 실패: ${name}`)

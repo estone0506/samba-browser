@@ -12,7 +12,33 @@ from samba_agent.agents.registry import AgentSpec, Registry
 from samba_agent.supervisor.state import RunState
 
 # 구매 결과에서 다음 단계가 일하는 데 필요한 값 — 대조용이 아니라 인계용이다
-BUYER_HANDOFF_FIELDS = ('card', 'account', 'cost', 'margin_pct', 'option', 'pay_provider')
+BUYER_HANDOFF_FIELDS = (
+    'card',
+    'account',
+    'cost',
+    'margin_pct',
+    'option',
+    'pay_provider',
+    'paid',
+    'card_issuer',
+    # 실제로 산 소싱처(교차 비교로 주문 소싱처와 다를 수 있다)
+    'buy_source',
+    # 주문서에서 쓴 보유 적립금(선할인 제외) — 기록 단계 원가에 쓴다(주문 상세는 선할인까지 합친 값만 보여 준다)
+    'points_used',
+    # 견적의 적립(사이트 적립예정 + 네이버페이 1%) — 주문 상세에 적립이 안 나오는 ABC·그랜드스테이지 원가에 쓴다
+    'reward',
+    # 결제 진입 대조·주문서 탭 지정(2026-09-26 재작성 계약)
+    'selected',
+    'order_tab',
+    # 실제로 산 상품 번호·이름(교차 비교면 원래 주문과 다른 사이트 기준) — 결제 진입 대조용
+    'product_no',
+    'product_name',
+    # 도착한 상품 주소(SSG 지정 몰 상품) — 결제 진입 대조(expect.product_url)
+    'product_url',
+    # 진입 경로(SSG 직접·애드픽)와 애드픽 적립(원) — 기록 단계 원가에 쓴다(주문 상세에 애드픽 적립이 안 나온다)
+    'route',
+    'adpick_reward',
+)
 
 
 def build_assignment(reg: Registry, spec: AgentSpec, state: RunState) -> Assignment:
@@ -69,6 +95,8 @@ def _expected(state: RunState) -> dict[str, object]:
                     'source_order_no': r.payload.get('source_order_no'),
                     'shipping_fee': r.payload.get('shipping_fee', 0),
                     'flags': r.payload.get('flags', []),
+                    # 구매 에이전트가 판정한 배송 종류 — 기록 단계가 삼바웨이브 태그로 남긴다
+                    'order_type': r.payload.get('order_type'),
                 }
             )
         if name == 'payer':

@@ -15,6 +15,7 @@ from samba_agent.ops.events import EventLog
 from samba_agent.ops.masking import mask_text
 from samba_agent.ops.tracing import run_metadata, traced
 from samba_agent.queue.db import PAY_STARTED_STEP, Job, JobQueue
+from samba_agent.queue.tabs import TabJanitor
 from samba_agent.supervisor.approval import resume_command
 
 THREAD_PREFIX = 'job:'
@@ -49,12 +50,31 @@ class WorkerDeps:
     events: EventLog | None = None
     env: str = 'dev'
     prompt_commit: str = '-'
+    # 이행하지 못한 주문 표시(가격X·재고X) — (주문번호, 실패 사유) → 결과 한 줄(붙일 게 없으면 None).
+    # dry-run 에서는 부르지 않는다
+    flag_order: Callable[[str, str | None], str | None] | None = None
+    # 처리할 소싱처 범위(대문자 id). 비어 있으면 거르지 않는다. 접수 뒤 삼바웨이브에서 소싱처가 바뀐 주문을
+    # 시작 직전에 한 번 더 거른다(실기 2026-09-25: 무신사로 접수된 주문이 롯데온으로 바뀌어 돌았다)
+    sources: frozenset[str] = frozenset()
+    # 자동 승인에서 빼는 결제수단 표시 이름(승인 요약의 '카드:' 에 들어 있으면 사람 승인을 기다린다)
+    manual_approve_methods: tuple[str, ...] = ()
     # 보관 기간 지난 이벤트 정리(EventLog.prune). 기동 시 1회 + 주기마다 부른다(리뷰 지적 — Minor)
     prune: Callable[[], int] | None = None
     prune_interval_s: float = 6 * 60 * 60
     # 끝난 실행의 체크포인트 스레드를 지운다(체크포인터의 delete_thread). 같은 job id 로 다시 접수될 때
     # 지난 실행의 attempts·results 가 새 실행에 섞이지 않게 한다. 없으면 지우지 않는다(테스트)
     reset_thread: Callable[[str], None] | None = None
+    # 작업이 연 브라우저 탭을 끝날 때 닫는다(실기: 옛 주문서 탭을 다음 작업이 읽어 원가 오독).
+    # 없으면 닫지 않는다(테스트)
+    tabs: TabJanitor | None = None
+    # True 면 작업이 끝나도 탭을 바로 닫지 않고 **다음 작업이 시작할 때** 닫는다 — 사용자가 결과 화면(주문서·
+    # 실패 화면)을 눈으로 확인할 수 있어야 한다(사용자 지시 2026-09-24). 옛 주문서 오독은 다음 작업 시작 전 정리로 막는다
+    keep_tabs: bool = False
+    # True 면 결제 승인 요청을 즉시 승인한다(SAMBA_AUTO_APPROVE — 사용자가 자동 이행을 켠 경우)
+    auto_approve: bool = False
+    # 브릿지가 지금 일을 받을 수 있는가(앱 채팅이 도는 동안은 409 busy). 거짓이면 큐를 집지 않고
+    # 다음 주기를 기다린다 — 실기: 사용자가 앱에서 채팅을 돌리는 동안 5건이 전부 bridge_down 으로 사람에게 넘어갔다
+    ready: Callable[[], bool] | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.version, str):
@@ -68,9 +88,15 @@ class Worker:
     def __init__(self, deps: WorkerDeps) -> None:
         self.d = deps
         self._last_prune: float | None = None
+        # 작업 id → 시작 시점 탭 목록. 승인 대기로 멈춘 작업은 재개 뒤 닫으려고 남겨 둔다
+        self._tab_marks: dict[int, frozenset[str]] = {}
+        # keep_tabs 일 때 아직 안 닫은 지난 작업의 시작 시점 탭 목록(가장 오래된 것 하나면 충분하다)
+        self._deferred_mark: frozenset[str] | None = None
 
     def tick(self) -> Job | None:
         """queued 1건을 집어 끝까지(또는 승인 대기까지) 돌린다. 없으면 None."""
+        if self.d.ready is not None and not self.d.ready():
+            return None
         job = self.d.queue.claim()
         if job is None:
             return None
@@ -85,7 +111,16 @@ class Worker:
             self.d.queue.finish(job.id, 'needs_human', error=f'주문 조회 실패: {msg}')
             self.d.report(job, f'주문 조회 실패 — 사람 확인 필요: {msg}')
             return self.d.queue.get(job.order_no)
+        if self.d.sources and order.source.upper() not in self.d.sources:
+            why = f'처리 범위 밖 소싱처: {order.source or "(없음)"} — 범위 {sorted(self.d.sources)}'
+            self.d.queue.finish(job.id, 'needs_human', error=why)
+            self.d.report(job, f'{job.order_no} 건너뜀 — {why}')
+            return self.d.queue.get(job.order_no)
         self._reset_finished_thread(job.id)
+        if self.d.tabs is not None:
+            self._close_deferred(job)
+            self._close_leftovers(job.order_no)
+            self._tab_marks[job.id] = self.d.tabs.snapshot()
         state = {
             'order': order,
             'options': {str(k): str(v) for k, v in job.options.items()},
@@ -93,7 +128,58 @@ class Worker:
             'dry_run': self.d.dry_run,
             'dry_run_digits': self.d.dry_run_digits,
         }
-        return self._invoke(job, state)
+        return self._cleanup_tabs(self._invoke(job, state))
+
+    def _close_leftovers(self, label: str) -> None:
+        """작업 시작 직전 — 지난 작업(죽은 하네스·시간 초과)이 남긴 탭을 닫는다. 화면을 남기는 설정이면 건너뛴다."""
+        if self.d.tabs is None or self.d.keep_tabs:
+            return
+        if self._tab_marks:
+            return  # 승인 대기로 멈춘 작업의 주문서가 살아 있어야 한다
+        try:
+            closed = self.d.tabs.close_leftovers()
+        except Exception:  # noqa: BLE001 — 정리 실패가 새 작업을 막으면 안 된다
+            _log.exception('남은 탭 정리 실패 — 그대로 둔다: %s', label)
+            return
+        if closed:
+            _log.info('%s 시작 전 남은 탭 %d개 닫음', label, closed)
+
+    def _close_deferred(self, job: Job) -> None:
+        """keep_tabs 로 남겨 둔 지난 작업의 탭을 새 작업 시작 직전에 닫는다(옛 주문서 오독 방지)."""
+        if self._deferred_mark is None or self.d.tabs is None:
+            return
+        mark, self._deferred_mark = self._deferred_mark, None
+        try:
+            closed = self.d.tabs.close_new(mark)
+        except Exception:  # noqa: BLE001 — 정리 실패가 새 작업을 막으면 안 된다
+            _log.exception('지난 작업 탭 정리 실패 — 그대로 둔다: %s', job.order_no)
+            return
+        if closed:
+            _log.info('%s 시작 전 지난 작업 탭 %d개 닫음', job.order_no, closed)
+
+    def _cleanup_tabs(self, job: Job | None) -> Job | None:
+        """작업이 끝났으면(승인 대기가 아니면) 그 작업이 연 탭을 닫는다."""
+        if job is None or self.d.tabs is None:
+            return job
+        if (job.step or '').startswith('승인 대기'):
+            return job  # 결제 직전 주문서가 살아 있어야 한다
+        before = self._tab_marks.pop(job.id, None)
+        if before is None:
+            return job
+        if self.d.keep_tabs:
+            # 화면을 남긴다 — 다음 작업 시작 때 닫는다(가장 오래된 표식을 유지해야 그 뒤 탭이 전부 닫힌다)
+            if self._deferred_mark is None:
+                self._deferred_mark = before
+            _log.info('%s 작업이 연 탭을 남겨 둔다(다음 작업 시작 때 정리)', job.order_no)
+            return job
+        try:
+            closed = self.d.tabs.close_new(before)
+        except Exception:  # noqa: BLE001 — 정리 실패가 결과를 바꾸면 안 된다
+            _log.exception('탭 정리 실패 — 그대로 둔다: %s', job.order_no)
+            return job
+        if closed:
+            _log.info('%s 작업이 연 탭 %d개 닫음', job.order_no, closed)
+        return job
 
     def resume(
         self, order_no: str, approved: bool, by: str, stage: str | None = None
@@ -108,7 +194,7 @@ class Worker:
         job = self.d.queue.try_start_resume(order_no, stage=stage)
         if job is None:
             return None
-        return self._invoke(job, resume_command(approved, by))
+        return self._cleanup_tabs(self._invoke(job, resume_command(approved, by)))
 
     def run_forever(self, stop: Callable[[], bool], interval_s: float = 2.0) -> None:
         """봇과 함께 도는 고리. stop() 이 참이 될 때까지 큐를 본다."""
@@ -242,6 +328,17 @@ class Worker:
             else:
                 # 버튼을 달 통로가 없을 때의 폴백 — 사람이 `@삼바` 명령으로 이어가야 한다
                 self.d.report(job, f'승인 요청\n{summary}')
+            manual = next(
+                (m for m in self.d.manual_approve_methods if m and m.lower() in summary.lower()),
+                None,
+            )
+            if manual and stage == 'pay':
+                self.d.report(job, f'수동 승인 필요: {order_no} — 검증 전 결제수단({manual})')
+            if self.d.auto_approve and not (manual and stage == 'pay'):
+                # 사용자가 자동 이행을 켰다 — 요약을 남긴 채 곧바로 승인해 이어 간다
+                self.d.report(job, f'자동 승인: {order_no} {stage}')
+                resumed = self.resume(order_no, True, 'auto-approve', stage)
+                return resumed if resumed is not None else self.d.queue.get(job.order_no)  # type: ignore[return-value]
             return self.d.queue.get(job.order_no)  # type: ignore[return-value]
         outcome = out['outcome']
         fail = out.get('fail_reason')
@@ -251,4 +348,50 @@ class Worker:
             job,
             f'{job.order_no} {outcome}' + (f' — 사유 {fail}' if fail else ' — 완료'),
         )
+        export_alert = _export_alert(out)
+        if export_alert is not None:
+            self.d.report(job, mask_text(f'{job.order_no} 외부 기입 {export_alert}')[:200])
+        if fail and outcome != 'done' and self.d.flag_order is not None and not self.d.dry_run:
+            reason = _failed_reason(out)
+            if str(fail) in (str(FailReason.OUT_OF_STOCK), str(FailReason.MARGIN)):
+                # 품절·마진 미달은 자동으로 재고X·가격X·취소요청하지 않는다 — 스크립트 문구('L (품절)' 합성 등)는
+                # 페이지 근거가 아니다. 검수자가 상품 페이지를 직접 보고 근거(본 가격·품절 표시)를 메모에 적은 뒤
+                # 취소한다(사용자 2026-09-28: 근거 없는 취소 금지)
+                kind = '재고X' if str(fail) == str(FailReason.OUT_OF_STOCK) else '가격X'
+                self.d.report(job, f'{job.order_no} {kind} 보류 — 검수 필요({mask_text(reason)[:80]})')
+            else:
+                flagged = self.d.flag_order(job.order_no, str(fail))
+                if flagged:
+                    self.d.report(job, f'{job.order_no} {flagged}')
         return self.d.queue.get(job.order_no)  # type: ignore[return-value]
+
+
+def _export_alert(out: dict) -> str | None:
+    """exporter 결과가 conflict·error 면 '{상태}: {사유}', 아니면 None.
+
+    ``out['results']`` 는 ``AgentResult`` 객체지만 체크포인트를 거치면 dict 로 올 수도
+    있다(``_failed_reason`` 과 같은 이유) — 둘 다 받는다.
+    """
+    result = (out.get('results') or {}).get('exporter')
+    if result is None:
+        return None
+    if isinstance(result, dict):
+        payload = result.get('payload') or {}
+        reason = result.get('reason')
+    else:
+        payload = result.payload
+        reason = result.reason
+    status = payload.get('export')
+    if status not in ('conflict', 'error'):
+        return None
+    return f'{status}: {reason or ""}'
+
+
+def _failed_reason(out: dict) -> str:
+    """그래프 결과에서 실패한 에이전트의 사유 글자(없으면 빈 문자열)."""
+    for r in (out.get('results') or {}).values():
+        status = getattr(r, 'status', None) if not isinstance(r, dict) else r.get('status')
+        if status and status != 'ok':
+            reason = getattr(r, 'reason', None) if not isinstance(r, dict) else r.get('reason')
+            return str(reason or '')
+    return ''

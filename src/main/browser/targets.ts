@@ -16,6 +16,8 @@ export interface AgentTarget {
   openerId?: string
   /** 탭이면 활성 탭인지, 팝업이면 AI 표식이 붙어 있는지 */
   active: boolean
+  /** 레인이 연 탭(과 그 팝업)이면 레인 이름 — 레인 없는 세션의 목록에만 붙는다(labelLaneTargets) */
+  lane?: string
 }
 
 /** 창·뷰를 모르는 순수 계산용 최소 정보 */

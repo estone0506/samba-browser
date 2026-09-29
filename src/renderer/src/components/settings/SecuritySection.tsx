@@ -41,18 +41,26 @@ const ACCESS_OPTIONS: { value: VaultAccessPolicy; labelKey: string; descKey: str
   }
 ]
 
+// 쉼표로 구분한 도메인 입력값을 목록으로
+function splitHosts(text: string): string[] {
+  return text
+    .split(',')
+    .map((h) => h.trim())
+    .filter((h) => h.length > 0)
+}
+
 // 보안 — 금고 자동 잠금 · AI 접근 정책 · 자동 제출/갱신 · 제외 도메인 · 복구 키 재발급
 export function SecuritySection({ settings, update }: SectionProps): React.JSX.Element {
   const { t } = useTranslation()
   const [excludedHostsText, setExcludedHostsText] = useState(settings.vaultExcludedHosts.join(', '))
+  const [neverSaveText, setNeverSaveText] = useState(settings.vaultNeverSaveHosts.join(', '))
   const [recoveryOpen, setRecoveryOpen] = useState(false)
 
   const commitExcludedHosts = (): void => {
-    const hosts = excludedHostsText
-      .split(',')
-      .map((h) => h.trim())
-      .filter((h) => h.length > 0)
-    update({ vaultExcludedHosts: hosts })
+    update({ vaultExcludedHosts: splitHosts(excludedHostsText) })
+  }
+  const commitNeverSave = (): void => {
+    update({ vaultNeverSaveHosts: splitHosts(neverSaveText) })
   }
 
   return (
@@ -138,12 +146,12 @@ export function SecuritySection({ settings, update }: SectionProps): React.JSX.E
           />
         </SettingsToggleRow>
         <SettingsToggleRow
-          label={t('vault.settings.autoUpdatePassword')}
-          description={t('vault.settings.autoUpdatePasswordDesc')}
+          label={t('vault.settings.autoSaveLogins')}
+          description={t('vault.settings.autoSaveLoginsDesc')}
         >
           <Switch
-            checked={settings.vaultAutoUpdatePassword}
-            onCheckedChange={(v) => update({ vaultAutoUpdatePassword: v })}
+            checked={settings.vaultAutoSaveLogins}
+            onCheckedChange={(v) => update({ vaultAutoSaveLogins: v })}
           />
         </SettingsToggleRow>
         <SettingsToggleRow
@@ -166,6 +174,17 @@ export function SecuritySection({ settings, update }: SectionProps): React.JSX.E
             value={excludedHostsText}
             onChange={setExcludedHostsText}
             onBlur={commitExcludedHosts}
+            placeholder={t('vault.settings.excludedHostsPlaceholder')}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label={t('vault.settings.neverSaveHosts')}
+          description={t('vault.settings.neverSaveHostsDesc')}
+        >
+          <TextInput
+            value={neverSaveText}
+            onChange={setNeverSaveText}
+            onBlur={commitNeverSave}
             placeholder={t('vault.settings.excludedHostsPlaceholder')}
           />
         </SettingsRow>

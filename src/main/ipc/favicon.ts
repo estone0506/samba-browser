@@ -2,7 +2,7 @@
 // 의존하지 않는 독립 기능이기 때문이다(등록 함수 한 줄만 index.ts 에서 부른다).
 
 import { join } from 'node:path'
-import { app, ipcMain, net } from 'electron'
+import { app, ipcMain } from 'electron'
 import { IPC, type IpcResult } from '../../shared/ipc'
 import { FaviconService, setFaviconService, type FaviconResponse } from '../favicon/service'
 import { assertFromRenderer, type RendererWindowLike } from './sender'
@@ -15,7 +15,8 @@ export interface FaviconGetResult {
 export function registerFaviconIpc(win: RendererWindowLike): FaviconService {
   const service = new FaviconService({
     cacheDir: join(app.getPath('userData'), 'favicons'),
-    fetch: (url, init) => net.fetch(url, init) as unknown as Promise<FaviconResponse>
+    // net.fetch 대신 Node fetch — 확장(webRequest)이 켜진 상태의 Electron 크래시 회피
+    fetch: (url, init) => globalThis.fetch(url, init) as unknown as Promise<FaviconResponse>
   })
   setFaviconService(service)
 

@@ -90,3 +90,36 @@ def test_주문번호_안의_글자를_카드로_읽지_않는다():
 )
 def test_카드는_단어_경계로만_읽는다(text, card):
     assert parse_command(text).options == {'card': card}
+
+
+# ---- 자동 수집 명령(Task D) ----
+
+
+@pytest.mark.parametrize(
+    'text',
+    ['<@BOT> 주문처리 전체', '<@BOT> 전체 처리', '<@BOT> 전체 처리해줘', '<@BOT> 전체 주문처리'],
+)
+def test_전체_수집_명령을_읽는다(text):
+    c = parse_command(text)
+    assert (c.kind, c.order_no) == ('intake_now', None)
+
+
+def test_전체는_주문번호로_읽히지_않는다():
+    assert parse_command('<@BOT> 전체 처리').order_no is None
+
+
+@pytest.mark.parametrize(
+    ('text', 'kind'),
+    [('<@BOT> 수집 중지', 'intake_pause'), ('<@BOT> 수집 재개', 'intake_resume')],
+)
+def test_수집_중지_재개를_읽는다(text, kind):
+    assert parse_command(text).kind == kind
+
+
+def test_모르는_수집_말은_unknown():
+    assert parse_command('<@BOT> 수집 뭐시기').kind == 'unknown'
+
+
+def test_평범한_주문_처리는_그대로_읽는다():
+    c = parse_command('<@BOT> 734501000740906 처리해')
+    assert (c.kind, c.order_no) == ('process', '734501000740906')

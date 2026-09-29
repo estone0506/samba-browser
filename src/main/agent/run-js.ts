@@ -14,7 +14,8 @@ import vm from 'node:vm'
 // - require·process 는 애초에 컨텍스트에 없다(참조하면 ReferenceError).
 
 /** 받아 줄 코드 길이 상한 */
-export const RUN_JS_MAX_CODE = 4000
+// 8000: 사이트 스크립트가 옵션·쿠폰·결제수단 처리를 덧붙이며 4000 을 넘어 AI 수리가 시험조차 못 했다(2026-09-24)
+export const RUN_JS_MAX_CODE = 8000
 /** 모델에게 돌려주는 결과 문자열 상한 */
 export const RUN_JS_MAX_OUTPUT = 12000
 /** 동기 실행 상한(무한 루프 차단) */
@@ -99,9 +100,26 @@ const BOOTSTRAP = `(() => {
     // 글자로 요소를 찾는다 — 번호는 페이지를 읽을 때마다 바뀌므로, 다시 쓸 코드는 이걸로 쓴다
     idOf: (text, nth) => invoke('page.idOf', [text, nth || 0]),
     clickText: (text, nth) => invoke('page.clickText', [text, nth || 0]),
+    // 합성 클릭을 무시하는 요소(커스텀 드롭다운 등)를 요소 가운데 좌표로 진짜 마우스 클릭한다(실기: 렉스몬드 옵션)
+    clickNative: (id) => invoke('page.clickNative', [id]),
     dismissOverlay: () => invoke('page.dismissOverlay', []),
+    // 라벨 글자로 체크박스를 켠다(숨은 동의 칸 포함) — checked·already·not-found·failed
+    check: (text) => invoke('page.check', [text]),
     url: () => invoke('page.url', []),
-    title: () => invoke('page.title', [])
+    title: () => invoke('page.title', []),
+    // 고정 sleep 대신 쓴다 — 화면(요소 목록·본문)에 글자(또는 정규식)가 보이면 바로 true, ms 안에 안 보이면 false.
+    // 페이지가 빨리 뜨면 기다리지 않고 넘어간다(실기: 스크립트마다 2~4초 고정 대기가 쌓여 계정당 1~2분)
+    waitFor: async (pattern, ms) => {
+      const limit = Date.now() + Math.min(Math.max(Number(ms) || 8000, 200), 30000)
+      const re = pattern instanceof RegExp ? pattern : null
+      while (true) {
+        const snap = await invoke('page.get', [{}])
+        const tree = snap && typeof snap.tree === 'string' ? snap.tree : ''
+        if (re ? re.test(tree) : tree.includes(String(pattern))) return true
+        if (Date.now() >= limit) return false
+        await invoke('sleep', [250])
+      }
+    }
   }
   g.tabs = {
     list: () => invoke('tabs.list', []),
@@ -109,6 +127,10 @@ const BOOTSTRAP = `(() => {
     close: (id) => invoke('tabs.close', [id]),
     // 계정별 프로필 탭을 한 턴에 여러 개 열 때 쓴다(계정 비교를 로그아웃 없이 병렬로)
     open: (opts) => invoke('tabs.open', [opts])
+  }
+  // 제휴 적립 링크 — 애드픽: 상품 주소 → {ok, trackinglink, percent, …}. 프로필의 애드픽 로그인으로 받는다(10초쯤 걸린다)
+  g.affiliate = {
+    adpick: (url, profile) => invoke('affiliate.adpick', [url, profile])
   }
   // 전역 객체를 손에 쥐지 못하게 한다(마지막에 지운다 — 위에서는 g 로 썼다)
   delete g.globalThis

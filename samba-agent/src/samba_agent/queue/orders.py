@@ -7,11 +7,16 @@
 """
 
 import json
+import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from samba_agent.agents.contracts import OrderRef
 from samba_agent.bridge.client import BridgeClient
+from samba_agent.sources import default_sources
+from samba_agent.wave.client import WaveClient, WaveError
+
+log = logging.getLogger(__name__)
 
 FIND_ORDER_SCRIPT = 'samba_find_order'
 # 조회 스크립트는 앱의 활성 탭에서 돈다 — 이 주소가 앞에 있어야 한다
@@ -47,6 +52,10 @@ def _normalize(data: dict[str, object]) -> dict[str, object]:
                 if data.get(n) not in (None, ''):
                     out[field] = data[n]
                     break
+    # 소싱처는 한글 이름('ABC마트')·id('ABCmart')·key('abc') 어느 쪽으로 와도 삼바웨이브 id 로 맞춘다
+    source = out.get('source')
+    if isinstance(source, str):
+        out['source'] = default_sources().normalize(source.strip())
     account = out.get('account')
     if isinstance(account, str):
         m = _ACCOUNT_ID.search(account)
@@ -60,6 +69,40 @@ def _normalize(data: dict[str, object]) -> dict[str, object]:
         if sku:
             out['sku'] = sku
     return out
+
+
+def lookup_order_api(wave: 'WaveClient', order_no: str) -> OrderRef:
+    """삼바웨이브 내부 API 로 주문을 찾아 OrderRef 를 만든다(앱 화면을 거치지 않는다).
+
+    상세 응답에는 배송지(개인정보)가 실려 있지만 OrderRef 에는 옮기지 않는다 —
+    배송지는 구매 에이전트가 입력하는 순간에만 따로 받아 쓴다.
+    소싱처 이름은 표(sources.yaml)를 거쳐 삼바웨이브 id 로 맞춘다.
+    """
+    detail = wave.get_order(order_no)
+    ref = detail.to_order_ref()
+    if not ref.source or not ref.seller:
+        raise ValueError(f'order lookup incomplete: {order_no} (소싱처·판매처 없음)')
+    return ref.model_copy(update={'source': default_sources().normalize(ref.source)})
+
+
+def parse_order_fn(
+    wave: 'WaveClient | None', bridge: BridgeClient
+) -> Callable[[str, Mapping[str, str]], OrderRef]:
+    """조회 통로 하나로 묶는다 — 삼바웨이브 API 가 있으면 그쪽, 없으면 앱 저장 스크립트.
+
+    API 가 있어도 그 주문이 삼바웨이브에 없거나(404) 필드가 모자라면 스크립트로 한 번 더 찾는다 —
+    수기로 넣은 주문이 API 목록에 안 잡히는 경우가 있다.
+    """
+
+    def parse(order_no: str, options: Mapping[str, str]) -> OrderRef:
+        if wave is not None:
+            try:
+                return lookup_order_api(wave, order_no)
+            except (WaveError, ValueError) as e:
+                log.warning('삼바웨이브 조회 실패 — 앱 스크립트로 넘어간다: %s', e)
+        return lookup_order(bridge, order_no, options)
+
+    return parse
 
 
 def focus_orders_page(bridge: BridgeClient) -> None:

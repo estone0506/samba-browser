@@ -26,6 +26,9 @@ export interface SignedInHint {
   signedIn: boolean
   // 판정 근거가 된 문구(모델·로그에 남긴다). 못 찾으면 빈 문자열
   matched: string
+  // 근거가 마이페이지 류(약한 근거)뿐이면 true — 로그아웃 상태에서도 그런 링크를 보이는 사이트가
+  // 있어(실기: 무신사 "마이 페이지로 이동") 호출부가 로그인 페이지 방문으로 한 번 더 확인한다
+  weak: boolean
 }
 
 // 사람이 직접 처리해야 하는 추가 확인(캡차·2FA) 징후.
@@ -84,6 +87,10 @@ const HONEYPOT_RE = /honey|\btrap\b|nospam|no.?bot|bot.?field|fake.?(field|input
 // 로그인된 사용자에게만 보이는 링크·버튼 문구(ko/en)
 export const SIGNED_IN_RE =
   /로그아웃|마이\s?페이지|내\s?정보|내\s?계정|내\s?정보\s?관리|주문\s?내역|sign\s?out|log\s?out|logout|my\s?page|my\s?account|my\s?info|my\s?profile/i
+// 그중 확실한 근거 — 로그아웃 버튼은 로그인 전 화면에 나오지 않는다
+export const SIGNED_OUT_ACTION_RE = /로그아웃|sign\s?out|log\s?out|logout/i
+// 로그인 전 화면에만 보이는 링크 문구. 마이페이지 류와 같이 보이면 로그인 전으로 본다
+export const SIGNED_OUT_LINK_RE = /^(로그인|회원\s?가입|sign\s?in|log\s?in|login|join)$/i
 
 // 사람이 직접 풀어야 하는 확인의 강한 징후 — 이 문구 하나로 넘김을 결정한다
 export const CAPTCHA_STRONG_RE =
@@ -337,6 +344,22 @@ function isSocialButton(el: HTMLElement): boolean {
   return SOCIAL_RE.test(buttonTextOf(el))
 }
 
+// 로그인 낱말이 섞여도 제출이 아닌 버튼 — 아이디·비밀번호 찾기, 회원가입, 비회원, 로그인 상태 유지 등
+export const NOT_SUBMIT_TEXT_RE =
+  /찾기|회원\s?가입|가입하기|비회원|find|forgot|reset|join|sign\s?up|register|로그인\s?상태|자동\s?로그인|로그아웃|logout|log\s?out/i
+
+/**
+ * 폼 안의 type="button" 로그인 버튼인가 — 한국 쇼핑몰은 form 안이어도 제출 버튼 대신
+ * <button type="button" v-on:click="login"> 로 로그인을 보낸다(실기: 패션플러스). 글자가 로그인·다음류이고
+ * 찾기·가입·소셜 버튼이 아닐 때만 제출로 본다
+ */
+function isFormLoginButton(el: HTMLElement): boolean {
+  if (!isButtonish(el)) return false
+  const text = buttonTextOf(el)
+  if (!SUBMIT_TEXT_RE.test(text)) return false
+  return !NOT_SUBMIT_TEXT_RE.test(text) && !SOCIAL_RE.test(text)
+}
+
 /**
  * 요소 → 스냅샷 id 를 알려 주는 함수.
  * 주지 않으면 목록 순서(1-base)를 id 로 본다 — 안정 id 표가 없는 호출부(테스트)용 기본값이다
@@ -363,6 +386,13 @@ export function findSubmit(
       if (formOf(el) !== form) continue
       if (!isSubmitLike(el)) continue
       if (isSocialButton(el)) continue
+      return idOf(el)
+    }
+    // 폼에 제출 버튼이 없으면 같은 폼 안의 로그인 글자 버튼(type="button")을 쓴다 — 문서 전체로 넘어가면
+    // 캐러셀 '다음' 같은 엉뚱한 버튼이 먼저 걸린다(실기: 패션플러스 로그인이 배너 '다음'을 눌러 실패)
+    for (const el of registry) {
+      if (formOf(el) !== form) continue
+      if (!isFormLoginButton(el)) continue
       return idOf(el)
     }
   }
@@ -456,12 +486,18 @@ export function detectLoginFields(
  * 반대로 로그인/회원가입 링크만 있으면 로그인 전 화면이다
  */
 export function matchSignedInText(texts: string[]): SignedInHint {
+  let weakHit = ''
+  let signedOutLink = false
   for (const raw of texts) {
     const t = raw.replace(/\s+/g, ' ').trim()
     if (!t || t.length > 40) continue
-    if (SIGNED_IN_RE.test(t)) return { signedIn: true, matched: t }
+    if (SIGNED_OUT_ACTION_RE.test(t)) return { signedIn: true, matched: t, weak: false }
+    if (!weakHit && SIGNED_IN_RE.test(t)) weakHit = t
+    if (SIGNED_OUT_LINK_RE.test(t)) signedOutLink = true
   }
-  return { signedIn: false, matched: '' }
+  // 마이페이지 류만 있고 로그인·회원가입 링크가 함께 보이면 로그인 전 화면이다
+  if (weakHit && !signedOutLink) return { signedIn: true, matched: weakHit, weak: true }
+  return { signedIn: false, matched: '', weak: false }
 }
 
 /**
@@ -469,7 +505,7 @@ export function matchSignedInText(texts: string[]): SignedInHint {
  * 호출부(login 도구)는 findLoginFields 가 폼을 못 찾았을 때만 이 값을 쓴다
  */
 export function detectSignedInHint(): SignedInHint {
-  if (passwordElement()) return { signedIn: false, matched: '' }
+  if (passwordElement()) return { signedIn: false, matched: '', weak: false }
   const nodes = Array.from(
     document.querySelectorAll<HTMLElement>('a, button, [role="button"], [role="link"]')
   ).filter(isVisible)
@@ -520,8 +556,19 @@ export function detectCaptchaHint(): CaptchaHint {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 5000)
-  const frameSources = Array.from(document.querySelectorAll('iframe')).map(
-    (f) => f.getAttribute('src') || f.getAttribute('title') || ''
-  )
+  const frameSources = Array.from(document.querySelectorAll('iframe'))
+    .filter(isCaptchaWidgetFrame)
+    .map((f) => f.getAttribute('src') || f.getAttribute('title') || '')
   return matchCaptchaSigns({ text, frameSources, hasCodeInput: hasCodeInput() })
+}
+
+/**
+ * 사람이 풀어야 하는 캡차 위젯 프레임만 고른다.
+ * 점수형 reCAPTCHA(v3·Enterprise)는 챌린지가 없어도 iframe 을 늘 심어 둔다 — 우측 아래 배지(.grecaptcha-badge)의
+ * anchor 프레임과 `visibility: hidden` 상자 안의 챌린지(bframe) 프레임. 이걸 캡차로 보면 로그인 폼이 멀쩡한데도
+ * "캡차를 풀어 달라"며 사용자에게 넘기고 영영 기다린다(실기: GS샵 로그인). 보이는 프레임만 위젯으로 본다
+ */
+export function isCaptchaWidgetFrame(frame: HTMLIFrameElement): boolean {
+  if (frame.closest('.grecaptcha-badge')) return false
+  return isVisible(frame)
 }

@@ -179,6 +179,13 @@ export async function pullAll(deps: PullDeps): Promise<PullResult> {
  * 로컬이 이기면 충돌로 센다 — 로컬 값이 그대로 남고, 다음 푸시가 원격을 덮는다
  */
 function wins(localRow: Syncable | null, remoteRow: Syncable, result: PullResult): boolean {
+  // 로컬에서 지운 행(tombstone)은 원격의 "살아 있는" 갱신이 더 늦어도 되살리지 않는다 — 옛 복제본(병렬
+  // 인스턴스)이 지운 뒤에 그 행을 만지고 upsert 하면 LWW 로는 삭제가 뒤집혔다(실기: 키마스터에서 지운
+  // 계정·사이트가 자꾸 원복). 삭제는 사용자 의도라 이긴다. 다음 푸시가 tombstone 을 다시 올린다
+  if (localRow !== null && localRow.deletedAt !== null && remoteRow.deletedAt === null) {
+    result.conflicts += 1
+    return false
+  }
   const decision = decideLww(localRow, remoteRow)
   if (decision === 'remote') return true
   if (decision === 'local') result.conflicts += 1
@@ -225,6 +232,11 @@ async function pullAccounts(
     if (localId === null) {
       // 원격에서 이미 지워진 행은 로컬에 되살리지 않는다
       if (remote.deletedAt !== null) continue
+      // 로컬에서 지운 행(삭제 메모)은 다른 기기가 살아 있는 채로 다시 올려도 되살리지 않는다 — 삭제가 이긴다
+      if (remote.remoteId && local.tombstoneAt('accounts', remote.remoteId) !== null) {
+        result.conflicts += 1
+        continue
+      }
       local.applyAccount(remote, null)
       result.applied += 1
       continue
@@ -286,6 +298,10 @@ async function pullVaultItems(
           : null)
       if (localId === null) {
         if (remote.deletedAt !== null) continue
+        if (remote.remoteId && local.tombstoneAt('vault_items', remote.remoteId) !== null) {
+          result.conflicts += 1
+          continue
+        }
         local.applyVaultItem(remote, null)
         result.applied += 1
         continue

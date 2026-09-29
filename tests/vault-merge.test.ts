@@ -114,9 +114,8 @@ describe('서브도메인 계정 합치기', () => {
     const naverMail = vault.upsertAccount({ host: 'mail.naver.com', username: 'mjkim88' })
     const naver = vault.upsertAccount({ host: 'nid.naver.com', username: 'mjkim88' })
     const site = vault.upsertAccount({ host: 'abcmart.a-rt.com', username: 'hong77' })
-    const payFields = (
-      extra: { key: string; label: string; kind: 'text' | 'secret'; value?: string }[]
-    ) => [
+    type PayField = { key: string; label: string; kind: 'text' | 'secret'; value?: string }
+    const payFields = (extra: PayField[]): { key: string; label: string; fields: PayField[] }[] => [
       {
         key: 'main',
         label: '결제',
@@ -164,5 +163,63 @@ describe('서브도메인 계정 합치기', () => {
       reason: 'not-found'
     })
     expect(naverMail.id).not.toBe(naver.id)
+  })
+})
+
+describe('앱 계정 자신의 결제 비밀번호 항목이 "이 사이트"(site) 로 저장된 경우', () => {
+  let db: Db
+  let vault: VaultService
+  beforeEach(async () => {
+    db = await openDatabase(':memory:')
+    vault = new VaultService(db, settings())
+    await vault.setup('pw')
+  })
+  afterEach(() => {
+    vault.dispose()
+    db.close()
+  })
+
+  it('네이버 계정의 site 항목을 네이버페이 비밀번호로 쓴다(실기 13차: not-found 로 끝나던 문제)', () => {
+    const naver = vault.upsertAccount({ host: 'nid.naver.com', username: 'buyer01' })
+    const site = vault.upsertAccount({ host: 'abcmart.a-rt.com', username: 'buyer01' })
+    vault.putItem({
+      accountId: naver.id,
+      type: 'password',
+      label: '결제 비밀번호',
+      sections: [
+        {
+          key: 'main',
+          label: '결제',
+          fields: [
+            { key: 'payment.provider', label: '결제 수단', kind: 'text', value: 'site' },
+            { key: 'value', label: '비밀번호', kind: 'secret', value: '135790' }
+          ]
+        }
+      ]
+    })
+    vault.putItem({
+      accountId: site.id,
+      type: 'password',
+      label: '네이버페이',
+      sections: [
+        {
+          key: 'main',
+          label: '결제',
+          fields: [
+            { key: 'payment.provider', label: '결제 수단', kind: 'text', value: 'naver' },
+            { key: 'payment.account', label: '계정', kind: 'text', value: 'buyer01' }
+          ]
+        }
+      ]
+    })
+    expect(vault.hasPaymentItem(naver.id, 'naver')).toBe(true)
+    expect(vault.getPaymentSecretForFill({ accountId: naver.id, provider: 'naver' }).value).toBe(
+      '135790'
+    )
+    expect(vault.getPaymentSecretForFill({ accountId: site.id, provider: 'naver' }).value).toBe(
+      '135790'
+    )
+    // 쇼핑몰 계정의 site 항목은 그 사이트 것이지 네이버페이가 아니다
+    expect(vault.hasPaymentItem(site.id, 'toss')).toBe(false)
   })
 })

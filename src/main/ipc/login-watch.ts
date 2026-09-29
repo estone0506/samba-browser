@@ -1,88 +1,139 @@
-// 저장된 값과 다른 값으로 로그인 폼이 제출됐을 때(vault-capture.ts 의 'pending-update'),
-// 해당 탭의 navigation 을 최대 20초 지켜보고 로그인 성공을 감지하면 조용히 비밀번호를 갱신한다.
-// electron 의존이 있어(WebContents 이벤트·isolated world 호출) 단위 테스트 대상은 아니다 —
-// 판정 로직 자체(isLoginSuccess)는 login-success.ts 에 분리해 순수 함수로 테스트한다.
+// 로그인 폼 제출 뒤 그 탭을 잠깐 지켜보다가 "로그인 성공"으로 보이면 콜백을 부른다.
+// 저장 제안 확인 바(vault-capture)는 성공한 로그인만 묻는다 — 틀린 비밀번호를 저장하자고 하지 않게.
+// electron 의존이 있어(WebContents 이벤트·격리 월드 호출) 단위 테스트 대상은 아니다 —
+// 판정 로직 자체(judgeLoginOutcome)는 login-success.ts 의 순수 함수로 테스트한다.
+//
+// 값(비밀번호)은 이 모듈을 지나지 않는다. 호출부가 콜백 클로저 안에 들고 있다가 성공일 때만 쓰고,
+// 실패·시간 초과·탭 닫힘이면 onSettled(false) 로 알려 호출부가 버리게 한다.
 
-import type { WebContents } from 'electron'
-import { isLoginSuccess } from './login-success'
-import type { VaultService } from '../vault/service'
+import type { WebContents, WebFrameMain } from 'electron'
+import { judgeLoginOutcome } from './login-success'
 import { ISOLATED_WORLD_ID } from '../browser/page-bridge'
-import type { PendingUpdatePayload } from './vault-capture'
+import { callFrameOp } from '../browser/frame-channel'
 
-// 로그인 성공 판정 대기 최대 시간(스펙: 20초)
+// 로그인 성공 판정 대기 최대 시간
 export const LOGIN_WATCH_TIMEOUT_MS = 20_000
+// 화면을 다시 들여다보는 간격. 첫 확인도 이만큼 뒤다(제출 직후 화면은 아직 그대로다)
+const LOGIN_WATCH_POLL_MS = 1_200
 
-export interface PasswordUpdatedResult {
-  host: string
-  username: string
-  undoToken: string
+// 탭마다 지켜보는 건 하나뿐이다 — 같은 탭에서 다시 제출하면 앞의 것은 버린다
+const watchers = new WeakMap<WebContents, () => void>()
+
+// 격리 월드의 __samba 로 페이지 텍스트와 비밀번호 칸 유무를 읽는다. 값은 읽지 않는다
+async function observe(wc: WebContents): Promise<{ text: string; passwordVisible?: boolean }> {
+  const run = async (code: string): Promise<unknown> => {
+    try {
+      return await wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code }])
+    } catch {
+      return undefined
+    }
+  }
+  const snap = await run('__samba.snapshot()')
+  const fields = await run('__samba.findLoginFields()')
+  const text =
+    snap && typeof snap === 'object' && typeof (snap as { text?: unknown }).text === 'string'
+      ? (snap as { text: string }).text
+      : ''
+  let passwordVisible: boolean | undefined
+  if (fields && typeof fields === 'object') {
+    passwordVisible = typeof (fields as { password?: unknown }).password === 'number'
+  }
+  return { text, passwordVisible }
 }
 
-// 페이지 스냅샷에서 text 필드만 최소한으로 신뢰한다(나머지 필드는 쓰지 않으므로 검증하지 않는다)
-async function readSnapshotText(wc: WebContents): Promise<string> {
+// 하위 프레임(iframe 로그인 폼)의 비밀번호 칸 유무. 프레임이 사라졌으면(로그인 레이어가 닫힘) false,
+// 물어보지 못했으면 undefined(모름 — 성공으로 치지 않는다). 값은 읽지 않는다(스냅샷은 비밀 칸 값을 담지 않는다)
+async function framePasswordVisible(frame: WebFrameMain): Promise<boolean | undefined> {
   try {
-    const raw: unknown = await wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [
-      { code: '__samba.snapshot()' }
-    ])
-    if (raw && typeof raw === 'object' && typeof (raw as { text?: unknown }).text === 'string') {
-      return (raw as { text: string }).text
-    }
-    return ''
+    if (frame.isDestroyed() || frame.detached) return false
   } catch {
-    return ''
+    return false
+  }
+  try {
+    const snap = await callFrameOp(frame, { op: 'snapshot' })
+    if (!snap || typeof snap !== 'object') return undefined
+    const elements = (snap as { elements?: unknown }).elements
+    if (!Array.isArray(elements)) return undefined
+    return elements.some(
+      (el) =>
+        typeof el === 'object' &&
+        el !== null &&
+        ((el as { inputType?: unknown }).inputType === 'password' ||
+          (el as { isSecret?: unknown }).isSecret === true)
+    )
+  } catch {
+    return undefined
   }
 }
+
+/** 감시가 끝난 사유(로그용 — 값은 담지 않는다) */
+export type LoginWatchReason =
+  'url-changed' | 'password-gone' | 'failure-text' | 'timeout' | 'tab-closed' | 'replaced'
 
 /**
- * 탭의 navigation 을 지켜보다가 로그인 성공을 감지하면 vault.applyAutoPasswordUpdate() 를 호출하고
- * onUpdated 로 결과를 알린다. 실패 판정이거나 타임아웃이면 아무 통지 없이 조용히 폐기한다.
+ * 탭을 지켜보다가 로그인 성공이면 onSettled(true), 실패·시간 초과·탭 닫힘·새 제출로 대체되면 onSettled(false).
+ * onSettled 는 정확히 한 번 불린다
  */
-export function watchLoginSuccess(
+export function watchLoginOutcome(
   wc: WebContents,
   prevUrl: string,
-  payload: PendingUpdatePayload,
-  vault: VaultService,
-  onUpdated: (result: PasswordUpdatedResult) => void
+  onSettled: (success: boolean, reason: LoginWatchReason) => void,
+  subFrame?: WebFrameMain
 ): void {
-  if (wc.isDestroyed()) return
+  // 같은 탭의 이전 감시는 버린다(그 제출의 값도 호출부가 버린다)
+  watchers.get(wc)?.()
+  if (wc.isDestroyed()) {
+    onSettled(false, 'tab-closed')
+    return
+  }
 
   let settled = false
-  const cleanup = (): void => {
-    wc.off('did-navigate', onNavigate)
-    wc.off('did-navigate-in-page', onNavigate)
-    clearTimeout(timer)
-  }
+  let checking = false
+  const startedAt = Date.now()
 
-  const timer = setTimeout(() => {
+  const finish = (success: boolean, reason: LoginWatchReason): void => {
     if (settled) return
     settled = true
-    cleanup()
-    // 타임아웃 → 폐기(알림 없음)
-  }, LOGIN_WATCH_TIMEOUT_MS)
-  timer.unref?.()
+    clearInterval(timer)
+    // 감시마다 붙인 리스너를 떼어 낸다(한 탭에서 여러 번 로그인해도 리스너가 쌓이지 않게)
+    if (!wc.isDestroyed()) wc.removeListener('destroyed', cancel)
+    if (watchers.get(wc) === cancel) watchers.delete(wc)
+    onSettled(success, reason)
+  }
+  const cancel = (): void => finish(false, wc.isDestroyed() ? 'tab-closed' : 'replaced')
 
-  const onNavigate = (): void => {
-    if (settled || wc.isDestroyed()) return
-    const newUrl = wc.getURL()
-    void readSnapshotText(wc).then((text) => {
-      if (settled) return
-      const success = isLoginSuccess(prevUrl, newUrl, text)
-      settled = true
-      cleanup()
-      if (!success) return
-      try {
-        const { undoToken } = vault.applyAutoPasswordUpdate({
-          accountId: payload.accountId,
-          username: payload.username,
-          value: payload.password
-        })
-        onUpdated({ host: payload.host, username: payload.username, undoToken })
-      } catch (e: unknown) {
-        console.error('비밀번호 자동 갱신 실패', e instanceof Error ? e.message : String(e))
-      }
-    })
+  const tick = async (): Promise<void> => {
+    if (settled || checking) return
+    if (wc.isDestroyed()) {
+      finish(false, 'tab-closed')
+      return
+    }
+    if (Date.now() - startedAt > LOGIN_WATCH_TIMEOUT_MS) {
+      finish(false, 'timeout')
+      return
+    }
+    // 새 문서를 싣는 중에는 보지 않는다 — 빈 화면을 "비밀번호 칸이 사라짐"으로 오판한다
+    if (wc.isLoading()) return
+    checking = true
+    try {
+      const top = await observe(wc)
+      if (settled || wc.isDestroyed()) return
+      const url = wc.getURL()
+      // iframe 로그인은 최상위 문서에 비밀번호 칸이 원래 없다 — 최상위 기준으로 보면 제출 즉시 "성공"이 된다.
+      // 그 경우 비밀번호 칸 유무는 제출한 프레임에서 본다
+      const passwordVisible = subFrame ? await framePasswordVisible(subFrame) : top.passwordVisible
+      if (settled || wc.isDestroyed()) return
+      const outcome = judgeLoginOutcome({ prevUrl, url, text: top.text, passwordVisible })
+      if (outcome === 'success') {
+        finish(true, passwordVisible === false ? 'password-gone' : 'url-changed')
+      } else if (outcome === 'failure') finish(false, 'failure-text')
+    } finally {
+      checking = false
+    }
   }
 
-  wc.on('did-navigate', onNavigate)
-  wc.on('did-navigate-in-page', onNavigate)
+  const timer = setInterval(() => void tick(), LOGIN_WATCH_POLL_MS)
+  timer.unref?.()
+  watchers.set(wc, cancel)
+  wc.once('destroyed', cancel)
 }

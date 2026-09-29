@@ -119,7 +119,7 @@ describe('vaultStore capture 상태 초기화', () => {
       .setCapture({ host: 'a.com', username: 'alice', isNew: true, locked: false })
     useVaultStore.setState({ capturePw: 'typed', captureUnlocking: true, captureErr: 'err' })
 
-    useVaultStore.getState().decideCapture(true)
+    useVaultStore.getState().decideCapture('save')
 
     const s = useVaultStore.getState()
     expect(s.capture).toBeNull()
@@ -134,7 +134,7 @@ describe('vaultStore capture 상태 초기화', () => {
       .setCapture({ host: 'a.com', username: 'alice', isNew: true, locked: true })
     captureDecision.mockClear()
 
-    useVaultStore.getState().decideCapture(true)
+    useVaultStore.getState().decideCapture('save')
 
     const s = useVaultStore.getState()
     expect(captureDecision).not.toHaveBeenCalled()

@@ -185,6 +185,28 @@ describe('pageBridge.keypadSignalsAll', () => {
   })
 })
 
+describe('pageBridge.keypadUnlabeled — 글자 없는 키패드 칸', () => {
+  const cell = (id: number): Record<string, number> => ({ id, x: 0, y: 0, width: 60, height: 40 })
+
+  it('메인 프레임에만 묻고 칸 목록을 그대로 준다', async () => {
+    const { tab, mainCalls } = fakeTab(
+      [cell(1), cell(2)],
+      [{ url: 'https://kpad.payco.com/', result: null }]
+    )
+    frameCalls.length = 0
+    expect(await pageBridge.keypadUnlabeled(tab)).toEqual([cell(1), cell(2)])
+    expect(mainCalls).toEqual(['__samba.keypadUnlabeled()'])
+    expect(frameCalls).toEqual([])
+  })
+
+  it('null 은 null, 모양이 틀린 결과는 믿지 않고 던진다', async () => {
+    expect(await pageBridge.keypadUnlabeled(fakeTab(null, []).tab)).toBeNull()
+    await expect(pageBridge.keypadUnlabeled(fakeTab([{ id: 'x' }], []).tab)).rejects.toThrow(
+      /unexpected page result/
+    )
+  })
+})
+
 describe('pageBridge.keypadLayout / keypadFilled — 결제 키패드 배치', () => {
   const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
   const layout = (
@@ -265,5 +287,72 @@ describe('pageBridge.rectOf / clickAt — 실제 마우스 클릭 폴백', () =>
     const { tab, inputEvents } = fakeTab(null, [])
     expect(pageBridge.clickAt(tab, -5, 10)).toBe(false)
     expect(inputEvents).toEqual([])
+  })
+})
+
+describe('pageBridge.typeLogin — 로그인 칸 진짜 키 입력', () => {
+  // fakeTab 의 mainResult 는 rectOf 와 valueLength 응답에 같이 쓰인다 — 좌표 객체를 주면 rectOf 가,
+  // 숫자를 주면 valueLength 가 그 값을 받는다. 여기서는 순서대로 다른 응답을 주는 가짜를 따로 만든다
+  function typingTab(replies: unknown[]): {
+    tab: Tab
+    mainCalls: string[]
+    inputEvents: Record<string, unknown>[]
+  } {
+    const mainCalls: string[] = []
+    const inputEvents: Record<string, unknown>[] = []
+    const mainFrame: { url: string; framesInSubtree: unknown[] } = {
+      url: 'https://www.gsshop.com/cust/login/login.gs',
+      framesInSubtree: []
+    }
+    mainFrame.framesInSubtree = [mainFrame]
+    const webContents = {
+      isDestroyed: () => false,
+      mainFrame,
+      executeJavaScriptInIsolatedWorld: async (_world: number, scripts: { code: string }[]) => {
+        mainCalls.push(scripts[0].code)
+        return replies.shift()
+      },
+      sendInputEvent: (ev: Record<string, unknown>) => inputEvents.push(ev)
+    }
+    return { tab: { view: { webContents } } as unknown as Tab, mainCalls, inputEvents }
+  }
+
+  it('요소를 실제 클릭해 포커스한 뒤 전체 선택하고 글자별 char 이벤트로 친다', async () => {
+    const { tab, mainCalls, inputEvents } = typingTab([{ x: 10, y: 20 }, 3])
+    expect(await pageBridge.typeLogin(tab, 5, 'a@1')).toBe('ok')
+    expect(mainCalls).toEqual(['__samba.rectOf(5)', '__samba.valueLength(5)'])
+    // 사람처럼 보이려 넣는 마우스 이동은 순서 검증에서 뺀다
+    const types = inputEvents
+      .filter((e) => e.type !== 'mouseMove')
+      .map((e) => `${e.type}:${e.keyCode ?? ''}`)
+    expect(types).toEqual([
+      'mouseDown:',
+      'mouseUp:',
+      'keyDown:A',
+      'keyUp:A',
+      'keyDown:a',
+      'char:a',
+      'keyUp:a',
+      // '@' 는 가속기 이름이 아니라 char 만 보낸다
+      'char:@',
+      'keyDown:1',
+      'char:1',
+      'keyUp:1'
+    ])
+    // 값은 어떤 코드 문자열에도 들어가지 않는다
+    expect(mainCalls.some((c) => c.includes('a@1'))).toBe(false)
+  })
+
+  it('좌표를 못 구하면(프레임 안 요소) fillValue 로 돌아간다', async () => {
+    const { tab, mainCalls, inputEvents } = typingTab([null, 'ok'])
+    expect(await pageBridge.typeLogin(tab, 5, 'pw')).toBe('ok')
+    expect(inputEvents).toEqual([])
+    expect(mainCalls[1]).toContain('__samba.fillValue(5,')
+  })
+
+  it('친 뒤 글자 수가 다르면(포커스 실패) fillValue 로 돌아간다', async () => {
+    const { tab, mainCalls } = typingTab([{ x: 10, y: 20 }, 0, 'ok'])
+    expect(await pageBridge.typeLogin(tab, 5, 'pw')).toBe('ok')
+    expect(mainCalls[2]).toContain('__samba.fillValue(5,')
   })
 })

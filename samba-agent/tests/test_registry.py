@@ -19,13 +19,15 @@ def _order(source: str = '무신사', seller: str = '포이즌') -> OrderRef:
 
 def test_소싱처로_구매_에이전트를_고른다(reg):
     assert reg.pick('buyer', _order('무신사'), {}).name == 'buyer.musinsa'
-    assert reg.pick('buyer', _order('29CM'), {}).name == 'buyer.29cm'
+    # 에이전트 이름은 sources.yaml 의 key 를 따른다 — 29CM 의 key 는 스크립트 접두어 cm29 다
+    assert reg.pick('buyer', _order('29CM'), {}).name == 'buyer.cm29'
     assert reg.pick('buyer', _order('ABC마트'), {}).name == 'buyer.abc'
     assert reg.pick('buyer', _order('롯데온'), {}).name == 'buyer.lotteon'
 
 
 def test_모르는_소싱처는_고르지_못한다(reg):
     assert reg.pick('buyer', _order('쿠팡'), {}) is None
+    assert reg.pick('buyer', _order('KREAM'), {}) is None  # 보류(hold)는 등록하지 않는다
 
 
 def test_결제_기록_검증은_소싱처와_무관하게_하나다(reg):
@@ -42,11 +44,41 @@ def test_허용_도구는_브릿지_도구_이름이다(reg):
     assert 'phone_approve_payment' in reg['payer'].tools
     assert 'phone_approve_payment' not in reg['recorder'].tools
     assert 'run_script' in reg['recorder'].tools
+    # 직배 배송 연락처(신원정보)는 구매가 앱에 채워 달라고 한다 — 결제 도구는 여전히 없다
+    assert 'fill_secret' in reg['buyer.musinsa'].tools
+    assert 'phone_approve_payment' not in reg['buyer.musinsa'].tools
 
 
 def test_규칙_파일이_실제로_있다(reg):
     for spec in reg.of_kind('buyer') + reg.of_kind('payer'):
         assert reg.rules_text(spec).strip() != ''
+
+
+def test_소싱처별_구매_규칙은_공통_규칙을_잇는다(reg):
+    # 사이트 파일은 특이점만 적는다 — 공통 규칙이 앞에 붙어 에이전트에 간다
+    abc = reg.rules_text(reg['buyer.abc'])
+    assert abc.startswith('# 구매 에이전트 — 공통 규칙')
+    assert '# 구매 에이전트 — ABC마트' in abc
+    # 공통 규칙 파일을 쓰는 에이전트에는 두 번 붙지 않는다
+    for spec in reg.of_kind('buyer'):
+        assert reg.rules_text(spec).count('# 구매 에이전트 — 공통 규칙') == 1
+    # 구매가 아닌 에이전트는 자기 파일 그대로다
+    assert reg.rules_text(reg['payer']).startswith('# 결제 에이전트')
+
+
+def test_규칙_파일은_플레이북_절을_따른다(reg):
+    default = reg.rules_text(reg['buyer.musinsa'])
+    for section in (
+        '## 1. 대상 선정',
+        '## 2. 재고 판정',
+        '## 3. 계정·혜택 비교와 원가',
+        '## 4. 주문서',
+    ):
+        assert section in default
+    assert '정산금 미확인 근사' in default
+    assert '§5-1' in reg.rules_text(reg['payer'])
+    assert '원가는 마지막에 저장한다' in reg.rules_text(reg['recorder'])
+    assert '§6-6' in reg.rules_text(reg['verifier'])
 
 
 def test_없는_도구가_적히면_로딩을_거부한다(tmp_path):

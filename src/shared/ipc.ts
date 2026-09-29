@@ -65,6 +65,7 @@ export const IPC = {
   vaultCapturePrompt: 'vault:capturePrompt', // main → renderer 이벤트 (비밀번호 제외)
   vaultCaptureDecision: 'vault:captureDecision', // renderer → main
   vaultCapture: 'vault:capture', // preload(격리 월드) → main, 폼 제출에서 감지한 자격정보
+  vaultCaptureTrace: 'vault:captureTrace', // preload(격리 월드) → main, 감지 단계 기록(값 없음, 원인 파악용 로그)
   vaultPasswordUpdated: 'vault:passwordUpdated', // main → renderer 이벤트, 로그인 성공 감지로 자동 갱신됨
   vaultUndoPasswordUpdate: 'vault:undoPasswordUpdate', // renderer → main, 자동 갱신 되돌리기
   // 상세 화면의 '자동 채우기' — 메인이 활성 탭에 직접 채운다(AI 미경유, 값은 IPC 로 나가지 않는다)
@@ -311,6 +312,7 @@ export type {
   VaultItemMeta,
   VaultState,
   CapturePromptDto,
+  CaptureDecision,
   PasswordUpdatedDto,
   AuditLogDto
 } from './vault'

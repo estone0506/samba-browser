@@ -57,6 +57,18 @@ export interface KeypadLayoutDto {
   filled: number | null
 }
 
+/**
+ * 글자·접근성 이름이 없는 키패드 버튼 한 칸(네이버페이처럼 숫자를 이미지로 그린 보안 키패드).
+ * 좌표는 뷰포트 기준이다 — 앱이 이 자리만 잘라 OCR 로 숫자를 읽는다. 값은 담기지 않는다
+ */
+export interface KeypadCellDto {
+  id: number
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface KeypadSignals {
   url: string
   // 문구 판정용 페이지 텍스트(앞부분만)

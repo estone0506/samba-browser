@@ -251,10 +251,11 @@ export function installAutofillPicker(
       const el = e.target
       if (!(el instanceof Element) || !isPickerTarget(el)) return
       showIcon(el)
-      // 페이지 스크립트가 만들어 쏜 합성 이벤트로는 목록을 열지 않는다.
-      // (el.focus() 가 만드는 이벤트는 브라우저가 신뢰됨으로 표시하므로 완전한 방어는
-      //  아니지만, 목록에는 값이 없고 아이디/라벨만 있어 노출 범위는 여기까지다)
-      if (!menu && (allowUntrusted || e.isTrusted)) void renderMenu()
+      // 목록은 입력칸 포커스로 저절로 열지 않는다 — 🔑 아이콘을 눌렀을 때만 연다.
+      // (실기 2026-09-25 네이버: 계정 40여 개 목록이 저절로 펼쳐져 비밀번호 칸·로그인 버튼을 가렸고,
+      //  가려진 곳을 누르면 다른 계정이 골라져 자동 입력이 사용자 타자와 섞였다 → 계정 잠김)
+      void allowUntrusted
+      void e
     },
     true
   )
@@ -265,14 +266,6 @@ export function installAutofillPicker(
       // 피커 자체나 현재 대상 입력칸을 누른 경우는 닫지 않는다
       if (e.target === host || e.target === target) return
       closeMenu()
-    },
-    true
-  )
-  // 이미 포커스된 입력칸을 다시 누르면(포커스 이벤트 없음) 목록을 다시 연다
-  document.addEventListener(
-    'click',
-    (e) => {
-      if (e.target === target && target && !menu) void renderMenu()
     },
     true
   )

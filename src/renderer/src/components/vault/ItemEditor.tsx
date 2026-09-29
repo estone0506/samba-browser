@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Eye, EyeOff } from 'lucide-react'
@@ -19,7 +19,7 @@ import { PasswordGenerator } from './PasswordGenerator'
 import {
   DEFAULT_PAYMENT_PROVIDER,
   PAYMENT_PROVIDER_FIELD_KEY,
-  PAYMENT_PROVIDERS,
+  SELECTABLE_PAYMENT_PROVIDERS,
   paymentProviderOfSections,
   normalizePaymentProvider,
   PAYMENT_PROVIDER_ACCOUNT_HOST,
@@ -64,7 +64,7 @@ const FORM_SPECS: Record<VaultItemType, SectionSpec[]> = {
           key: PAYMENT_PROVIDER_FIELD_KEY,
           labelKey: 'vault.fieldNames.paymentProvider',
           kind: 'select',
-          options: PAYMENT_PROVIDERS,
+          options: SELECTABLE_PAYMENT_PROVIDERS,
           optionLabelPrefix: 'vault.paymentProvider'
         },
         { key: 'value', labelKey: 'vault.fieldNames.password', kind: 'secret' },
@@ -202,15 +202,32 @@ interface Props {
   account?: AccountDto
   // 편집 중인 기존 항목(없으면 신규)
   item?: VaultItemMeta
+  // 복사 원본 계정 — 사이트·아이디·라벨·URL·태그와 로그인 항목의 값을 채운 채 '새 계정'으로 연다
+  template?: AccountDto
 }
 
 /**
  * 항목 종류별 폼. 계정형(login)은 계정 정보도 함께 저장한다.
  * 부모가 열 때마다 key 를 바꿔 새로 마운트하므로 초기값만 props 에서 읽는다.
  */
-export function ItemEditor({ open, onOpenChange, type, account, item }: Props): React.JSX.Element {
+export function ItemEditor({
+  open,
+  onOpenChange,
+  type,
+  account,
+  item,
+  template
+}: Props): React.JSX.Element {
   const { t } = useTranslation()
   const upsertAccount = useVaultStore((s) => s.upsertAccount)
+  const reveal = useVaultStore((s) => s.reveal)
+  const itemsByAccount = useVaultStore((s) => s.itemsByAccount)
+  // 복사본 저장 검사 오류(같은 사이트·아이디) — 스토어 오류와 별개로 폼 안에 보인다
+  const [formError, setFormError] = useState<string | null>(null)
+  // 복사 원본의 로그인 항목(평문 필드는 바로, 비밀번호는 reveal 로 채운다)
+  const templateItem = template
+    ? itemsByAccount[String(template.id)]?.find((i) => i.type === 'login')
+    : undefined
   const putItem = useVaultStore((s) => s.putItem)
   const select = useVaultStore((s) => s.select)
   const selectGlobalItem = useVaultStore((s) => s.selectGlobalItem)
@@ -223,7 +240,22 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
   const tabHost = normalizeHost(activeTab?.url ?? '')
   const tabUrl = activeTab?.url ?? ''
 
-  const [values, setValues] = useState<Record<string, string>>(() => initialValues(item, itemType))
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    initialValues(item ?? templateItem, itemType)
+  )
+  // 복사 원본의 비밀번호를 한 번 읽어 채운다 — 사용자가 일부만 고쳐 새 계정으로 저장한다
+  useEffect(() => {
+    if (!templateItem) return
+    let alive = true
+    void reveal(templateItem.id, 'value').then((secret) => {
+      if (alive && secret) setValues((prev) => ({ ...prev, value: prev.value || secret }))
+    })
+    return () => {
+      alive = false
+    }
+    // 원본 항목은 마운트 시점 값만 쓴다(부모가 key 로 새로 마운트한다)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // 결제 비밀번호의 기본 라벨은 결제 수단 이름이다(사용자가 '무신사머니'처럼 바꿀 수 있다)
   const defaultLabel = (): string => {
     if (isAccountForm) return tabHost
@@ -234,11 +266,17 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
     }
     return t(`vault.itemType.${itemType}`)
   }
-  const [label, setLabel] = useState(item?.label ?? account?.label ?? defaultLabel())
+  const [label, setLabel] = useState(
+    item?.label ??
+      account?.label ??
+      (template ? t('vault.editor.duplicateLabel', { label: template.label }) : defaultLabel())
+  )
   // 사용자가 라벨을 직접 고쳤는가 — 고치기 전까지는 결제 수단을 바꾸면 라벨도 따라간다
   const [labelTouched, setLabelTouched] = useState(item !== undefined)
-  const [username, setUsername] = useState(account?.username ?? '')
-  const [host, setHost] = useState(account?.host ?? (isAccountForm ? tabHost : ''))
+  const [username, setUsername] = useState(account?.username ?? template?.username ?? '')
+  const [host, setHost] = useState(
+    account?.host ?? template?.host ?? (isAccountForm ? tabHost : '')
+  )
   const [customFields, setCustomFields] = useState<CustomField[]>([])
   const [saving, setSaving] = useState(false)
 
@@ -334,14 +372,31 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
         setSaving(false)
         return
       }
+      // 새 계정인데 같은 사이트·아이디가 이미 있으면 저장하지 않는다 — 메인은 (사이트, 아이디)로 기존 계정을
+      // 찾아 갱신하므로 복사본이 원본을 덮어쓴다(실기 2026-09-28). 아이디나 사이트를 바꿔야 새 계정이다
+      const dupOf = account
+        ? undefined
+        : accounts.find(
+            (a) =>
+              accountGroupKey(a.host) === accountGroupKey(host.trim()) &&
+              a.username === username.trim()
+          )
+      if (dupOf) {
+        setFormError(t('vault.editor.duplicateExists', { label: dupOf.label }))
+        setSaving(false)
+        return
+      }
       const saved = await upsertAccount({
         id: account?.id,
         host: host.trim(),
         label: label.trim(),
         username: username.trim(),
         isDefault: account?.isDefault,
+        ...(template
+          ? { urls: template.urls, tags: template.tags, agentAccess: template.agentAccess }
+          : {}),
         // 새 계정이면 현재 탭 URL 을 첫 Website 로 담는다
-        ...(account || !tabUrl ? {} : { urls: [tabUrl] })
+        ...(account || template || !tabUrl ? {} : { urls: [tabUrl] })
       })
       if (!saved) {
         setSaving(false)
@@ -492,7 +547,9 @@ export function ItemEditor({ open, onOpenChange, type, account, item }: Props): 
             onChange={setValue}
           />
 
-          {error && <p className="text-[12px] text-[#b91c1c]">{error}</p>}
+          {(formError ?? error) && (
+            <p className="text-[12px] text-[#b91c1c]">{formError ?? error}</p>
+          )}
           <DialogFooter>
             <Button
               type="button"

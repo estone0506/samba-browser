@@ -16,9 +16,17 @@ from samba_agent.settings import DEFAULT_ROOT
 
 
 def test_모든_에이전트_데이터셋이_있다():
+    """스크립트가 다 있는(active) 소싱처와 공통 에이전트에는 시드 데이터셋이 있어야 한다.
+
+    scripts_pending 소싱처는 아직 실제로 돌지 않는다(부르면 곧바로 needs_human) — 시드도 없다.
+    """
     reg = Registry.load(DEFAULT_ROOT)
     counts = seed_counts(DEFAULT_ROOT)
-    for spec in [s for k in ('buyer', 'payer', 'recorder', 'verifier') for s in reg.of_kind(k)]:
+    specs = [s for k in ('buyer', 'payer', 'recorder', 'verifier') for s in reg.of_kind(k)]
+    for spec in specs:
+        source = reg.source_of(spec.name)
+        if source is not None and source.status != 'active':
+            continue
         assert spec.dataset in counts, f'{spec.name} 의 데이터셋이 없다'
     assert 'ds.supervisor.assign' in counts  # 배정 정답 데이터셋
 

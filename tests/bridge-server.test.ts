@@ -162,6 +162,37 @@ describe('BridgeServer', () => {
     expect(fs.disposed()).toBe(1)
   })
 
+  it('도구 호출이 영영 안 끝나면 유예 뒤 강제로 세션을 닫고 busy 를 푼다 — 하네스가 죽은 뒤 문이 잠기지 않게', async () => {
+    let disposed = 0
+    const make = (onStep: (l: string, ok: boolean) => void): ToolSession => {
+      void onStep
+      return {
+        names: () => ['get_page'],
+        call: () => new Promise<string>(() => {}), // 절대 끝나지 않는 호출
+        dispose: () => {
+          disposed += 1
+        }
+      }
+    }
+    server = new BridgeServer({
+      openSession: make,
+      token: () => TOKEN,
+      toolTimeoutMs: 50,
+      hangGraceMs: 100
+    })
+    const port = await server.start(0)
+    const r = await fetch(`http://127.0.0.1:${port}/tool/get_page`, {
+      method: 'POST',
+      headers: H,
+      body: '{"args":{}}'
+    })
+    expect(r.status).toBe(504)
+    expect((await fetch(`http://127.0.0.1:${port}/health`, { headers: H })).status).toBe(409)
+    await new Promise((r2) => setTimeout(r2, 200))
+    expect(disposed).toBe(1)
+    expect((await fetch(`http://127.0.0.1:${port}/health`, { headers: H })).status).toBe(200)
+  })
+
   it('제한 시간 뒤에도 도구 호출을 끝까지 지켜본 뒤 세션을 닫는다 — 그동안 새 요청은 409, 끝나면 다음 요청은 정상', async () => {
     let callCount = 0
     let disposed = 0

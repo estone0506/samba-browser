@@ -30,6 +30,10 @@ const { pageBridge } = vi.hoisted(() => ({
     select: vi.fn(async () => 'ok'),
     scroll: vi.fn(async () => 'ok'),
     fillValue: vi.fn(async () => 'ok'),
+    // 로그인 칸 진짜 키 입력 — 테스트에서는 fillValue 와 같은 목으로 흘려 기존 기대를 그대로 둔다
+    typeLogin: vi.fn(async (tab: unknown, id: number, value: string) =>
+      pageBridge.fillValue(tab, id, value)
+    ),
     isSecretField: vi.fn(async () => true),
     waitForLoad: vi.fn(async () => {}),
     // 기본값은 beforeEach 에서 넣는다(hoist 시점에는 아래 상수를 참조할 수 없다)
@@ -151,7 +155,11 @@ describe('PIN 인증 주소 정규식', () => {
     'https://order.musinsa.com/simplepay/password',
     'https://pg.kakaopay.com/v1/pw/confirm',
     'https://pay.toss.im/web/pin',
-    'https://alpha.payco.com/order/pin'
+    'https://alpha.payco.com/order/pin',
+    // 네이버페이 결제 비밀번호 창 — 숫자 버튼에 글자가 없어 주소로만 잡힌다(실기)
+    'https://pay.naver.com/authentication/pw/check?token=abc',
+    // 페이코 PC 결제 비밀번호 창(iframe) — 숫자가 그림이라 주소로만 잡힌다(실기 2026-09-25)
+    'https://bill.payco.com/paymentPopup/password/confirm/202609253441874557?callback=x'
   ])('%s 는 PIN 인증 경로다', (url) => {
     expect(isPinAuthUrl(url)).toBe(true)
     expect(secretKeypadReason(signals({ url }))).toBe('pin-url')
@@ -160,7 +168,8 @@ describe('PIN 인증 주소 정규식', () => {
   it.each([
     'https://www.musinsa.com/app/goods/123',
     'https://shop.example/checkout',
-    'https://pay.example.com/pinned-items'
+    'https://pay.example.com/pinned-items',
+    'https://pay.naver.com/o/orderStatus/123'
   ])('%s 는 PIN 인증 경로가 아니다', (url) => {
     expect(isPinAuthUrl(url)).toBe(false)
   })
@@ -374,5 +383,18 @@ describe('fill_secret 은 키패드 화면에서 사람에게 넘긴다', () => 
     })
     expect(textOut(r)).toBe(`handoff: ${KEYPAD_HANDOFF_MESSAGE}`)
     expect(pageBridge.fillValue).not.toHaveBeenCalled()
+  })
+})
+
+describe('SSGPAY 보안 키패드(2026-09-27 실측)', () => {
+  it('숫자 버튼 10개와 "보안 키패드 동작중" 문구면 결제 키패드로 본다', () => {
+    expect(
+      secretKeypadReason({
+        url: 'https://www.ssgpay.com/mobile/order/onlinePay',
+        text: '비밀번호를 잊으셨나요? 비밀번호 재설정하기 보안 키패드 동작중',
+        digitButtons: 10,
+        pinField: false
+      })
+    ).toBe('digit-keypad')
   })
 })

@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
     from slack_bolt import App
 
+    from samba_agent.queue.intake import Intake
+
 log = logging.getLogger(__name__)
 
 APPROVE_ACTION_ID = 'samba_approve'
@@ -66,6 +68,7 @@ class SambaBot:
         diagnose: 'Callable[[str | None], str]',
         *,
         channel_id: str | None = None,
+        intake: 'Intake | None' = None,
     ) -> None:
         self.app = app
         self.worker = worker
@@ -75,6 +78,8 @@ class SambaBot:
         # settings.slack_channel(id 또는 이름)을 채널 id 로 풀어둔 값. app 이 없는 테스트는
         # 여기로 직접 주입한다 — start() 는 이게 비어 있을 때만 conversations.list 로 풀어본다.
         self._channel_id = channel_id
+        # 자동 수집 고리. 배선되지 않았으면(삼바웨이브 설정 없음) 수집 명령은 안내만 한다
+        self.intake = intake
 
     def post(
         self, thread_ts: str | None, text: str, blocks: list[dict[str, object]] | None = None
@@ -95,6 +100,22 @@ class SambaBot:
             kwargs['blocks'] = blocks
         self.app.client.chat_postMessage(**kwargs)
         return True
+
+    def post_new(self, text: str) -> str | None:
+        """스레드가 아닌 최상위 메시지를 올리고 그 ts 를 준다. 자동 수집이 주문 스레드를 여는 통로다.
+
+        슬랙이 없거나 채널을 못 풀었으면 None — 부르는 쪽은 스레드 없이 큐에만 넣는다.
+        슬랙 오류로 수집 고리가 죽으면 안 되므로 여기서 삼킨다(개인정보는 마스킹을 한 번 더 거친다).
+        """
+        if self.app is None or self._channel_id is None:
+            return None
+        try:
+            resp = self.app.client.chat_postMessage(channel=self._channel_id, text=mask_text(text))
+        except Exception:  # 슬랙 장애가 수집을 멈추게 하지 않는다
+            log.exception('최상위 메시지 게시 실패')
+            return None
+        ts = resp.get('ts') if hasattr(resp, 'get') else None
+        return str(ts) if ts else None
 
     def post_approval(self, thread_ts: str | None, order_no: str, stage: str, summary: str) -> bool:
         """승인 요청을 버튼과 함께 보낸다(리뷰 지적 — Critical 1).
@@ -185,6 +206,8 @@ class SambaBot:
             except ValueError as e:
                 return str(e)
             return f'{cmd.order_no} 를 다시 큐에 넣었습니다'
+        if cmd.kind in ('intake_now', 'intake_pause', 'intake_resume'):
+            return self._dispatch_intake(cmd.kind)
         if cmd.kind == 'diagnose':
             return self.diagnose(cmd.order_no)
         if cmd.kind == 'version':
@@ -199,6 +222,18 @@ class SambaBot:
                 return f'버전 {cmd.version} 승인을 기록하지 못했습니다'
             return f'버전 {cmd.version} 승인을 기록했습니다({path.name})'
         return None
+
+    def _dispatch_intake(self, kind: str) -> str:
+        """자동 수집 명령 셋 — 지금 수집 · 중지 · 재개."""
+        if self.intake is None:
+            return '자동 수집이 꺼져 있습니다(삼바웨이브 설정 없음)'
+        if kind == 'intake_pause':
+            self.intake.pause()
+            return '자동 수집을 중지했습니다'
+        if kind == 'intake_resume':
+            self.intake.resume()
+            return '자동 수집을 재개했습니다'
+        return self.intake.run_once().as_line()
 
     def handle_approval(
         self, order_no: str, approved: bool, user: str, stage: str | None = None

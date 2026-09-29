@@ -264,7 +264,9 @@
     "pc": "PC",
     "mobile": "Mobile",
     "profile": "Profile",
-    "home": "Home"
+    "home": "Home",
+    "bookmarkAdd": "Bookmark this page",
+    "bookmarkRemove": "Remove bookmark"
   },
   "tab": {
     "new": "New Tab",
@@ -272,7 +274,8 @@
     "openTabs": "Open tabs",
     "empty": "No open tabs",
     "untitled": "Untitled",
-    "popup": "Popup"
+    "popup": "Popup",
+    "profileOf": "Account profile: {{profile}} (this tab has its own login session)"
   },
   "newtab": {
     "title": "New Tab",
@@ -387,16 +390,20 @@
     }
   },
   "capture": {
-    "title": "Save your {{host}} account info?",
-    "titleUpdate": "Update the password for your {{host}} account?",
-    "titleLocked": "Save your sign-in for {{host}}?",
-    "body": "You just signed in to {{host}} as {{username}}. Save it so it can autofill next time?",
-    "skip": "Skip this time",
+    "title": "Save this site's account to KeyMaster?",
+    "titleUpdate": "Update the password?",
+    "titleLocked": "Save your {{host}} sign-in to KeyMaster?",
+    "account": "{{host}} · {{username}}",
+    "skip": "Not now",
+    "never": "Never for this site",
     "save": "Save",
+    "update": "Update",
     "unlockToSave": "Unlock to save",
     "lockedNotice": "KeyMaster is locked. Unlock it to save.",
-    "updated": "Your {{host}} password was updated",
-    "undo": "Undo"
+    "saved": "Saved to KeyMaster · {{host}} ({{username}})",
+    "updated": "Saved to KeyMaster · {{host}} password updated",
+    "undo": "Undo",
+    "close": "Close"
   },
   "screenCapture": {
     "title": "Capture",
@@ -560,8 +567,10 @@
       "accessNeverDesc": "AI can never fill KeyMaster values",
       "autoSubmit": "Auto-submit after autofill",
       "autoSubmitDesc": "When off, fields are filled but you press the login button yourself",
-      "autoUpdatePassword": "Auto-update password on successful sign-in",
-      "autoUpdatePasswordDesc": "If you sign in with a different value, it's updated right away without asking (undo available)",
+      "autoSaveLogins": "Save without asking",
+      "autoSaveLoginsDesc": "When you sign in to a site for the first time or with a new password, save or update it in KeyMaster right away (undo available). When off, a bar below the address bar asks once",
+      "neverSaveHosts": "Never ask to save on",
+      "neverSaveHostsDesc": "Signing in to these sites won't ask to save. Separate with commas. Autofill still works",
       "remember": "Remember on this PC",
       "rememberDesc": "Turning this off deletes the stored device key immediately",
       "excludedHosts": "Excluded domains",
@@ -607,7 +616,8 @@
       "auditSource": {
         "ai": "AI",
         "user": "User"
-      }
+      },
+      "duplicate": "Duplicate"
     },
     "itemType": {
       "login": "Login",
@@ -641,7 +651,9 @@
       "naverPayHow": "The payment password lives in the {{host}} account (your Naver account in KeyMaster), not in this site account. Whichever site you choose Naver Pay on, that one Naver password is used.",
       "naverPayPick": "Pick below which Naver account pays on this site. Only Naver accounts that have a payment password saved are listed.",
       "naverPayNone": "No {{host}} account with a payment password yet. Open your Naver account in KeyMaster and add a \"payment password (Naver Pay)\" item first. Until then you can also type it below.",
-      "naverPayCheck": "At checkout the app verifies that the signed-in ID at the top right of the Naver Pay window (e.g. mjki******) matches the chosen account and refuses to pay otherwise."
+      "naverPayCheck": "At checkout the app verifies that the signed-in ID at the top right of the Naver Pay window (e.g. mjki******) matches the chosen account and refuses to pay otherwise.",
+      "duplicateLabel": "{{label}} (copy)",
+      "duplicateExists": "An account with the same site and username ({{label}}) already exists. Change the username or site to save it as a new account"
     },
     "import": {
       "title": "Import",
@@ -775,7 +787,7 @@
       "cvc": "CVC",
       "cardPassword": "Payment password",
       "paymentPhone": "Phone for payment alerts (Toss Pay etc., optional)",
-      "paymentBirth": "Birth date, 6 digits (Toss Pay etc., optional)",
+      "paymentBirth": "Birth date, 8 digits (e.g. 19910101 — Toss Pay, PAYCO etc., optional)",
       "name": "Name",
       "birth": "Date of birth",
       "address": "Address",
@@ -798,7 +810,14 @@
       "other": "Other"
     },
     "preparing": "Preparing KeyMaster with your account password…",
-    "accountUnlockHint": "Your account password is the KeyMaster key. Enter your sign-in password"
+    "accountUnlockHint": "Your account password is the KeyMaster key. Enter your sign-in password",
+    "payPriority": {
+      "label": "Payment priority",
+      "none": "Not set",
+      "rank": "#{{n}}",
+      "hint": "Order to use among accounts on this site when buying (ties go to the higher rank)",
+      "badge": "Pay #{{n}}"
+    }
   },
   "settingsPage": {
     "title": "Settings",
@@ -1299,6 +1318,7 @@
     "disable": "Turn off",
     "disabled": "Off",
     "manage": "Manage extensions",
+    "openWebstore": "Chrome Web Store",
     "installedTitle": "Installed extensions",
     "toolbarTitle": "Extensions",
     "menuEmpty": "No extensions installed",

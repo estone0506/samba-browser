@@ -183,6 +183,13 @@ export function createSessionExtensionHost(session: SessionLike): ExtensionHost 
   }
 }
 
+// 기본 세션과 일반 탭(default 프로필) 세션에만 올리는 확장 — 삼바웨이브 확장은 삼바 페이지에서 설정(proxyUrl·apiKey)을 받는다.
+// 계정 프로필 세션에는 그 페이지가 없어 설정 없이 떠서 API 호출이 전부 실패했다(실기 2026-09-28: 10분에 173건)
+const PRIMARY_ONLY_IDS = new Set(['ojfcneljbbajgcmpmklgglhenieehicb'])
+// 계정 프로필 파티션인가 — 파티션 이름이 'default' 로 끝나면(persist:ws1-default) 일반 탭 세션이다(삼바 페이지가 여기서 열린다)
+const isAccountPartition = (key: string | undefined): boolean =>
+  key !== undefined && !/(^|[:-])default$/.test(key)
+
 export class ExtensionManager {
   /** 로드에 성공한 확장. 설정에 저장되는 경로 순서와 같다 */
   private entries: ExtensionDto[] = []
@@ -190,6 +197,11 @@ export class ExtensionManager {
   private hosts: ExtensionHost[] = []
   /** 이미 붙인 파티션 이름. 같은 세션을 두 번 붙여 목록이 불어나는 것을 막는다 */
   private hostKeys = new Set<string>()
+  /** 세션별 파티션 이름 — 계정 프로필 세션에는 PRIMARY_ONLY_IDS 확장을 올리지 않는다 */
+  private keyOfHost = new WeakMap<ExtensionHost, string>()
+  private skips(host: ExtensionHost, id: string): boolean {
+    return PRIMARY_ONLY_IDS.has(id) && isAccountPartition(this.keyOfHost.get(host))
+  }
   private failures: ExtensionError[] = []
   /** 진행 중인 최초 로드. 새 파티션 세션에 확장을 걸기 전에 이것을 기다린다 */
   private ready: Promise<void> = Promise.resolve()
@@ -299,6 +311,14 @@ export class ExtensionManager {
     }
   }
 
+  /** 확장이 chrome.action.setIcon 으로 바꾼 툴바 아이콘을 목록에 반영한다. 항목이 없으면 false */
+  setActionIcon(id: string, dataUrl: string): boolean {
+    const entry = this.entries.find((e) => e.id === id)
+    if (!entry || entry.icon === dataUrl) return false
+    entry.icon = dataUrl
+    return true
+  }
+
   /** id 로 목록의 한 항목을 찾는다(툴바 액션이 팝업 경로를 읽을 때 쓴다) */
   find(id: string): ExtensionDto | null {
     return this.entries.find((e) => e.id === id) ?? null
@@ -330,6 +350,7 @@ export class ExtensionManager {
       // 첫 세션이 실패하면 아무것도 바꾸지 않는다
       await this.hosts[0].loadExtension(entry.path)
       for (const host of this.hosts.slice(1)) {
+        if (this.skips(host, entry.id)) continue
         try {
           await host.loadExtension(entry.path)
         } catch (e: unknown) {
@@ -358,6 +379,7 @@ export class ExtensionManager {
     this.persist()
     // 다른 파티션 세션에도 같은 확장을 걸어 준다(실패해도 전체를 되돌리지는 않는다)
     for (const host of this.hosts.slice(1)) {
+      if (this.skips(host, dto.id)) continue
       try {
         await host.loadExtension(dto.path)
       } catch (e: unknown) {
@@ -399,6 +421,7 @@ export class ExtensionManager {
     if (key !== undefined) {
       if (this.hostKeys.has(key)) return
       this.hostKeys.add(key)
+      this.keyOfHost.set(host, key)
     }
     this.hosts.push(host)
     // 첫 탭은 앱이 뜨자마자 만들어지므로 저장된 확장을 아직 다 읽지 못했을 수 있다.
@@ -406,6 +429,7 @@ export class ExtensionManager {
     await this.ready
     for (const entry of this.entries) {
       if (!entry.enabled) continue
+      if (this.skips(host, entry.id)) continue
       try {
         await host.loadExtension(entry.path)
       } catch (e: unknown) {

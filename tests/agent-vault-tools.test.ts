@@ -31,8 +31,14 @@ const { pageBridge } = vi.hoisted(() => ({
     select: vi.fn(async () => 'ok'),
     scroll: vi.fn(async () => 'ok'),
     fillValue: vi.fn(async () => 'ok'),
+    // 로그인 칸 진짜 키 입력 — 테스트에서는 fillValue 와 같은 목으로 흘려 기존 기대를 그대로 둔다
+    typeLogin: vi.fn(async (tab: unknown, id: number, value: string) =>
+      pageBridge.fillValue(tab, id, value)
+    ),
     findLoginFields: vi.fn(async () => ({ username: 1, password: 2, submit: 3 })),
-    submitForm: vi.fn(async () => 'ok'),
+    submitForm: vi.fn(async (): Promise<string> => 'ok'),
+    // 로그인 제출(진짜 클릭) — 테스트에서는 submitForm 목으로 흘려 기존 기대를 그대로 둔다
+    submitLogin: vi.fn(async (tab: unknown, id: number) => pageBridge.submitForm(tab, id)),
     waitForLoad: vi.fn(async () => {}),
     isSecretField: vi.fn(async () => true)
   }
@@ -68,6 +74,8 @@ function account(over: Partial<AccountDto> = {}): AccountDto {
 }
 
 interface Built {
+  // 페이지 대화상자 문구를 미리 넣어 두면 도구가 takeDialogMessage 로 가져간다
+  dialogs: string[]
   tools: Map<string, ToolStub>
   confirm: ReturnType<typeof vi.fn>
   steps: Array<{ label: string; ok: boolean }>
@@ -134,12 +142,15 @@ function build(
   const navigate = vi.fn(async (_id: string, to: string) => {
     setUrl(to)
   })
+  // 페이지가 띄운 대화상자 문구(로그인 실패 알림 재현용). 한 번 가져가면 비워진다
+  const dialogs: string[] = []
   const tabs = {
     active: () => tab,
     create: vi.fn(),
     activate: vi.fn(),
     list: () => [],
-    navigate
+    navigate,
+    takeDialogMessage: () => dialogs.shift() ?? null
   } as unknown as TabManager
   const ctx: ToolContext = {
     tabs,
@@ -157,6 +168,7 @@ function build(
   }
   const server = createSambaTools(ctx) as unknown as { tools: ToolStub[] }
   return {
+    dialogs,
     tools: new Map(server.tools.map((t) => [t.name, t])),
     confirm,
     steps,
@@ -310,6 +322,20 @@ describe('금고 AI 도구', () => {
     expect(b.steps).toContainEqual({ label: '로그인: shop.example (메인)', ok: true })
 
     assertNoSecretLeak(b, result)
+  })
+
+  it('사이트가 "비밀번호 불일치" 대화상자를 띄우면 실패로 돌려주고 같은 실행의 재시도는 거부한다(실기: SSG 3회 재시도)', async () => {
+    const b = build()
+    b.dialogs.push('아이디 또는 비밀번호가 일치하지 않습니다. 다시 확인하신 후 입력해주세요.')
+    const first = await callTool(b, 'login', {})
+    expect(first).toContain('failed: WRONG_PASSWORD')
+    expect(first).toContain('shop.example')
+    pageBridge.fillValue.mockClear()
+    const second = await callTool(b, 'login', {})
+    expect(second).toContain('failed: WRONG_PASSWORD')
+    // 두 번째는 채우지도 제출하지도 않는다
+    expect(pageBridge.fillValue).not.toHaveBeenCalled()
+    assertNoSecretLeak(b, first)
   })
 
   it('탭이 naver.com(www. 제거)이고 계정이 nid.naver.com 에 저장돼 있어도 login 이 성공한다(도메인 매칭 실검수 회귀)', async () => {
@@ -547,7 +573,7 @@ describe('금고 AI 도구', () => {
     const raw = await callTool(b, 'list_accounts', {})
     expect(b.listAccounts).toHaveBeenCalledWith('shop.example')
     expect(JSON.parse(raw)).toEqual([
-      { label: '메인', username: 'ho***', types: ['login'], tags: [] }
+      { label: '메인', username: 'ho***', types: ['login'], payments: [], priority: null, tags: [] }
     ])
     expect(raw).not.toContain('hongildong')
   })
@@ -558,7 +584,7 @@ describe('금고 AI 도구', () => {
     expect(b.listAccounts).toHaveBeenCalledWith('shop.example')
     expect(JSON.parse(raw)).toEqual({
       vaultLocked: true,
-      accounts: [{ label: '메인', username: 'ho***', types: ['login'], tags: [] }]
+      accounts: [{ label: '메인', username: 'ho***', types: ['login'], payments: [], priority: null, tags: [] }]
     })
   })
 
@@ -857,8 +883,14 @@ describe('list_accounts 응답', () => {
     const b = build({ accounts: [account({ tags: ['쇼핑', '해외'] })] })
     const raw = await callTool(b, 'list_accounts', {})
     expect(JSON.parse(raw)).toEqual([
-      { label: '메인', username: 'ho***', types: ['login'], tags: ['쇼핑', '해외'] }
+      { label: '메인', username: 'ho***', types: ['login'], payments: [], priority: null, tags: ['쇼핑', '해외'] }
     ])
+  })
+
+  it('결제 비밀번호 항목의 결제 제공자를 payments 로 함께 돌려준다(하네스의 결제 가능 수단 판단)', async () => {
+    const b = build({ accounts: [account({ paymentProviders: ['site', 'toss'] })] })
+    const raw = await callTool(b, 'list_accounts', {})
+    expect(JSON.parse(raw)[0].payments).toEqual(['site', 'toss'])
   })
 })
 

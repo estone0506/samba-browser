@@ -42,7 +42,8 @@ describe('installAutofillPicker — 포커스 자동 열기', () => {
     expect(listAccounts).not.toHaveBeenCalled()
   })
 
-  it('신뢰된 포커스로 간주하면 계정 목록을 요청한다', () => {
+  // 포커스만으로는 목록을 열지 않는다 — 🔑 아이콘을 눌러야 연다(실기 2026-09-25: 네이버 로그인 칸을 가려 입력이 섞였다)
+  it('신뢰된 포커스여도 계정 목록을 저절로 열지 않는다', () => {
     const input = setupForm()
     const listAccounts = vi.fn(async () => ({ outcome: 'ok', accounts: [] }))
     installAutofillPicker(
@@ -52,6 +53,6 @@ describe('installAutofillPicker — 포커스 자동 열기', () => {
 
     input.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
 
-    expect(listAccounts).toHaveBeenCalledTimes(1)
+    expect(listAccounts).not.toHaveBeenCalled()
   })
 })

@@ -37,6 +37,7 @@ import { makeCounter } from './counter'
 import type { SiteScriptStore } from './site-scripts-store'
 import { buildScriptsBlock } from '../../shared/site-scripts'
 import { createTextDeduper } from './dedupe'
+import { labelLaneTargets, laneTabs, newLaneState, type LaneState } from './lane-tabs'
 import {
   watchHandoff,
   HANDOFF_TIMEOUT_MS,
@@ -123,8 +124,13 @@ interface PendingConfirm {
 }
 
 // 작업 1건 실행: SDK 스트림을 읽어 UI 이벤트로 변환
+// 실행·세션 종료 뒤 페이지 대화상자를 계속 자동 처리하는 유예 시간
+export const AUTOMATION_GRACE_MS = 5_000
+
 export class AgentRunner {
   private abort: AbortController | null = null
+  // 마지막으로 실행·브릿지 세션이 끝난 시각(대화상자 자동 처리 유예 창의 기준)
+  private automationIdleSince = 0
   private pending = new Map<string, PendingConfirm>()
   // 실행 세대 번호. 중단된 이전 스트림이 뒤늦게 보내는 이벤트를 걸러낸다
   private generation = 0
@@ -151,6 +157,20 @@ export class AgentRunner {
   private releaseVaultHold: (() => void) | null = null
   // 밖의 하네스가 쥔 도구 세션. 있는 동안은 채팅 실행(run)을 받지 않는다(한 손발이라 동시에 못 돈다)
   private session: ToolSession | null = null
+  // 동시에 열린 레인 세션 수와 레인별 탭 보기 상태(하네스 계정 동시 처리)
+  private laneSessions = 0
+  private readonly lanes = new Map<string, LaneState>()
+  // 브릿지 세션들이 함께 보는 키패드 입력 기록(창 id|호스트) — 한 결제창에 결제 비밀번호를 두 번 넣지 않는다
+  private readonly bridgeKeypadEntered = new Set<string>()
+
+  private laneStateOf(name: string): LaneState {
+    let st = this.lanes.get(name)
+    if (!st) {
+      st = newLaneState()
+      this.lanes.set(name, st)
+    }
+    return st
+  }
 
   constructor(
     private tabs: TabManager,
@@ -281,9 +301,20 @@ export class AgentRunner {
     }
   }
 
-  /** 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다). 브릿지 세션이 열려 있는 동안도 포함한다 */
+  /**
+   * 지금 작업이 실행 중인가(페이지 대화상자 자동 처리 조건 판정에 쓴다). 브릿지 세션이 열려 있는 동안도 포함한다.
+   * 실행·세션이 끝난 직후 잠깐(AUTOMATION_GRACE_MS)도 실행 중으로 본다 — 스크립트가 버튼을 누르고
+   * 바로 돌아간 뒤 페이지가 띄우는 alert 가 "자동화 중 아님" 으로 판정돼 창이 쌓였다(실기: 하네스는
+   * 도구 호출마다 세션을 열고 닫아 그 틈이 잦다)
+   */
   isRunning(): boolean {
-    return this.abort !== null || this.session !== null
+    if (this.abort !== null || this.session !== null || this.laneSessions > 0) return true
+    return Date.now() - this.automationIdleSince < AUTOMATION_GRACE_MS
+  }
+
+  /** 실행·세션이 끝난 시각을 적는다(유예 창의 기준점) */
+  private markAutomationIdle(): void {
+    this.automationIdleSince = Date.now()
   }
 
   /**
@@ -419,7 +450,7 @@ export class AgentRunner {
     // AI 창에 붙여 넣은 이미지. 모델에만 실어 주고 대화 기록에는 남기지 않는다
     images?: AgentImage[]
   ): Promise<void> {
-    if (this.session) throw new Error('브릿지 세션 사용 중')
+    if (this.session || this.laneSessions > 0) throw new Error('브릿지 세션 사용 중')
     // 이미 실행 중이면 세대 가드 없이 status 를 emit 하면 진행 중인 실행의 UI 를 덮어쓸 수 있다.
     // 핸들러가 throw 를 { ok: false, error } 로 ack 하므로 에러만 던진다.
     if (this.abort) {
@@ -450,6 +481,12 @@ export class AgentRunner {
     // 자동 이어가기 문장이 아니면 사용자의 새 지시 — 허용 횟수를 되돌린다
     const autoContinuing = prompt.startsWith(AUTO_CONTINUE_PROMPT)
     if (!autoContinuing) this.autoContinueLeft = 1
+    // 사용자의 새 지시는 지금 보이는 탭부터 조작한다 — 이전 자동화가 뒤 탭에 남긴 대상 표식을 지운다
+    // (사람이 창을 쓰는 중이라 뒤에서만 돌던 자동화의 대상 탭이 새 지시로 이어지지 않게, visible-guard.ts)
+    if (!autoContinuing && !prompt.startsWith(LEARN_PROMPT_PREFIX)) {
+      const tabs = this.tabs as Partial<TabManager>
+      if (typeof tabs.clearAgentTarget === 'function') tabs.clearAgentTarget()
+    }
     this.followUpRunning = autoContinuing || prompt.startsWith(LEARN_PROMPT_PREFIX)
     // 이 실행의 행동 도구 호출 기록. 성공으로 끝나면 사이트 기억이 여기서 경로를 뽑는다
     const calls: AgentToolCall[] = []
@@ -744,6 +781,7 @@ ${CODEX_NO_IMAGE_NOTE}`
       // 이미 stop() 이나 다음 run() 이 상태를 가져갔으면 건드리지 않는다
       if (gen === this.generation) {
         this.abort = null
+        this.markAutomationIdle()
         this.clearPending()
       }
       // 중단으로 끝났어도 그때까지의 대화는 남긴다. 저장 실패가 실행을 깨뜨리지는 않는다
@@ -858,9 +896,15 @@ ${CODEX_NO_IMAGE_NOTE}`
    * 캡차·2단계 인증 같은 넘김은 즉시 skipped 로 돌려 하네스가 needs_human 으로 처리하게 한다.
    * 채팅 실행이 도는 동안은 만들 수 없고, 세션이 있는 동안 채팅 실행은 거부된다
    */
-  createToolSession(opts: { onStep?: (label: string, ok: boolean) => void }): ToolSession {
+  createToolSession(opts: {
+    onStep?: (label: string, ok: boolean) => void
+    /** 레인 이름(하네스가 계정마다 동시에 돌릴 때). 있으면 그 레인의 탭 보기로 일하고 다른 레인과 동시에 열린다 */
+    lane?: string
+  }): ToolSession {
     if (this.abort) throw new Error('이미 실행 중')
+    // 레인 없는 세션은 단독이다(다른 세션·레인이 없어야 한다). 레인 세션은 레인 없는 세션만 없으면 된다
     if (this.session) throw new Error('브릿지 세션 사용 중')
+    if (!opts.lane && this.laneSessions > 0) throw new Error('브릿지 세션 사용 중')
     if (this.settings.get().permissionMode === 'read_only') {
       throw new Error('읽기 전용 모드에서는 브릿지를 쓸 수 없음')
     }
@@ -877,8 +921,8 @@ ${CODEX_NO_IMAGE_NOTE}`
       handoff: async (req) => ({ outcome: 'skipped', url: req.currentUrl() }),
       cancelled: () => false
     })
-    const server = createSambaTools(
-      this.buildToolContext({
+    const laneState = opts.lane ? this.laneStateOf(opts.lane) : null
+    const baseCtx = this.buildToolContext({
         s: { ...s, permissionMode: 'full', finalConfirm: false },
         jobId,
         tick: () => null,
@@ -899,6 +943,12 @@ ${CODEX_NO_IMAGE_NOTE}`
             : Promise.resolve({ ok: false, reason: 'declined' as const }),
         prompt: ''
       })
+    // 키패드 입력 기록은 브릿지 세션(요청 1건)을 넘어 공유한다 — 같은 결제창에 두 번 넣지 않는다
+    const bridgeCtx = { ...baseCtx, keypadEntered: this.bridgeKeypadEntered }
+    const server = createSambaTools(
+      laneState
+        ? { ...bridgeCtx, tabs: laneTabs(this.tabs, laneState) }
+        : { ...bridgeCtx, tabs: labelLaneTargets(this.tabs, this.lanes) }
     )
     const tools = extractSdkTools(server).filter((t) => t.name !== 'done')
     // 브릿지 세션이 열려 있는 동안은 금고 자동 잠금을 보류한다(run() 과 같은 패턴). 두 번 풀려도 안전하다
@@ -912,12 +962,23 @@ ${CODEX_NO_IMAGE_NOTE}`
         return r.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n')
       },
       dispose: () => {
-        if (this.session === session) this.session = null
+        if (laneState) {
+          if (!disposed) {
+            disposed = true
+            this.laneSessions -= 1
+            if (this.laneSessions === 0) this.markAutomationIdle()
+          }
+        } else if (this.session === session) {
+          this.session = null
+          this.markAutomationIdle()
+        }
         releaseVaultHold?.()
         releaseVaultHold = null
       }
     }
-    this.session = session
+    let disposed = false
+    if (laneState) this.laneSessions += 1
+    else this.session = session
     return session
   }
 

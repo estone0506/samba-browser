@@ -133,6 +133,21 @@ export function installWebstoreHook(deps: WebstoreHookDeps): WebstoreHook {
   // 설치를 요청해 둔 버튼들(같은 확장을 두 번 누르는 것을 막고, 결과를 되돌려 적는다)
   const pending = new Map<string, HTMLElement>()
 
+  // 웹스토어는 크롬 전용 설치 기능이 없는 브라우저에서 'Chrome에 추가' 버튼을 disabled 로 막는다(2026-09 확인).
+  // 비활성 버튼은 눌러도 click 이 생기지 않아 아래 가로채기가 못 받는다 — 보이는 대로 다시 켠다(페이지가 다시 막아도 되풀이)
+  const enableAddButtons = (): void => {
+    for (const b of Array.from(document.querySelectorAll<HTMLButtonElement>('button[disabled]'))) {
+      if (isAddButtonLabel(labelOf(b))) b.disabled = false
+    }
+  }
+  enableAddButtons()
+  new MutationObserver(enableAddButtons).observe(document.documentElement, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['disabled']
+  })
+
   // 웹스토어는 click 이 아니라 pointerdown/pointerup(jsaction)에서 "Chrome으로 전환할까요?" 안내를
   // 띄운다. 버튼 위의 포인터 이벤트는 캡처 단계에서 모두 끊어 그 안내가 뜨지 않게 한다
   for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup'] as const) {

@@ -1,6 +1,7 @@
 // 사용자 조작(상세 화면의 '자동 채우기' 버튼, 페이지 내 피커)으로 시작하는 자동 채움.
 // AI 도구를 거치지 않고 메인이 직접 탭에 값을 넣는다 — 값은 IPC 로 나가지 않는다.
 
+import { markHuman } from '../browser/human-activity'
 import { pageBridge } from '../browser/page-bridge'
 import type { Tab } from '../browser/tab-manager'
 import type { VaultService } from './service'
@@ -51,6 +52,8 @@ export async function autofillAccount(
 ): Promise<AutofillResult> {
   const tab = target?.tab ?? deps.activeTab()
   if (!tab) return 'no-active-tab'
+  // 사용자가 누른 자동완성이다 — 이 탭은 잠시 자동화가 끼어들지 않는다(두 입력이 섞여 계정이 잠긴 실기 2026-09-25)
+  markHuman(tab.view.webContents)
   const url = tab.view.webContents.getURL()
   // 평문 페이지 판정을 먼저 본다(about: 등 호스트가 없는 주소도 'insecure-page' 로 알린다)
   if (!isSecurePageUrl(url)) return 'insecure-page'
@@ -85,14 +88,29 @@ export async function autofillAccount(
   // 빈 아이디로 폼을 제출하면 로그인 실패·계정 잠금으로 이어진다
   let usernameFilled = fields.username === undefined
   if (fields.username !== undefined && account.username) {
-    usernameFilled = (await pageBridge.fillValue(tab, fields.username, account.username)) === 'ok'
+    usernameFilled = (await pageBridge.typeLogin(tab, fields.username, account.username)) === 'ok'
   }
-  const filled = await pageBridge.fillValue(tab, fields.password, password)
+  // 아이디 → 비밀번호 칸으로 옮기는 사람의 틈
+  await new Promise((resolve) => setTimeout(resolve, 180))
+  const filled = await pageBridge.typeLogin(tab, fields.password, password)
   if (filled !== 'ok') return 'fill-failed'
+  // 제출 전에 두 칸의 글자 수를 다시 본다 — 하나라도 다르면(다른 칸에 쳐졌거나 섞였으면) 로그인 버튼을 누르지 않는다.
+  // 틀린 값으로 자동 제출이 반복되면 계정이 잠긴다(실기 2026-09-25 네이버)
+  const lengthsOk =
+    (await pageBridge.valueLength(tab, fields.password)) === password.length &&
+    (fields.username === undefined ||
+      !account.username ||
+      (await pageBridge.valueLength(tab, fields.username)) === account.username.length)
+  if (!lengthsOk) return 'fill-failed'
   // 계정을 고르면 로그인 버튼까지 눌러 준다(아이디까지 채운 경우만 — 비밀번호만 채웠으면 사용자가 확인)
   if (usernameFilled && deps.autoSubmit?.()) {
     try {
-      await pageBridge.submitForm(tab, fields.password)
+      // 제출 버튼이 있으면 그 버튼을 진짜 클릭한다(사이트 핸들러가 캡차 토큰을 붙이고 제출한다)
+      await pageBridge.submitLogin(
+        tab,
+        fields.submit ?? fields.password,
+        fields.submit !== undefined
+      )
     } catch {
       // 제출 실패는 채우기 성공을 뒤집지 않는다 — 사용자가 버튼을 누르면 된다
     }

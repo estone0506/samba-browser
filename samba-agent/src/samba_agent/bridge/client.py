@@ -61,8 +61,11 @@ class BridgeClient:
         busy_retries: int = DEFAULT_BUSY_RETRIES,
         busy_wait_s: float = DEFAULT_BUSY_WAIT_S,
         client: httpx.Client | None = None,
+        lane: str | None = None,
     ) -> None:
         self._url = url.rstrip('/')
+        # 레인(X-Samba-Lane) — 레인이 다르면 앱이 동시에 받는다(계정 동시 비교)
+        self._lane = lane
         self._token = token
         self._allowed = tuple(allowed)
         self._timeout_s = timeout_s
@@ -80,7 +83,33 @@ class BridgeClient:
             busy_retries=self._busy_retries,
             busy_wait_s=self._busy_wait_s,
             client=self._client,
+            lane=self._lane,
         )
+
+    def with_lane(self, lane: str | None) -> 'BridgeClient':
+        """같은 허용 목록으로 레인만 바꾼 사본."""
+        return BridgeClient(
+            self._url,
+            self._token,
+            allowed=self._allowed,
+            timeout_s=self._timeout_s,
+            busy_retries=self._busy_retries,
+            busy_wait_s=self._busy_wait_s,
+            client=self._client,
+            lane=lane,
+        )
+
+    def supports_lanes(self) -> bool:
+        """앱이 레인을 아는가 — 레인을 붙여 부르면 응답에 레인 이름이 돌아와야 한다(예전 앱은 무시한다)."""
+        try:
+            r = self._client.post(
+                f'{self._url}/tool/list_tabs',
+                headers={**self._headers(), 'X-Samba-Lane': 'lane-probe'},
+                json={'args': {}},
+            )
+            return r.status_code == 200 and r.json().get('lane') == 'lane-probe'
+        except (httpx.HTTPError, ValueError):
+            return False
 
     @property
     def allowed(self) -> tuple[str, ...]:
@@ -152,7 +181,10 @@ class BridgeClient:
         self.close()
 
     def _headers(self) -> dict[str, str]:
-        return {'X-Samba-Token': self._token, 'content-type': 'application/json'}
+        headers = {'X-Samba-Token': self._token, 'content-type': 'application/json'}
+        if self._lane:
+            headers['X-Samba-Lane'] = self._lane
+        return headers
 
     @staticmethod
     def _fail(r: httpx.Response) -> tuple[FailReason, str, int]:

@@ -10,20 +10,43 @@ import { timingSafeEqual } from 'node:crypto'
 import type { ToolSession } from '../agent/runner'
 
 export interface BridgeDeps {
-  openSession: (onStep: (label: string, ok: boolean) => void) => ToolSession
+  /** lane 이 있으면 그 레인 세션(다른 레인과 동시에 열린다) */
+  openSession: (onStep: (label: string, ok: boolean) => void, lane?: string) => ToolSession
   token: () => string
   toolTimeoutMs?: number
+  /** 제한 시간 뒤에도 도구 호출이 안 끝나면 이만큼 더 기다렸다가 강제로 busy 를 푼다 */
+  hangGraceMs?: number
 }
 
 const DEFAULT_TOOL_TIMEOUT_MS = 90_000
+// 실기: 하네스가 죽어 응답을 못 받은 도구 호출이 영영 안 끝나 busy 가 풀리지 않았다(이후 모든 요청 409).
+// 늦게 끝나는 호출은 지켜보되, 이 시간이 지나면 세션을 닫고 문을 연다
+const DEFAULT_HANG_GRACE_MS = 60_000
 const MAX_BODY_BYTES = 1024 * 1024
+
+/** 마지막 브릿지 호출 뒤 이 시간 안이면 자동화가 도는 중으로 본다(페이지 대화상자 자동 처리) */
+export const BRIDGE_ACTIVE_WINDOW_MS = 2 * 60_000
 
 export class BridgeServer {
   private server: Server | null = null
   /** 지금 도구를 돌리는 중인가 — 한 손발이라 동시에 하나만 */
   private busy = false
+  /** 지금 도는 레인들 — 레인이 다르면 동시에 돈다(하네스 계정 동시 처리) */
+  private busyLanes = new Set<string>()
+  /** 마지막으로 도구 호출이 시작·끝난 시각(ms) — 호출 사이 틈에 뜬 페이지 대화상자도 자동화 중으로 본다 */
+  private lastActivityAt = 0
 
   constructor(private readonly deps: BridgeDeps) {}
+
+  /**
+   * 하네스가 브릿지로 자동화를 돌리고 있는가. 호출 중이거나 마지막 호출 뒤 windowMs 안이면 true.
+   * 페이지 대화상자 자동 처리 조건에 쓴다 — 실기 2026-09-25: 하네스가 도는 동안 무신사 "옵션을 선택해 주세요"
+   * alert 20개가 닫히지 않고 쌓였다(AI 채팅 작업일 때만 자동 처리하고 있었다)
+   */
+  recentlyActive(windowMs = BRIDGE_ACTIVE_WINDOW_MS, now = Date.now()): boolean {
+    if (this.busy || this.busyLanes.size > 0) return true
+    return this.lastActivityAt > 0 && now - this.lastActivityAt < windowMs
+  }
 
   listening(): boolean {
     return this.server?.listening === true
@@ -101,7 +124,14 @@ export class BridgeServer {
   }
 
   private async tool(name: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const rawLane = req.headers['x-samba-lane']
+    const lane =
+      typeof rawLane === 'string' && /^[A-Za-z0-9_.@-]{1,64}$/.test(rawLane) ? rawLane : undefined
+    // 레인 없는 요청은 단독(다른 요청·레인이 없어야 한다). 레인 요청은 같은 레인만 겹치지 않으면 된다
     if (this.busy) return json(res, 409, { error: 'busy' })
+    if (lane ? this.busyLanes.has(lane) : this.busyLanes.size > 0) {
+      return json(res, 409, { error: 'busy' })
+    }
     let body: string
     try {
       body = await readBody(req)
@@ -120,7 +150,7 @@ export class BridgeServer {
     const steps: Array<{ label: string; ok: boolean }> = []
     let session: ToolSession
     try {
-      session = this.deps.openSession((label, ok) => steps.push({ label, ok }))
+      session = this.deps.openSession((label, ok) => steps.push({ label, ok }), lane)
     } catch {
       return json(res, 409, { error: 'busy' })
     }
@@ -128,7 +158,17 @@ export class BridgeServer {
       session.dispose()
       return json(res, 404, { error: `unknown tool: ${name}` })
     }
-    this.busy = true
+    const hold = (): void => {
+      this.lastActivityAt = Date.now()
+      if (lane) this.busyLanes.add(lane)
+      else this.busy = true
+    }
+    const free = (): void => {
+      this.lastActivityAt = Date.now()
+      if (lane) this.busyLanes.delete(lane)
+      else this.busy = false
+    }
+    hold()
     const timeoutMs = this.deps.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS
     let timer: NodeJS.Timeout | undefined
     const callPromise = session.call(name, args)
@@ -144,7 +184,8 @@ export class BridgeServer {
           }, timeoutMs)
         })
       ])
-      json(res, 200, { ok: true, result, steps })
+      // 레인 요청이면 레인 이름을 돌려준다 — 하네스가 이 앱이 레인을 아는지 확인한다(예전 앱은 머리글을 무시한다)
+      json(res, 200, { ok: true, result, steps, ...(lane ? { lane } : {}) })
     } catch (e: unknown) {
       if (settledByTimer) {
         // 504 를 먼저 보낸다 — 세션은 아직 안 닫는다, callPromise 가 끝날 때 정리한다
@@ -155,18 +196,30 @@ export class BridgeServer {
     } finally {
       if (timer) clearTimeout(timer)
       if (settledByTimer) {
+        // 세션 정리와 busy 해제는 한 번만 — 늦게 끝나거나(finally) 유예가 지나거나(grace) 먼저 오는 쪽이 한다
+        let released = false
+        const release = (why: string): void => {
+          if (released) return
+          released = true
+          if (why !== 'finished')
+            console.warn(`브릿지: 도구 호출이 안 끝나 강제로 세션을 닫는다 (${why})`)
+          session.dispose()
+          free()
+        }
+        const graceMs = this.deps.hangGraceMs ?? DEFAULT_HANG_GRACE_MS
+        const grace = setTimeout(() => release('hang'), graceMs)
         callPromise
           .catch((e: unknown) => {
             const message = e instanceof Error ? e.message : String(e)
             console.warn('브릿지: 제한 시간 뒤 늦게 끝난 도구 호출 실패', message)
           })
           .finally(() => {
-            session.dispose()
-            this.busy = false
+            clearTimeout(grace)
+            release('finished')
           })
       } else {
         session.dispose()
-        this.busy = false
+        free()
       }
     }
   }

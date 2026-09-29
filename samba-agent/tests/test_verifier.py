@@ -134,3 +134,85 @@ def test_대조할_기대값이_없으면_ok가_아니라_사람에게_넘긴다
     out = agent(reg)(assignment(reg, expected={}))
     assert out.status == 'needs_human'
     assert out.fail_reason is FailReason.VERIFY_MISMATCH
+
+
+# ---- 삼바웨이브 쪽 값은 내부 API 로(Task C) ----
+
+WAVE_BASE = 'https://wave.test'
+WAVE_API = f'{WAVE_BASE}/api/v1/internal/harness'
+WAVE_ORDER = {'order_number': 'A1', 'source_site': 'MUSINSA', 'status': 'pending'}
+
+
+def wave_client():
+    from samba_agent.wave.client import WaveClient
+
+    return WaveClient(WAVE_BASE, 'test-token', 'tenant-1')
+
+
+def verifier_with_wave(reg, decide=None) -> VerifierAgent:
+    a = agent(reg, decide)
+    a.set_wave(wave_client())
+    return a
+
+
+@respx.mock
+def test_삼바웨이브_값이_같으면_통과하고_앱_행은_읽지_않는다(reg):
+    respx.get(f'{WAVE_API}/orders/A1').mock(
+        return_value=httpx.Response(
+            200, json={**WAVE_ORDER, 'sourcing_order_number': 'M-777', 'cost': 89000}
+        )
+    )
+    route = respx.post(f'{URL}/tool/run_script')
+    route.side_effect = [page(EXPECTED)]  # 소싱처 상세 1번만 부른다
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = verifier_with_wave(reg)(assignment(reg))
+    assert out.status == 'ok'
+    assert out.payload['unverified'] == []
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_삼바웨이브_값이_다르면_불일치_표를_낸다(reg):
+    respx.get(f'{WAVE_API}/orders/A1').mock(
+        return_value=httpx.Response(
+            200, json={**WAVE_ORDER, 'sourcing_order_number': 'M-777', 'cost': 91000}
+        )
+    )
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(EXPECTED))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = verifier_with_wave(reg)(assignment(reg))
+    assert (out.status, out.fail_reason) == ('fail', FailReason.VERIFY_MISMATCH)
+    assert out.payload['mismatches'][0]['field'] == 'real_price'
+
+
+@respx.mock
+def test_삼바웨이브가_대조할_필드를_안_주면_사람에게_넘긴다(reg):
+    """응답에 없는 값을 '같다' 로 치지 않는다 — 확인하지 못했다고 말한다."""
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(200, json=WAVE_ORDER))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(EXPECTED))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = verifier_with_wave(reg)(assignment(reg))
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.VERIFY_MISMATCH)
+    assert set(out.payload['unverified']) == set(EXPECTED)
+
+
+@respx.mock
+def test_일부만_대조_가능하면_나머지는_대조_불가로_남긴다(reg):
+    respx.get(f'{WAVE_API}/orders/A1').mock(
+        return_value=httpx.Response(200, json={**WAVE_ORDER, 'cost': 89000})
+    )
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(EXPECTED))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = verifier_with_wave(reg)(assignment(reg))
+    assert out.status == 'ok'
+    assert out.payload['unverified'] == ['source_order_no']
+    assert any('대조 불가' in e.label for e in out.evidence)
+
+
+@respx.mock
+def test_삼바웨이브_조회가_실패하면_그_사유로_실패한다(reg):
+    respx.get(f'{WAVE_API}/orders/A1').mock(return_value=httpx.Response(403, json={'detail': 'x'}))
+    respx.post(f'{URL}/tool/run_script').mock(return_value=page(EXPECTED))
+    respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
+    out = verifier_with_wave(reg)(assignment(reg))
+    assert (out.status, out.fail_reason) == ('fail', FailReason.PERMISSION_DENIED)

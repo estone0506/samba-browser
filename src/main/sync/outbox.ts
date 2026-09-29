@@ -66,6 +66,9 @@ export class SyncOutbox {
         workspaceId: workspaceId ?? null
       })
       .run()
+    // 지운 행의 원격 id 를 따로 기억해 둔다 — 로컬 행은 이미 없어서, 다른 기기(옛 복제본)가 그 행을 살아 있는
+    // 채로 다시 올리면 풀이 새 행으로 알고 되살렸다(실기: 키마스터 계정·사이트 원복). 풀은 이 메모를 보고 거른다
+    if (op === 'delete' && payload) new SyncLocal(this.db).rememberTombstoneFromPayload(table, payload)
     this.db.scheduleSave()
   }
 

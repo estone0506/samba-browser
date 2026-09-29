@@ -23,14 +23,29 @@ export function PersonalInfoPage(): React.JSX.Element {
   // 새로 만들 항목 종류(+ 메뉴에서 고른 값). 편집 중이면 기존 항목 종류를 따른다
   const [editorType, setEditorType] = useState<VaultItemType>('login')
   const [editingItem, setEditingItem] = useState<VaultItemMeta | undefined>(undefined)
+  // 에디터가 다룰 계정 — 계정 '편집'·그 계정의 항목 추가/편집일 때만. + 메뉴의 신규 계정은 undefined 다
+  // (버그 2026-09-28: 신규 로그인에도 선택된 계정을 넘겨 upsertAccount({id}) 가 기존 계정을 덮어썼다)
+  const [editingAccountId, setEditingAccountId] = useState<number | null>(null)
+  // 복사 원본 계정 — '복사' 로 열면 그 계정 값을 채운 새 계정 에디터가 된다(id 없음 → 새로 저장)
+  const [templateAccountId, setTemplateAccountId] = useState<number | null>(null)
   // 열 때마다 바뀌어 ItemEditor 를 새로 마운트시킨다(폼 상태를 effect 없이 초기화하기 위함)
   const [editorKey, setEditorKey] = useState(0)
   const [importOpen, setImportOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   // + 메뉴에서 종류를 고르거나(신규), 계정 '편집' 을 누를 때(기존 계정) 열린다
-  const openEditor = (type: VaultItemType, item?: VaultItemMeta): void => {
+  const openEditor = (
+    type: VaultItemType,
+    item?: VaultItemMeta,
+    opts: { withAccount?: boolean; duplicate?: boolean } = {}
+  ): void => {
     setEditorType(type)
     setEditingItem(item)
+    setEditingAccountId(
+      opts.withAccount && typeof selectedAccountId === 'number' ? selectedAccountId : null
+    )
+    setTemplateAccountId(
+      opts.duplicate && typeof selectedAccountId === 'number' ? selectedAccountId : null
+    )
     setEditorKey((k) => k + 1)
     setEditorOpen(true)
   }
@@ -50,7 +65,10 @@ export function PersonalInfoPage(): React.JSX.Element {
   if (state === 'uninitialized') return accountConfigured ? <PreparingNote /> : <SetupScreen />
   if (state === 'locked') return <UnlockScreen />
 
-  const editingAccount = accounts.find((a) => a.id === selectedAccountId)
+  const editingAccount =
+    editingAccountId === null ? undefined : accounts.find((a) => a.id === editingAccountId)
+  const templateAccount =
+    templateAccountId === null ? undefined : accounts.find((a) => a.id === templateAccountId)
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -60,17 +78,19 @@ export function PersonalInfoPage(): React.JSX.Element {
         onSettings={() => setSettingsOpen(true)}
       />
       <ItemDetail
-        onEdit={() => openEditor('login')}
+        onEdit={() => openEditor('login', undefined, { withAccount: true })}
+        onDuplicate={() => openEditor('login', undefined, { duplicate: true })}
         onEditGlobal={(item) => openEditor(item.type, item)}
-        onAddPayment={() => openEditor('password')}
-        onEditItem={(item) => openEditor(item.type, item)}
+        onAddPayment={() => openEditor('password', undefined, { withAccount: true })}
+        onEditItem={(item) => openEditor(item.type, item, { withAccount: true })}
       />
       <ItemEditor
         key={editorKey}
         open={editorOpen}
         onOpenChange={setEditorOpen}
         type={editorType}
-        account={typeof selectedAccountId === 'number' ? editingAccount : undefined}
+        account={editingAccount}
+        template={templateAccount}
         item={editingItem}
       />
       <ImportPanel open={importOpen} onOpenChange={setImportOpen} />

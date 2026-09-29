@@ -15,13 +15,14 @@ import { z } from 'zod'
 
 /** 스크립트 이름: 소문자로 시작하는 snake_case, 3~40자 */
 export const SITE_SCRIPT_NAME_RE = /^[a-z][a-z0-9_]{2,39}$/
-/** 저장하는 스크립트 수 상한(오래 안 쓴 것부터 버린다) */
-export const SITE_SCRIPT_MAX = 40
+/** 저장하는 스크립트 수 상한(오래 안 쓴 것부터 버린다). 40 이던 때 꽉 차 새 스크립트를 저장할 때마다
+ *  결제창 진입 스크립트가 밀려 지워졌다(실기 2026-09-24, 소싱처 11곳 × 스크립트 5종) */
+export const SITE_SCRIPT_MAX = 200
 export const SITE_SCRIPT_DESCRIPTION_MAX = 240
 export const SITE_SCRIPT_PARAM_MAX = 10
 export const SITE_SCRIPT_PARAM_LENGTH_MAX = 60
-/** run_js 상한과 같다(RUN_JS_MAX_CODE) */
-export const SITE_SCRIPT_CODE_MAX = 4000
+/** run_js 상한과 같다(RUN_JS_MAX_CODE, 8000) */
+export const SITE_SCRIPT_CODE_MAX = 8000
 /** 연속 실패가 이만큼 쌓이면 프롬프트 목록에서 뺀다 */
 export const SITE_SCRIPT_FAIL_LIMIT = 3
 /** 프롬프트에 붙이는 목록 블록 길이 상한 */

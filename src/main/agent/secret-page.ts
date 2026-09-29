@@ -18,7 +18,7 @@ export const DIGIT_BUTTON_MIN = 10
 
 // 결제 비밀번호 화면에서 흔히 보이는 문구
 export const SECRET_KEYPAD_TEXT_RE =
-  /결제\s?비밀번호|비밀번호\s?6\s?자리|비밀번호를\s?입력|\bPIN\b|간편\s?비밀번호/i
+  /결제\s?비밀번호|비밀번호\s?6\s?자리|비밀번호를\s?입력|\bPIN\b|간편\s?비밀번호|보안\s?키패드/i
 
 // 알려진 PIN 인증 경로. 숫자가 이미지로 그려져 DOM 으로 못 세는 화면을 여기서 잡는다
 export const PIN_URL_PATTERNS: readonly RegExp[] = [
@@ -27,7 +27,13 @@ export const PIN_URL_PATTERNS: readonly RegExp[] = [
   /simplepay.*password/i,
   /kakaopay.*pw/i,
   /toss.*pin/i,
-  /payco.*pin/i
+  /payco.*pin/i,
+  // 네이버페이 결제 비밀번호 창(pay.naver.com/authentication/pw/check). 숫자 버튼에 글자·이름이 없고
+  // 입력칸도 없어(점 6개로만 표시) DOM 신호로는 못 잡는다(실기 2026-09-23)
+  /pay\.naver\.com\/authentication\/pw/i,
+  // 페이코 PC 결제 비밀번호 창(bill.payco.com/paymentPopup/password/confirm, 결제창 안 iframe). 숫자가 그림
+  // (스프라이트)이고 입력칸도 없어 DOM 신호로는 못 잡는다(실기 2026-09-25 르무통)
+  /bill\.payco\.com\/paymentPopup\/password/i
 ]
 
 /** 주소가 알려진 PIN 인증 경로인가 */

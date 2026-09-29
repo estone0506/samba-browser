@@ -1,8 +1,10 @@
+import { PAYMENT_PROVIDER_ACCOUNT_HOST, payPriorityOf, visibleTags } from '../../shared/vault'
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import type { TabManager, Tab } from '../browser/tab-manager'
+import { adpickTrackingLink } from './affiliate'
 import { pageBridge } from '../browser/page-bridge'
-import type { LoginFieldsResult } from '../browser/page-bridge'
+import type { KeypadLayout, LoginFieldsResult } from '../browser/page-bridge'
 import { serializeSnapshot } from '../../shared/snapshot'
 import type { PageOverlay, PageSnapshot } from '../../shared/snapshot'
 import { diffLines } from '../../shared/snapshot-diff'
@@ -34,7 +36,7 @@ import {
 } from '../vault/access-gate'
 import { DEFAULT_FIELD_KEY } from '../vault/fields'
 import { formatDialogNote } from '../browser/dialogs'
-import { createOcrTool } from './tools-ocr'
+import { createOcrTool, ocrDigitInRegion, resolveKeypadDigits, type DigitRead } from './tools-ocr'
 import {
   createPayTool,
   createPhoneTools,
@@ -58,6 +60,7 @@ import {
   popupTargetsOf
 } from './target'
 import type { AgentTarget } from '../browser/targets'
+import { automationBlocked, runAsAutomation } from '../browser/human-activity'
 import type { AgentToolCall, SiteActionTool } from '../../shared/site-memory'
 import type { HandoffKind } from '../../shared/ipc'
 import { PLAYBOOK_INSTRUCTIONS_MAX, type PlaybookDto } from '../../shared/playbook'
@@ -92,13 +95,23 @@ export const NAVERPAY_ACCOUNT_UNKNOWN =
 // 임의로 고르면 잘못 눌러 계정이 잠기므로 반드시 모델에게 되묻게 한다
 const PAYMENT_PROVIDER_AMBIGUOUS =
   'ambiguous: this account has several payment passwords; pass provider ' +
-  '(site for the site own pay such as 무신사머니, toss, kakao, naver, payco, samsung, apple, other)'
+  '(site for the site own pay such as 무신사머니, musinsapay, toss, kakao, naver, payco, other)'
 // guard 모드에서 추가 확인을 받아야 하는 민감 항목
 const CONFIRM_ITEM_TYPES: VaultItemType[] = ['password', 'card']
 // PG 결제창(토스·ePAY 팝업)에서 채우는 항목 — 그 창의 호스트가 아니라 창을 연 사이트의 계정을 쓴다
 const PAYMENT_POPUP_ITEM_TYPES: VaultItemType[] = ['identity', 'card', 'password']
 // fill_secret 의 format 인자 — 저장된 값을 입력칸이 원하는 모양으로 바꾼다
-export const FILL_FORMATS = ['yymmdd', 'yyyymmdd', 'digits'] as const
+export const FILL_FORMATS = [
+  'yymmdd',
+  'yyyymmdd',
+  'digits',
+  // 전화번호를 칸 셋(010 / 1234 / 5678)에 나눠 넣는 폼 — 앞·가운데·끝
+  'phone-first',
+  'phone-mid',
+  'phone-last',
+  // 앞자리는 고르는 칸(010 선택)이고 나머지 8자리를 한 칸에 넣는 폼(슈마커 ReceiveHP23) — 가운데+끝
+  'phone-rest'
+] as const
 export type FillFormat = (typeof FILL_FORMATS)[number]
 
 /**
@@ -111,6 +124,16 @@ export function formatFillValue(value: string, format?: FillFormat): string | nu
   if (!format) return value
   const digits = value.replace(/\D/g, '')
   if (format === 'digits') return digits === '' ? null : digits
+  if (format.startsWith('phone-')) {
+    // 010-1234-5678(11자리) / 02-123-4567 같은 번호를 앞·가운데·끝으로 나눈다. 끝은 항상 4자리
+    if (digits.length < 9 || digits.length > 11) return null
+    const last = digits.slice(-4)
+    const first = digits.startsWith('02') ? '02' : digits.slice(0, 3)
+    const mid = digits.slice(first.length, -4)
+    if (mid.length < 3) return null
+    if (format === 'phone-rest') return mid + last
+    return format === 'phone-first' ? first : format === 'phone-mid' ? mid : last
+  }
   if (digits.length === 8) return format === 'yymmdd' ? digits.slice(2) : digits
   if (digits.length === 6) return format === 'yymmdd' ? digits : null
   return null
@@ -120,6 +143,11 @@ export function formatFillValue(value: string, format?: FillFormat): string | nu
 const SECRET_TARGET_ITEM_TYPES: VaultItemType[] = ['login', 'password']
 // 대상 요소가 비밀 입력칸이 아닐 때 돌려주는 문자열
 const NOT_A_SECRET_FIELD = 'refused: target is not a secret input'
+// run_js safety:no_pay 에서 누르지 않는 결제 확정·주문 취소/반품/교환 버튼 글자(요소 자신 + 감싸는 버튼·링크 글자로 판정)
+export const PAY_CLICK_RE =
+  /결제\s*하기|입력\s*완료|구매\s*확정|결제\s*승인|주문\s*확정|취소\s*요청|주문\s*취소|반품\s*요청|교환\s*요청|place\s*order|pay\s*now/i
+export const RUN_JS_SAFETY_PROBE = 'safety: no_pay supported'
+const PAY_CLICK_REFUSAL = 'refused: safety no_pay — payment confirm buttons cannot be clicked here'
 // 접근 정책이 never 일 때 돌려주는 문자열
 const VAULT_ACCESS_NEVER = 'refused: KeyMaster access policy is Never'
 // 현재 호스트가 제외 도메인 목록에 있을 때 돌려주는 문자열
@@ -132,6 +160,13 @@ const INSECURE_PAGE = 'refused: insecure page (https required)'
 const FILL_HOST_MISMATCH = 'refused: HOST_MISMATCH — page moved to another domain'
 // 이미 로그인돼 있을 때 돌려주는 문자열(다시 로그인하면 세션이 끊겨 캡차가 늘어난다)
 const ALREADY_SIGNED_IN = 'already signed in'
+// 사이트가 "아이디 또는 비밀번호가 일치하지 않습니다" 같은 대화상자로 로그인 실패를 알린 경우.
+// 같은 실행에서 다시 시도하면 실패가 쌓여 계정이 잠긴다(실기: SSG 에서 모델이 3회 재시도) — 앱이 막고 사람에게 넘긴다
+const WRONG_PASSWORD_RE =
+  /일치하지\s*않|비밀번호가\s*(틀|올바르지|잘못)|아이디\s*또는\s*비밀번호|비밀번호를?\s*(다시|확인)|incorrect\s*(password|login)|invalid\s*(password|credentials)|wrong\s*password/i
+export const LOGIN_WRONG_PASSWORD = (host: string): string =>
+  `failed: WRONG_PASSWORD — ${host} says the id or password does not match. Do NOT retry (repeated failures lock the account); ` +
+  "tell the user to update this account's password in KeyMaster and stop"
 // 캡차·2FA 를 사용자에게 넘길 수 없을 때(넘김 콜백 미주입) 돌려주는 문자열
 const NEEDS_USER_CAPTCHA = 'needs_user: captcha'
 // 웹 결제 비밀번호 키패드에서 조작 도구(click/type/select/scroll)를 거부할 때 돌려주는 문자열.
@@ -207,6 +242,21 @@ export function rememberSnapshot(
   return prev
 }
 
+// 세션을 넘는 키패드 입력 기록의 상한 — 오래된 것부터 버린다(창 id 는 매번 새로 생긴다)
+const KEYPAD_ENTERED_MAX = 200
+
+/** 키패드 입력을 한 결제창을 기록한다. 상한을 넘으면 가장 오래된 기록부터 지운다 */
+export function rememberKeypadEntered(set: Set<string> | undefined, key: string): void {
+  if (!set) return
+  set.delete(key)
+  set.add(key)
+  while (set.size > KEYPAD_ENTERED_MAX) {
+    const oldest = set.values().next().value
+    if (oldest === undefined) break
+    set.delete(oldest)
+  }
+}
+
 /** progress 도구 입력 검증. 문제가 없으면 null, 있으면 모델이 읽을 거부 문구 */
 export function validateProgress(done: number, total: number): string | null {
   if (!Number.isInteger(done) || !Number.isInteger(total)) return PROGRESS_INVALID
@@ -262,6 +312,16 @@ export function maskUsername(username: string): string {
  * 탭 프로필을 같이 넘기면 계정 순회(계정별 새 탭)에서 라벨 없이도 그 탭의 계정을 고른다.
  * 특정하지 못하면 null 을 돌려준다(도구는 ACCOUNT_NOT_FOUND 를 반환).
  */
+/** 주소에서 호스트·경로만(쿼리·해시 제외) — 진행 라벨용. 파싱 실패면 원문 앞 80자 */
+export function pathOnly(url: string): string {
+  try {
+    const u = new URL(url)
+    return `${u.host}${u.pathname}`
+  } catch {
+    return url.slice(0, 80)
+  }
+}
+
 export function resolveAccount(
   accounts: AccountDto[],
   label?: string,
@@ -277,8 +337,34 @@ export function resolveAccount(
   return accounts.length === 1 ? accounts[0] : null
 }
 
+/**
+ * 통합 로그인으로 다른 도메인에 넘어갔을 때 원래 사이트 계정과 짝인 계정을 고른다.
+ * 실기: 29CM 계정 라벨 "buyer02@naver.com" 은 무신사 통합 로그인 화면에서 무신사 계정 "buyer02" 다.
+ * 아이디가 같거나, 넘어간 쪽 라벨이 원래 계정의 아이디·라벨 @ 앞부분과 같으면 짝으로 본다
+ */
+export function movedHostAccount(
+  origin: AccountDto[],
+  moved: AccountDto[],
+  label?: string
+): AccountDto | null {
+  if (!label) return null
+  const src = origin.find((a) => a.label === label)
+  const keys = new Set(
+    [label, label.split('@')[0], src?.username, src?.username.split('@')[0]]
+      .filter((k): k is string => typeof k === 'string' && k.length > 0)
+      .map((k) => k.toLowerCase())
+  )
+  return (
+    moved.find((a) => keys.has(a.username.toLowerCase())) ??
+    moved.find((a) => keys.has(a.label.toLowerCase())) ??
+    null
+  )
+}
+
 // 도구 하나의 상한 시간. run_js 는 자체 30초 상한이 있으므로 그보다 넉넉히 둔다
 const TOOL_TIMEOUT_MS = 90_000
+// 로그인 제출 뒤 사이트의 실패 대화상자(비밀번호 불일치)가 뜰 때까지 기다리는 시간
+const LOGIN_DIALOG_WAIT_MS = 800
 
 // 도구가 실패를 알릴 때 쓰는 말. 결과 어디에 있든 실패로 보던 예전 판정은, 페이지 본문·플레이북 절차처럼
 // 남의 글을 그대로 돌려주는 도구에서 오탐을 냈다(실기: 플레이북 본문의 "error"·"locked" 때문에 읽기 성공이 ✗)
@@ -445,6 +531,9 @@ export interface ToolContext {
   phone?: PhoneToolContext
   // 결제 승인 문맥. 폰 도구와 따로 주입한다 — 결제만 금고를 보는 실행기를 갖는다
   pay?: PayToolContext
+  // 키패드 자동 입력을 이미 한 결제창(창 id|호스트) — 도구 세션을 넘어 공유한다. 브릿지는 요청마다 새
+  // 세션을 열어 세션 안의 1회 제한이 하네스의 반복 호출을 막지 못했다(실기 2026-09-27). 주입되지 않으면 세션 안만 본다
+  keypadEntered?: Set<string>
 }
 
 const text = (t: string): { content: [{ type: 'text'; text: string }] } => ({
@@ -453,6 +542,9 @@ const text = (t: string): { content: [{ type: 'text'; text: string }] } => ({
 
 // 지금 조작할 창. 팝업(결제창·주소 검색창)을 골라 둔 상태면 그 팝업, 아니면 활성 탭.
 // 대상이 없으면 null
+// 행동 도구(action)가 아니어도 탭에 입력하는 도구의 라벨 머리 — fill_secret('입력: …')·login('로그인…')·run_script
+const HUMAN_GATED_LABEL_RE = /^(입력|로그인|스크립트 실행)/
+
 function activeOr(ctx: ToolContext): Tab | null {
   return agentTargetOf(ctx.tabs)
 }
@@ -461,6 +553,9 @@ function activeOr(ctx: ToolContext): Tab | null {
 // 크림처럼 소셜 로그인 버튼만 보이고 이메일 로그인은 한 번 더 눌러야 나오는 사이트가 있어
 // "이메일로 로그인" 류를 가장 먼저 찾는다
 const EMAIL_LOGIN_TEXT_RE = /이메일(로| )?\s?로그인|email.*(login|sign in)|아이디로 로그인/i
+// 통합계정 로그인 — 29CM 는 무신사 통합계정으로 전환된 계정이라 "이메일 로그인"으로 들어가면
+// "무신사 통합계정으로 다시 로그인해주세요"로 막힌다(실기 2026-09-25). 이메일 로그인보다 먼저 찾는다
+const UNIFIED_LOGIN_TEXT_RE = /통합\s?계정.{0,12}로그인|통합\s?로그인/
 const LOGIN_TEXT_RE = /^(로그인|로그인하기|login|log in|sign\s?in|signin)$/i
 const LOGIN_HREF_RE = /login|signin|sign-in|logon/i
 
@@ -468,6 +563,7 @@ const LOGIN_HREF_RE = /login|signin|sign-in|logon/i
 async function clickLoginLink(tab: Tab): Promise<boolean> {
   const snapshot = await pageBridge.snapshot(tab)
   const target =
+    snapshot.elements.find((el) => UNIFIED_LOGIN_TEXT_RE.test(el.text)) ??
     snapshot.elements.find((el) => EMAIL_LOGIN_TEXT_RE.test(el.text)) ??
     snapshot.elements.find((el) => LOGIN_TEXT_RE.test(el.text.trim())) ??
     snapshot.elements.find((el) => el.href !== undefined && LOGIN_HREF_RE.test(el.href)) ??
@@ -484,6 +580,12 @@ async function clickLoginLink(tab: Tab): Promise<boolean> {
  *   2) 현재 페이지의 로그인 링크를 눌러 이동 → 재탐지
  * 끝내 못 찾으면 마지막 탐지 결과(stage: 'none')를 그대로 돌려준다.
  */
+// 알려진 로그인 URL 로 옮긴 뒤 폼이 나타날 때까지 다시 보는 횟수·간격
+const LOGIN_FIELDS_POLL_MAX = 6
+const LOGIN_FIELDS_POLL_MS = 700
+// 로그인 링크를 따라가는 최대 횟수(29CM: LOGIN → 로그인 방법 선택 → 무신사 통합 로그인 "로그인" → 입력칸)
+const LOGIN_LINK_HOPS = 3
+
 export async function findLoginFieldsWithFallback(
   tabs: TabManager,
   tab: Tab,
@@ -500,18 +602,41 @@ export async function findLoginFieldsWithFallback(
     try {
       await tabs.navigate(tab.id, known)
       await pageBridge.waitForLoad(tab)
-      fields = await pageBridge.findLoginFields(tab)
-      if (fields.stage !== 'none') return fields
+      // 로그인 폼을 스크립트로 늦게 그리는 사이트(실기: SSG member.ssg.com)는 적재 직후엔 칸이 없다 — 잠깐씩 다시 본다
+      for (let attempt = 0; attempt < LOGIN_FIELDS_POLL_MAX; attempt += 1) {
+        fields = await pageBridge.findLoginFields(tab)
+        if (fields.stage !== 'none') return fields
+        await new Promise((resolve) => setTimeout(resolve, LOGIN_FIELDS_POLL_MS))
+      }
     } catch {
       // 이동 실패는 다음 단계(로그인 링크 클릭)로 넘어간다
     }
   }
 
-  // 2) 페이지 안의 로그인 링크를 눌러 본다
-  try {
-    if (await clickLoginLink(tab)) fields = await pageBridge.findLoginFields(tab)
-  } catch {
-    // 스냅샷·클릭 실패는 무시하고 마지막 탐지 결과를 돌려준다
+  // 2) 페이지 안의 로그인 링크를 눌러 본다. 눌러 간 곳이 입력칸 없는 로그인 방법 선택 화면이면
+  //    (실기: 29CM LOGIN → 카카오·Apple·무신사 통합계정·이메일 버튼만 있는 화면) 한 번 더 누른다
+  // 페이지가 넘어가는 중에는 조회가 "응답 없음"으로 던진다 — 그 한 번은 못 찾은 것으로 보고 계속 기다린다
+  // (실기: 29CM 통합계정 버튼 → member.one.musinsa.com 이동 중 오류가 반복 전체를 끝내 "칸 없음"으로 답함)
+  const detect = async (): Promise<LoginFieldsResult> => {
+    try {
+      return await pageBridge.findLoginFields(tab)
+    } catch {
+      return fields
+    }
+  }
+  for (let hop = 0; hop < LOGIN_LINK_HOPS; hop += 1) {
+    try {
+      if (!(await clickLoginLink(tab))) break
+    } catch {
+      // 누르다 페이지가 넘어가면 던질 수 있다 — 넘어간 화면을 아래에서 본다
+    }
+    fields = await detect()
+    // 통합 로그인은 다른 도메인을 거쳐 오느라 늦게 뜬다(실기: 29CM → member.one.musinsa.com) — 두 배로 기다린다
+    for (let attempt = 0; fields.stage === 'none' && attempt < LOGIN_FIELDS_POLL_MAX * 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, LOGIN_FIELDS_POLL_MS))
+      fields = await detect()
+    }
+    if (fields.stage !== 'none') break
   }
   return fields
 }
@@ -571,10 +696,20 @@ export function createSambaTools(
       }
       return text(over)
     }
+    // 사람이 지금 쓰고 있는 탭에는 입력·클릭·로그인·비밀값 채우기·페이지 스크립트를 하지 않는다
+    // (실기 2026-09-25: 사용자 자동로그인과 login 도구 입력이 섞여 네이버 계정이 잠겼다)
+    if (action || HUMAN_GATED_LABEL_RE.test(resolveLabel())) {
+      const busy = automationBlocked(activeOr(ctx)?.view.webContents)
+      if (busy) {
+        ctx.onStep(resolveLabel(), false)
+        return text(busy)
+      }
+    }
     try {
       // 페이지가 대화상자·무한 로딩으로 응답하지 않으면 실행 전체가 멈춘다(실기에서 14분 대기).
       // 도구 하나는 이 시간 안에 끝나야 하고, 넘기면 문구로 돌려줘 모델이 다른 길을 찾게 한다
-      const r = await withToolTimeout(fn(), TOOL_TIMEOUT_MS, () => humanWaits > 0)
+      // 자동화 흐름으로 표시해 아래 입력 함수들이 '사람이 쓰는 탭' 검사를 하게 한다
+      const r = await withToolTimeout(runAsAutomation(fn), TOOL_TIMEOUT_MS, () => humanWaits > 0)
       const raw = typeof r === 'string' ? r : JSON.stringify(r)
       const ok = isToolResultOk(raw, content)
       ctx.onStep(resolveLabel(), ok)
@@ -739,6 +874,8 @@ ${raw}`
    */
   // 이번 실행에서 키패드 자동 입력을 이미 한 결제창 호스트들
   const keypadAttempts = new Set<string>()
+  // 이번 실행에서 "비밀번호 불일치"로 로그인이 거부된 호스트들 — 다시 시도하지 않는다
+  const wrongPasswordHosts = new Set<string>()
 
   const keypadAccountHosts = (tab: Tab): string[] => {
     const hosts = [currentHost(tab)]
@@ -752,7 +889,99 @@ ${raw}`
       hosts.push(normalizeHost(opener.url))
       openerId = opener.openerId
     }
+    // 같은 탭 안에서 결제창으로 넘어온 경우(롯데온 → pay.naver.com, opener 없음)는 뒤로가기 이력의
+    // 직전 호스트들을 쇼핑몰 후보로 쓴다 — 없으면 결제 앱 호스트만 남아 계정을 못 골랐다(실기 2026-09-28)
+    if (hosts.length === 1) {
+      try {
+        const nav = tab.view.webContents.navigationHistory
+        const entries = nav.getAllEntries()
+        for (let i = nav.getActiveIndex() - 1; i >= 0 && hosts.length < 4; i -= 1) {
+          const h = normalizeHost(entries[i]?.url ?? '')
+          if (h && !hosts.includes(h) && !sameRegistrableDomain(h, hosts[0])) hosts.push(h)
+        }
+      } catch {
+        // 이력을 못 읽어도 opener 방식은 그대로 동작한다
+      }
+    }
     return hosts.filter((h) => h !== '')
+  }
+
+  /**
+   * 네이버페이 창에 표시된 로그인 아이디(마스킹 mjki****** 또는 비밀번호 화면의 "buyer01 님")를 읽는다.
+   * 비밀번호 화면은 "동의하고 결제하기" 직후 다시 그려지는 중일 수 있다 — 표기가 없으면 잠깐 두고 다시 읽는다.
+   * 못 읽으면 실패 라벨에 주소(쿼리 제외)·본문 길이·읽기 오류를 남기고 null(비밀은 없다)
+   */
+  const readNaverPayAccount = async (tab: Tab): Promise<string | null> => {
+    let shown: string | null = null
+    let textLength = 0
+    let readError = ''
+    for (let attempt = 0; attempt < 3 && shown === null; attempt += 1) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 500))
+      try {
+        const snapshot = await pageBridge.snapshot(tab)
+        textLength = snapshot.text.length
+        shown = maskedNaverAccount(`${snapshot.title}\n${snapshot.text}`)
+      } catch (e: unknown) {
+        readError = e instanceof Error ? e.message : String(e)
+      }
+    }
+    if (!shown) {
+      const where = pathOnly(currentUrl(tab))
+      ctx.onStep(
+        `네이버페이 창 계정 확인 실패(표시 없음: ${where}, 본문 ${textLength}자${readError ? `, 읽기 오류: ${readError}` : ''})`,
+        false
+      )
+    }
+    return shown
+  }
+
+  /**
+   * 네이버페이 창이면 창에 표시된 로그인 아이디로 계정을 고른다 — 라벨도 프로필 단서도 없고 쇼핑몰 계정 여럿이
+   * 결제 비밀번호를 가진 경우(실기 8차: ABC 계정 4개가 각각 네이버 계정에 연결). 후보 중 연결된 네이버 아이디가
+   * 표시 아이디와 맞는 것을 고르되, 결제창을 연 쇼핑몰 쪽 계정을 먼저 본다. 하나로 좁혀지지 않으면 null
+   */
+  const keypadAccountByNaverWindow = async (
+    available: VaultService,
+    hosts: string[],
+    tab: Tab
+  ): Promise<AccountDto | null> => {
+    if (!isNaverPayHost(currentHost(tab))) return null
+    const shown = await readNaverPayAccount(tab)
+    if (!shown) return null
+    const seen = new Set<number>()
+    const matching: AccountDto[] = []
+    for (const host of hosts) {
+      for (const a of available.listAccounts(host)) {
+        if (seen.has(a.id) || !a.itemTypes.includes('password')) continue
+        seen.add(a.id)
+        const username = available.paymentAccountUsername(a.id, 'naver')
+        if (username && maskedNaverAccountMatches(shown, username)) matching.push(a)
+      }
+    }
+    const shopHosts = hosts.slice(1)
+    const fromShop = matching.filter((a) => shopHosts.some((h) => sameRegistrableDomain(h, a.host)))
+    const pool = fromShop.length > 0 ? fromShop : matching
+    if (pool.length === 0) {
+      ctx.onStep(`키패드 계정: 네이버페이 창 표시(${shown})에 연결된 계정 없음`, false)
+      return null
+    }
+    // 여럿이어도 모두 같은 네이버 계정(같은 결제 비밀번호)에 연결돼 있으면 어느 것이든 같다(실기 9차: ABC 계정 4개
+    // 가 전부 buyer01 연결). 다른 네이버 계정이 섞여 있으면 고르지 않는다
+    const linked = new Set(pool.map((a) => available.paymentAccountUsername(a.id, 'naver')))
+    if (linked.size !== 1) {
+      ctx.onStep(
+        `키패드 계정: 네이버페이 창 표시(${shown})에 맞는 계정이 ${pool.length}개(연결 계정 다름)`,
+        false
+      )
+      return null
+    }
+    // 같은 연결이면 어느 것이든 되지만, 표시 아이디와 이름이 같은 계정(buyer01)이 있으면 그것을 앞세운다(로그 가독성)
+    const picked =
+      pool.find((a) => maskedNaverAccountMatches(shown, a.label)) ??
+      pool.find((a) => maskedNaverAccountMatches(shown, a.username)) ??
+      pool[0]
+    ctx.onStep(`키패드 계정: 네이버페이 창 표시(${shown})로 ${picked.label} 선택`, true)
+    return picked
   }
 
   /**
@@ -767,12 +996,8 @@ ${raw}`
     if (!isNaverPayHost(currentHost(tab))) return null
     const expected = v.paymentAccountUsername(accountId, 'naver')
     if (!expected) return null
-    const snapshot = await pageBridge.snapshot(tab).catch(() => null)
-    const shown = snapshot ? maskedNaverAccount(`${snapshot.title}\n${snapshot.text}`) : null
-    if (!shown) {
-      ctx.onStep('네이버페이 창 계정 확인 실패(표시 없음)', false)
-      return NAVERPAY_ACCOUNT_UNKNOWN
-    }
+    const shown = await readNaverPayAccount(tab)
+    if (!shown) return NAVERPAY_ACCOUNT_UNKNOWN
     if (!maskedNaverAccountMatches(shown, expected)) {
       ctx.onStep(`네이버페이 창 계정 불일치: ${shown} ≠ ${expected}`, false)
       return NAVERPAY_ACCOUNT_MISMATCH(shown, expected)
@@ -803,10 +1028,44 @@ ${raw}`
       }
     }
     const withItem = candidates.filter((a) => a.itemTypes.includes(wanted))
-    return (
+    const resolved =
       resolveAccount(withItem, accountLabel, profile) ??
       resolveAccount(candidates, accountLabel, profile)
-    )
+    if (resolved || accountLabel) return resolved
+    // 라벨도 프로필 단서도 없다(기본 프로필 탭에서 연 결제창, 실기 7차) — 결제창을 연 쇼핑몰 쪽 계정 중
+    // 이 결제 수단의 항목을 가진 계정이 하나뿐이면 그것이다(네이버 계정 수십 개 사이에서 고를 필요가 없다).
+    // 네이버페이는 이어지는 창 계정 검사가 그 계정으로 로그인돼 있는지 다시 맞춰 본다
+    const shopHosts = hosts.slice(1)
+    const fromShop = withItem.filter((a) => shopHosts.some((h) => sameRegistrableDomain(h, a.host)))
+    return fromShop.length === 1 ? fromShop[0] : null
+  }
+
+  /**
+   * 결제창(팝업) 안의 결제 앱 로그인(네이버·페이코)에 쓸 계정. 결제창을 연 쇼핑몰 계정의 결제 비밀번호 항목이
+   * 연결해 둔 앱 계정 아이디(payment.account)와 같은 아이디의 앱 사이트 계정을 고른다 — 키마스터에서 무신사
+   * 계정마다 네이버페이·페이코 계정을 골라 두는 것과 같은 규칙이다. 결제창이 아니거나 연결이 없으면 null
+   */
+  const linkedAppAccount = (
+    available: VaultService,
+    tab: Tab,
+    loginHost: string,
+    accountLabel: string | undefined
+  ): AccountDto | null => {
+    const entry = (
+      Object.entries(PAYMENT_PROVIDER_ACCOUNT_HOST) as Array<[PaymentProvider, string]>
+    ).find(([, appHost]) => sameRegistrableDomain(loginHost, appHost))
+    if (!entry) return null
+    const [provider] = entry
+    const shopHosts = keypadAccountHosts(tab)
+      .slice(1)
+      .filter((h) => !sameRegistrableDomain(h, loginHost))
+    if (shopHosts.length === 0) return null
+    const shop = keypadAccount(available, shopHosts, accountLabel, tab.profile)
+    if (!shop) return null
+    const username = available.paymentAccountUsername(shop.id, provider)
+    if (!username) return null
+    const appAccounts = available.listAccounts(loginHost).filter((a) => a.username === username)
+    return appAccounts.find((a) => a.itemTypes.includes('login')) ?? appAccounts[0] ?? null
   }
 
   /**
@@ -828,8 +1087,26 @@ ${raw}`
     const available = vaultAvailable()
     if (typeof available === 'string') return await keypadHandoff(tab)
     const hosts = keypadAccountHosts(tab)
-    const account = keypadAccount(available, hosts, accountLabel, tab.profile)
-    if (!account) return hosts.length > 1 ? KEYPAD_ACCOUNT_UNKNOWN : ACCOUNT_NOT_FOUND
+    // 네이버페이 창이면 창에 로그인된 네이버 계정에 연결된 항목을 먼저 고른다 — 비밀번호는 그 네이버 계정의 것이다.
+    // 라벨(쇼핑몰 계정)을 먼저 보면 연결이 다른 항목을 골라 거절됐다(실기 2026-09-25 ABC V36: buyer02 ≠ 창 buyer01)
+    const byWindow = isNaverPayHost(currentHost(tab))
+      ? await keypadAccountByNaverWindow(available, hosts, tab)
+      : null
+    const account =
+      byWindow ??
+      keypadAccount(available, hosts, accountLabel, tab.profile) ??
+      (accountLabel ? null : await keypadAccountByNaverWindow(available, hosts, tab))
+    if (!account) {
+      // 왜 못 골랐는지 라벨에 남긴다(호스트·탭 프로필·후보 라벨 — 비밀은 없다). 실기 5차: 라벨 없이 부르면 여기서 끝났다
+      const labels = hosts
+        .flatMap((h) => available.listAccounts(h))
+        .map((a) => `${a.label}${a.itemTypes.includes('password') ? '*' : ''}`)
+      ctx.onStep(
+        `키패드 계정 못 고름(호스트 ${hosts.join(',')}; 프로필 ${tab.profile ?? '-'}; 후보 ${labels.slice(0, 12).join(' ') || '없음'})`,
+        false
+      )
+      return hosts.length > 1 ? KEYPAD_ACCOUNT_UNKNOWN : ACCOUNT_NOT_FOUND
+    }
     const gate = await applyPolicy(available, effectiveAccess(account.agentAccess, globalPolicy()))
     // 잠김·미설정은 사람에게 넘기고(직접 누르면 이어간다), 접근 정책 거부(never)는 그대로 알린다
     if (gate === VAULT_LOCKED || gate === VAULT_NOT_SET_UP) return await keypadHandoff(tab)
@@ -857,11 +1134,21 @@ ${raw}`
     // 한 실행에서 키패드 자동 입력은 결제창(호스트)마다 1회뿐이다. 틀린 값을 모델이 다시 부르면
     // 5회 오답으로 결제 수단이 잠긴다(실기: 3/5 까지 감). 두 번째부터는 앱이 거절하고 사람에게 맡긴다
     const attemptKey = currentHost(tab)
-    if (keypadAttempts.has(attemptKey)) return KEYPAD_ALREADY_TRIED
-    const layout = await pageBridge.keypadLayout(tab).catch(() => null)
+    // 세션을 넘는 기록은 창(id)별이다 — 호스트만 보면 다음 주문의 새 결제창(같은 pay.naver.com)까지 막힌다
+    const windowKey = `${tab.id}|${attemptKey}`
+    if (keypadAttempts.has(attemptKey) || ctx.keypadEntered?.has(windowKey)) return KEYPAD_ALREADY_TRIED
+    // 글자·이름으로 읽히는 키패드가 먼저다. 못 읽으면(네이버페이처럼 숫자를 이미지로 그린 키패드)
+    // 빈 버튼들을 OCR 로 읽어 배치를 만든다 — 둘 다 안 되면 사람에게 넘긴다
+    const labelled = await pageBridge.keypadLayout(tab).catch(() => null)
+    const fromOcr = labelled === null
+    const layout = labelled ?? (await ocrKeypadLayout(tab).catch(() => null))
+    if (fromOcr) ctx.onStep('키패드 배치(OCR)', layout !== null)
     if (!layout) return await keypadHandoff(tab)
     // 시험 입력은 끝까지 누르지 않으므로 1회 제한을 쓰지 않는다 — 진짜 입력 기회를 남겨 둔다
-    if (dryRunDigits === undefined) keypadAttempts.add(attemptKey)
+    if (dryRunDigits === undefined) {
+      keypadAttempts.add(attemptKey)
+      rememberKeypadEntered(ctx.keypadEntered, windowKey)
+    }
     let typedDigits = dryRunDigits ?? 0
     const frameIndex = layout.frameIndex
     const result: WebKeypadResult = await enterWebPaymentPassword({
@@ -871,7 +1158,9 @@ ${raw}`
       ...(ctx.jobId === undefined ? {} : { jobId: ctx.jobId }),
       layout,
       // 누를 때마다 숫자가 재배열되는 키패드가 있다 — 매 자리 직전에 배치를 다시 읽는다
-      relayout: () => pageBridge.keypadLayout(tab).catch(() => null),
+      relayout: fromOcr
+        ? () => ocrKeypadLayout(tab).catch(() => null)
+        : () => pageBridge.keypadLayout(tab).catch(() => null),
       // 일반 click 은 변화가 안 보이면 Enter·좌표로 다시 눌러 같은 숫자가 두세 번 들어간다 —
       // 키패드는 폴백 없는 단발 누름만 쓴다
       click: (id) => pageBridge.pressOnce(tab, id),
@@ -881,7 +1170,8 @@ ${raw}`
         const point = await pageBridge.rectOf(tab, id).catch(() => null)
         return point ? pageBridge.clickAt(tab, point.x, point.y) : false
       },
-      filled: () => pageBridge.keypadFilled(tab, frameIndex),
+      // OCR 배치는 입력칸이 없는 화면(점 6개)이라 자리수를 셀 수 없다 — 검증 없이 한 번씩만 누른다
+      filled: fromOcr ? async () => null : () => pageBridge.keypadFilled(tab, frameIndex),
       onStep: ctx.onStep,
       ...(dryRunDigits === undefined
         ? {}
@@ -903,6 +1193,48 @@ ${raw}`
     }
     // 금고가 잠겼거나, 배치를 못 읽었거나, 눌러도 자리수가 늘지 않았다 — 사람에게 넘긴다
     return await keypadHandoff(tab)
+  }
+
+  /**
+   * 글자 없는 보안 키패드(네이버페이 결제 비밀번호 창)의 배치를 OCR 로 만든다.
+   * 빈 버튼 칸마다 화면을 잘라 한 자리 숫자로 읽고, 0~9 가 각각 정확히 한 번씩 읽혔을 때만
+   * 배치를 돌려준다 — 하나라도 빠지거나 겹치면 null(잘못 누르면 결제 수단이 잠긴다).
+   * 배치(숫자 위치)는 로그·결과·모델 어디에도 내보내지 않는다. 자리수 검증 수단이 없어 filled 는 null
+   */
+  // 캡처는 탭이 화면에 그려져 있어야 한다 — 뒤 층(가려진) 탭이면 OCR 동안만 맨 위로 올린다
+  const ocrKeypadLayout = (tab: Tab): Promise<KeypadLayout | null> =>
+    ctx.tabs.withFront(tab.id, () => ocrKeypadLayoutInner(tab))
+
+  const ocrKeypadLayoutInner = async (tab: Tab): Promise<KeypadLayout | null> => {
+    const cells = await pageBridge.keypadUnlabeled(tab).catch(() => null)
+    if (!cells) {
+      ctx.onStep('키패드 배치(OCR): 글자 없는 버튼 10~14개를 못 찾음', false)
+      return null
+    }
+    // 못 읽은 사유만 모은다(어느 칸이 어느 숫자인지는 남기지 않는다)
+    const reasons: string[] = []
+    const reads: DigitRead[] = []
+    for (const cell of cells) {
+      const scores: number[] = []
+      const digit = await ocrDigitInRegion(tab, cell, reasons, scores).catch(() => null)
+      if (digit === null) continue
+      // 확신도를 안 주는 경로(시험의 목 등)는 1 로 본다
+      reads.push({ cellId: cell.id, digit, score: scores[0] ?? 1 })
+    }
+    const resolved = resolveKeypadDigits(reads)
+    if (!resolved) {
+      const distinct = new Set(reads.map((r) => r.digit)).size
+      const why = [...new Set(reasons)].slice(0, 4).join(' ')
+      ctx.onStep(
+        `키패드 배치(OCR): 칸 ${cells.length}, 읽은 숫자 ${reads.length}(서로 다른 ${distinct})${why ? `, 사유 ${why}` : ''}`,
+        false
+      )
+      return null
+    }
+    if (resolved.inferred !== null) {
+      ctx.onStep(`키패드 배치(OCR): 9개 읽고 빠진 숫자 1개는 혼동 짝으로 추론`, true)
+    }
+    return { digits: resolved.digits, filled: null, frameIndex: 0 }
   }
 
   /**
@@ -1345,8 +1677,16 @@ overlays left: ${after.length}${kept}`
     return pool[Math.max(nth, 0)]?.id ?? -1
   }
 
-  const makeRunJsBridge = (clicked?: string[]): RunJsBridge => {
+  const makeRunJsBridge = (clicked?: string[], noPay = false): RunJsBridge => {
     let lastTree: string | undefined
+    // noPay(safety no_pay): 결제 확정 버튼(결제하기·입력완료 …)은 누르지 않는다 — 하네스의 AI 스크립트 수리가 켠다.
+    // 비밀번호 없는 간편결제는 결제하기 한 번에 결제가 끝난다(실기 2026-09-24). 판정은 페이지 실제 글자
+    const payRefusal = async (id: number): Promise<string | null> => {
+      if (!noPay) return null
+      const tab = activeOr(ctx)
+      const text = tab ? await pageBridge.textOf(tab, id).catch(() => '') : ''
+      return PAY_CLICK_RE.test(text) ? `${PAY_CLICK_REFUSAL} (${text.slice(0, 40)})` : null
+    }
     return async (name, args) => {
       runJsTick()
       switch (name) {
@@ -1379,6 +1719,8 @@ overlays left: ${after.length}${kept}`
           }
         }
         case 'page.click': {
+          const blocked = await payRefusal(asId(args[0]))
+          if (blocked) return blocked
           // 학습용: 번호로 누른 요소가 무슨 글자였는지 남긴다
           if (clicked) {
             const tab = activeOr(ctx)
@@ -1389,9 +1731,23 @@ overlays left: ${after.length}${kept}`
         }
         case 'page.idOf':
           return idOfText(asText(args[0]), asId(args[1]))
+        case 'page.clickNative': {
+          const blocked = await payRefusal(asId(args[0]))
+          if (blocked) return blocked
+          // 요소 가운데 좌표에 진짜 마우스 클릭(sendInputEvent). 프레임 안 요소는 좌표를 몰라 거절한다
+          const tab = activeOr(ctx)
+          if (!tab) return 'no active tab'
+          const point = await pageBridge.rectOf(tab, asId(args[0])).catch(() => null)
+          if (!point) return 'not found: element has no screen position (inside a frame or hidden)'
+          return (await pageBridge.clickHuman(tab, point.x, point.y))
+            ? 'ok'
+            : 'failed: click not sent'
+        }
         case 'page.clickText': {
           const id = await idOfText(asText(args[0]), asId(args[1]))
           if (id < 0) return `not found: no element with text "${asText(args[0])}"`
+          const blocked = await payRefusal(id)
+          if (blocked) return blocked
           return doClick(id, asText(args[0]))
         }
         case 'page.type': {
@@ -1399,7 +1755,8 @@ overlays left: ${after.length}${kept}`
           if (!tab) return 'no active tab'
           // 비밀 입력칸에는 run_js 로 값을 넣지 않는다 — fill_secret 만이 비밀 경로다
           if (await pageBridge.isSecretField(tab, asId(args[0]))) return RUN_JS_SECRET_REFUSAL
-          return doType(asId(args[0]), asText(args[1]), args[2] === true)
+          // safety no_pay 면 Enter 제출은 하지 않는다(주문서 폼 제출 = 결제 가능)
+          return doType(asId(args[0]), asText(args[1]), !noPay && args[2] === true)
         }
         case 'page.select':
           return doSelect(asId(args[0]), asText(args[1]))
@@ -1422,6 +1779,12 @@ overlays left: ${after.length}${kept}`
         }
         case 'page.dismissOverlay':
           return doDismissOverlay()
+        case 'page.check': {
+          // 라벨 글자로 체크박스 켜기(동의 칸). 결제 확정 버튼이 아니라 no_pay 에서도 허용한다
+          const tab = activeOr(ctx)
+          if (!tab) return 'no active tab'
+          return await pageBridge.checkByLabel(tab, asText(args[0])).catch((e: unknown) => `failed: ${e instanceof Error ? e.message : String(e)}`)
+        }
         case 'page.url':
           return currentUrl()
         case 'page.title': {
@@ -1460,6 +1823,12 @@ overlays left: ${after.length}${kept}`
           const t = ctx.tabs.create({ url, ...(profile ? { profile } : {}) })
           return `ok: tab ${t.id}${profile ? ` (profile ${profile})` : ''}`
         }
+        case 'affiliate.adpick': {
+          // 프로필 세션의 애드픽 로그인으로 적립 링크를 받는다(값에 쿠키·계정 정보는 없다)
+          const url = typeof args[0] === 'string' ? args[0] : ''
+          const profile = typeof args[1] === 'string' && args[1] ? args[1] : 'default'
+          return JSON.stringify(await adpickTrackingLink(ctx.tabs.sessionForProfile(profile), url))
+        }
         default:
           return RUN_JS_NO_SECRET_TOOLS
       }
@@ -1473,17 +1842,26 @@ overlays left: ${after.length}${kept}`
       'page.get({query,selector,interactive}) -> {tree,diff,total,elements}, page.click(id), ' +
       'page.type(id,text,submit), page.select(id,value), page.scroll(dir,id), page.text(id), ' +
       'page.find(query), page.idOf(text,nth) -> id or -1, page.clickText(text,nth), ' +
-      'page.dismissOverlay(), page.url(), page.title(), ' +
-      'tabs.list()/switch(id)/close(id)/open({url, profile}), sleep(ms), log(...). ' +
+      'page.dismissOverlay(), page.url(), page.title(), page.waitFor(textOrRegex, ms) -> true/false (use instead of fixed sleep), ' +
+      'tabs.list()/switch(id)/close(id)/open({url, profile}), affiliate.adpick(productUrl, profile) -> JSON string {ok,trackinglink,percent}, sleep(ms), log(...). ' +
       'Use log() and return a value; both come back to you. ' +
       'fill_secret, login and the phone tools are NOT available here - call those tools directly.',
-    { code: z.string().describe(`JavaScript, ${RUN_JS_MAX_CODE} characters or fewer`) },
-    ({ code }) => {
+    {
+      code: z.string().describe(`JavaScript, ${RUN_JS_MAX_CODE} characters or fewer`),
+      // 하네스의 AI 스크립트 수리 전용 — 결제 확정 버튼 클릭·Enter 제출을 앱이 거절한다
+      safety: z
+        .enum(['no_pay', 'probe'])
+        .optional()
+        .describe('no_pay: refuse clicks on payment-confirm buttons; probe: report support')
+    },
+    ({ code, safety }) => {
+      // 하네스가 이 앱이 결제 버튼 차단을 아는지 묻는다(모르는 예전 앱은 코드를 그냥 돌린다)
+      if (safety === 'probe') return Promise.resolve(text(RUN_JS_SAFETY_PROBE))
       const clicked: string[] = []
       return guard(
         runJsLabel(code),
         async () => {
-          const result = await runSandbox(code, makeRunJsBridge(clicked))
+          const result = await runSandbox(code, makeRunJsBridge(clicked, safety === 'no_pay'))
           ctx.onRunJs?.({ code, ok: isToolResultOk(result, true), url: currentUrl(), clicked })
           return result
         },
@@ -1594,7 +1972,12 @@ overlays left: ${after.length}${kept}`
           label: a.label,
           username: maskUsername(a.username),
           types: a.itemTypes,
-          tags: a.tags
+          // 결제 비밀번호가 있는 결제 제공자(site·musinsapay·toss·kakao·naver·payco …) — 하네스가
+          // "결제 가능한 수단"만 견적 후보로 남기는 데 쓴다
+          payments: a.paymentProviders ?? [],
+          // 키마스터에서 사용자가 정한 결제 우선순위(1 = 먼저). 없으면 null
+          priority: payPriorityOf(a.tags),
+          tags: visibleTags(a.tags)
         }))
         if (state !== 'unlocked') return JSON.stringify({ vaultLocked: true, accounts })
         return JSON.stringify(accounts)
@@ -1755,19 +2138,36 @@ overlays left: ${after.length}${kept}`
           // 이미 로그인돼 있으면 다시 로그인하지 않는다 — 재로그인은 세션을 새로 만들어
           // 캡차·추가 인증을 불러오기 때문이다. 폼이 없을 때만 상태 힌트를 본다
           const first = await pageBridge.findLoginFields(tab)
+          let verified: LoginFieldsResult | undefined
           if (first.stage === 'none') {
             try {
               const hint = await pageBridge.signedInHint(tab)
               if (hint.signedIn) {
-                label = `이미 로그인됨: ${host}`
-                return `${ALREADY_SIGNED_IN} (${hint.matched})`
+                // 마이페이지 류만 근거면(약한 근거) 알려진 로그인 URL 로 가서 확인한다 — 로그아웃 상태에서도
+                // 그 링크를 보이는 사이트가 있다(실기: 무신사 홈 "마이 페이지로 이동" → 로그인 건너뜀 →
+                // 구매하기가 로그인 페이지로 감). 로그인 페이지에 폼이 나오면 로그인 전이다
+                if (hint.weak && knownLoginUrl(host) !== undefined) {
+                  verified = await findLoginFieldsWithFallback(ctx.tabs, tab, host, first)
+                }
+                // 확인하러 간 곳이 로그인 전 화면이면(로그인 링크만 보임 등) 로그인된 게 아니다
+                // (실기: 29CM 홈 "마이페이지" → 로그인 방법 선택 화면이라 칸이 없어 "이미 로그인"으로 잘못 답함)
+                // (URL 로는 가리지 않는다 — 29CM 는 로그인된 상태에서도 /mypage/login 에 머문다)
+                const stillOut =
+                  verified !== undefined &&
+                  verified.stage === 'none' &&
+                  !(await pageBridge.signedInHint(tab)).signedIn
+                if (stillOut) return 'fields not found: navigate to the login page first'
+                if (!verified || verified.stage === 'none') {
+                  label = `이미 로그인됨: ${host}`
+                  return `${ALREADY_SIGNED_IN} (${hint.matched})`
+                }
               }
             } catch {
               // 힌트를 못 읽으면 평소대로 로그인 절차를 계속한다
             }
           }
           // 폼이 없으면 알려진 로그인 URL 이동 → 페이지 내 로그인 링크 클릭까지 한 번에 시도한다
-          let fields = await findLoginFieldsWithFallback(ctx.tabs, tab, host, first)
+          let fields = verified ?? (await findLoginFieldsWithFallback(ctx.tabs, tab, host, first))
           if (fields.stage === 'none') {
             return 'fields not found: navigate to the login page first'
           }
@@ -1778,12 +2178,29 @@ overlays left: ${after.length}${kept}`
           const movedBlocked = gateRefusal(currentUrl(tab))
           if (movedBlocked) return movedBlocked
           label = `로그인: ${loginHost}`
+          if (wrongPasswordHosts.has(loginHost)) return LOGIN_WRONG_PASSWORD(loginHost)
           // 라벨을 안 주면 탭 프로필과 같은 라벨의 계정을 자동으로 고른다(계정 순회 지원)
-          const account = resolveAccount(
-            available.listAccounts(loginHost),
-            accountLabel,
-            tab.profile
+          // 결제 앱 사이트(naver.com·payco …)에서는 프로필 이름으로 계정을 고르지 않는다 — 결제창은 쇼핑몰 계정에
+          // 연결된 앱 계정(linkedAppAccount)으로만, 그 밖은 라벨을 준 경우만. 실기 2026-09-28: 라벨 없이 부르자 프로필
+          // buyer03 과 이름이 같은 네이버 계정(결제 비밀번호 없음)으로 로그인됐다
+          const payAppHost = Object.values(PAYMENT_PROVIDER_ACCOUNT_HOST).some((h) =>
+            sameRegistrableDomain(loginHost, h)
           )
+          const linked = linkedAppAccount(available, tab, loginHost, accountLabel)
+          // 결제창(팝업)에서만 막는다 — 일반 탭의 프로필 이름 폴백(계정 순회)은 그대로 둔다
+          if (!linked && payAppHost && !accountLabel && tab.openerId) {
+            return `${ACCOUNT_NOT_FOUND}: payment popup — no linked app account; pass accountLabel`
+          }
+          const account =
+            // 결제창 안의 네이버·페이코 로그인이면 결제창을 연 쇼핑몰 계정이 연결해 둔 앱 계정으로 로그인한다
+            linked ??
+            resolveAccount(available.listAccounts(loginHost), accountLabel, tab.profile) ??
+            // 앞 호출에서 이미 통합 로그인 화면으로 넘어와 있어도(host === loginHost) 라벨 @ 앞부분으로 짝을 찾는다
+            movedHostAccount(
+              loginHost !== host ? available.listAccounts(host) : [],
+              available.listAccounts(loginHost),
+              accountLabel ?? tab.profile
+            )
           if (!account) return ACCOUNT_NOT_FOUND
           const gate = await applyPolicy(
             available,
@@ -1794,13 +2211,17 @@ overlays left: ${after.length}${kept}`
           label = `로그인: ${loginHost} (${account.label})`
           // 2단계 로그인 1단계(아이디 화면): 아이디만 채워 제출한 뒤 비밀번호 화면을 다시 탐지한다
           if (fields.stage === 'username-only' && fields.username !== undefined) {
-            const idFilled = await pageBridge.fillValue(tab, fields.username, account.username)
+            const idFilled = await pageBridge.typeLogin(tab, fields.username, account.username)
             if (idFilled !== 'ok') return idFilled
             if (ctx.vaultAutoSubmit === false) {
               return 'filled: submit is disabled by setting; ask the user to press login'
             }
             await keepSignedIn(tab, fields.submit ?? fields.username)
-            const idSubmitted = await pageBridge.submitForm(tab, fields.submit ?? fields.username)
+            const idSubmitted = await pageBridge.submitLogin(
+              tab,
+              fields.submit ?? fields.username,
+              fields.submit !== undefined
+            )
             if (idSubmitted !== 'ok') return idSubmitted
             await pageBridge.waitForLoad(tab)
             // 아이디 제출로 페이지가 옮겨 갔을 수 있어 https·등록 도메인을 다시 확인한다
@@ -1815,13 +2236,13 @@ overlays left: ${after.length}${kept}`
           if (password === null) return 'not found: no login password saved for this account'
           // 사용자명은 비밀값이 아니므로 평문 그대로 채운다. 실패해도 전파한다
           if (fields.username !== undefined) {
-            const userFilled = await pageBridge.fillValue(tab, fields.username, account.username)
+            const userFilled = await pageBridge.typeLogin(tab, fields.username, account.username)
             if (userFilled !== 'ok') return userFilled
           }
           // 비밀번호를 넣기 직전 마지막 재검증 — 이 사이에 페이지가 바뀌었을 수 있다
           const beforeFill = verifyFillTarget(account, tab)
           if (beforeFill) return beforeFill
-          const pwFilled = await pageBridge.fillValue(tab, fields.password, password)
+          const pwFilled = await pageBridge.typeLogin(tab, fields.password, password)
           if (pwFilled !== 'ok') return pwFilled
           // 자동 제출이 꺼져 있으면 채우기만 하고 제출은 사용자에게 맡긴다
           if (ctx.vaultAutoSubmit === false) {
@@ -1829,13 +2250,39 @@ overlays left: ${after.length}${kept}`
           }
           // 제출 직전 "로그인 상태 유지"를 켠다 — 세션이 오래가면 재로그인·캡차가 줄어든다
           await keepSignedIn(tab, fields.submit ?? fields.password)
-          const submitted = await pageBridge.submitForm(tab, fields.submit ?? fields.password)
+          const submitted = await pageBridge.submitLogin(
+            tab,
+            fields.submit ?? fields.password,
+            fields.submit !== undefined
+          )
           if (submitted !== 'ok') return submitted
           await pageBridge.waitForLoad(tab)
+          // 사이트가 로그인 실패를 대화상자로 알렸으면(비밀번호 불일치) 재시도를 막고 사람에게 넘긴다
+          await new Promise((resolve) => setTimeout(resolve, LOGIN_DIALOG_WAIT_MS))
+          const dialog = ctx.tabs.takeDialogMessage?.() ?? null
+          if (dialog && WRONG_PASSWORD_RE.test(dialog)) {
+            wrongPasswordHosts.add(loginHost)
+            return `${LOGIN_WRONG_PASSWORD(loginHost)} (${formatDialogNote(dialog)})`
+          }
+          // 첫 클릭이 먹지 않는 사이트(실기: 패션플러스 — 같은 화면에서 로그인 버튼을 한 번 더 누르면 로그인됨):
+          // 대화상자 없이 같은 폼(같은 비밀번호 칸)이 그대로 남아 있으면 제출을 한 번만 더 누른다.
+          // 두 번째는 DOM 클릭 — 숨김 탭(작업 레인)에는 진짜 마우스 클릭이 닿지 않아
+          // 버튼 onclick 로그인(슈마커 chk_Login)이 아예 불리지 않았다(실기 2026-09-26)
+          if (!dialog && fields.submit !== undefined) {
+            const again = await pageBridge.findLoginFields(tab)
+            if (again.stage === fields.stage && again.password === fields.password) {
+              await pageBridge.submitLogin(tab, fields.submit, false)
+              await pageBridge.waitForLoad(tab)
+            }
+          }
           // 사이트가 캡차·2FA 를 요구하면 사용자에게 넘기고 처리될 때까지 기다린다
           const handed = await captchaHandoff(tab)
           if (handed) return handed
-          return 'submitted: check the page for success or captcha/2FA'
+          const submittedNote = 'submitted: check the page for success or captcha/2FA'
+          return dialog
+            ? `${formatDialogNote(dialog)}
+${submittedNote}`
+            : submittedNote
         }
       )
     }

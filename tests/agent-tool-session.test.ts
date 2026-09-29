@@ -1,6 +1,6 @@
 // 브릿지가 쓰는 도구 세션 — 채팅 실행과 겹치지 않고, 도구를 이름으로 부른다
 import { describe, it, expect, vi } from 'vitest'
-import { AgentRunner } from '../src/main/agent/runner'
+import { AgentRunner, AUTOMATION_GRACE_MS } from '../src/main/agent/runner'
 import type { TabManager } from '../src/main/browser/tab-manager'
 import type { SettingsStore } from '../src/main/settings/store'
 import { DEFAULT_SETTINGS } from '../src/shared/settings'
@@ -102,5 +102,26 @@ describe('createToolSession', () => {
     expect(typeof out).toBe('string')
     expect(steps.some((l) => l.includes('페이지 읽기'))).toBe(true)
     s.dispose()
+  })
+})
+
+describe('isRunning 유예 창', () => {
+  it('브릿지 세션을 닫은 직후 잠깐은 실행 중으로 보고, 유예가 지나면 아니다', () => {
+    // 실기: 스크립트가 버튼을 누르고 돌아간 뒤 페이지가 띄운 alert 가 "자동화 중 아님" 으로 판정돼 창이 쌓였다
+    vi.useFakeTimers()
+    try {
+      const r = runner()
+      expect(r.isRunning()).toBe(false)
+      const s = r.createToolSession({})
+      expect(r.isRunning()).toBe(true)
+      s.dispose()
+      expect(r.isRunning()).toBe(true)
+      vi.advanceTimersByTime(AUTOMATION_GRACE_MS - 1)
+      expect(r.isRunning()).toBe(true)
+      vi.advanceTimersByTime(2)
+      expect(r.isRunning()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

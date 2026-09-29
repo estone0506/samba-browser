@@ -26,6 +26,18 @@ class OrderRef(BaseModel):
     product_url: str | None = None
     # 소싱처 로그인 계정(아이디). 삼바웨이브 '주문계정'(예: "ABCmart · 사무(buyer01)")의 괄호 안 값
     account: str | None = None
+    # 소싱 계정의 삼바웨이브 내부 id. 기록이 이 값을 그대로 되돌려 준다(표시용 아이디와 다르다)
+    account_id: str | None = None
+    # 주문 종류 — 까대기는 사무실로 받고, 선물하기는 배송지 입력 흐름이 다르다.
+    # 배송지 자체는 여기 담지 않는다(개인정보) — 실행 순간에만 받아 쓴다
+    order_type: Literal['direct', 'kkadaegi', 'gift'] = 'direct'
+    # 판매가(고객 결제액 = SAMBA 매출). 스냅샷이 마진을 안 주면 원가와 이 값으로 계산한다. 0 이면 모름
+    sale_price: float = 0
+    # SAMBA 정산금(판매처 수수료를 뺀 금액). 있으면 마진율 = (정산금 − 원가) ÷ 매출 × 100. 0 이면 모름
+    revenue: float = 0
+    # 삼바웨이브 플래그(action_tag 토큰, 소문자) — 가격X·재고X·직원A 등. 오류일 수 있어 제외하지 않고
+    # 결제 승인 요약에 표시해 사람이 검토한다
+    flags: tuple[str, ...] = ()
 
 
 class Evidence(BaseModel):

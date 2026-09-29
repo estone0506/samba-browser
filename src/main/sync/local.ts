@@ -3,7 +3,7 @@
 // 기존 저장소(VaultRepo·BookmarkRepo)는 "앱 기능" 관점의 질의만 담당하고,
 // 여기에는 remote_id·deleted_at 처럼 동기화에만 쓰는 컬럼 질의를 둔다
 
-import { and, eq, isNotNull, isNull, lt } from 'drizzle-orm'
+import { and, eq, isNotNull, isNull, like, lt } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import {
   accounts,
@@ -26,6 +26,12 @@ import type {
   ChatSyncRow,
   VaultItemSyncRow
 } from './mappers'
+
+// 삭제 메모(sync_state) 키: tombstone:<표>:<원격 id>
+const TOMBSTONE_KEY_PREFIX = 'tombstone:'
+function tombstoneKey(table: SyncTable, remoteId: string): string {
+  return `${TOMBSTONE_KEY_PREFIX}${table}:${remoteId}`
+}
 
 /** 폴더 경로 구분자. bookmarks_sync.folder_path 도 같은 규칙을 쓴다 */
 const PATH_SEPARATOR = '/'
@@ -81,6 +87,57 @@ export class SyncLocal {
   deleteState(key: string): void {
     this.d.delete(syncState).where(eq(syncState.key, key)).run()
     this.db.scheduleSave()
+  }
+
+  // --- 삭제 메모(tombstone memory) -------------------------------------------
+  // 로컬에서 지운 행은 곧바로 사라진다. 그 원격 id 를 30일 동안 기억해, 다른 기기가 그 행을 살아 있는 채로
+  // 다시 올려도 풀이 되살리지 않게 한다(실기: 병렬 인스턴스의 옛 복제본이 지운 계정·사이트를 원복시킴)
+
+  /** 삭제 기록(outbox payload = 지운 행의 스냅샷)에서 원격 id 를 읽어 메모한다. 원격 id 가 없으면 아무것도 안 한다 */
+  rememberTombstoneFromPayload(table: SyncTable, payload: string): void {
+    try {
+      const parsed: unknown = JSON.parse(payload)
+      if (typeof parsed !== 'object' || parsed === null) return
+      const row = parsed as { remoteId?: unknown; deletedAt?: unknown }
+      if (typeof row.remoteId !== 'string' || !row.remoteId) return
+      const deletedAt = typeof row.deletedAt === 'number' ? row.deletedAt : Date.now()
+      this.rememberTombstone(table, row.remoteId, deletedAt)
+    } catch {
+      // 스냅샷을 못 읽으면 메모하지 않는다 — 삭제 전파 자체는 outbox 가 맡는다
+    }
+  }
+
+  rememberTombstone(table: SyncTable, remoteId: string, deletedAt: number): void {
+    this.setStateNumber(tombstoneKey(table, remoteId), deletedAt)
+  }
+
+  /** 그 원격 id 를 로컬에서 지운 시각. 메모가 없으면 null */
+  tombstoneAt(table: SyncTable, remoteId: string): number | null {
+    return this.getStateNumber(tombstoneKey(table, remoteId))
+  }
+
+  /** 삭제 메모를 지운다 — 원격에서 같은 id 로 다시 받아야 할 때(테스트의 "다른 기기" 흉내 등) */
+  forgetTombstone(table: SyncTable, remoteId: string): void {
+    this.deleteState(tombstoneKey(table, remoteId))
+  }
+
+  /** 30일 지난 삭제 메모를 지운다(pruneExpiredTombstones 가 부른다) */
+  pruneTombstoneMemory(now: number): number {
+    const cutoff = now - TOMBSTONE_TTL_MS
+    const rows = this.d
+      .select({ key: syncState.key, value: syncState.value })
+      .from(syncState)
+      .where(like(syncState.key, `${TOMBSTONE_KEY_PREFIX}%`))
+      .all()
+    let pruned = 0
+    for (const row of rows) {
+      const at = Number(row.value)
+      if (!Number.isFinite(at) || at < cutoff) {
+        this.d.delete(syncState).where(eq(syncState.key, row.key)).run()
+        pruned += 1
+      }
+    }
+    return pruned
   }
 
   // --- 계정 -----------------------------------------------------------------
@@ -615,7 +672,7 @@ export class SyncLocal {
   /** 30일이 지난 삭제 표식을 물리 삭제한다. 돌려주는 값은 지운 행 수 */
   pruneExpiredTombstones(now: number): number {
     const cutoff = now - TOMBSTONE_TTL_MS
-    let pruned = 0
+    let pruned = this.pruneTombstoneMemory(now)
     // 메시지를 먼저 지운다 — 대화가 먼저 사라지면 외래 키가 가리킬 대상이 없어진다
     for (const table of [accounts, vaultItems, bookmarks, chatMessages, chats]) {
       const rows = this.d

@@ -50,7 +50,8 @@ export interface HarnessJob {
   /** 진행 단계 설명. '승인 대기: pay' 처럼 오면 사람 승인 대기다 */
   step: string | null
   requester: string
-  harness_version: string
+  // 시작 전(대기)이거나 시작 전에 사람에게 넘긴 작업은 버전이 없다(null) — 필수로 두면 목록 전체가 bad-response 가 됐다
+  harness_version: string | null
   attempts: number
   updated_at: string
 }
@@ -114,7 +115,7 @@ const harnessJobSchema: z.ZodType<HarnessJob> = z.object({
   assignee_agent: z.string().nullable(),
   step: z.string().nullable(),
   requester: z.string(),
-  harness_version: z.string(),
+  harness_version: z.string().nullable(),
   attempts: z.number(),
   updated_at: z.string()
 })

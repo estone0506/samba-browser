@@ -1,16 +1,24 @@
 import { isSupabaseAnonKey, isSupabaseProjectUrl, type AuthState } from '../../shared/sync'
 import type { SyncBackend } from '../sync/backend'
+import {
+  enableExtensionServiceWorkerSupport,
+  pickActionIconPath,
+  sendExtensionTabEvent,
+  setExtensionActionListener,
+  warmExtensionWorkers
+} from '../extensions/cookies-bridge'
+import { applyProfileProxy, loadProfileProxies, profileOfPartition } from '../browser/profile-proxy'
 import { ChatSessionStore } from '../agent/chat-session'
 import {
   app,
   dialog,
   ipcMain,
-  net,
   safeStorage,
   session,
   shell,
   type BrowserWindow,
-  type WebContents
+  type WebContents,
+  type WebFrameMain
 } from 'electron'
 import { join } from 'node:path'
 import * as os from 'node:os'
@@ -46,7 +54,15 @@ import { ActivityRecorder } from '../activity/recorder'
 import { RecommendService } from '../activity/recommend'
 import { RECENT_CHAT_LIMIT, type AppendMessageInput } from '../../shared/chat'
 import { VaultCaptureGate } from './vault-capture'
-import { watchLoginSuccess } from './login-watch'
+import { watchLoginOutcome } from './login-watch'
+import { machineFilledRecently } from '../browser/human-activity'
+import { addNeverSaveHost, autoSaveCapturedLogin, saveCapturedLogin } from '../vault/login-capture'
+import {
+  CAPTURE_DECISIONS,
+  CAPTURE_TRACE_STAGES,
+  maskUsername,
+  type CaptureDecision
+} from '../../shared/vault'
 import { VaultPickerGate } from './vault-picker'
 import { autofillAccount, type AutofillDeps } from '../vault/autofill'
 import { assertFromRenderer, isFromRenderer, settingsForSender } from './sender'
@@ -100,6 +116,7 @@ import type { DeviceService } from '../sync/devices'
 import { WorkspaceService } from '../workspace/service'
 import { workspaceShortcutIndex } from '../workspace/shortcut'
 import { ExtensionManager, createSessionExtensionHost } from '../extensions/manager'
+import { readIconDataUrl } from '../extensions/import-sources'
 import { createExtensionInstaller } from '../extensions/install-service'
 import { extensionPopupUrl } from '../extensions/action'
 import { ExtensionPopupHost, sessionWithExtension } from '../extensions/popup-view'
@@ -201,7 +218,7 @@ export function registerIpc(
   // (작업 완료·실패, 확인 카드, 사람에게 넘김 — 폰 결제 비밀번호 키패드 포함)
   const notifier = createAgentNotifier({
     settings: () => settings.get(),
-    fetchImpl: (url, init) => net.fetch(url, init)
+    fetchImpl: (url, init) => globalThis.fetch(url, init)
   })
   // 활동 기록. 파일은 이 PC 의 userData 안에만 있고 동기화 대상이 아니다.
   // 기록 여부는 설정 한 칸(activityRecording)으로 매번 다시 읽는다 — 끄면 곧바로 멈춘다
@@ -244,7 +261,7 @@ export function registerIpc(
   agent.setSiteScripts(new SiteScriptStore(join(app.getPath('userData'), 'site-scripts.json')))
   // 하네스 브릿지 — 밖의 LangGraph 하네스가 이 앱의 도구를 부르는 문. 설정으로 켜고 끈다
   const bridge = new BridgeServer({
-    openSession: (onStep) => agent.createToolSession({ onStep }),
+    openSession: (onStep, lane) => agent.createToolSession({ onStep, ...(lane ? { lane } : {}) }),
     token: () => settings.get().bridgeToken
   })
   const applyBridge = (): Promise<void> =>
@@ -292,8 +309,8 @@ export function registerIpc(
     settings,
     playbooks
   })
-  // 페이지 JS 대화상자는 AI 작업이 도는 동안에만 자동 처리한다
-  tabs.setAgentRunningProvider(() => agent.isRunning())
+  // 페이지 JS 대화상자는 AI 작업이나 하네스(브릿지) 자동화가 도는 동안에만 자동 처리한다
+  tabs.setAgentRunningProvider(() => agent.isRunning() || bridge.recentlyActive())
   // guard 모드에서 confirm/beforeunload 는 사용자 확인 카드를 거쳐야 '예' 가 된다
   tabs.setDialogPolicy({
     mode: () => settings.get().permissionMode,
@@ -537,25 +554,68 @@ export function registerIpc(
     )
   )
   // 페이지(preload 격리 월드)가 감지한 로그인 폼 제출.
-  // 검증·레이트리밋·호스트 대조는 전부 VaultCaptureGate 안에 있다(테스트 가능하도록 분리)
+  // 로그인 자격증명 자동 저장(크롬 '비밀번호 저장' 흐름).
+  // 검증·레이트리밋·호스트 대조·기계 입력 제외는 전부 VaultCaptureGate 안에 있다(테스트 가능하도록 분리).
+  // 통과한 제출은 그 탭의 로그인 성공을 지켜본 뒤에만 확인 바(렌더러)를 띄운다
   const captureGate = new VaultCaptureGate({
     vault,
     excludedHosts: () => settings.get().vaultExcludedHosts,
-    // 기존 계정 + 다른 값으로 로그인 폼이 제출되면(자동 갱신이 켜져 있을 때) 저장 제안 없이
-    // navigation 을 지켜보다가 로그인 성공을 감지했을 때만 조용히 갱신한다
-    autoUpdateEnabled: () => settings.get().vaultAutoUpdatePassword,
-    onPendingUpdate: (payload, senderKey) => {
+    neverSaveHosts: () => settings.get().vaultNeverSaveHosts,
+    machineFilled: (senderKey) => machineFilledRecently(senderKey as WebContents),
+    profileOf: (senderKey) => tabs.findByWebContents(senderKey as WebContents)?.profile,
+    watchLogin: (senderKey, onSettled, subFrame) => {
       const wc = senderKey as WebContents
-      watchLoginSuccess(wc, wc.getURL(), payload, vault, (result) =>
-        send(IPC.vaultPasswordUpdated, result)
-      )
+      watchLoginOutcome(wc, wc.getURL(), onSettled, subFrame as WebFrameMain | undefined)
+    },
+    // 호스트·단계·버린 이유만 남긴다(값·아이디 없음) — 바가 안 뜰 때 원인을 앱 로그로 찾는다
+    log: (line) => console.log(line),
+    autoSaveEnabled: () => settings.get().vaultAutoSaveLogins,
+    autoSave: (capture) => {
+      try {
+        const { result, undoToken } = autoSaveCapturedLogin(vault, capture)
+        if (result === 'same' || !undoToken) return false
+        send(IPC.vaultPasswordUpdated, {
+          host: capture.host,
+          username: maskUsername(capture.username),
+          undoToken,
+          kind: result
+        })
+        return true
+      } catch (e: unknown) {
+        // 실패 사유만 남긴다 — 값은 절대 로그에 넣지 않는다
+        console.error('자격정보 자동 저장 실패', e instanceof Error ? e.message : String(e))
+        return 'error'
+      }
     }
   })
   ipcMain.on(IPC.vaultCapture, (e, raw: unknown) => {
+    const frame = e.senderFrame
+    const isSubFrame = !!frame && frame.parent !== null
     captureGate.handle(
       e.sender,
-      { trusted: tabs.hasWebContents(e.sender), frameUrl: e.senderFrame?.url ?? '' },
+      {
+        trusted: tabs.hasWebContents(e.sender),
+        frameUrl: frame?.url ?? '',
+        topUrl: e.sender.isDestroyed() ? '' : e.sender.getURL(),
+        ...(isSubFrame && frame ? { subFrame: frame } : {})
+      },
       raw
+    )
+  })
+  // 페이지(preload)의 감지 단계 기록 — 단계 이름만 받아 발신 프레임 호스트와 함께 로그에 남긴다.
+  // 실제 탭이 보낸 것만, 정해진 단계 이름만, 탭당 30초에 10줄까지만(로그 도배 방지)
+  const traceSentAt = new WeakMap<WebContents, number[]>()
+  ipcMain.on(IPC.vaultCaptureTrace, (e, raw: unknown) => {
+    if (!tabs.hasWebContents(e.sender)) return
+    if (typeof raw !== 'string' || !(CAPTURE_TRACE_STAGES as readonly string[]).includes(raw))
+      return
+    const now = Date.now()
+    const recent = (traceSentAt.get(e.sender) ?? []).filter((t) => now - t < 30_000)
+    if (recent.length >= 10) return
+    recent.push(now)
+    traceSentAt.set(e.sender, recent)
+    console.log(
+      `[로그인 저장] ${normalizeHost(e.senderFrame?.url ?? '') || '(호스트 모름)'} 페이지 감지 단계: ${raw}`
     )
   })
 
@@ -619,33 +679,37 @@ export function registerIpc(
     }
   })
 
-  // 저장 제안 수락/거절. 거절이면 보관 중이던 비밀번호를 그냥 버린다
-  onFromRenderer(IPC.vaultCaptureDecision, (accept: boolean) => {
+  // 확인 바의 답. 저장이 아니면 보관 중이던 비밀번호를 그냥 버린다.
+  // 옛 렌더러(boolean)도 받는다 — true 는 저장, false 는 이번만 건너뛰기
+  onFromRenderer(IPC.vaultCaptureDecision, (raw: unknown) => {
+    const decision: CaptureDecision | null =
+      raw === true
+        ? 'save'
+        : raw === false
+          ? 'skip'
+          : typeof raw === 'string' && (CAPTURE_DECISIONS as readonly string[]).includes(raw)
+            ? (raw as CaptureDecision)
+            : null
+    if (!decision) return
     const capture = vault.takePendingCapture()
-    if (!accept || !capture) return
+    if (!capture) return
+    if (decision === 'never') {
+      // 이 사이트(등록 도메인)는 다시 묻지 않는다. 자동 채움은 그대로 쓸 수 있다(제외 도메인과 다르다)
+      settings.set({
+        vaultNeverSaveHosts: addNeverSaveHost(settings.get().vaultNeverSaveHosts, capture.host)
+      })
+      return
+    }
+    if (decision !== 'save') return
     // 수락했는데 그 사이 금고가 잠겼다면(자동 잠금 등) 조용히 버리지 않고 제안을 다시 띄운다.
-    // 사용자가 카드에서 잠금을 풀고 다시 저장할 수 있다
+    // 사용자가 확인 바에서 잠금을 풀고 다시 저장할 수 있다
     if (vault.state() !== 'unlocked') {
       vault.setPendingCapture({ ...capture, locked: true })
       return
     }
     try {
-      const host = normalizeHost(capture.host) || capture.host
-      // 기존 계정이면 label/isDefault 를 넘기지 않는다 — 사용자가 붙여 둔 라벨과
-      // 기본 계정 지정을 자동 저장이 덮어쓰지 않게 한다
-      const existing = vault.listAccounts(host).find((a) => a.username === capture.username)
-      const account = vault.upsertAccount({
-        id: existing?.id,
-        host,
-        ...(existing ? {} : { label: host }),
-        username: capture.username
-      })
-      vault.putItem({
-        accountId: account.id,
-        type: 'login',
-        label: '로그인 비밀번호',
-        value: capture.password
-      })
+      // 누른 시점에 다시 판정한다(같은 값이면 저장하지 않는다). 기존 계정의 라벨·기본 지정은 건드리지 않는다
+      saveCapturedLogin(vault, capture)
     } catch (e: unknown) {
       // 실패 사유만 남긴다 — 값은 절대 로그에 넣지 않는다
       console.error('자격정보 저장 실패', e instanceof Error ? e.message : String(e))
@@ -1161,15 +1225,38 @@ export function registerIpc(
   // === 확장(압축 해제된 크롬 확장 폴더) — 이 블록만 따로 추가한다 ======================
   // 기본 세션에 걸고, 작업공간 파티션 세션이 새로 생기면 같은 확장을 그 세션에도 건다.
   // 로드 실패는 항목별 오류 문자열로만 남고 앱을 멈추지 않는다
+  // 확장 서비스워커에 없는 chrome.cookies 보충을 확장 로드보다 먼저 건다(기본 세션)
+  enableExtensionServiceWorkerSupport(
+    session.defaultSession,
+    join(__dirname, '../preload/extension-sw.js')
+  )
   const extensions = new ExtensionManager(
     createSessionExtensionHost(session.defaultSession),
     settings
   )
-  void extensions.loadSaved().catch((e: unknown) => console.error('저장된 확장 로드 실패', e))
+  void extensions
+    .loadSaved()
+    .then(() => warmExtensionWorkers(session.defaultSession))
+    .catch((e: unknown) => console.error('저장된 확장 로드 실패', e))
+  // 확장이 툴바 아이콘을 바꾸면(샵백 활성화 → 초록) 목록의 아이콘을 바꾸고 렌더러가 다시 그리게 한다
+  setExtensionActionListener((id, op, details) => {
+    if (op !== 'setIcon') return
+    const entry = extensions.find(id)
+    const rel = pickActionIconPath((details as { path?: unknown } | null)?.path)
+    if (!entry || !rel) return
+    const dataUrl = readIconDataUrl(entry.path, rel)
+    if (dataUrl && extensions.setActionIcon(id, dataUrl)) send(IPC.extChanged, null)
+  })
+  // 프로필별 프록시(userData/profile-proxies.json · SAMBA_PROFILE_PROXY_<프로필>) — 스니커덩크처럼 사무실 IP 를
+  // 막는 사이트는 전용 프로필에만 프록시를 건다(사용자 2026-09-28)
+  const profileProxies = loadProfileProxies(app.getPath('userData'))
   tabs.setSessionHook((ses, partition) => {
+    applyProfileProxy(ses, profileOfPartition(partition, workspace.partitionPrefix()), profileProxies)
+    enableExtensionServiceWorkerSupport(ses, join(__dirname, '../preload/extension-sw.js'))
     // 파티션 이름을 함께 넘긴다 — 같은 세션이 두 번 들어와도 한 번만 붙는다
     void extensions
       .attachHost(createSessionExtensionHost(ses), partition)
+      .then(() => warmExtensionWorkers(ses))
       .catch((e: unknown) => console.error('파티션 세션 확장 로드 실패', e))
   })
 
@@ -1181,7 +1268,16 @@ export function registerIpc(
   win.once('closed', () => extensionPopup.dispose())
   // 팝업은 탭 뷰 위에 얹히는데, 탭을 전환하면 활성 탭 뷰가 다시 맨 위로 올라간다.
   // 크롬도 탭을 바꾸면 팝업을 닫으므로 여기서 함께 닫는다
-  tabs.onActivated(() => extensionPopup.close())
+  tabs.onActivated(() => {
+    extensionPopup.close()
+    // 확장에 탭 활성화를 알린다(chrome.tabs.onActivated) — 샵백은 이때 아이콘·알림을 다시 판정한다.
+    // 이 콜백은 활성 탭이 바뀌기 전에 불리므로 한 틱 뒤에 새 활성 탭을 읽는다(실기 2026-09-28: 이전 탭을 보냈다)
+    setTimeout(() => {
+      const t = tabs.active()
+      const wc = t?.view.webContents
+      if (wc && !wc.isDestroyed()) sendExtensionTabEvent(wc.session, 'activated', { tabId: wc.id, windowId: 0 })
+    }, 0)
+  })
 
   handleFromRenderer(IPC.extList, () => ({ items: extensions.list(), errors: extensions.errors() }))
   // 경로를 주지 않으면 폴더 선택 다이얼로그를 연다. 취소하면 null 을 돌려준다.
@@ -1245,7 +1341,7 @@ export function registerIpc(
     extensionsRoot: join(app.getPath('userData'), 'extensions'),
     localAppData: process.env.LOCALAPPDATA ?? '',
     chromiumVersion: process.versions.chrome ?? '120.0.0.0',
-    fetchImpl: (url, init) => net.fetch(url, init)
+    fetchImpl: (url, init) => globalThis.fetch(url, init)
   })
   handleFromRenderer(IPC.extImportSources, () => extensionInstaller.importSources())
   handleFromRenderer(IPC.extImportFrom, (ids: string[]) => extensionInstaller.importFrom(ids))
@@ -1334,7 +1430,7 @@ export function registerIpc(
   handleFromRenderer(IPC.phoneInstallTools, () =>
     installPhoneTools({
       root: phoneToolsRoot,
-      fetchImpl: (url, init) => net.fetch(url, init),
+      fetchImpl: (url, init) => globalThis.fetch(url, init),
       settings,
       onProgress: (p) => send(IPC.phoneInstallProgress, p)
     })
