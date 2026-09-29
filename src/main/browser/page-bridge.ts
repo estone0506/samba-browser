@@ -1,3 +1,4 @@
+import { webContents } from 'electron'
 import type { WebContents, WebFrameMain } from 'electron'
 import { z } from 'zod'
 import type {
@@ -734,8 +735,17 @@ export const pageBridge = {
   typeLoginKeys: async (tab: Tab, id: number, value: string): Promise<string> => {
     const wc = tab.view.webContents
     if (wc.isDestroyed()) return 'page is gone'
+    // 키 입력은 포커스를 가진 페이지만 받는다. 뒤에서 도는 탭(브릿지 작업)은 포커스가 없어 글자가 하나도 안 들어가고
+    // 값 직접 넣기로 떨어졌다(실기 2026-09-29 partner.hmall.com "패스워드를 입력하세요!") — 치는 동안만 포커스를 준다
+    const before = webContents?.getFocusedWebContents?.() ?? null
+    if (typeof wc.focus === 'function' && !(wc.isFocused?.() ?? false)) wc.focus()
+    const giveBack = (): void => {
+      if (before && before !== wc && !before.isDestroyed()) before.focus?.()
+    }
     const point = await pageBridge.rectOf(tab, id).catch(() => null)
     if (!point || !(await pageBridge.clickHuman(tab, point.x, point.y))) {
+      giveBack()
+      console.warn(`[type-login] 클릭 실패(좌표 ${point ? '있음' : '없음'}) — 값 직접 넣기로`)
       return pageBridge.fillValue(tab, id, value)
     }
     try {
@@ -755,13 +765,19 @@ export const pageBridge = {
         await pause(HUMAN_KEY_MIN_MS + Math.random() * HUMAN_KEY_JITTER_MS)
       }
     } catch {
+      giveBack()
       return pageBridge.fillValue(tab, id, value)
     }
+    giveBack()
     const { id: localId } = decodeFrameId(id)
     const length = await call(wc, opToCode({ op: 'valueLength', id: localId }), z.number()).catch(
       () => -1
     )
-    if (length !== value.length) return pageBridge.fillValue(tab, id, value)
+    if (length !== value.length) {
+      // 글자 수만 남긴다(값은 남기지 않는다)
+      console.warn(`[type-login] 키 입력 뒤 글자 수 ${length}/${value.length}, 포커스 ${wc.isFocused?.()} — 값 직접 넣기로`)
+      return pageBridge.fillValue(tab, id, value)
+    }
     return 'ok'
   },
   /**
