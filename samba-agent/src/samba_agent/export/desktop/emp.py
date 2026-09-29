@@ -22,6 +22,10 @@ class EmpUi(Protocol):
 
     def ensure_ready(self) -> None: ...
 
+    def search(self) -> None:
+        """검색 기간에 오늘이 들어가게 하고 검색시작을 누른다."""
+        ...
+
     def read(self, order_no: str) -> CellValues: ...
 
     def write(self, order_no: str, cost: int, shipping_fee: int) -> None: ...
@@ -35,6 +39,8 @@ class EmpAdapter:
 
     def read(self, order_no: str) -> CellValues:
         self._ui.ensure_ready()
+        # 조건이 먼저다 — 오늘이 빠진 기간이면 오늘 주문이 그리드에 없다
+        self._ui.search()
         return self._ui.read(order_no)
 
     def write(self, order_no: str, cost: int, shipping_fee: int) -> None:

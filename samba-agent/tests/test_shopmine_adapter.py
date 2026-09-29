@@ -25,6 +25,9 @@ class FakeUi:
         if self.ready_error is not None:
             raise self.ready_error
 
+    def set_period(self) -> None:
+        self.calls.append('period')
+
     def collect(self) -> None:
         self.calls.append('collect')
 
@@ -56,6 +59,7 @@ def test_넘긴_주문_중_화면에_있는_것만_체크해_완료됨으로_바
     assert done == {'S1', 'S3'}
     assert ui.calls == [
         'ready',
+        'period',
         'collect',
         'wait 90',
         'filters',

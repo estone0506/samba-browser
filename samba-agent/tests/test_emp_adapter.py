@@ -17,6 +17,9 @@ class FakeUi:
         if self.ready_error is not None:
             raise self.ready_error
 
+    def search(self) -> None:
+        self.calls.append('search')
+
     def read(self, order_no: str) -> CellValues:
         self.calls.append(f'read {order_no}')
         return self.rows[order_no]
@@ -32,7 +35,16 @@ def test_읽기와_쓰기_앞에_창_상태를_확인한다():
     assert adapter.read('E1') == CellValues(0, 0)
     adapter.write('E1', 57131, 2300)
     assert adapter.read('E1') == CellValues(57131, 2300)
-    assert ui.calls == ['ready', 'read E1', 'ready', 'write E1 57131 2300', 'ready', 'read E1']
+    assert ui.calls == [
+        'ready',
+        'search',
+        'read E1',
+        'ready',
+        'write E1 57131 2300',
+        'ready',
+        'search',
+        'read E1',
+    ]
 
 
 def test_창이_준비되지_않으면_드라이버를_부르지_않는다():

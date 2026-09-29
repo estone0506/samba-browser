@@ -33,6 +33,10 @@ class ShopMineUi(Protocol):
         """창이 있고 통합주문관리 탭이 앞에 있으며 낯선 대화상자가 없다."""
         ...
 
+    def set_period(self) -> None:
+        """검색 기간에 오늘이 들어가게 한다(이미 들어 있으면 그대로)."""
+        ...
+
     def collect(self) -> None:
         """상태 콤보를 (정상전체) 로 두고 수집하기(F5)."""
         ...
@@ -65,7 +69,7 @@ class ShopMineAdapter:
         self,
         ui: ShopMineUi,
         *,
-        collect_timeout_s: float = 120.0,
+        collect_timeout_s: float = 300.0,
         dry_run: bool = False,
     ) -> None:
         self._ui = ui
@@ -79,6 +83,8 @@ class ShopMineAdapter:
         if not wanted:
             return set()
         ui.ensure_ready()
+        # 조건이 먼저다 — 오늘이 빠진 기간으로 수집하면 오늘 주문이 목록에 없다
+        ui.set_period()
         ui.collect()
         ui.wait_collected(self._collect_timeout_s)
         ui.set_filters()

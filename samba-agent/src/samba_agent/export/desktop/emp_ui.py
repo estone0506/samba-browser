@@ -12,17 +12,21 @@ EMP 는 관리자 권한으로 돈다 — 이 드라이버도 관리자 권한 �
 """
 
 import ctypes
+import datetime as dt
 import logging
+import threading
 import time
 from ctypes import wintypes
 
 from pywinauto import Desktop
+from pywinauto.controls.hwndwrapper import InvalidWindowHandle
 from pywinauto.controls.uiawrapper import UIAWrapper
 from pywinauto.uia_element_info import UIAElementInfo
 
 from samba_agent.export.adapters import AdapterReject, AdapterRetry, CellValues
 from samba_agent.export.desktop.emp import parse_won
 from samba_agent.export.desktop.shopmine import order_matches
+from samba_agent.export.desktop.shopmine_ui import period_to_cover
 from samba_agent.export.failures import ExportFail
 
 log = logging.getLogger(__name__)
@@ -44,6 +48,14 @@ SAVED_MARK = '저장 되었습니다'
 # 새로고침 때 저장 안 된 편집이 있으면 뜨는 문구
 UNSAVED_MARK = '저장하시겠습니까'
 OK_BUTTONS = ('확인', 'OK')
+# 검색 영역(리본) — 요소 이름은 프로그램 안쪽 이름이다(실기 2026-09-29)
+RIBBON_ID = 'c1Ribbon1'
+START_DATE = 'OrderSdate'
+END_DATE = 'OrderEdate'
+# 날짜 빠른 선택 '2주' — 오늘까지 14일을 잡는다
+TWO_WEEKS_BUTTON = 'ribbonToggleButton1511'
+SEARCH_BUTTON = 'OrderSearchBT'
+DIALOG_CLASS = '#32770'
 NO_BUTTONS = ('아니요(N)', '아니오(N)', 'No')
 
 _WM_SETTEXT, _WM_GETTEXT = 0x000C, 0x000D
@@ -82,6 +94,29 @@ def _visible_children(hwnd: int) -> list[int]:
     return found
 
 
+def _process_windows(pid: int) -> list[tuple[int, str, str]]:
+    """그 프로세스의 보이는 최상위 창 — (핸들, 제목, 창 종류).
+
+    pywinauto 의 창 목록은 읽는 사이 창 하나가 사라지면 통째로 실패한다(실기 2026-09-29:
+    InvalidWindowHandle). 여기서는 사라진 창을 건너뛴다.
+    """
+    found: list[tuple[int, str, str]] = []
+
+    def collect(hwnd, _lparam):
+        owner = wintypes.DWORD()
+        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and _user32.IsWindowVisible(hwnd):
+            title = ctypes.create_unicode_buffer(256)
+            kind = ctypes.create_unicode_buffer(256)
+            _user32.GetWindowTextW(hwnd, title, 256)
+            _user32.GetClassNameW(hwnd, kind, 256)
+            found.append((hwnd, title.value, kind.value))
+        return True
+
+    _user32.EnumWindows(_ENUM_PROC(collect), 0)
+    return found
+
+
 class GridRow:
     """그리드 한 행 — 요소와 열 이름 → 값."""
 
@@ -102,7 +137,12 @@ class PywinautoEmpUi:
 
     # ---- 창·색인 ----
     def _find_main(self):
-        for w in Desktop(backend='win32').windows():
+        try:
+            windows = Desktop(backend='win32').windows()
+        except InvalidWindowHandle as e:
+            # 창 목록을 읽는 사이 창이 사라졌다 — 다음에 다시 하면 된다
+            raise AdapterRetry(ExportFail.BLOCKED, f'창 목록을 읽지 못했다: {e}') from e
+        for w in windows:
             title = w.window_text() or ''
             if WINDOW_TITLE_MARK in title and LOGIN_MARK not in title:
                 return w
@@ -157,10 +197,11 @@ class PywinautoEmpUi:
         return out
 
     def find_row(self, order_no: str) -> GridRow:
-        """주문번호가 맞는 행 하나. 없으면 거절(NOT_FOUND), 여러 개면 거절(AMBIGUOUS)."""
+        """주문번호가 맞는 행 하나. 없으면 재시도(NOT_FOUND), 여러 개면 거절(AMBIGUOUS)."""
         hits = [r for r in self.rows() if order_matches(order_no, r.values.get(COL_ORDER_NO, ''))]
         if not hits:
-            raise AdapterReject(ExportFail.NOT_FOUND, 'EMP 그리드에 그 주문번호가 없다')
+            # 방금 들어온 주문은 EMP 가 아직 수집하지 않았을 수 있다 — 나중에 다시 본다
+            raise AdapterRetry(ExportFail.NOT_FOUND, 'EMP 그리드에 그 주문번호가 없다')
         if len(hits) > 1:
             raise AdapterReject(
                 ExportFail.AMBIGUOUS, f'EMP 그리드에 그 주문번호 행이 {len(hits)}개다'
@@ -180,6 +221,101 @@ class PywinautoEmpUi:
             if (cell.element_info.name or '') == want:
                 return cell
         raise AdapterRetry(ExportFail.BLOCKED, f'EMP 그리드에 {prefix!r} 열이 화면에 보이지 않는다')
+
+    # ---- 검색 조건 ----
+    def _ribbon_item(self, name: str):
+        """리본 안의 요소 하나(콤보 상자·버튼). 리본 요소는 창 핸들이 없어 이름으로 찾는다."""
+
+        def walk(element, depth: int):
+            for child in element.children():
+                info = child.element_info
+                if (info.name or '') == name and info.control_type in ('Button', 'ComboBox'):
+                    return child
+                if depth < 5:
+                    hit = walk(child, depth + 1)
+                    if hit is not None:
+                        return hit
+            return None
+
+        item = walk(self._el(RIBBON_ID), 0)
+        if item is None:
+            raise AdapterRetry(ExportFail.BLOCKED, f'EMP 검색 영역에 {name!r} 가 없다')
+        return item
+
+    def _ribbon_date(self, name: str) -> dt.date | None:
+        text = (self._ribbon_item(name).legacy_properties().get('Value') or '').strip()
+        try:
+            return dt.date.fromisoformat(text)
+        except ValueError:
+            return None
+
+    def _invoke(self, name: str, timeout_s: float = 15.0) -> None:
+        """리본 버튼을 누른다. 리본은 창에 보낸 클릭 메시지를 받지 않는다(실기) — UIA 동작을 쓴다.
+
+        대화상자가 뜨면 동작 호출이 돌아오지 않으므로 따로 돌리고 기다리는 시간을 둔다.
+        """
+        button = self._ribbon_item(name)
+        errors: list[Exception] = []
+
+        def run() -> None:
+            try:
+                button.invoke()
+            except Exception as e:  # noqa: BLE001 — 아래에서 재시도로 바꿔 던진다
+                errors.append(e)
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        worker.join(timeout_s)
+        if errors:
+            raise AdapterRetry(
+                ExportFail.BLOCKED, f'EMP {name!r} 버튼을 누르지 못했다: {errors[0]}'
+            )
+
+    def search(self, today: dt.date | None = None) -> None:
+        """검색 기간에 오늘이 들어가게 한 뒤 검색시작을 눌러 그리드를 다시 채운다.
+
+        종료일이 어제로 남아 있으면 오늘 들어온 주문이 그리드에 없다(실기 2026-09-29).
+        """
+        today = today or dt.datetime.now().astimezone().date()
+        start, end = self._ribbon_date(START_DATE), self._ribbon_date(END_DATE)
+        if (start, end) != period_to_cover(start, end, today):
+            self._invoke(TWO_WEEKS_BUTTON)
+            time.sleep(self._poll_s * 2)
+            start, end = self._ribbon_date(START_DATE), self._ribbon_date(END_DATE)
+            if end is None or end < today or start is None or start > today:
+                raise AdapterRetry(
+                    ExportFail.BLOCKED, f'EMP 검색 기간을 오늘까지로 바꾸지 못했다({start} ~ {end})'
+                )
+            log.info('EMP 검색 기간 %s ~ %s', start, end)
+        self._invoke(SEARCH_BUTTON)
+        time.sleep(self._poll_s * 4)
+        dialog = self._wait_dialog(1.0)
+        if dialog is not None:
+            _handle, title, message, buttons = dialog
+            if UNSAVED_MARK not in message:
+                raise AdapterRetry(
+                    ExportFail.BLOCKED, f'EMP 검색 뒤 창이 떴다: {title[:20]!r} {message[:60]!r}'
+                )
+            self._click_dialog_button(buttons, NO_BUTTONS)
+            log.warning('EMP 에 저장 안 된 편집이 남아 있어 버렸다')
+        self._wait_enabled(60.0)
+        self._wait_rows_settled()
+        self._refresh()
+
+    def _wait_rows_settled(self, timeout_s: float = 60.0) -> None:
+        """그리드 행 수가 연달아 같게 읽힐 때까지 기다린다(검색 결과를 채우는 중일 수 있다)."""
+        deadline = time.monotonic() + timeout_s
+        last = -1
+        while time.monotonic() < deadline:
+            try:
+                count = len(self.rows())
+            except Exception:  # noqa: BLE001 — 채우는 중에는 요소가 사라진다
+                count = -1
+            if count >= 0 and count == last:
+                return
+            last = count
+            time.sleep(self._poll_s * 2)
+        raise AdapterRetry(ExportFail.TIMEOUT, 'EMP 검색 결과가 자리 잡지 않았다')
 
     # ---- 쓰기 ----
     def _focus(self) -> tuple[int, str]:
@@ -287,16 +423,16 @@ class PywinautoEmpUi:
         """EMP 가 띄운 보이는 대화상자들 — (핸들, 제목, 문구, 버튼 요소들)."""
         found = []
         pid = self._main.process_id()
-        for w in Desktop(backend='win32').windows():
+        for handle, title, kind in _process_windows(pid):
+            if kind != DIALOG_CLASS:
+                continue
             try:
-                if w.process_id() != pid or not w.is_visible() or w.class_name() != '#32770':
-                    continue
-                dialog = UIAWrapper(UIAElementInfo(w.handle))
+                dialog = UIAWrapper(UIAElementInfo(handle))
                 message = ' '.join(t.window_text() for t in dialog.descendants(control_type='Text'))
                 buttons = dialog.descendants(control_type='Button')
             except Exception:  # noqa: BLE001, S112 — 이미 닫힌 창
                 continue
-            found.append((w.handle, w.window_text() or '', message, buttons))
+            found.append((handle, title, message, buttons))
         return found
 
     def _click_dialog_button(self, buttons: list, names: tuple[str, ...]) -> str | None:

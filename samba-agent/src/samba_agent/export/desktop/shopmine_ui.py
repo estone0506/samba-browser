@@ -11,6 +11,7 @@ UIA 요소를 만들어 automation id 색인을 만든다(약 4초). 숨은 탭 
 """
 
 import ctypes
+import datetime as dt
 import functools
 import logging
 import re
@@ -19,6 +20,7 @@ from collections.abc import Sequence
 from ctypes import wintypes
 
 from pywinauto import Desktop
+from pywinauto.controls.hwndwrapper import InvalidWindowHandle
 from pywinauto.controls.uiawrapper import UIAWrapper
 from pywinauto.findwindows import ElementNotFoundError
 from pywinauto.timings import TimeoutError as PwTimeoutError
@@ -51,6 +53,15 @@ RESULT_MARK = '되었습니다'
 # 행별 선택 상태 셀 값이 '체크됨'으로 보이는 표시들
 _CHECKED_MARKERS = ('true', '1', '선택', '체크', 'checked')
 
+# 검색 기간 — 시작일은 적어도 이만큼 전, 종료일은 적어도 오늘(사용자 지시 2026-09-29)
+PERIOD_BACK_DAYS = 14
+START_DATE_ID = 'DtpStartDate'
+END_DATE_ID = 'DtpEndDate'
+
+_WM_KEYDOWN, _WM_KEYUP = 0x0100, 0x0101
+_WM_LBUTTONDOWN, _WM_LBUTTONUP = 0x0201, 0x0202
+_VK_RIGHT = 0x27
+
 _user32 = ctypes.windll.user32
 _ENUM_PROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
@@ -61,6 +72,20 @@ def _new_windows(before: set[int], windows: list) -> list:
     순수 함수(pywinauto 를 부르지 않는다) — `windows` 는 `.handle` 속성만 있으면 된다.
     """
     return [w for w in windows if w.handle not in before]
+
+
+def period_to_cover(
+    start: dt.date | None, end: dt.date | None, today: dt.date, back_days: int = PERIOD_BACK_DAYS
+) -> tuple[dt.date, dt.date]:
+    """오늘이 들어가는 검색 기간. 이미 넉넉하면 그대로 둔다(순수 함수).
+
+    종료일이 어제로 남아 있으면 오늘 들어온 주문이 목록에 없다(실기 2026-09-29: 12건 전부
+    '주문을 찾지 못했다').
+    """
+    floor = today - dt.timedelta(days=back_days)
+    new_start = start if start is not None and start <= floor else floor
+    new_end = end if end is not None and end >= today else today
+    return new_start, new_end
 
 
 def _guard_pywinauto_errors(fn):
@@ -78,6 +103,9 @@ def _guard_pywinauto_errors(fn):
         except (AdapterRetry, AdapterReject):
             raise
         except (ElementNotFoundError, PwTimeoutError, NoPatternInterfaceError) as e:
+            raise AdapterRetry(ExportFail.BLOCKED, f'{fn.__name__}: {e}') from e
+        except InvalidWindowHandle as e:
+            # 창 목록을 읽는 사이 창이 사라졌다(실기 2026-09-29) — 다음에 다시 하면 된다
             raise AdapterRetry(ExportFail.BLOCKED, f'{fn.__name__}: {e}') from e
         finally:
             # 단계별 소요 — 실기에서 어느 단계가 느린지 본다
@@ -302,6 +330,64 @@ class PywinautoShopMineUi:
                 ExportFail.BLOCKED,
                 f'콤보 상자를 {item!r} 로 바꾸지 못했다({combo.selected_text()!r})',
             )
+
+    # ---- 검색 기간 ----
+    def _read_date(self, auto_id: str) -> dt.date | None:
+        """날짜 상자에 보이는 날짜('2026-09-29'). 못 읽으면 None."""
+        # 색인의 요소는 읽은 때의 값을 쥐고 있을 수 있다 — 핸들로 새로 읽는다
+        handle = self._el(auto_id).element_info.handle
+        text = (UIAElementInfo(handle).name or '').strip()
+        try:
+            return dt.date.fromisoformat(text)
+        except ValueError:
+            return None
+
+    def _type_date(self, auto_id: str, value: dt.date) -> None:
+        """날짜 상자에 연·월·일을 차례로 넣는다 — 그 상자 창 핸들에 메시지만 보낸다.
+
+        전역 키 입력은 쓰지 않는다(다른 창으로 샌다). 맨 왼쪽(연도)을 눌러 고르고, 숫자를 넣고
+        오른쪽 화살표로 다음 칸으로 간다. 상자가 스스로 값 변경을 알리므로 프로그램도 새 값을 쓴다.
+        """
+        hwnd = self._el(auto_id).element_info.handle
+
+        def post(message: int, wparam: int, lparam: int = 0) -> None:
+            _user32.PostMessageW(hwnd, message, wparam, lparam)
+            time.sleep(0.08)
+
+        def key(code: int) -> None:
+            post(_WM_KEYDOWN, code)
+            post(_WM_KEYUP, code, 0xC0000001)
+
+        at_year = (10 << 16) | 8
+        post(_WM_LBUTTONDOWN, 1, at_year)
+        post(_WM_LBUTTONUP, 0, at_year)
+        time.sleep(self._poll_s / 2)
+        for part in (f'{value.year:04d}', f'{value.month:02d}', f'{value.day:02d}'):
+            for ch in part:
+                key(ord(ch))
+            key(_VK_RIGHT)
+        time.sleep(self._poll_s)
+
+    def _set_date(self, auto_id: str, value: dt.date) -> None:
+        if self._read_date(auto_id) == value:
+            return
+        self._type_date(auto_id, value)
+        got = self._read_date(auto_id)
+        if got != value:
+            raise AdapterRetry(
+                ExportFail.BLOCKED, f'샵마인 검색 날짜를 {value} 로 바꾸지 못했다({got})'
+            )
+
+    @_guard_pywinauto_errors
+    def set_period(self, today: dt.date | None = None) -> None:
+        today = today or dt.datetime.now().astimezone().date()
+        start, end = period_to_cover(
+            self._read_date(START_DATE_ID), self._read_date(END_DATE_ID), today
+        )
+        # 종료일을 먼저 넓힌다 — 시작일이 종료일보다 늦어지는 순간을 만들지 않는다
+        self._set_date(END_DATE_ID, end)
+        self._set_date(START_DATE_ID, start)
+        log.info('샵마인 검색 기간 %s ~ %s', start, end)
 
     # ---- 수집 ----
     @_guard_pywinauto_errors
