@@ -45,6 +45,9 @@ FILTER_EXCEL = '엑셀생성안됨'
 STATUS_MENU = '작업상태지정'
 STATUS_DONE = '완료됨'
 ORDER_NO_COLUMN = '주문번호'
+# 쿠팡은 삼바웨이브 주문번호가 샵마인의 배송번호 칸에 있다(실기 2026-09-29: 736… ↔ 배송번호)
+SHIPMENT_NO_COLUMN = '배송번호'
+_EMPTY_CELLS = ('', '(null)')
 # 우리가 완료됨을 누른 뒤 뜨는 확인 대화상자에서 눌러도 되는 버튼 이름
 CONFIRM_BUTTONS = ('예(Y)', '확인', 'OK', 'Yes')
 # 확인 대화상자에서 물러날 때 누르는 버튼 이름
@@ -497,8 +500,18 @@ class PywinautoShopMineUi:
         header, rows = self._rows()
         if not rows:
             return []
-        col = self._column(header, ORDER_NO_COLUMN)
-        return [self._cell_value(cells[col]) if col < len(cells) else '' for cells in rows]
+        cols = self._key_columns(header)
+        return [key for cells in rows for key in self._row_keys(cells, cols)]
+
+    def _key_columns(self, header: list) -> list[int]:
+        """주문을 알아보는 칸들 — 주문번호는 꼭 있어야 하고, 배송번호는 있으면 함께 본다."""
+        cols = [self._column(header, ORDER_NO_COLUMN)]
+        cols.extend(i for i, h in enumerate(header) if h.window_text() == SHIPMENT_NO_COLUMN)
+        return cols
+
+    def _row_keys(self, cells: list, cols: list[int]) -> list[str]:
+        values = [self._cell_value(cells[c]) for c in cols if c < len(cells)]
+        return [v for v in values if v not in _EMPTY_CELLS]
 
     def _set_row_check(self, cells: list, want: bool) -> bool:
         """행의 체크 칸을 원하는 상태로 만든다.
@@ -528,10 +541,10 @@ class PywinautoShopMineUi:
         checked: dict[str, int] = dict.fromkeys(order_nos, 0)
         if not rows:
             return checked
-        col = self._column(header, ORDER_NO_COLUMN)
+        cols = self._key_columns(header)
         for cells in rows:
-            value = self._cell_value(cells[col]) if col < len(cells) else ''
-            hit = next((o for o in order_nos if order_matches(o, value)), None)
+            keys = self._row_keys(cells, cols)
+            hit = next((o for o in order_nos if any(order_matches(o, k) for k in keys)), None)
             if hit is None:
                 # 이전 실행이 남긴 체크를 지운다 — 대상이 아닌 행이 함께 바뀌면 안 된다
                 if self._checked(cells[0]) and not self._set_row_check(cells, False):

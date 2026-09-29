@@ -50,7 +50,7 @@ class ShopMineUi(Protocol):
         ...
 
     def filtered_order_nos(self) -> list[str]:
-        """지금 필터에 걸린 행들의 주문번호 칸 값(행 순서대로, 헤더 제외)."""
+        """지금 필터에 걸린 행들을 알아보는 값들 — 주문번호, 쿠팡은 배송번호도(헤더 제외)."""
         ...
 
     def select_orders(self, order_nos: Sequence[str]) -> Mapping[str, int]:
