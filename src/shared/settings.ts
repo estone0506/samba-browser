@@ -170,6 +170,9 @@ export const DEFAULT_SETTINGS = {
   // 주소창 툴바에 고정한 확장의 id(왼쪽부터 이 순서대로 놓인다).
   // 툴바를 이 기기에서 어떻게 보여 줄지에 대한 값이라 동기화하지 않는다
   extensionsPinned: [] as string[],
+  // 담당 폰이 정해지지 않은 계정이 쓸 기본 폰의 serial. 비우면 예전처럼 연결된 첫 폰(결제는 결제 앱이 깔린 폰).
+  // 다른 작업 전용 폰이 같이 붙어 있을 때 결제·문자가 그 폰으로 가지 않게 한다(사용자 2026-09-29 "모든 건 임성희 폰")
+  defaultPhoneSerial: '',
   // 모양(기기 로컬 — 동기화하지 않는다)
   theme: 'system' as ThemeMode,
   uiZoom: 100,
@@ -363,6 +366,7 @@ export const settingsSchema = z.object({
     .record(z.string(), z.array(z.string()))
     .catch(DEFAULT_SETTINGS.extensionProfiles),
   extensionsPinned: z.array(z.string()).catch(DEFAULT_SETTINGS.extensionsPinned),
+  defaultPhoneSerial: z.string().catch(DEFAULT_SETTINGS.defaultPhoneSerial),
   // 모양 — 범위를 벗어나거나 타입이 틀리면 기본값으로 되돌린다
   theme: z.enum(THEME_MODES).catch(DEFAULT_SETTINGS.theme),
   uiZoom: z.number().int().min(MIN_UI_ZOOM).max(MAX_UI_ZOOM).catch(DEFAULT_SETTINGS.uiZoom),

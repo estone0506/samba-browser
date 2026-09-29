@@ -376,6 +376,9 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
       const assigned = deps.phones.assignForJob(accountId)
       if (assigned && list.some((p) => p.serial === assigned.serial)) return [assigned.serial]
     }
+    // 담당 폰이 없으면 설정의 기본 폰(붙어 있을 때). 없으면 연결된 폰 전부
+    const fallback = deps.settings().defaultPhoneSerial
+    if (fallback && list.some((p) => p.serial === fallback)) return [fallback]
     return list.map((p) => p.serial)
   }
 
