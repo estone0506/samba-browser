@@ -213,11 +213,17 @@ describe('keypadUnlabeled — 글자 없는 보안 키패드(네이버페이)', 
     document.body.innerHTML = unlabeledHtml(10)
     placeGrid({ w: 12, h: 12 })
     expect(keypadUnlabeled()).toBeNull()
-    placeGrid({ w: 300, h: 40 })
+    placeGrid({ w: 500, h: 40 })
     expect(keypadUnlabeled()).toBeNull()
     placeGrid()
     ;(document.querySelector('.kpd') as HTMLElement).style.display = 'none'
     expect(keypadUnlabeled()).toBeNull()
+  })
+
+  it('넓은 창의 큰 칸(300px)도 키패드로 본다', () => {
+    document.body.innerHTML = unlabeledHtml(10)
+    placeGrid({ w: 300, h: 80 })
+    expect(keypadUnlabeled()).toHaveLength(10)
   })
 
   it('jsdom 기본(크기 0) 버튼은 후보가 아니다', () => {

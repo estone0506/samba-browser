@@ -904,6 +904,9 @@ class PayerAgent(AgentBase):
                             seen = self.tool('get_page')
                             text = seen[seen.find('PAGE TEXT') :] if 'PAGE TEXT' in seen else seen
                             self.note('키패드 넘김 화면', mask_text(seen[:120] + ' … ' + text[:400]))
+                            # 요소 종류·이름 앞부분만(값은 없다) — 버튼을 왜 못 찾았는지 본다
+                            kinds = [ln[:48] for ln in seen.splitlines() if ln.startswith('[')]
+                            self.note('키패드 넘김 요소', f'{len(kinds)}개: ' + ' ; '.join(kinds[:40]))
                         except AgentFailure as e:
                             self.note('키패드 넘김 화면', mask_text(f'못 읽음: {e.reason}'[:160]))
                     break

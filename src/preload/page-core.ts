@@ -1199,7 +1199,8 @@ export function keypadLayout(): KeypadLayoutDto | null {
 const KEYPAD_UNLABELED_SELECTOR = 'button, [role="button"], a'
 // 보안 키패드 한 칸으로 볼 크기(px). 아이콘·전체 화면 레이어는 빼낸다
 const KEYPAD_CELL_MIN = 16
-const KEYPAD_CELL_MAX = 200
+// 창이 넓으면 네이버페이 PC 키패드 한 칸이 200px 을 넘는다(실기 2026-09-29: 버튼 11개가 다 걸러져 사람에게 넘김)
+const KEYPAD_CELL_MAX = 400
 // 숫자 10개 + 재배열·빈칸 같은 여분 버튼까지
 const KEYPAD_UNLABELED_MIN = 10
 const KEYPAD_UNLABELED_MAX = 14
