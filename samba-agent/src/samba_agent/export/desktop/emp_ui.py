@@ -15,6 +15,7 @@ import contextlib
 import ctypes
 import datetime as dt
 import logging
+import re
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -76,6 +77,9 @@ _WM_KEYDOWN, _WM_KEYUP, _WM_CHAR = 0x0100, 0x0101, 0x0102
 _WM_LBUTTONDOWN, _WM_LBUTTONUP, _WM_LBUTTONDBLCLK = 0x0201, 0x0202, 0x0203
 _WM_COMMAND = 0x0111
 _VK_RETURN, _VK_ESCAPE = 0x0D, 0x1B
+
+# 확인 창 문구의 선택 건수('선택하신 1건의 주문의 …')
+_SELECTED_COUNT = re.compile(r'선택하신\s*(\d+)\s*건')
 
 _user32 = ctypes.windll.user32
 _ENUM_PROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -586,8 +590,13 @@ class PywinautoEmpUi:
                 ExportFail.VERIFY_MISMATCH, f'EMP 상태를 취소로 바꿨는데 {got!r} 로 읽힌다'
             )
 
-    def _settle_after_cancel(self, timeout_s: float = 30.0) -> None:
-        """취소 뒤 뜨는 창을 처리한다 — 아는 문구(취소·변경 확인, 완료 안내)만 누르고 나머지는 거절한다."""
+    def _settle_after_cancel(self, timeout_s: float = 90.0) -> None:
+        """취소 뒤 뜨는 창을 처리한다 — 아는 문구(취소·변경 확인, 완료 안내)만 누르고 나머지는 거절한다.
+
+        확인 창('선택하신 1건의 주문의 상태를 취소 상태로 강제 변경 하시겠습니까?')은 30초 뒤 스스로
+        실행된다(실기 2026-09-29). 메뉴 누름 호출이 끝나지 않은 동안에는 문구를 읽을 수 없어,
+        못 읽으면 누르지 않고 스스로 실행될 때까지 기다린다. 읽었는데 1건이 아니면 물러난다.
+        """
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             found = self.dialogs()
@@ -601,6 +610,13 @@ class PywinautoEmpUi:
                 # 아직 다 그려지지 않았거나 스스로 닫히는 진행 창이다 — 누르지 않고 기다린다
                 time.sleep(self._poll_s)
                 continue
+            count = _SELECTED_COUNT.search(message)
+            if count is not None and int(count.group(1)) != 1:
+                self._click_dialog_button(buttons, NO_BUTTONS)
+                raise AdapterReject(
+                    ExportFail.AMBIGUOUS,
+                    f'EMP 취소 확인 창이 {count.group(1)}건을 묻는다 — 누르지 않았다',
+                )
             known = ('취소' in message or '변경' in message) and UNSAVED_MARK not in message
             if not known:
                 raise AdapterReject(
