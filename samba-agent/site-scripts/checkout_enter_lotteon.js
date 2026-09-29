@@ -28,6 +28,20 @@ if (mc) {
   method = mp;
 }
 await sleep(600);
+// 현금영수증은 항상 지출증빙용(사용자 2026-09-29). 번호 칸이 비어 있고 args.biz_no 가 있으면 사업자등록번호를 넣는다
+let receipt=null;
+try{
+  const rt=(await page.get({query:'지출증빙용'})).tree;
+  const rm=rt.match(/\[(\d+)\] radio "지출증빙용"[^\n]*/);
+  if(rm){
+    if(!/value="on"/.test(rm[0])){await page.click(parseInt(rm[1]));await sleep(900);}
+    receipt='지출증빙용';
+    const it=(await page.get({interactive:true})).tree.split('\n');
+    const ri=it.findIndex(l=>/radio "지출증빙용"/.test(l));
+    const tb=ri>=0?it.slice(ri,ri+14).find(l=>/^\[\d+\] textbox/.test(l)):null;
+    if(tb&&/value=""/.test(tb)&&args.biz_no){await page.type(parseInt(tb.slice(1)),String(args.biz_no),false);await sleep(500);receipt='지출증빙용(번호 입력)';}
+  }
+}catch(e){receipt='확인 실패';}
 const payId = await page.idOf('결제하기');
 if (payId<0) return {ok:false, error:'결제하기 button not found', method};
 await page.click(payId);
@@ -38,4 +52,4 @@ if (/네이버페이/.test(method)) {
 }
 const tbs = await tabs.list();
 const popup = tbs.find(t=>t.kind==='popup');
-return { ok:true, method, popup_url: popup? popup.url : null, keypad_in_tab: /네이버페이/.test(method) };
+return { ok:true, method, receipt, popup_url: popup? popup.url : null, keypad_in_tab: /네이버페이/.test(method) };

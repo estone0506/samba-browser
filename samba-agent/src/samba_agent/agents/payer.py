@@ -10,6 +10,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, urlsplit
 
+from samba_agent import local_aliases
 from samba_agent.agents.base import AgentBase, AgentFailure, run_agent, split_page_dialogs
 from samba_agent.agents.buyer import DIRECT_CARD_METHODS, POINTS_ONLY_METHOD, product_no_of
 from samba_agent.agents.contracts import AgentResult, Assignment
@@ -406,6 +407,9 @@ def checkout_script_for(source: str) -> str:
 # 코드 흐름상 dry_run 은 결제창 진입 뒤 곧바로 끝나 이 도구들을 호출하지 않지만, buyer.py 처럼
 # tool() 에서도 한 번 더 막아 이중으로 지킨다(불변조건)
 DRY_RUN_BLOCKED_TOOLS = frozenset({'fill_secret', 'phone_approve_payment'})
+
+# 사업자등록번호의 가명 열쇠 — 실제 값은 local-aliases.json 의 같은 열쇠에 'biz:<번호>' 로 둔다
+BIZ_NO_ALIAS = 'biz:0000000000'
 
 # 결제 직전 재조회에서 '아직 미처리' 로 보는 삼바웨이브 상태(플레이북 §5-1)
 WAVE_PENDING_STATUS = 'pending'
@@ -1140,6 +1144,11 @@ class PayerAgent(AgentBase):
         # 실제로 산 사이트(교차 비교) 기준으로 결제창에 들어간다
         script = checkout_script_for(str(a.handoff.get('buy_source') or a.order.source))
         payload: dict[str, object] = {'card': card}
+        # 현금영수증은 항상 지출증빙용(사용자 2026-09-29 롯데온) — 사업자등록번호는 이 PC 의 local-aliases.json 에만 둔다.
+        # 주문서 칸이 비어 있을 때만 스크립트가 넣는다
+        biz_no = local_aliases.apply(BIZ_NO_ALIAS).removeprefix('biz:')
+        if biz_no.isdigit() and set(biz_no) != {'0'}:
+            payload['biz_no'] = biz_no
         profile = a.handoff.get('account') or a.order.account
         if profile:
             payload['profile'] = profile  # 구매가 연 계정 프로필의 주문서에서 결제창을 연다
