@@ -474,7 +474,26 @@ export function createPhoneAgentBridge(deps: PhoneWiringDeps): PhoneAgentBridge 
       )
       return { ok: false, reason: 'no-phone' }
     }
-    const serial = serialsFor(account.id)[0]
+    // 담당 폰이 없는 계정은 연결된 폰 중 **그 결제 앱이 깔린 폰**만 고른다 — 첫 폰으로 가면 결제 앱이 없는 폰
+    // (다른 일에 쓰는 폰)에 결제 탭이 찍힐 수 있다(2026-09-29: 플립은 得物 전용, 결제 앱은 A426N 에만 있다)
+    const candidates = serialsFor(account.id)
+    const withApp: string[] = []
+    for (const s of candidates) {
+      const res = await deps.adb
+        .run(shellArgs(s, ['pm', 'path', PAY_PROVIDERS[req.provider].packageName]), 8000)
+        .catch(() => null)
+      if (res && res.code === 0 && /package:/.test(res.stdout)) withApp.push(s)
+    }
+    const serial = withApp[0]
+    if (candidates.length && !serial) {
+      ctx.onStep(
+        tr('phone.payRejected', {
+          reason: `${PAY_PROVIDERS[req.provider].packageName} 가 깔린 폰이 없다`
+        }),
+        false
+      )
+      return { ok: false, reason: 'no-phone' }
+    }
     if (!serial) {
       ctx.onStep(tr('phone.payRejected', { reason: tr('phone.gateNoPhone') }), false)
       return { ok: false, reason: 'no-phone' }
