@@ -81,7 +81,9 @@ def test_상품명_끝_번호로_소싱처를_가른다():
         'MUSINSA',
         '3347853',
     )
-    assert infer_source('티셔츠 123456789') is None  # 9자리는 모른다
+    assert infer_source('티셔츠 123456789') == ('FashionPlus', '123456789')  # 9자리는 패션플러스
+    assert infer_source('수영복 A4FL1LH08 1000618616029') == ('SSG', '1000618616029')  # 13자리(1000…)는 SSG
+    assert infer_source('티셔츠 12345678901') is None  # 11자리는 모른다
     o = WaveOrderDetail(order_number='L', source_site='', product_name='팬츠 LE1215528857')
     assert (o.source_site, o.source_url, o.inferred_product_id) == (
         'LOTTEON',
