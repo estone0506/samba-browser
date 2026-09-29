@@ -17,6 +17,7 @@ from samba_agent.ops.tracing import run_metadata, traced
 from samba_agent.queue.db import PAY_STARTED_STEP, Job, JobQueue
 from samba_agent.queue.tabs import TabJanitor
 from samba_agent.supervisor.approval import resume_command
+from samba_agent.wave.flags import auto_cancel_evidence
 
 THREAD_PREFIX = 'job:'
 
@@ -52,7 +53,7 @@ class WorkerDeps:
     prompt_commit: str = '-'
     # 이행하지 못한 주문 표시(가격X·재고X) — (주문번호, 실패 사유) → 결과 한 줄(붙일 게 없으면 None).
     # dry-run 에서는 부르지 않는다
-    flag_order: Callable[[str, str | None], str | None] | None = None
+    flag_order: Callable[..., str | None] | None = None
     # 처리할 소싱처 범위(대문자 id). 비어 있으면 거르지 않는다. 접수 뒤 삼바웨이브에서 소싱처가 바뀐 주문을
     # 시작 직전에 한 번 더 거른다(실기 2026-09-25: 무신사로 접수된 주문이 롯데온으로 바뀌어 돌았다)
     sources: frozenset[str] = frozenset()
@@ -354,11 +355,18 @@ class Worker:
         if fail and outcome != 'done' and self.d.flag_order is not None and not self.d.dry_run:
             reason = _failed_reason(out)
             if str(fail) in (str(FailReason.OUT_OF_STOCK), str(FailReason.MARGIN)):
-                # 품절·마진 미달은 자동으로 재고X·가격X·취소요청하지 않는다 — 스크립트 문구('L (품절)' 합성 등)는
-                # 페이지 근거가 아니다. 검수자가 상품 페이지를 직접 보고 근거(본 가격·품절 표시)를 메모에 적은 뒤
-                # 취소한다(사용자 2026-09-28: 근거 없는 취소 금지)
+                # 품절·마진 미달: 페이지에서 확인한 근거(확정 품절 문구, 주문서 원가·마진)가 있으면 그 근거를 메모에 적고
+                # 바로 취소중으로 돌린다(사용자 2026-09-29 "멈춘 주문 자동 처리"). 근거가 없거나 포이즌이면 예전처럼
+                # 사람이 본다(사용자 2026-09-28: 근거 없는 취소 금지)
                 kind = '재고X' if str(fail) == str(FailReason.OUT_OF_STOCK) else '가격X'
-                self.d.report(job, f'{job.order_no} {kind} 보류 — 검수 필요({mask_text(reason)[:80]})')
+                evidence = auto_cancel_evidence(
+                    out.get('order'), str(fail), reason, _buy_payload(out), time.strftime('%m/%d %H:%M')
+                )
+                if evidence:
+                    flagged = self.d.flag_order(job.order_no, str(fail), evidence)
+                    self.d.report(job, f'{job.order_no} {kind} 자동 취소중 — {flagged or "결과 없음"}')
+                else:
+                    self.d.report(job, f'{job.order_no} {kind} 보류 — 검수 필요({mask_text(reason)[:80]})')
             else:
                 flagged = self.d.flag_order(job.order_no, str(fail))
                 if flagged:
@@ -385,6 +393,17 @@ def _export_alert(out: dict) -> str | None:
     if status not in ('conflict', 'error'):
         return None
     return f'{status}: {reason or ""}'
+
+
+def _buy_payload(out: dict) -> dict[str, object] | None:
+    """구매 에이전트 결과의 payload(원가·마진·계정·수단). 없으면 None."""
+    for name, r in (out.get('results') or {}).items():
+        if not str(name).startswith('buyer'):
+            continue
+        payload = getattr(r, 'payload', None) if not isinstance(r, dict) else r.get('payload')
+        if isinstance(payload, dict) and payload.get('cost') is not None:
+            return payload
+    return None
 
 
 def _failed_reason(out: dict) -> str:

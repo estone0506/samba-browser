@@ -569,6 +569,75 @@ def test_품절_실패는_자동으로_재고X_를_붙이지_않는다(setup, re
         assert any('재고X 보류' in s for s in sent)
 
 
+def _auto_worker(setup, marked):
+    q, log, sent, _make = setup
+    reg = Registry.load(DEFAULT_ROOT)
+    graph = build_supervisor(reg, agents(log, None), checkpointer=MemorySaver(), gate=False)
+    w = Worker(
+        WorkerDeps(
+            queue=q,
+            graph=graph,
+            version='vtest',
+            report=lambda job, line: sent.append(line),
+            parse_order=order_of,
+            dry_run=False,
+            flag_order=lambda no, err, ev=None: marked.append((no, err, ev)) or '표시함',
+        )
+    )
+    return q, sent, w
+
+
+def _ref(seller: str) -> OrderRef:
+    return OrderRef(
+        order_no='X1', source='MUSINSA', seller=seller, sku='상품', revenue=43600,
+        product_url='https://www.musinsa.com/products/1',
+    )
+
+
+def test_확정_품절은_근거를_적고_자동으로_취소중(setup):
+    """사용자 2026-09-29: 페이지에서 확인한 품절은 사람 검수 없이 취소중 — 근거(사유 글자)를 메모에 싣는다."""
+    marked: list = []
+    q, sent, w = _auto_worker(setup, marked)
+    job, _ = q.enqueue('X1', 'U1', {}, 'ts1')
+    result = AgentResult(
+        status='fail', reason='확정 품절: a — a: 주문 옵션 품절 표시 [95 품절]', fail_reason=FailReason.OUT_OF_STOCK
+    )
+    w._apply(
+        job,
+        {'outcome': 'needs_human', 'fail_reason': 'out_of_stock', 'order': _ref('KT알파쇼핑'), 'results': {'buyer.musinsa': result}},
+    )
+    assert len(marked) == 1 and marked[0][1] == 'out_of_stock'
+    assert '품절 확인' in marked[0][2] and '95 품절' in marked[0][2]
+    assert any('자동 취소중' in s for s in sent)
+
+
+def test_포이즌_품절은_자동으로_취소하지_않는다(setup):
+    """포이즌은 취소 패널티가 있어 사람이 본다."""
+    marked: list = []
+    q, sent, w = _auto_worker(setup, marked)
+    job, _ = q.enqueue('X1', 'U1', {}, 'ts1')
+    result = AgentResult(status='fail', reason='확정 품절: a — a: 품절', fail_reason=FailReason.OUT_OF_STOCK)
+    w._apply(
+        job,
+        {'outcome': 'needs_human', 'fail_reason': 'out_of_stock', 'order': _ref('poison(x)'), 'results': {'buyer.musinsa': result}},
+    )
+    assert marked == []
+    assert any('재고X 보류' in s for s in sent)
+
+
+def test_마진_미달은_주문서_원가가_있으면_자동으로_취소중(setup):
+    marked: list = []
+    q, sent, w = _auto_worker(setup, marked)
+    job, _ = q.enqueue('X1', 'U1', {}, 'ts1')
+    buy = AgentResult(status='ok', reason='ok', payload={'cost': 48480, 'margin_pct': -9.0, 'account': 'buyer01', 'card': '무신사페이'})
+    w._apply(
+        job,
+        {'outcome': 'needs_human', 'fail_reason': 'margin', 'order': _ref('KT알파쇼핑'), 'results': {'buyer.musinsa': buy}},
+    )
+    assert len(marked) == 1 and marked[0][1] == 'margin'
+    assert '48,480' in marked[0][2] and '43,600' in marked[0][2]
+
+
 @pytest.mark.parametrize(
     ('export_status', 'expect_alert'),
     [
