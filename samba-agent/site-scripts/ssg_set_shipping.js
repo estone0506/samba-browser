@@ -11,15 +11,19 @@ const first = async sel => { const l = (await tree({ selector: sel })).split('\n
 const R = { ok: false, name: null, address: null, address_detail: null, phone_field_ids: [], phone_formats: ['phone-rest'], form_popup: null, note: null }
 if (!args.name || !args.address) return { ...R, note: 'name·address 필요' }
 const waitPopup = async (re, ms) => { for (let i = 0; i < ms / 400; i++) { const p = (await tabs.list()).find(t => t.kind === 'popup' && re.test(t.url || '')); if (p) return p; await sleep(400) } return null }
-const ofs = (await tabs.list()).filter(t => t.kind === 'tab' && OF.test(t.url || ''))
-const tab = args.tab ? ofs.find(t => t.id === String(args.tab)) : ofs.length === 1 ? ofs[0] : null
-if (!tab) return { ...R, note: ofs.length ? 'order forms ' + ofs.length + ' — pass args.tab' : 'no order form' }
-await tabs.switch(tab.id)
-let b = await first('[id^="btnChangeShpploc"], [name="btnChangeShpploc"]')
-if (b < 0) b = await page.idOf('배송지 변경', 0)
-if (b < 0) return { ...R, note: '배송지 변경 버튼 없음' }
-await page.click(b)
-const list = await waitPopup(/shpplocList/, 8000)
+// 선물하기(2026-09-29): 선물 정보 화면 '배송지 대신 입력하기' → 주소록 팝업 '배송지 추가' 로 목록 팝업이 이미 열려 있다 — 그걸 쓴다
+let list = args.gift ? (await tabs.list()).find(t => t.kind === 'popup' && /shpplocList/.test(t.url || '')) : null
+if (!list) {
+  const ofs = (await tabs.list()).filter(t => t.kind === 'tab' && OF.test(t.url || ''))
+  const tab = args.tab ? ofs.find(t => t.id === String(args.tab)) : ofs.length === 1 ? ofs[0] : null
+  if (!tab) return { ...R, note: ofs.length ? 'order forms ' + ofs.length + ' — pass args.tab' : 'no order form' }
+  await tabs.switch(tab.id)
+  let b = await first('[id^="btnChangeShpploc"], [name="btnChangeShpploc"]')
+  if (b < 0) b = await page.idOf('배송지 변경', 0)
+  if (b < 0) return { ...R, note: '배송지 변경 버튼 없음' }
+  await page.click(b)
+  list = await waitPopup(/shpplocList/, 8000)
+}
 if (!list) {
   const lg = (await tabs.list()).find(t => t.kind === 'popup' && /member\.ssg\.com\/member\/login/.test(t.url || ''))
   if (lg) { try { await tabs.close(lg.id) } catch (e) {} return { ...R, error: 'login_required', note: 'SSG 세션 만료 — 로그인 팝업' } }
