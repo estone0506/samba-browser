@@ -63,6 +63,7 @@ AUTO_RUN_WAIT_S = 50.0
 _WM_RBUTTONDOWN, _WM_RBUTTONUP = 0x0204, 0x0205
 DIALOG_CLASS = '#32770'
 COL_STATE = '상태'
+COL_SELLER_CODE = '판매자상품코드'
 STATE_CANCELLED = '취소'
 # 행 메뉴(우클릭 메뉴) 항목 — 이름 뒤에 단축 글자가 붙는다('상태변경 (Q)')
 MENU_STATE = '상태변경'
@@ -272,6 +273,10 @@ class PywinautoEmpUi:
                 ExportFail.AMBIGUOUS, f'EMP 그리드에 그 주문번호 행이 {len(hits)}개다'
             )
         return hits[0]
+
+    def seller_code(self, order_no: str) -> str:
+        """그 주문 행의 판매자상품코드. 비어 있으면 빈 글자."""
+        return (self.find_row(order_no).values.get(COL_SELLER_CODE) or '').strip()
 
     def read(self, order_no: str) -> CellValues:
         row = self.find_row(order_no)

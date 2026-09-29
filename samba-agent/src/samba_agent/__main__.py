@@ -10,8 +10,8 @@ import logging
 import signal
 import sqlite3
 import threading
-from datetime import UTC, datetime
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from slack_bolt import App
@@ -26,7 +26,12 @@ from samba_agent.api.server import build_app, serve
 from samba_agent.bridge.client import BridgeClient, BridgeError
 from samba_agent.export.notify import ExportNotifier
 from samba_agent.export.routing import ExportRouting
-from samba_agent.export.stage import ExportFn, make_cancel_exporter, make_exporter
+from samba_agent.export.stage import (
+    ExportFn,
+    make_cancel_exporter,
+    make_exporter,
+    make_lookup_requester,
+)
 from samba_agent.export.store import ExportQueue
 from samba_agent.gateway.slack_bot import SambaBot
 from samba_agent.llm.decide import make_decide
@@ -118,6 +123,27 @@ def make_cancel_export(
         wait_s=settings.export_wait_s,
         deferred=EXPORT_DEFERRED,
     )
+
+
+def make_lookup(settings: 'Settings') -> Callable[[str, str | None], str | None] | None:
+    """소싱처 미등록 주문의 판매자상품코드 읽기를 큐에 넣는 함수. 꺼져 있으면 None."""
+    if not (settings.export_enabled and settings.link_by_seller_code):
+        return None
+    queue = ExportQueue(settings.export_db_path)
+    return make_lookup_requester(queue, ExportRouting.load(settings.export_routing_file))
+
+
+def make_linker(wave: WaveClient) -> Callable[[str, str], str]:
+    """읽어 온 수집상품 번호로 주문을 잇고 결과 한 줄을 돌려준다. 이어지면 다음 수집 때 주문이 들어온다."""
+
+    def link(order_no: str, collected_product_id: str) -> str:
+        out = wave.link_collected(order_no, collected_product_id)
+        return (
+            f'{order_no} 소싱처 미등록 → 수집상품 {collected_product_id} 에 연결'
+            f'({out.get("source_url") or "주소 없음"}) — 다음 수집 때 처리한다'
+        )
+
+    return link
 
 
 def _bridge_ready(bridge: BridgeClient) -> bool:
@@ -341,6 +367,8 @@ def main() -> None:
             ),
             # 이행 불가(소싱처 상품 삭제) — 재고X 표시 + 취소요청
             on_unfulfillable=flagger.mark if flagger is not None else None,
+            # 소싱처를 추정도 못 한 주문 — 샵마인·EMP 에서 판매자상품코드를 읽어 온다
+            on_unlinked=make_lookup(settings),
         )
         bot.intake = intake
 
@@ -379,7 +407,11 @@ def main() -> None:
             _thread_of,
             lambda ts, text: bot.post(ts, text),
             post_new=bot.post_new,
-            done_targets=[t for d in EXPORT_DEFERRED for t in (d, f'{d}_cancel')],
+            done_targets=[
+                *(t for d in EXPORT_DEFERRED for t in (d, f'{d}_cancel')),
+                *(('shopmine_lookup', 'emp_lookup') if settings.link_by_seller_code else ()),
+            ],
+            link=make_linker(wave) if settings.link_by_seller_code and wave is not None else None,
             since=datetime.now(UTC).isoformat(timespec='seconds'),
         )
         threading.Thread(

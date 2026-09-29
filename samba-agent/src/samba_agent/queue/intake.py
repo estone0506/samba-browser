@@ -86,6 +86,7 @@ class Intake:
         poison_only: bool = False,
         all_sellers_sources: frozenset[str] = frozenset(),
         on_unfulfillable: Callable[[str, str], str | None] | None = None,
+        on_unlinked: Callable[[str, str | None], str | None] | None = None,
     ) -> None:
         self._wave = wave
         self._queue = queue
@@ -105,6 +106,9 @@ class Intake:
         self._on_unfulfillable = on_unfulfillable
         # 범위 밖 소싱처 미등록 주문 중 이미 연결을 시도한 주문(주기마다 되풀이하지 않는다)
         self._linked_only: set[str] = set()
+        # 소싱처를 추정도 못 한 주문 — 샵마인·EMP 의 판매자상품코드를 읽어 달라고 넘긴다(주문번호, 판매처)
+        self._on_unlinked = on_unlinked
+        self._lookup_asked: set[str] = set()
         # 슬랙 `수집 중지` 가 세우는 깃발. 세워져 있으면 run_once 는 아무것도 하지 않는다
         self.paused = False
 
@@ -129,6 +133,7 @@ class Intake:
         for wave_order in sorted(orders, key=_paid_key):
             seen += 1
             order = wave_order.to_order_ref()
+            self._ask_lookup(wave_order)
             if not self._in_scope(wave_order):
                 # 이행 범위 밖이라도 소싱처 미등록 주문은 상품관리 상품에 연결만 해 둔다(사용자 2026-09-25 — ABC마트).
                 # 연결되면 소싱처가 채워져 다음 주기부터는 추정 주문이 아니다
@@ -156,6 +161,21 @@ class Intake:
         return IntakeReport(
             seen=seen, enqueued=enqueued, skipped_live=skipped_live, unsupported=unsupported
         )
+
+    def _ask_lookup(self, wave_order: WaveOrder) -> None:
+        """소싱처가 없고 상품명으로 추정도 못 한 주문 — 판매자상품코드 읽기를 한 번 요청한다."""
+        if self._on_unlinked is None or (wave_order.source_site or '').strip():
+            return
+        if wave_order.order_number in self._lookup_asked:
+            return
+        self._lookup_asked.add(wave_order.order_number)
+        target = self._on_unlinked(wave_order.order_number, wave_order.seller)
+        if target:
+            log.info(
+                '소싱처 미등록 주문 %s — 판매자상품코드 읽기 요청(%s)',
+                wave_order.order_number,
+                target,
+            )
 
     def _link_inferred(self, wave_order: WaveOrder, job_id: int | None, ts: str | None) -> bool:
         """소싱처 미등록 주문(상품명 숫자로 무신사·ABC마트 추정)을 수집상품에 연결한다. 이행을 이어 가면 True.

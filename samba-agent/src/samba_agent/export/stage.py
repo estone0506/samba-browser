@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable, Collection
 
 from samba_agent.agents.contracts import AgentResult, Evidence
-from samba_agent.export.routing import ExportRouting, cancel_target
+from samba_agent.export.routing import ExportRouting, cancel_target, lookup_target
 from samba_agent.export.store import ExportConflict, ExportQueue
 from samba_agent.supervisor.state import RunState
 
@@ -163,3 +163,28 @@ def make_cancel_exporter(
         return f'{target} 취소 연동 요청함'
 
     return export_cancel
+
+
+def make_lookup_requester(
+    queue: ExportQueue, routing: ExportRouting
+) -> Callable[[str, str | None], str | None]:
+    """소싱처 미등록 주문의 판매자상품코드를 읽어 달라고 큐에 넣는 함수(주문번호, 판매처).
+
+    넣었으면 대상 이름, 넣지 않았으면(제외 판매처·이미 넣음) None. 예외를 내지 않는다.
+    """
+
+    def request(order_no: str, seller: str | None) -> str | None:
+        try:
+            target = routing.target_for(seller)
+            if target is None:
+                return None
+            name = lookup_target(target)
+            if queue.find(order_no, name) is not None:
+                return None
+            queue.enqueue(order_no, name, 0, 0)
+        except Exception:  # 수집은 이어 간다 — 다음 주기에 다시 넣는다
+            log.exception('판매자상품코드 읽기 요청 실패')
+            return None
+        return name
+
+    return request

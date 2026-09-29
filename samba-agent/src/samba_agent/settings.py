@@ -90,6 +90,9 @@ class Settings(BaseSettings):
     export_wait_s: float = Field(default=60.0, ge=0, alias='SAMBA_EXPORT_WAIT_S')
     # 입력 작업자가 맡을 대상(쉼표). 비우면 어댑터를 만들지 않는다. 예: shopmine
     export_targets: str = Field(default='', alias='SAMBA_EXPORT_TARGETS')
+    # 소싱처 미등록 주문을 샵마인·EMP 의 판매자상품코드(cp_…)로 수집상품에 잇는다.
+    # 삼바웨이브 상품 연결 API 가 수집상품 번호를 받게 된 뒤에 켠다
+    link_by_seller_code: bool = Field(default=False, alias='SAMBA_LINK_BY_SELLER_CODE')
 
     @property
     def export_target_list(self) -> tuple[str, ...]:

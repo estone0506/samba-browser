@@ -7,9 +7,13 @@
 from collections.abc import Collection
 
 from samba_agent.export.adapters import Adapter, BatchAdapter
-from samba_agent.export.desktop.emp import EmpAdapter, EmpCancelAdapter
-from samba_agent.export.desktop.shopmine import STATUS_DELAYED, ShopMineAdapter
-from samba_agent.export.routing import cancel_target
+from samba_agent.export.desktop.emp import EmpAdapter, EmpCancelAdapter, EmpLookupAdapter
+from samba_agent.export.desktop.shopmine import (
+    STATUS_DELAYED,
+    ShopMineAdapter,
+    ShopMineLookupAdapter,
+)
+from samba_agent.export.routing import cancel_target, lookup_target
 
 USER_BACK_S = 3.0
 
@@ -39,11 +43,14 @@ def build_adapters(targets: Collection[str]) -> dict[str, Adapter | BatchAdapter
             made[target] = ShopMineAdapter(ui)
             # 취소한 주문은 같은 화면에서 지연됨으로 바꾼다
             made[cancel_target(target)] = ShopMineAdapter(ui, status=STATUS_DELAYED)
+            # 소싱처 미등록 주문의 판매자상품코드 읽기
+            made[lookup_target(target)] = ShopMineLookupAdapter(ui)
         elif target == 'emp':
             # EMP 는 관리자 권한으로 돈다 — 작업자도 관리자 권한으로 띄워야 한다
             emp_ui = _emp_ui()
             made[target] = EmpAdapter(emp_ui)
             made[cancel_target(target)] = EmpCancelAdapter(emp_ui)
+            made[lookup_target(target)] = EmpLookupAdapter(emp_ui)
         else:
             raise ValueError(f'모르는 외부 기입 대상: {target!r}')
     return {name: adapter for name, adapter in made.items() if name not in off}

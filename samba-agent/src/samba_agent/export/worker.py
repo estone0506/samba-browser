@@ -187,6 +187,10 @@ class ExportWorker:
             log.exception('외부 일괄 처리 중 오류: %s(%s)', req.order_no, req.target)
             return _Outcome('fail', f'{type(e).__name__}: {e}'[:200], ExportFail.UNKNOWN), set()
         detail = f'처리 {len(completed)}건'
+        # 읽기 작업은 읽은 값을 결과로 남긴다(하네스가 그 값으로 다음 일을 한다)
+        found = getattr(adapter, 'detail_for', None)
+        if callable(found) and req.order_no in completed:
+            detail = str(found(req.order_no) or detail)
         if req.order_no in completed:
             return _Outcome('done', detail), completed
         # 화면(필터)에 아직 없는 주문 — 수집이 늦을 수 있으니 시간을 두고 다시 본다

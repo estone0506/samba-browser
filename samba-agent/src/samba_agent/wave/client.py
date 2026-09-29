@@ -367,6 +367,18 @@ class WaveClient:
         )
         return body if isinstance(body, dict) else {}
 
+    def link_collected(self, order_no: str, collected_product_id: str) -> dict[str, object]:
+        """소싱처 미등록 주문을 수집상품 번호(cp_…)로 연결한다 — 판매자상품코드에서 읽은 번호다.
+
+        그 수집상품이 없으면(지워짐) 삼바웨이브가 404 를 준다.
+        """
+        body = self._request(
+            'POST',
+            f'/orders/{order_no}/link-product',
+            json={'collected_product_id': collected_product_id},
+        )
+        return body if isinstance(body, dict) else {}
+
     def set_cancel_requested(self, order_no: str, reason: str, flag: str | None = None) -> bool:
         """이행하지 못한 발주 전 주문을 '취소중'(cancelling)으로 바꾼다(flag 를 주면 가격X·재고X 태그도 붙인다).
 

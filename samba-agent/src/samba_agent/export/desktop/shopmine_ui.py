@@ -46,6 +46,7 @@ STATUS_MENU = '작업상태지정'
 ORDER_NO_COLUMN = '주문번호'
 # 쿠팡은 삼바웨이브 주문번호가 샵마인의 배송번호 칸에 있다(실기 2026-09-29: 736… ↔ 배송번호)
 SHIPMENT_NO_COLUMN = '배송번호'
+SELLER_CODE_COLUMN = '판매자상품코드'
 _EMPTY_CELLS = ('', '(null)')
 # 우리가 완료됨을 누른 뒤 뜨는 확인 대화상자에서 눌러도 되는 버튼 이름
 CONFIRM_BUTTONS = ('예(Y)', '확인', 'OK', 'Yes')
@@ -472,6 +473,22 @@ class PywinautoShopMineUi:
         self._select_combo(self._filter_combo(FILTER_EXCEL), FILTER_EXCEL)
         time.sleep(self._poll_s * 2)
         self._refresh()
+
+    @_guard_pywinauto_errors
+    def seller_codes(self, order_nos: Sequence[str]) -> dict[str, str]:
+        """지금 목록에서 그 주문들의 판매자상품코드(주문번호 → 코드). 목록에 없는 주문은 빠진다."""
+        header, rows = self._rows()
+        if not rows:
+            return {}
+        cols = self._key_columns(header)
+        code_col = self._column(header, SELLER_CODE_COLUMN)
+        out: dict[str, str] = {}
+        for cells in rows:
+            keys = self._row_keys(cells, cols)
+            hit = next((o for o in order_nos if any(order_matches(o, k) for k in keys)), None)
+            if hit is not None and code_col < len(cells):
+                out[hit] = self._cell_value(cells[code_col])
+        return out
 
     @_guard_pywinauto_errors
     def order_nos_with_status(self, status: str) -> list[str]:

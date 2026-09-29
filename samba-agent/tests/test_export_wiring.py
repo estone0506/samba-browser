@@ -70,7 +70,7 @@ def test_shopmine_대상은_샵마인_어댑터를_만든다(monkeypatch):
 
     monkeypatch.setattr(desktop, '_shopmine_ui', lambda: object())
     made = build_adapters(('shopmine',))
-    assert set(made) == {'shopmine', 'shopmine_cancel'}
+    assert set(made) == {'shopmine', 'shopmine_cancel', 'shopmine_lookup'}
     assert isinstance(made['shopmine'], BatchAdapter)
 
 
@@ -221,4 +221,4 @@ def test_no_를_붙인_대상은_만들지_않는다(monkeypatch):
 
     monkeypatch.setattr(desktop, '_shopmine_ui', lambda: object())
     made = build_adapters(('shopmine', 'no_shopmine_cancel'))
-    assert set(made) == {'shopmine'}
+    assert set(made) == {'shopmine', 'shopmine_lookup'}

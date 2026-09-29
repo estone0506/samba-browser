@@ -4,12 +4,17 @@
 """
 
 import logging
+import re
 import time
 from collections.abc import Callable, Collection
 
 from samba_agent.export.store import ExportQueue, ExportRequest
 
 log = logging.getLogger(__name__)
+
+# 판매자상품코드 속 삼바웨이브 수집상품 번호(cp_ + 26글자)
+_COLLECTED_ID = re.compile(r'cp_[0-9A-Z]{26}')
+LOOKUP_SUFFIX = '_lookup'
 
 
 def _text(req: ExportRequest) -> str:
@@ -44,6 +49,8 @@ class ExportNotifier:
         # 하네스가 결과를 기다리지 않는 대상(EMP) — 끝나면 성공도 알린다
         done_targets: Collection[str] = (),
         since: str = '',
+        # 읽어 온 판매자상품코드로 주문을 수집상품에 잇는 함수(주문번호, 수집상품 번호) → 결과 한 줄
+        link: Callable[[str, str], str] | None = None,
     ) -> None:
         self._queue = queue
         self._thread_of = thread_of
@@ -52,6 +59,7 @@ class ExportNotifier:
         self._done_targets = tuple(done_targets)
         # 이 시각 뒤에 들어온 요청만 알린다 — 예전에 끝난 요청을 한꺼번에 쏟아내지 않는다
         self._since = since
+        self._link = link
 
     def tick(self) -> int:
         """알리지 않은 실패를 알린다. 이번에 알린 건수를 돌려준다."""
@@ -62,7 +70,7 @@ class ExportNotifier:
             else []
         )
         todo = [(r, _text(r)) for r in self._queue.unnotified_failed()]
-        todo += [(r, _done_text(r)) for r in finished]
+        todo += [(r, self._finish(r)) for r in finished]
         for req, text in todo:
             try:
                 thread_ts = self._thread_of(req.order_no)
@@ -80,6 +88,21 @@ class ExportNotifier:
             self._queue.mark_notified(req.id)
             sent += 1
         return sent
+
+    def _finish(self, req: ExportRequest) -> str:
+        """끝난 요청의 알림 글자. 읽기 요청이면 읽어 온 코드로 주문을 수집상품에 잇는다."""
+        if not req.target.endswith(LOOKUP_SUFFIX):
+            return _done_text(req)
+        found = _COLLECTED_ID.search(req.detail or '')
+        if found is None:
+            return f'{req.order_no} 소싱처 미등록 — 판매자상품코드에 수집상품 번호가 없다({req.detail})'
+        if self._link is None:
+            return f'{req.order_no} 소싱처 미등록 — 수집상품 {found.group(0)} (연결 기능 꺼짐)'
+        try:
+            return self._link(req.order_no, found.group(0))
+        except Exception as e:
+            log.exception('소싱처 미등록 주문 연결 실패: %s', req.order_no)
+            return f'{req.order_no} 소싱처 미등록 — 연결 실패({type(e).__name__}: {str(e)[:80]})'
 
     def run_forever(
         self,

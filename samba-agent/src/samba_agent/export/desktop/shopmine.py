@@ -71,6 +71,10 @@ class ShopMineUi(Protocol):
         """작업상태가 status 인 행들을 알아보는 값들(엑셀 필터는 그대로 둔다)."""
         ...
 
+    def seller_codes(self, order_nos: Sequence[str]) -> Mapping[str, str]:
+        """지금 목록에서 그 주문들의 판매자상품코드. 목록에 없는 주문은 빠진다."""
+        ...
+
     def select_orders(self, order_nos: Sequence[str]) -> Mapping[str, int]:
         """전체 선택을 풀고, 목록의 주문번호와 맞는 행만 체크한다. 주문번호 → 체크한 행 수."""
         ...
@@ -153,3 +157,30 @@ class ShopMineAdapter:
                 f'{self._status} 지정 뒤에도 {len(left)}건이 필터에 남음(처리 대상 {len(found)}건)',
             )
         return set(found) | already
+
+
+class ShopMineLookupAdapter:
+    """BatchAdapter 구현 — 소싱처 미등록 주문의 판매자상품코드를 읽는다. 화면의 값은 바꾸지 않는다."""
+
+    one_at_a_time = True
+
+    def __init__(self, ui: ShopMineUi, *, collect_timeout_s: float = 300.0) -> None:
+        self._ui = ui
+        self._collect_timeout_s = collect_timeout_s
+        self._found: dict[str, str] = {}
+
+    def complete_pending(self, order_nos: Sequence[str]) -> set[str]:
+        wanted = [o for o in dict.fromkeys(order_nos) if o]
+        if not wanted:
+            return set()
+        ui = self._ui
+        ui.ensure_ready()
+        ui.set_period()
+        ui.collect()
+        ui.wait_collected(self._collect_timeout_s)
+        ui.set_filters()
+        self._found = {o: c for o, c in ui.seller_codes(wanted).items() if c.strip()}
+        return set(self._found)
+
+    def detail_for(self, order_no: str) -> str | None:
+        return self._found.get(order_no)

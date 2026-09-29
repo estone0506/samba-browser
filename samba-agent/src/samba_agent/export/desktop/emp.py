@@ -43,6 +43,10 @@ class EmpUi(Protocol):
         """검색어를 지우고 목록을 되돌린다."""
         ...
 
+    def seller_code(self, order_no: str) -> str:
+        """그 주문 행의 판매자상품코드. 비어 있으면 빈 글자."""
+        ...
+
     def cancel(self, order_no: str) -> None:
         """그 주문 행의 상태를 취소로 바꾸고 되읽는다. 이미 취소면 아무것도 하지 않는다."""
         ...
@@ -101,3 +105,37 @@ class EmpCancelAdapter:
         finally:
             self._ui.clear_keyword()
         return done
+
+
+class EmpLookupAdapter:
+    """BatchAdapter 구현 — 소싱처 미등록 주문의 판매자상품코드를 읽는다. 화면의 값은 바꾸지 않는다."""
+
+    one_at_a_time = True
+
+    def __init__(self, ui: EmpUi) -> None:
+        self._ui = ui
+        self._found: dict[str, str] = {}
+
+    def complete_pending(self, order_nos: Sequence[str]) -> set[str]:
+        wanted = [o for o in dict.fromkeys(order_nos) if o]
+        if not wanted:
+            return set()
+        self._ui.ensure_ready()
+        self._found = {}
+        try:
+            for order_no in wanted:
+                try:
+                    self._ui.show_only(order_no)
+                    code = self._ui.seller_code(order_no)
+                except AdapterRetry as e:
+                    if e.reason is not ExportFail.NOT_FOUND:
+                        raise
+                    continue
+                if code:
+                    self._found[order_no] = code
+        finally:
+            self._ui.clear_keyword()
+        return set(self._found)
+
+    def detail_for(self, order_no: str) -> str | None:
+        return self._found.get(order_no)
