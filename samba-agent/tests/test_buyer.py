@@ -1598,3 +1598,28 @@ def test_matching_options_letter_number_size_uses_product_code() -> None:
     ]
     assert matching_options(options, '블랙/031 S-3') == [options[0]]
     assert matching_options(options, '블랙/031 XL-6') == []
+
+
+def test_주문_옵션에_한국_치수가_있으면_그_치수로_맞춘다():
+    from samba_agent.agents.buyer import matching_options
+
+    wanted = 'EU 화이트 EU 42 · KR 270'
+    assert matching_options(['230', '240', '250', '260', '270', '280'], wanted) == ['270']
+    # 외국 치수 숫자(42)가 든 선택지에 걸리지 않는다
+    assert matching_options(['42', '43', '270', '280'], wanted) == ['270']
+    # 선택지에도 한국 치수가 적혀 있으면 그것끼리 맞춘다
+    options = ['KR 265 / EU 42', 'KR 270 / EU 42.5', 'KR 275 / EU 43']
+    assert matching_options(options, wanted) == ['KR 270 / EU 42.5']
+
+
+def test_한국_치수가_없는_외국_치수_주문은_짐작하지_않는다():
+    from samba_agent.agents.buyer import matching_options
+
+    options = ['230', '240', '250', '260', '270', '280']
+    assert matching_options(options, 'EU 미디엄 다크 카키 EU 43/44') == []
+
+
+def test_한국_치수_선택지가_품절이면_다른_치수로_바꾸지_않는다():
+    from samba_agent.agents.buyer import matching_options
+
+    assert matching_options(['260', '270 (품절)', '280'], 'EU 42 · KR 270') == []

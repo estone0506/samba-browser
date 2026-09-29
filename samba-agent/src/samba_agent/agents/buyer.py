@@ -556,6 +556,15 @@ def _is_free_size(text: str) -> bool:
     return any(t in _FREE_SIZE_TOKENS for t in toks) or 'onesize' in joined or 'freesize' in joined
 
 
+_KR_SIZE_RE = re.compile(r'(?<![A-Za-z])KR\s*(\d{3})(?!\d)', re.IGNORECASE)
+
+
+def kr_size(text: str | None) -> str | None:
+    """옵션 글자에 적힌 한국 치수('KR 270' → '270'). 없으면 None."""
+    m = _KR_SIZE_RE.search(text or '')
+    return m.group(1) if m else None
+
+
 def matching_options(options: list[str], wanted: str | None) -> list[str]:
     """주문 옵션과 맞는 후보들. 주문 옵션이 없으면 전부 후보다.
 
@@ -582,6 +591,16 @@ def matching_options(options: list[str], wanted: str | None) -> list[str]:
         and not size_letters(wanted)
     ):
         return live
+    # 주문 옵션에 한국 치수가 같이 적혀 있으면('EU 42 · KR 270') 그 치수로 맞춘다 — 외국 치수 숫자(42)가
+    # 다른 선택지에 걸리지 않게 먼저 본다(사용자 결정 2026-09-29: 한국 치수가 있을 때만 그것으로 맞춘다)
+    kr = kr_size(wanted)
+    if kr:
+        marked = [o for o in live if kr_size(o) == kr]
+        if marked:
+            return marked
+        by_kr = [o for o in live if not kr_size(o) and kr in size_numbers(o)]
+        if by_kr:
+            return by_kr
     w = wanted.strip()
     exact = [o for o in live if o.strip() == w]
     if exact:
