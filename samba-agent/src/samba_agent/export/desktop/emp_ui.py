@@ -850,11 +850,18 @@ class PywinautoEmpUi:
         self._click_dialog_button(buttons, OK_BUTTONS)
         self._wait_enabled()
 
-    def _wait_enabled(self, timeout_s: float = 10.0) -> None:
+    def _wait_enabled(self, timeout_s: float = 20.0) -> None:
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
-            if self._main.is_enabled() and not self.dialogs():
+            found = self.dialogs()
+            if self._main.is_enabled() and not found:
                 return
+            for _handle, _title, message, buttons in found:
+                # 저장 안 된 편집을 묻는 창은 늦게 읽혀도 여기서 닫는다 — 우리가 넣은 값은 저장을 거친
+                # 뒤에만 남기므로, 이 창이 뜬 것은 버려도 되는 값이다(실기 2026-09-29: 창이 남아 EMP 가 막혔다)
+                if UNSAVED_MARK in message:
+                    self._click_dialog_button(buttons, NO_BUTTONS)
+                    log.warning('EMP 에 저장 안 된 편집이 남아 있어 버렸다')
             time.sleep(self._poll_s)
         raise AdapterRetry(ExportFail.BLOCKED, 'EMP 대화상자가 닫히지 않았다')
 
