@@ -518,6 +518,12 @@ def _source_order_no(page: str, tabs: str = '') -> str | None:
 
     실기: 무신사페이 완료 화면 글자에 '주문번호' 표기가 없어 기록이 멈췄다 — 완료 탭 주소에는 번호가 있다.
     """
+    # 완료 화면 주소의 번호가 가장 확실하다 — 화면 글자의 '주문번호'는 다른 주문(추천·최근 주문·다른 탭)일 수 있다
+    # (실기 2026-09-28 무신사 3474468594: 주소는 …/order/result/202609281237190008 인데 글자에서
+    # 2026092815965556 을 읽어 기입했다). 화면 첫 줄(URL: …)을 먼저 본다
+    m = RESULT_URL_ORDER_NO_RE.search(page.splitlines()[0] if page.strip() else '')
+    if m:
+        return m.group(1) or m.group(2)
     m = SOURCE_ORDER_NO_RE.search(page)
     if m:
         return m.group(1)
