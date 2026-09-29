@@ -794,6 +794,8 @@
       "phone": "Phone",
       "passport": "Passport number",
       "idCard": "ID card number",
+      "bizName": "Business name",
+      "bizNo": "Business registration number",
       "note": "Note",
       "paymentProvider": "Payment method",
       "paymentAccount": "Pay-app account"

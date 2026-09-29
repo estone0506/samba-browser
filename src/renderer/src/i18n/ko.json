@@ -794,6 +794,8 @@
       "phone": "연락처",
       "passport": "여권번호",
       "idCard": "신분증번호",
+      "bizName": "사업자명",
+      "bizNo": "사업자번호",
       "note": "메모",
       "paymentProvider": "결제 수단",
       "paymentAccount": "결제할 앱 계정"
