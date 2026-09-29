@@ -28,8 +28,8 @@ if (mc) {
   method = mp;
 }
 await sleep(600);
-// 현금영수증은 항상 지출증빙용(사용자 2026-09-29). 번호 칸이 비어 있고 args.biz_no 가 있으면 사업자등록번호를 넣는다
-let receipt=null;
+// 현금영수증은 항상 지출증빙용(사용자 2026-09-29). args.biz_no 가 있으면 번호 칸을 사업자등록번호로 맞춘다
+let receipt=null,after=null;
 try{
   const rt=(await page.get({query:'지출증빙용'})).tree;
   const rm=rt.match(/\[(\d+)\] radio "지출증빙용"[^\n]*/);
@@ -38,8 +38,11 @@ try{
     receipt='지출증빙용';
     const it=(await page.get({interactive:true})).tree.split('\n');
     const ri=it.findIndex(l=>/radio "지출증빙용"/.test(l));
-    const tb=ri>=0?it.slice(ri,ri+14).find(l=>/^\[\d+\] textbox/.test(l)):null;
-    if(tb&&/value=""/.test(tb)&&args.biz_no){await page.type(parseInt(tb.slice(1)),String(args.biz_no),false);await sleep(500);receipt='지출증빙용(번호 입력)';}
+    const tb=it.find(l=>/^\[\d+\] textbox "[^"]*10자리/.test(l));
+    if(!tb)receipt='지출증빙용(번호 칸 못 찾음)';
+    // 칸에 다른 번호(소득공제용 휴대폰 번호 등)가 미리 들어 있으면 지우고 사업자등록번호로 바꾼다(실기 2026-09-29)
+    const cur=tb?((tb.match(/value="([^"]*)"/)||[])[1]||'').replace(/\D/g,''):'';
+    if(tb&&args.biz_no&&cur!==String(args.biz_no)){await page.type(parseInt(tb.slice(1)),String(args.biz_no),true);await sleep(500);receipt='지출증빙용(번호 입력)';}
   }
 }catch(e){receipt='확인 실패';}
 const payId = await page.idOf('결제하기');
@@ -50,6 +53,8 @@ await sleep(3000);
 if (/네이버페이/.test(method)) {
   for (let i = 0; i < 8; i++) { const ag = await page.idOf('동의하고 결제하기'); if (ag >= 0) { await page.click(ag); await sleep(3000); break; } await sleep(1000); }
 }
+try{const T=String((await page.get({})).tree||'');if(/^URL: [^\n]*orderSheet/.test(T)){const m=T.match(/사업자등록번호[^\n]{0,25}입력해 ?주세요/)||T.match(/[^\n.]{0,30}(입력해 ?주세요|선택해 ?주세요|동의해 ?주세요)/);after='주문서에 그대로: '+(m?m[0].replace(/\d{6,}/g,'#'):'안내 문구 없음')}}catch(e){}
+if(after)return{ok:false,error:after,method,receipt};
 const tbs = await tabs.list();
 const popup = tbs.find(t=>t.kind==='popup');
 return { ok:true, method, receipt, popup_url: popup? popup.url : null, keypad_in_tab: /네이버페이/.test(method) };
