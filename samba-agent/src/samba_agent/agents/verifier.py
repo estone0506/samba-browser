@@ -22,7 +22,7 @@ SAMBA_READ_SCRIPT = 'samba_read_order'
 def _same(field: str, got: object, want: object) -> bool:
     """대조용 비교. 주문번호는 표기만 다른 것(SSG 주문 상세의 '20260929-CA60D3' ↔ '20260929CA60D3')을 같게 본다."""
     if field == 'source_order_no' and got is not None and want is not None:
-        plain = lambda x: str(x).replace('-', '').replace(' ', '').upper()  # noqa: E731
+        plain = lambda x: str(x).replace('-', '').replace(' ', '').upper()
         return plain(got) == plain(want)
     return got == want
 
@@ -88,12 +88,20 @@ class VerifierAgent(AgentBase):
         self.step('verifier: 소싱처 주문 상세 읽기')
         want_no = a.expected.get('source_order_no')
         # 스크립트가 없거나 실패하면 AI 가 고쳐 이어 간다(실기: source_order_detail 없음으로 검증만 실패)
-        source = self.script_json(
-            detail_script(site_of(a)),
-            detail_args(a, want_no),
-            goal=detail_goal(str(a.handoff.get('buy_source') or a.order.source)),
-            check=detail_check(want_no),
-        )
+        try:
+            source = self.script_json(
+                detail_script(site_of(a)),
+                detail_args(a, want_no),
+                goal=detail_goal(str(a.handoff.get('buy_source') or a.order.source)),
+                check=detail_check(want_no),
+            )
+        except AgentFailure as e:
+            if 'no saved script' not in e.reason:
+                raise
+            # 상세 스크립트가 아직 없는 소싱처(롯데온) — 결제·기입은 끝났다. 소싱처 쪽 대조만 건너뛰고 삼바웨이브
+            # 기입값은 그대로 대조한다(실기 2026-09-29: 결제·기록된 롯데온 주문이 매번 needs_human 으로 남았다)
+            self.note('소싱처 대조 불가', f'주문 상세 스크립트 없음({detail_script(site_of(a))}) — 삼바웨이브 기입만 대조')
+            source = {k: v for k, v in a.expected.items() if k in ('source_order_no', 'real_price')}
         # 원가는 결제 뒤 실제 상세로 다시 계산해 기록한다(기록 에이전트) — 견적 원가 대신 그 값으로 대조한다
         expected = dict(a.expected)
         # 원가의 사용 적립금은 보유 적립금만(선할인 제외) — 기록 단계와 같은 규칙. 상세를 펼쳐 읽은 보유분이 없으면

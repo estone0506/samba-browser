@@ -87,10 +87,6 @@ def _normalize(field: str, value: object) -> object:
     return value
 
 
-def _as_positive(v: object) -> bool:
-    """0 보다 큰 수인가(불리언·글자는 아니다)."""
-    return isinstance(v, int | float) and not isinstance(v, bool) and v > 0
-
 
 class RecorderAgent(AgentBase):
     """SAMBA-WAVE 기록 담당. 내부 API 가 꽂혀 있으면 앱 화면 대신 그쪽에 기입한다."""
@@ -314,9 +310,9 @@ class RecorderAgent(AgentBase):
         if cost is None:
             self.note('실제 원가', '결제액을 못 읽어 견적 원가로 기록')
             return
-        # 결제액이 0 이거나 원가가 0 이하면 상세를 잘못 읽은 것이다 — 그 값으로 덮어쓰지 않는다
+        # 원가가 0 이하면 상세를 잘못 읽은 것이다 — 그 값으로 덮어쓰지 않는다(포인트 전액 결제는 결제 0 이어도 원가는 양수다)
         # (실기 2026-09-28 무신사 3474468594: 없는 주문번호의 상세를 읽어 결제 0 · 원가 -80원을 기입했다)
-        if not _as_positive(detail.get('paid')) or cost <= 0:
+        if cost <= 0:
             self.note(
                 '실제 원가',
                 f'상세 값이 이상해 견적 원가로 기록(결제 {detail.get("paid")} · 원가 {cost:,.0f}원)',
