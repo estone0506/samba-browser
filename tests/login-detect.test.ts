@@ -13,6 +13,20 @@ function idOfName(snap: ReturnType<typeof buildSnapshot>, name: string): number 
 }
 
 describe('findLoginFields 픽스처', () => {
+  it('Nexacro(현대홈쇼핑 파트너센터): 비어 있는 비밀번호 칸은 type=text 다', () => {
+    const snap = snapshotWith(`
+      <div id="mainframe.VFrameSet00.LoginFrame.form.div_login.form.div_dtl.form.edt_userId">
+        <input type="text" name="uid" id="mainframe.VFrameSet00.LoginFrame.form.div_login.form.div_dtl.form.edt_userId:input">
+      </div>
+      <div id="mainframe.VFrameSet00.LoginFrame.form.div_login.form.div_dtl.form.edt_password">
+        <input type="text" name="upw" autocomplete="new-password" id="mainframe.VFrameSet00.LoginFrame.form.div_login.form.div_dtl.form.edt_password:input">
+      </div>
+    `)
+    const f = findLoginFields()
+    expect(f.password).toBe(idOfName(snap, 'upw'))
+    expect(f.username).toBe(idOfName(snap, 'uid'))
+  })
+
   it('네이버: 아이디 또는 전화번호 라벨', () => {
     const snap = snapshotWith(`
       <form id="frmNIDLogin">

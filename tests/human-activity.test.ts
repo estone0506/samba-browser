@@ -58,5 +58,8 @@ describe('needsHumanTyping — 한 글자씩 키 입력은 GS샵·페이코만',
     expect(needsHumanTyping('id.payco.com')).toBe(true)
     expect(needsHumanTyping('notpayco.com')).toBe(false)
     expect(needsHumanTyping('www.shoemarker.co.kr')).toBe(true)
+    // 현대홈쇼핑 파트너센터만 — H몰 고객 사이트 로그인은 그대로 둔다
+    expect(needsHumanTyping('partner.hmall.com')).toBe(true)
+    expect(needsHumanTyping('www.hmall.com')).toBe(false)
   })
 })
