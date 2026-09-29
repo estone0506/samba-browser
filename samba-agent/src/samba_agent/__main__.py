@@ -11,7 +11,7 @@ import signal
 import sqlite3
 import threading
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from slack_bolt import App
@@ -412,7 +412,8 @@ def main() -> None:
                 *(('shopmine_lookup', 'emp_lookup') if settings.link_by_seller_code else ()),
             ],
             link=make_linker(wave) if settings.link_by_seller_code and wave is not None else None,
-            since=datetime.now(UTC).isoformat(timespec='seconds'),
+            # 하네스가 다시 떠도 하루 안의 결과는 알린다 — 알린 것은 표시가 남아 되풀이하지 않는다
+            since=(datetime.now(UTC) - timedelta(days=1)).isoformat(timespec='seconds'),
         )
         threading.Thread(
             target=notifier.run_forever, args=(stop.is_set,), daemon=True, name='export-notify'
