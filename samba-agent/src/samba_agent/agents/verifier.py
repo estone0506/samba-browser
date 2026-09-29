@@ -19,6 +19,14 @@ from samba_agent.wave.client import WaveClient, WaveError, wave_fields
 SAMBA_READ_SCRIPT = 'samba_read_order'
 
 
+def _same(field: str, got: object, want: object) -> bool:
+    """대조용 비교. 주문번호는 표기만 다른 것(SSG 주문 상세의 '20260929-CA60D3' ↔ '20260929CA60D3')을 같게 본다."""
+    if field == 'source_order_no' and got is not None and want is not None:
+        plain = lambda x: str(x).replace('-', '').replace(' ', '').upper()  # noqa: E731
+        return plain(got) == plain(want)
+    return got == want
+
+
 class VerifierAgent(AgentBase):
     """대조만 한다. 주문·배송지는 바꾸지 않는다 — 쓰기 도구는 소싱처 상세 스크립트 AI 수리용 save_script 뿐이다."""
 
@@ -122,8 +130,8 @@ class VerifierAgent(AgentBase):
         mismatches = [
             {'field': f, 'expected': v, 'source': source.get(f), 'samba': samba.get(f)}
             for f, v in expected.items()
-            if (f not in source_missing and source.get(f) != v)
-            or (f not in unverified and samba.get(f) != v)
+            if (f not in source_missing and not _same(f, source.get(f), v))
+            or (f not in unverified and not _same(f, samba.get(f), v))
         ]
         # 여기서부터는 마스킹한 사본만 쓴다 — payload·reason·LLM 프롬프트 어디에도
         # 브릿지의 날것 값(고객 개인정보일 수 있다)이 그대로 나가지 않게 한다
