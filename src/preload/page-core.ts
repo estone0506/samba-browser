@@ -716,6 +716,30 @@ export function valueLength(id: number): number {
   return -1
 }
 
+/**
+ * 이 요소가 지금 키 입력을 받는가(document.activeElement). 진짜 키 입력 전에 확인한다 — 클릭이 포커스로
+ * 이어지지 않으면 글자가 앞서 포커스된 칸(아이디 칸)에 쳐진다(실기 2026-09-25 네이버, 2026-09-29 partner.hmall.com)
+ */
+export function hasFocus(id: number): boolean {
+  const el = get(id)
+  const active = document.activeElement
+  if (!el || !active) return false
+  if (active === el) return true
+  // Nexacro 는 포커스를 받으면 안내 글자용 칸(type=text)을 비밀번호 칸으로 바꿔 끼운다 — 요소는 달라져도
+  // DOM id 가 같거나 같은 부모 안의 입력칸이면 같은 칸이다
+  if (!(active instanceof HTMLInputElement)) return false
+  if (el.id !== '' && active.id === el.id) return true
+  return el.parentElement !== null && el.parentElement.contains(active)
+}
+
+/** 요소에 포커스를 준다(클릭이 포커스로 이어지지 않는 화면용 — Nexacro). 포커스를 받았으면 true */
+export function focusEl(id: number): boolean {
+  const el = get(id)
+  if (!el) return false
+  el.focus()
+  return hasFocus(id)
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }

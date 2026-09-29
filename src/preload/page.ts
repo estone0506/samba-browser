@@ -32,6 +32,8 @@ import {
   performScroll,
   rectOf,
   valueLength,
+  hasFocus,
+  focusEl,
   fillValue,
   findLoginFields,
   signedInHint,
@@ -120,7 +122,9 @@ if (!isExtensionDocument) {
     // 요소 가운데의 뷰포트 좌표. 메인 프로세스가 실제 마우스 클릭을 보낼 자리다
     rectOf: (id: number) => rectOf(id),
     // 입력칸 값의 글자 수만(값은 안 돌려준다) — 진짜 키 입력이 들어갔는지 확인용
-    valueLength: (id: number) => valueLength(id)
+    valueLength: (id: number) => valueLength(id),
+    hasFocus: (id: number) => hasFocus(id),
+    focusEl: (id: number) => focusEl(id)
   }
 
   // globalThis 에 직접 대입(any 없이 타입 안전하게)
