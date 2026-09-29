@@ -185,6 +185,12 @@ class PywinautoEmpUi:
     def ensure_ready(self) -> None:
         """창이 있고 최소화가 풀려 있으며 모달 대화상자에 막히지 않았다."""
         self._main = self._find_main()
+        if not self._main.is_minimized() and _user32.GetForegroundWindow() != self._main.handle:
+            # EMP 그리드는 창이 뒤에 있으면 칸 편집·행 메뉴가 열리다 말다 한다(실기 2026-09-29).
+            # 작업자는 사람이 3분 넘게 자리를 비웠을 때만 EMP 를 만지므로 창을 앞으로 가져온다 —
+            # 뒤에 있는 창을 바로 부르는 것은 윈도우가 막아서, 최소화했다 복원한다
+            self._main.minimize()
+            time.sleep(self._poll_s)
         if self._main.is_minimized():
             self._main.restore()
             time.sleep(self._poll_s * 2)

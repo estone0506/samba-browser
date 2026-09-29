@@ -61,6 +61,7 @@ class ExportWorker:
         *,
         user_idle_s: Callable[[], float],
         min_idle_s: float = 20.0,
+        min_idle_by_target: Mapping[str, float] | None = None,
         max_attempts: int = 5,
         retry_delay_s: float = 60.0,
     ) -> None:
@@ -68,6 +69,8 @@ class ExportWorker:
         self._adapters = dict(adapters)
         self._user_idle_s = user_idle_s
         self._min_idle_s = min_idle_s
+        # 대상마다 다른 기준 — 화면을 앞으로 가져오는 프로그램(EMP)은 사람이 자리를 비웠을 때만 만진다
+        self._min_idle_by_target = dict(min_idle_by_target or {})
         self._max_attempts = max_attempts
         self._retry_delay_s = retry_delay_s
 
@@ -75,14 +78,22 @@ class ExportWorker:
     def targets(self) -> tuple[str, ...]:
         return tuple(self._adapters)
 
+    def ready_targets(self) -> tuple[str, ...]:
+        """지금 만져도 되는 대상 — 사람이 입력을 멈춘 지 그 대상의 기준 시간 이상 지난 것."""
+        idle = self._user_idle_s()
+        return tuple(
+            t for t in self._adapters if idle >= self._min_idle_by_target.get(t, self._min_idle_s)
+        )
+
     def run_once(self) -> ExportRequest | None:
         """요청 1건을 처리하고 그 최종 상태를 돌려준다. 할 일이 없으면 None."""
         if not self._adapters:
             return None
         # 사람이 PC 를 쓰는 중이면 집지도 않는다 — 시도 횟수를 헛되이 쓰지 않는다
-        if self._user_idle_s() < self._min_idle_s:
+        ready = self.ready_targets()
+        if not ready:
             return None
-        req = self._queue.claim_next(self.targets)
+        req = self._queue.claim_next(ready)
         if req is None:
             return None
         self._process(req, self._adapters[req.target])
@@ -193,8 +204,9 @@ class ExportWorker:
             try:
                 # 살아 있다는 표시는 실제로 집을 수 있을 때만 남긴다 — 사람이 PC 를 쓰는 중에도
                 # beat 를 남기면 export 단계가 alive() 만 보고 주문마다 대기 시간을 통째로 쓴다
-                if self._user_idle_s() >= self._min_idle_s:
-                    self._queue.beat(self.targets)
+                ready = self.ready_targets()
+                if ready:
+                    self._queue.beat(ready)
                 worked = self.run_once() is not None
             except Exception:
                 log.exception('입력 작업자 고리 오류 — 계속한다')

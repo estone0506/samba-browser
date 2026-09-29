@@ -345,3 +345,28 @@ def test_배치_어댑터와_셀_어댑터가_함께_등록돼도_대상별로_�
     assert {first.target, second.target} == {'emp', 'shopmine'}
     assert cell.rows['E1'] == CellValues(62470, 2300)
     assert batch.calls == [['S1']]
+
+
+def test_대상마다_기다리는_시간이_다르다(queue):
+    cell = FakeAdapter()
+    batch = FakeBatch(present=('S1',))
+    queue.enqueue('E1', 'emp', 1000, 0)
+    queue.enqueue('S1', 'shopmine', 1000, 0)
+    idle = {'s': 10.0}
+    w = ExportWorker(
+        queue,
+        {'emp': cell, 'shopmine': batch},
+        user_idle_s=lambda: idle['s'],
+        min_idle_s=0.0,
+        min_idle_by_target={'emp': 180.0},
+    )
+    # 사람이 쓰는 중 — 샵마인만 집는다
+    assert w.ready_targets() == ('shopmine',)
+    done = w.run_once()
+    assert done is not None and done.target == 'shopmine'
+    assert w.run_once() is None
+    assert queue.find('E1', 'emp').status == 'pending'
+    # 3분 넘게 멈췄다 — EMP 도 집는다
+    idle['s'] = 200.0
+    done = w.run_once()
+    assert done is not None and done.target == 'emp'

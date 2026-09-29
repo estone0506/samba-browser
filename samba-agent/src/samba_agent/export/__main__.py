@@ -25,6 +25,8 @@ from samba_agent.settings import DEFAULT_ROOT, load_settings
 
 log = logging.getLogger(__name__)
 
+EMP_MIN_IDLE_S = 180.0
+
 
 def _list(queue: ExportQueue, limit: int) -> int:
     rows = queue.recent(limit)
@@ -91,11 +93,13 @@ def _worker(queue: ExportQueue, targets: tuple[str, ...]) -> int:
     signal.signal(signal.SIGTERM, lambda *_a: stop.set())
     log.info('입력 작업자 시작 — 대상 %s', ', '.join(adapters) or '없음')
     ExportWorker(
-        # 화면 조작은 창 메시지로만 한다 — 사용자가 PC 를 쓰는 중에도 돈다(2026-09-29)
         queue,
         adapters,
         user_idle_s=user_idle_seconds,
+        # 샵마인은 창 메시지로만 만져 사람이 PC 를 쓰는 중에도 돈다
         min_idle_s=0.0,
+        # EMP 는 조작하면 창이 앞으로 나온다 — 키보드·마우스가 3분 넘게 멈췄을 때만 한다(사용자 지시 2026-09-29)
+        min_idle_by_target={t: EMP_MIN_IDLE_S for t in adapters if t.startswith('emp')},
     ).run_forever(stop.is_set)
     return 0
 
