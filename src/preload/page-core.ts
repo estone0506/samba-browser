@@ -1180,6 +1180,29 @@ function pinCounterInput(): HTMLInputElement | null {
   return tel ?? null
 }
 
+/**
+ * 글자가 정확히 같은 요소에 번호를 매겨 돌려준다 — 누를 수 있다는 표시(버튼·링크·커서)가 없어 요소 목록에
+ * 안 잡히는 칸(Nexacro 그리드 셀 등)을 누르려는 용도다. 같은 글자가 여럿이면 가장 안쪽 요소들 중 nth 번째.
+ * 보이지 않거나 없으면 -1
+ */
+export function idOfExactText(text: string, nth = 0): number {
+  const want = text.replace(/\s+/g, ' ').trim()
+  if (want === '') return -1
+  const visible: VisibilityCache = new Map()
+  const hits: HTMLElement[] = []
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>('body *'))) {
+    if ((el.textContent ?? '').replace(/\s+/g, ' ').trim() !== want) continue
+    // 같은 글자를 가진 자식이 있으면 바깥 껍데기다 — 가장 안쪽만 센다
+    if (Array.from(el.children).some((c) => (c.textContent ?? '').replace(/\s+/g, ' ').trim() === want)) continue
+    if (!isVisible(el, visible)) continue
+    const r = el.getBoundingClientRect()
+    if (r.width <= 0 || r.height <= 0) continue
+    hits.push(el)
+  }
+  const el = hits[nth]
+  return el ? ensureId(el) : -1
+}
+
 /** 이 요소에 id 가 없으면 매겨 registry 에 넣는다(스냅샷을 다시 찍지 않고 누를 수 있게) */
 function ensureId(el: HTMLElement): number {
   if (idDoc !== document) resetElementIds()

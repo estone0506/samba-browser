@@ -1747,6 +1747,12 @@ overlays left: ${after.length}${kept}`
         }
         case 'page.idOf':
           return idOfText(asText(args[0]), asId(args[1]))
+        case 'page.idOfExact': {
+          // 요소 목록에 안 잡히는 칸(그리드 셀)을 글자로 찾아 번호를 준다 — 누르는 것은 click/clickNative 가 한다
+          const tab = activeOr(ctx)
+          if (!tab) return -1
+          return pageBridge.idOfExactText(tab, asText(args[0]), asId(args[1]))
+        }
         case 'page.clickNative': {
           const blocked = await payRefusal(asId(args[0]))
           if (blocked) return blocked

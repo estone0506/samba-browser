@@ -34,6 +34,7 @@ import {
   valueLength,
   hasFocus,
   focusEl,
+  idOfExactText,
   fillValue,
   findLoginFields,
   signedInHint,
@@ -124,7 +125,8 @@ if (!isExtensionDocument) {
     // 입력칸 값의 글자 수만(값은 안 돌려준다) — 진짜 키 입력이 들어갔는지 확인용
     valueLength: (id: number) => valueLength(id),
     hasFocus: (id: number) => hasFocus(id),
-    focusEl: (id: number) => focusEl(id)
+    focusEl: (id: number) => focusEl(id),
+    idOfExactText: (text: string, nth: number) => idOfExactText(text, nth)
   }
 
   // globalThis 에 직접 대입(any 없이 타입 안전하게)

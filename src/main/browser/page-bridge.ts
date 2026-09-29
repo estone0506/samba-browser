@@ -402,6 +402,8 @@ function opToCode(op: AgentOp): string {
       return `__samba.hasFocus(${op.id})`
     case 'focusEl':
       return `__samba.focusEl(${op.id})`
+    case 'idOfExactText':
+      return `__samba.idOfExactText(${JSON.stringify(op.text)},${op.nth})`
     case 'keypadSignals':
       return '__samba.keypadSignals()'
     case 'keypadLayout':
@@ -726,6 +728,12 @@ export const pageBridge = {
     if (isAutomation())
       return withAutomationInput(wc, () => pageBridge.typeLoginNow(tab, id, value))
     return pageBridge.typeLoginNow(tab, id, value)
+  },
+  /** 글자가 정확히 같은 요소(요소 목록에 안 잡히는 칸 포함)에 번호를 매겨 돌려준다. 없으면 -1. 최상위 문서만 본다 */
+  idOfExactText: async (tab: Tab, text: string, nth: number): Promise<number> => {
+    const wc = tab.view.webContents
+    if (wc.isDestroyed()) return -1
+    return call(wc, opToCode({ op: 'idOfExactText', text, nth }), z.number()).catch(() => -1)
   },
   /** 입력칸 값의 글자 수(값 자체는 돌려주지 않는다). 못 읽으면 -1 */
   valueLength: async (tab: Tab, id: number): Promise<number> => {
