@@ -29,6 +29,7 @@ import { installSessionCookieKeeper } from './session-cookies'
 import { installDialogHandler, isAutomationActive } from './dialogs'
 import {
   isAutomation,
+  isBackgroundAutomation,
   isHumanInputEvent,
   lastHumanInWindowAt,
   markHuman,
@@ -879,6 +880,8 @@ export class TabManager {
   /** 사람이 이 창을 쓰는 중이라 자동화가 보이는 탭·창 포커스를 바꾸면 안 되는가(visible-guard.ts) */
   private holdVisible(): boolean {
     if (this.win.isDestroyed()) return false
+    // 브릿지(하네스) 작업은 사람의 입력 시각과 상관없이 늘 뒤에서만 돈다
+    if (isBackgroundAutomation()) return true
     return shouldHoldVisible(isAutomation(), lastHumanInWindowAt(this.win), Date.now())
   }
 

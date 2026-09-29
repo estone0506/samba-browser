@@ -944,7 +944,8 @@ ${CODEX_NO_IMAGE_NOTE}`
         prompt: ''
       })
     // 키패드 입력 기록은 브릿지 세션(요청 1건)을 넘어 공유한다 — 같은 결제창에 두 번 넣지 않는다
-    const bridgeCtx = { ...baseCtx, keypadEntered: this.bridgeKeypadEntered }
+    // 브릿지 작업은 늘 뒤에서 — 사람이 보는 탭을 바꾸지 않는다
+    const bridgeCtx = { ...baseCtx, keypadEntered: this.bridgeKeypadEntered, background: true }
     const server = createSambaTools(
       laneState
         ? { ...bridgeCtx, tabs: laneTabs(this.tabs, laneState) }

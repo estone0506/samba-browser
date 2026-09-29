@@ -474,6 +474,8 @@ export async function withToolTimeout<T>(
 
 export interface ToolContext {
   tabs: TabManager
+  /** 브릿지(하네스) 호출이면 true — 보이는 탭·창 포커스를 가져가지 않는다 */
+  background?: boolean
   dangerWords: string[]
   // 사용 권한 모드. read_only 는 조작 도구를 실행하지 않고, full 은 위험 단어 확인을 생략한다
   mode: PermissionMode
@@ -709,7 +711,11 @@ export function createSambaTools(
       // 페이지가 대화상자·무한 로딩으로 응답하지 않으면 실행 전체가 멈춘다(실기에서 14분 대기).
       // 도구 하나는 이 시간 안에 끝나야 하고, 넘기면 문구로 돌려줘 모델이 다른 길을 찾게 한다
       // 자동화 흐름으로 표시해 아래 입력 함수들이 '사람이 쓰는 탭' 검사를 하게 한다
-      const r = await withToolTimeout(runAsAutomation(fn), TOOL_TIMEOUT_MS, () => humanWaits > 0)
+      const r = await withToolTimeout(
+        runAsAutomation(fn, ctx.background === true),
+        TOOL_TIMEOUT_MS,
+        () => humanWaits > 0
+      )
       const raw = typeof r === 'string' ? r : JSON.stringify(r)
       const ok = isToolResultOk(raw, content)
       ctx.onStep(resolveLabel(), ok)
