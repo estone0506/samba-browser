@@ -1,6 +1,8 @@
 """샵마인 화면 드라이버 — pywinauto. ShopMineUi 규약을 실제 창에 대고 수행한다.
 
-컨트롤은 automation id·이름·항목 목록으로 찾는다. 좌표는 쓰지 않는다.
+컨트롤은 automation id·이름·항목 목록으로 찾는다.
+실제 마우스·키보드는 쓰지 않고 창을 앞으로 가져오지도 않는다 — 사용자가 PC 를 쓰는 동안
+뒤에서 돈다(사용자 지시 2026-09-29). 누르기는 그 컨트롤 창에 메시지를 보내거나 UIA 동작으로 한다.
 못 하는 상황(창 없음·수집 시간 초과·낯선 대화상자)은 AdapterRetry 로 던진다.
 
 찾는 방법(실기 2026-09-28): 창 전체를 UIA 로 훑으면(descendants·child_window) 주문 수백 행 ×
@@ -15,6 +17,7 @@ import datetime as dt
 import functools
 import logging
 import re
+import threading
 import time
 from collections.abc import Sequence
 from ctypes import wintypes
@@ -59,7 +62,12 @@ START_DATE_ID = 'DtpStartDate'
 END_DATE_ID = 'DtpEndDate'
 
 _WM_KEYDOWN, _WM_KEYUP = 0x0100, 0x0101
-_WM_LBUTTONDOWN, _WM_LBUTTONUP = 0x0201, 0x0202
+_WM_MOUSEMOVE, _WM_LBUTTONDOWN, _WM_LBUTTONUP = 0x0200, 0x0201, 0x0202
+_WM_COMMAND = 0x0111
+_BM_CLICK = 0x00F5
+_CB_GETCURSEL, _CB_SETCURSEL = 0x0147, 0x014E
+_CBN_SELCHANGE = 1
+_SW_SHOWNOACTIVATE = 4
 _VK_RIGHT = 0x27
 
 _user32 = ctypes.windll.user32
@@ -112,6 +120,42 @@ def _guard_pywinauto_errors(fn):
             log.info('샵마인 %s %.1f초', fn.__name__, time.monotonic() - started)
 
     return wrapper
+
+
+def _post_click(hwnd: int, rect) -> None:
+    """그 창의 화면 좌표 rect 가운데를 누른다 — 창에 메시지만 보낸다(실제 마우스는 그대로)."""
+    point = wintypes.POINT((rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2)
+    _user32.ScreenToClient(hwnd, ctypes.byref(point))
+    lparam = (point.y << 16) | (point.x & 0xFFFF)
+    for message, wparam in ((_WM_MOUSEMOVE, 0), (_WM_LBUTTONDOWN, 1), (_WM_LBUTTONUP, 0)):
+        _user32.PostMessageW(hwnd, message, wparam, lparam)
+        time.sleep(0.05)
+
+
+def _press_button(button) -> None:
+    """버튼을 누른다 — 버튼의 부모(대화상자·패널)에 '이 버튼이 눌렸다'를 보낸다.
+
+    버튼에 직접 보내는 누름 메시지는 뒤에 있는 대화상자에서 먹지 않았다(실기 2026-09-29).
+    """
+    hwnd = button.element_info.handle
+    _user32.PostMessageW(_user32.GetParent(hwnd), _WM_COMMAND, _user32.GetDlgCtrlID(hwnd), hwnd)
+
+
+def _invoke(element, timeout_s: float = 10.0) -> None:
+    """UIA 동작으로 누른다. 누른 결과 대화상자가 뜨면 호출이 돌아오지 않으므로 따로 돌린다."""
+    errors: list[Exception] = []
+
+    def run() -> None:
+        try:
+            element.invoke()
+        except Exception as e:  # noqa: BLE001 — 아래에서 재시도로 바꿔 던진다
+            errors.append(e)
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout_s)
+    if errors:
+        raise AdapterRetry(ExportFail.BLOCKED, f'누르지 못했다: {errors[0]!r}')
 
 
 def _visible_children(hwnd: int) -> list[int]:
@@ -274,14 +318,9 @@ class PywinautoShopMineUi:
     @_guard_pywinauto_errors
     def ensure_ready(self) -> None:
         self._main = self._find_main()
-        if not self._main.is_minimized() and _user32.GetForegroundWindow() != self._main.handle:
-            # 다른 창 뒤에 있으면 클릭이 앞의 창으로 들어간다(실기 2026-09-29: 체크가 안 됐다).
-            # 뒤에 있는 창을 바로 앞으로 부르는 것은 윈도우가 막는다 — 최소화했다 복원하면 앞으로 온다
-            self._main.minimize()
-            time.sleep(self._poll_s)
         if self._main.is_minimized():
-            # 최소화된 창은 자식 요소를 돌려주지 않는다(실기) — 먼저 복원한다
-            self._main.restore()
+            # 최소화된 창은 자식 요소를 돌려주지 않는다(실기) — 앞으로 가져오지 않고 펴기만 한다
+            _user32.ShowWindow(self._main.handle, _SW_SHOWNOACTIVATE)
             time.sleep(self._poll_s * 2)
         self._refuse_if_dialog()
         if self._order_page_shown():
@@ -290,8 +329,8 @@ class PywinautoShopMineUi:
         if tab is None:
             self._open_order_tab()
         else:
-            # select() 는 예외 없이 조용히 실패한다(실기: 홈 탭 그대로) — 클릭으로 고른다
-            tab.click_input()
+            # select() 는 예외 없이 조용히 실패한다(실기: 홈 탭 그대로) — 탭 막대를 눌러 고른다
+            _post_click(tab.parent().element_info.handle, tab.rectangle())
             time.sleep(self._poll_s * 2)
         if not self._order_page_shown():
             raise AdapterRetry(ExportFail.BLOCKED, '통합주문관리 탭으로 전환하지 못했다')
@@ -305,30 +344,16 @@ class PywinautoShopMineUi:
         """
         if (combo.selected_text() or '').strip() == item:
             return
-        before = {w.handle for w in self._top_windows(self._main.process_id())}
-        opened = False
-        for b in combo.children(control_type='Button'):
-            if b.window_text() in ('열기', 'Open'):
-                b.click_input()
-                opened = True
-                break
-        if not opened:
-            combo.click_input()
-        time.sleep(self._poll_s)
-        # 펼쳐진 목록은 콤보 안의 List 로 잡힌다. 아니면 새로 뜬 팝업 창의 목록에서 찾는다
-        candidates = []
-        for lst in combo.children(control_type='List'):
-            candidates.extend(lst.children(control_type='ListItem'))
-        if not candidates:
-            for popup in _new_windows(before, self._top_windows(self._main.process_id())):
-                candidates.extend(
-                    UIAWrapper(UIAElementInfo(popup.handle)).descendants(control_type='ListItem')
-                )
-        target = next((c for c in candidates if c.window_text() == item), None)
-        if target is None:
-            combo.type_keys('{ESC}')
+        items = [t.strip() for t in combo.texts()]
+        if item not in items:
             raise AdapterRetry(ExportFail.BLOCKED, f'콤보 상자 목록에 {item!r} 이 없다')
-        target.click_input()
+        # 목록을 펼치지 않는다 — 고른 뒤 부모에게 '선택이 바뀌었다'를 알려 프로그램이 반응하게 한다
+        hwnd = combo.element_info.handle
+        _user32.SendMessageW(hwnd, _CB_SETCURSEL, items.index(item), 0)
+        notify = (_CBN_SELCHANGE << 16) | (_user32.GetDlgCtrlID(hwnd) & 0xFFFF)
+        _user32.SendMessageTimeoutW(
+            _user32.GetParent(hwnd), _WM_COMMAND, notify, hwnd, 0x0002, 10000, None
+        )
         time.sleep(self._poll_s)
         if (combo.selected_text() or '').strip() != item:
             raise AdapterRetry(
@@ -399,7 +424,7 @@ class PywinautoShopMineUi:
     def collect(self) -> None:
         self._select_combo(self._el('ComboBoxProcessStatus'), NORMAL_ALL)
         time.sleep(self._poll_s)
-        self._el('ButtonSearch').click_input()
+        _press_button(self._el('ButtonSearch'))
         # 수집 중 표시가 뜰 틈을 준다 — 바로 보면 '이미 끝남'으로 잘못 읽는다
         time.sleep(self._poll_s * 2)
 
@@ -484,10 +509,11 @@ class PywinautoShopMineUi:
         for _ in range(2):
             if self._checked(cells[0]) == want:
                 return True
-            cells[0].click_input()
+            grid = self._el('DataGridView1').element_info.handle
+            _post_click(grid, cells[0].rectangle())
             time.sleep(self._poll_s / 2)
             if len(cells) > 1:
-                cells[1].click_input()
+                _post_click(grid, cells[1].rectangle())
                 time.sleep(self._poll_s / 2)
         return self._checked(cells[0]) == want
 
@@ -531,16 +557,24 @@ class PywinautoShopMineUi:
         if menu is None:
             raise AdapterRetry(ExportFail.BLOCKED, f'{STATUS_MENU!r} 메뉴를 찾지 못했다')
         before_menu = {w.handle for w in self._top_windows(pid)}
-        menu.click_input()
+        _invoke(menu)
         time.sleep(self._poll_s)
         done_item = self._menu_item(menu, STATUS_DONE, before_menu)
         if done_item is None:
-            self._main.type_keys('{ESC}')
             raise AdapterRetry(
                 ExportFail.BLOCKED, '작업상태지정 메뉴에서 완료됨 항목을 찾지 못했다'
             )
         before_confirm = {w.handle for w in self._top_windows(pid)}
-        done_item.click_input()
+        # 확인 창을 띄우는 항목이다 — UIA 동작으로 누르면 창이 닫힐 때까지 UIA 가 통째로 멈춘다
+        # (실기 2026-09-29). 펼쳐진 메뉴 창에 클릭 메시지를 보낸다.
+        popup = _user32.WindowFromPoint(
+            wintypes.POINT(done_item.rectangle().mid_point().x, done_item.rectangle().mid_point().y)
+        )
+        owner = wintypes.DWORD()
+        _user32.GetWindowThreadProcessId(popup, ctypes.byref(owner))
+        if owner.value != pid:
+            raise AdapterRetry(ExportFail.BLOCKED, '완료됨 항목이 다른 창에 가려 있다')
+        _post_click(popup, done_item.rectangle())
         self._confirm_own_dialog(pid, before_confirm, expected_rows)
         self._dismiss_result_dialog(pid, before_confirm)
         time.sleep(self._poll_s * 2)
@@ -567,7 +601,7 @@ class PywinautoShopMineUi:
                 ok = next((named[n] for n in CONFIRM_BUTTONS if n in named), None)
                 if ok is None:
                     continue
-                ok.click_input()
+                _press_button(ok)
                 log.info('샵마인 결과 안내창(%r)을 닫았다', message[:80])
                 time.sleep(self._poll_s)
                 return
@@ -603,13 +637,13 @@ class PywinautoShopMineUi:
                 if int(count.group(1)) != expected_rows:
                     cancel = next((named[n] for n in CANCEL_BUTTONS if n in named), None)
                     if cancel is not None:
-                        cancel.click_input()
+                        _press_button(cancel)
                     raise AdapterReject(
                         ExportFail.AMBIGUOUS,
                         f'확인 창의 선택 {count.group(1)}개 ≠ 체크한 {expected_rows}개 — 누르지 않았다',
                     )
                 pressed = confirm.window_text()
-                confirm.click_input()
+                _press_button(confirm)
                 log.info('샵마인 확인 대화상자(%r) 에서 %r 을 눌렀다', message[:80], pressed)
                 time.sleep(self._poll_s)
                 return

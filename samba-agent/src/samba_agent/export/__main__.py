@@ -90,7 +90,13 @@ def _worker(queue: ExportQueue, targets: tuple[str, ...]) -> int:
     signal.signal(signal.SIGINT, lambda *_a: stop.set())
     signal.signal(signal.SIGTERM, lambda *_a: stop.set())
     log.info('입력 작업자 시작 — 대상 %s', ', '.join(adapters) or '없음')
-    ExportWorker(queue, adapters, user_idle_s=user_idle_seconds).run_forever(stop.is_set)
+    ExportWorker(
+        # 화면 조작은 창 메시지로만 한다 — 사용자가 PC 를 쓰는 중에도 돈다(2026-09-29)
+        queue,
+        adapters,
+        user_idle_s=user_idle_seconds,
+        min_idle_s=0.0,
+    ).run_forever(stop.is_set)
     return 0
 
 
