@@ -129,7 +129,8 @@ class ShopMineAdapter:
         # 목록에 없는 주문은 이미 그 작업상태일 수 있다(사람이 먼저 바꿨거나 앞선 시도가 바꿨다) —
         # 그러면 끝난 것이다. 못 찾았다고 되풀이하지 않는다(실기 2026-09-29: 20260927C6134A)
         already: set[str] = set()
-        if len(found) < len(wanted):
+        if len(found) < len(wanted) and self._status != STATUS_DONE:
+            # 완료됨 목록은 한 달 치 수백 행이라 읽는 데 10분이 걸린다(실기 2026-09-29) — 거기서는 찾지 않는다
             marked = ui.order_nos_with_status(self._status)
             already = {
                 o for o in wanted if o not in found and any(order_matches(o, c) for c in marked)

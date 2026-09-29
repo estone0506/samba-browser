@@ -77,9 +77,6 @@ def test_넘긴_주문_중_화면에_있는_것만_체크해_완료됨으로_바
         'wait 90',
         'filters',
         'list',
-        # X9 가 목록에 없어 이미 완료됨인지 본 뒤 필터를 되돌린다
-        'marked 완료됨',
-        'filters',
         'select S1,S3',
         'done 2',
         'filters',
@@ -178,7 +175,7 @@ def test_기본은_완료됨_취소_어댑터는_지연됨으로_바꾼다():
 def test_이미_그_작업상태인_주문은_끝난_것으로_본다():
     ui = FakeUi(rows=('S1',))
     ui.marked = ['D1']
-    done = ShopMineAdapter(ui).complete_pending(['S1', 'D1', 'X9'])
+    done = ShopMineAdapter(ui, status='지연됨').complete_pending(['S1', 'D1', 'X9'])
     assert done == {'S1', 'D1'}
     assert ui.rows == []
 
@@ -186,7 +183,7 @@ def test_이미_그_작업상태인_주문은_끝난_것으로_본다():
 def test_전부_이미_바뀌어_있으면_누르지_않는다():
     ui = FakeUi(rows=('S1',))
     ui.marked = ['D1']
-    assert ShopMineAdapter(ui).complete_pending(['D1']) == {'D1'}
+    assert ShopMineAdapter(ui, status='지연됨').complete_pending(['D1']) == {'D1'}
     assert not any(c.startswith('done') for c in ui.calls)
 
 
@@ -205,3 +202,10 @@ def test_취소_어댑터는_클레임까지_찾지_않는다():
     done = ShopMineAdapter(ui, status='지연됨').complete_pending(['C1'])
     assert done == set()
     assert 'collect (정상/클레임 전체)' not in ui.calls
+
+
+def test_완료됨은_이미_바뀐_주문을_찾으러_큰_목록을_읽지_않는다():
+    ui = FakeUi(rows=('S1',))
+    ui.marked = ['D1']
+    assert ShopMineAdapter(ui).complete_pending(['D1']) == set()
+    assert not any(c.startswith('marked') for c in ui.calls)
