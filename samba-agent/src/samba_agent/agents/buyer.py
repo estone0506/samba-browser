@@ -3304,7 +3304,8 @@ class BuyerAgent(AgentBase):
         # 원문끼리 비교하지 않는다 — 마스킹한 값끼리만 비교해서 판단에도 개인정보를 안 남긴다
         if not shipping_matches(shipping, applied):
             # 스크립트가 남긴 사유(note)를 붙인다 — 예전엔 사유 없이 멈춰 비교 오탐인지 스크립트 실패인지 몰랐다(job 207)
-            note = str(applied.get('note') or '').strip()
+            # note 가 없으면 오류 코드(name-input-nf 등)라도 남긴다 — 사유 없는 실패는 원인을 못 가른다(실기 2026-09-29)
+            note = str(applied.get('note') or applied.get('error') or '').strip()
             raise AgentFailure(
                 'needs_human',
                 '배송지 입력 검증에 실패했다' + (f': {mask_text(note[:80])}' if note else ''),

@@ -55,6 +55,9 @@ async function search(q){
 }
 let {hit,count}=await search(query);
 if(!hit){const sh=query.replace(/^\S*(특별자치도|특별시|광역시|특별자치시|도|시)\s+/,'');if(sh&&sh!==query)({hit,count}=await search(sh));}
+// 도로명과 건물번호가 붙어 온 주소('○○로167')는 검색이 안 된다(실기 2026-09-29) — 띄워서, 그래도 없으면 도로명+번호만으로 찾는다
+if(!hit){const sp=query.replace(/([가-힣])(\d)/g,'$1 $2');if(sp!==query)({hit,count}=await search(sp));
+  if(!hit){const rd=sp.match(/[가-힣0-9]+(?:로|길)\s?\d+(?:-\d+)?/);if(rd)({hit,count}=await search(rd[0]));}}
 if(!hit)return{...R,error:'address-result-nf',note:'주소 검색 결과 없음: '+query};
 R.address_results=count;
 await page.click(hit.id);await sleep(1200);
