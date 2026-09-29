@@ -41,6 +41,7 @@ if(args.required_seller&&!(r.seller||'').includes(String(args.required_seller)))
 try{let am=(await tx('님')).match(/([\w가-힣*]{2,20})\s*님/);r.account=(am&&am[1])||args.account||null;}catch(e){r.account=args.account||null;}
 
 let picked=[],proceed=true;const seen=new Set();
+const wantsColor=/[가-힣]{2,}|[A-Za-z]{3,}/.test(String(args.size||''));
 for(let step=0;step<5;step++){
   let combos=[];
   for(let w=0;w<6&&!combos.length;w++){let g=await page.get({selector:'[role="combobox"], select'});combos=pe(g.tree).filter(x=>x.role==='combobox');if(!combos.length)await sleep(700);}
@@ -56,7 +57,8 @@ for(let step=0;step<5;step++){
   const live=opts.filter(o=>!so(o.text));
   let m=null;
   if(args.size){let best=0;for(const o of live){const s=sc(o.text,args.size);if(s>best){best=s;m=o;}}}
-  if(!m&&live.length===1)m=live[0];
+  if(!m&&live.length===1&&!(wantsColor&&/색상|컬러|color/i.test(lab(combo))))m=live[0];
+  if(!m&&wantsColor&&/색상|컬러|color/i.test(lab(combo))){r.options=opts.map(o=>o.text);r.note='option not matched: 색상 — 주문 옵션과 맞는 색상이 없다';proceed=false;break;}
   if(!m&&!args.size)m=live[0];
   if(m){picked.push(cl(m.text));await page.click(m.id);await sleep(700);}
   else{r.options=live.map(o=>o.text);r.note='size not available';proceed=false;break;}

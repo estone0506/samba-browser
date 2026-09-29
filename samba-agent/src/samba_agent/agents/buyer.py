@@ -344,6 +344,9 @@ OFFICE_ADDRESS_HINT = local_aliases.apply('사무실길 58')
 OFFICE_NAME = local_aliases.apply('김사무')
 # 까대기 주문 배송지(사무실). 기본 배송지가 사무실이 아닐 때 이번 주문에만 넣는다 — poizon-sourcing 스킬 "사무실 배송"
 OFFICE_DETAIL = '1층 102호'
+# 까대기 주문서에서 기본 배송지(사무실)가 그려질 때까지 다시 읽는 횟수·간격
+DEFAULT_SHIPPING_POLL_TRIES = 4
+DEFAULT_SHIPPING_POLL_MS = 1500
 # 계정별 결제수단 제한 — 비어 있으면 모든 계정이 허용 수단(SAMBA_ALLOWED_PAY_PROVIDERS) 전부로 비교한다.
 # buyer02 는 한때 무신사머니만 썼으나 무신사머니·무신사페이·페이코 모두 허용으로 바뀌었다(사용자 2026-09-25 저녁)
 ACCOUNT_PAY_ONLY: dict[str, frozenset[str]] = {}
@@ -1530,7 +1533,9 @@ class BuyerAgent(AgentBase):
                 bool(a.order.option)
                 and not out.get('selected')
                 and bool(out.get('options'))
-                and note.startswith(('option ambiguous', 'option not matched'))
+                and note.startswith(('option ambiguous', 'option not matched', 'size not available'))
+                # 색상이 안 맞는 것은 다시 열어도 같다 — 사이즈 글자로 다시 열면 다른 색을 사게 된다
+                and '색상' not in note
             )
 
         snap = self.script_json(
@@ -3409,6 +3414,14 @@ class BuyerAgent(AgentBase):
         else:
             page = self.tool('get_page')
             office = office_block_in(page)
+            # 주문서의 배송지 영역은 늦게 그려진다(실기 2026-09-29 롯데온: 기본 배송지가 사무실인데 못 읽어
+            # 새 배송지를 넣으려다 멈췄다) — 사무실이 안 보이면 몇 번 더 읽는다
+            for _ in range(DEFAULT_SHIPPING_POLL_TRIES):
+                if office:
+                    break
+                self.tool('wait', ms=DEFAULT_SHIPPING_POLL_MS)
+                page = self.tool('get_page')
+                office = office_block_in(page)
             # 사무실 주소가 보이면 채워진 것이다 — 무신사 주문서엔 '받는 분' 문구가 없다(실기: 새 배송지를 또 만듦)
             filled = office or (
                 any(m in page for m in RECIPIENT_MARKERS)
