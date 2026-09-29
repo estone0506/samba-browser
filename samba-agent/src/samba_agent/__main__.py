@@ -33,6 +33,7 @@ from samba_agent.ops.diagnose import diagnose
 from samba_agent.ops.events import EventLog
 from samba_agent.ops.masking import mask_text
 from samba_agent.ops.releases import ReleaseStore
+from samba_agent.ops.site_scripts import install_missing
 from samba_agent.ops.tracing import configure_tracing
 from samba_agent.queue.db import Job, JobQueue
 from samba_agent.queue.intake import Intake
@@ -138,6 +139,18 @@ def main() -> None:
     )
     # 주문 조회 = 삼바웨이브 탭 앞에 두기(list_tabs·switch_tab·new_tab·wait) + 저장 스크립트 1회
     lookup_bridge = bridge.scoped(list(LOOKUP_TOOLS))
+
+    # 저장소의 스크립트 묶음 중 앱에 없는 것을 넣는다 — 앱이 아직 안 떴으면 건너뛰고 다음 시작 때 다시 본다
+    def _install_scripts() -> None:
+        try:
+            added = install_missing(settings.bridge_token.get_secret_value(), settings.bridge_url)
+        except Exception as e:  # noqa: BLE001 — 스크립트 설치 실패가 하네스 시작을 막으면 안 된다
+            log.warning('사이트 스크립트 자동 설치를 건너뛴다: %s', e)
+            return
+        if added:
+            log.info('사이트 스크립트 %d개를 앱에 넣었다(저장소 묶음)', added)
+
+    threading.Thread(target=_install_scripts, name='site-scripts', daemon=True).start()
 
     # 삼바웨이브 내부 API — 토큰·테넌트가 둘 다 있을 때만 만든다. 없으면 앱 저장 스크립트로 돈다
     wave = make_wave(settings)
