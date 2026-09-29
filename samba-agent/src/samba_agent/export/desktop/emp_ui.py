@@ -236,7 +236,11 @@ class PywinautoEmpUi:
             self._main.restore()
             time.sleep(self._poll_s * 2)
         if not self._main.is_enabled():
-            raise AdapterRetry(ExportFail.BLOCKED, 'EMP 에 대화상자가 떠 있다')
+            # 앞선 시도가 남긴 '저장하시겠습니까' 창이면 닫고 계속한다. 다른 창이면 건드리지 않고 물러난다
+            try:
+                self._wait_enabled(6.0)
+            except AdapterRetry as e:
+                raise AdapterRetry(ExportFail.BLOCKED, 'EMP 에 대화상자가 떠 있다') from e
         self._refresh()
         if GRID_ID not in self._index:
             raise AdapterRetry(ExportFail.BLOCKED, 'EMP 주문관리 그리드가 화면에 없다')
