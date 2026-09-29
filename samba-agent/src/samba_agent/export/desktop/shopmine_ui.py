@@ -274,6 +274,11 @@ class PywinautoShopMineUi:
     @_guard_pywinauto_errors
     def ensure_ready(self) -> None:
         self._main = self._find_main()
+        if not self._main.is_minimized() and _user32.GetForegroundWindow() != self._main.handle:
+            # 다른 창 뒤에 있으면 클릭이 앞의 창으로 들어간다(실기 2026-09-29: 체크가 안 됐다).
+            # 뒤에 있는 창을 바로 앞으로 부르는 것은 윈도우가 막는다 — 최소화했다 복원하면 앞으로 온다
+            self._main.minimize()
+            time.sleep(self._poll_s)
         if self._main.is_minimized():
             # 최소화된 창은 자식 요소를 돌려주지 않는다(실기) — 먼저 복원한다
             self._main.restore()
