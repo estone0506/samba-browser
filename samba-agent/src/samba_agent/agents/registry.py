@@ -7,6 +7,7 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict
 
+from samba_agent import local_aliases
 from samba_agent.agents.contracts import OrderRef
 from samba_agent.sources import Source, Sources
 
@@ -197,11 +198,12 @@ class Registry:
         소싱처별 구매 규칙은 공통 규칙을 '잇는다' — 사이트 특이점만 적어 두므로 공통 규칙을
         앞에 붙여서 준다(파일만 넘기면 LLM 은 공통 규칙을 보지 못한다).
         """
-        text = (self._root / spec.rules).read_text(encoding='utf-8')
+        # 규칙 문서의 가명(계정·사무실)은 이 PC 의 실제 값으로 바꿔 준다(local_aliases)
+        text = local_aliases.apply((self._root / spec.rules).read_text(encoding='utf-8'))
         default = self._root / DEFAULT_BUYER_RULES
         if spec.kind == 'buyer' and spec.rules != DEFAULT_BUYER_RULES and default.exists():
             sep = '\n\n---\n\n'
-            return default.read_text(encoding='utf-8').rstrip() + sep + text
+            return local_aliases.apply(default.read_text(encoding='utf-8')).rstrip() + sep + text
         return text
 
     def names(self) -> list[str]:

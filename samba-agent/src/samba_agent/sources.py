@@ -13,6 +13,7 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict
 
+from samba_agent import local_aliases
 from samba_agent.settings import DEFAULT_ROOT
 
 SOURCES_FILE = 'sources.yaml'
@@ -179,7 +180,7 @@ class Sources:
 
     @classmethod
     def load(cls, root: Path, filename: str = SOURCES_FILE) -> 'Sources':
-        raw = yaml.safe_load((root / filename).read_text(encoding='utf-8')) or {}
+        raw = yaml.safe_load(local_aliases.apply((root / filename).read_text(encoding='utf-8'))) or {}
         rows = [Source.model_validate(row) for row in raw.get('sources', [])]
         seen_ids: set[str] = set()
         for s in rows:

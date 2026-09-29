@@ -17,3 +17,4 @@ script-history/
 # 감시자 점검 중지 표시(scripts/samba-watchdog.ps1)
 PAUSE
 PAUSE_APP
+local-aliases.json

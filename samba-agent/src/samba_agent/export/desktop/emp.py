@@ -35,6 +35,14 @@ class EmpUi(Protocol):
 
     def write(self, order_no: str, cost: int, shipping_fee: int) -> None: ...
 
+    def show_only(self, order_no: str) -> None:
+        """그 주문만 그리드에 띄운다. 없으면 AdapterRetry(NOT_FOUND)."""
+        ...
+
+    def clear_keyword(self) -> None:
+        """검색어를 지우고 목록을 되돌린다."""
+        ...
+
     def cancel(self, order_no: str) -> None:
         """그 주문 행의 상태를 취소로 바꾸고 되읽는다. 이미 취소면 아무것도 하지 않는다."""
         ...
@@ -48,13 +56,21 @@ class EmpAdapter:
 
     def read(self, order_no: str) -> CellValues:
         self._ui.ensure_ready()
-        # 조건이 먼저다 — 오늘이 빠진 기간이면 오늘 주문이 그리드에 없다
-        self._ui.search()
-        return self._ui.read(order_no)
+        # 그 주문만 띄워서 읽는다 — 오늘이 들어간 기간으로 다시 검색하고, 다른 주문 행이 화면에 없게 한다
+        try:
+            self._ui.show_only(order_no)
+            return self._ui.read(order_no)
+        finally:
+            self._ui.clear_keyword()
 
     def write(self, order_no: str, cost: int, shipping_fee: int) -> None:
         self._ui.ensure_ready()
-        self._ui.write(order_no, cost, shipping_fee)
+        # 그 주문 행만 띄운 채로 넣는다 — 값이 다른 주문 행에 들어갈 자리가 없다(실기 2026-09-29 사고)
+        try:
+            self._ui.show_only(order_no)
+            self._ui.write(order_no, cost, shipping_fee)
+        finally:
+            self._ui.clear_keyword()
 
 
 class EmpCancelAdapter:
@@ -68,16 +84,20 @@ class EmpCancelAdapter:
         if not wanted:
             return set()
         self._ui.ensure_ready()
-        self._ui.search()
         done: set[str] = set()
-        for order_no in wanted:
-            try:
-                self._ui.cancel(order_no)
-            except AdapterRetry as e:
-                if e.reason is not ExportFail.NOT_FOUND:
-                    raise
-                # 아직 EMP 에 수집되지 않은 주문이다 — 나머지는 계속한다
-                log.info('EMP 에 아직 없는 주문: %s', order_no)
-                continue
-            done.add(order_no)
+        try:
+            for order_no in wanted:
+                try:
+                    # 그 주문만 띄운다 — 목록이 길면 대상 행이 화면 밖이라 누를 수 없다
+                    self._ui.show_only(order_no)
+                    self._ui.cancel(order_no)
+                except AdapterRetry as e:
+                    if e.reason is not ExportFail.NOT_FOUND:
+                        raise
+                    # 아직 EMP 에 수집되지 않은 주문이다 — 나머지는 계속한다
+                    log.info('EMP 에 아직 없는 주문: %s', order_no)
+                    continue
+                done.add(order_no)
+        finally:
+            self._ui.clear_keyword()
         return done

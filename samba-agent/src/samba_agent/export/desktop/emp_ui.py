@@ -55,6 +55,8 @@ END_DATE = 'OrderEdate'
 # 날짜 빠른 선택 '2주' — 오늘까지 14일을 잡는다
 TWO_WEEKS_BUTTON = 'ribbonToggleButton1511'
 SEARCH_BUTTON = 'OrderSearchBT'
+KEYWORD_BOX = 'OrderKeyword'
+_WM_RBUTTONDOWN, _WM_RBUTTONUP = 0x0204, 0x0205
 DIALOG_CLASS = '#32770'
 COL_STATE = '상태'
 STATE_CANCELLED = '취소'
@@ -144,6 +146,8 @@ class PywinautoEmpUi:
         self._poll_s = poll_s
         self._main = None
         self._index: dict[str, UIAElementInfo] = {}
+        # 방금 고른 행의 칸 자리(화면 좌표) — 행 메뉴를 그 자리에서 연다
+        self._selected_cell = None
 
     # ---- 창·색인 ----
     def _find_main(self):
@@ -281,6 +285,53 @@ class PywinautoEmpUi:
                 ExportFail.BLOCKED, f'EMP {name!r} 버튼을 누르지 못했다: {errors[0]}'
             )
 
+    def _keyword_handle(self) -> int:
+        """검색어 칸의 창 핸들. 리본 요소에는 핸들이 없어, 자리가 같은 편집 창을 찾는다."""
+        box = self._ribbon_item(KEYWORD_BOX)
+        edit = next((c for c in box.children() if c.element_info.control_type == 'Edit'), None)
+        if edit is None:
+            raise AdapterRetry(ExportFail.BLOCKED, 'EMP 검색어 칸이 없다')
+        want = edit.rectangle()
+        for hwnd in _visible_children(self._main.handle):
+            try:
+                info = UIAElementInfo(hwnd)
+                rect = info.rectangle
+            except Exception:  # noqa: BLE001, S112 — 열거 사이에 사라진 창
+                continue
+            same = (rect.left, rect.top, rect.right, rect.bottom) == (
+                want.left,
+                want.top,
+                want.right,
+                want.bottom,
+            )
+            if info.control_type == 'Edit' and same:
+                return hwnd
+        raise AdapterRetry(ExportFail.BLOCKED, 'EMP 검색어 칸의 창을 찾지 못했다')
+
+    def set_keyword(self, text: str) -> None:
+        """검색어 칸에 글자를 넣는다(검색은 따로 누른다)."""
+        hwnd = self._keyword_handle()
+        _user32.SendMessageW(hwnd, _WM_SETTEXT, 0, ctypes.c_wchar_p(text))
+        if self._window_text(hwnd) != text:
+            raise AdapterRetry(ExportFail.BLOCKED, 'EMP 검색어 칸에 글자가 들어가지 않았다')
+
+    def show_only(self, order_no: str) -> None:
+        """그 주문만 그리드에 띄운다 — 행이 많으면 대상 행이 화면 밖이라 누를 수 없다.
+
+        주문번호가 두 토막이면(GS이숍) 토막마다 검색해 본다. 끝나면 clear_keyword() 로 되돌린다.
+        """
+        for word in dict.fromkeys([order_no.split(':', 1)[0], *order_no.split()]):
+            self.set_keyword(word)
+            self.search()
+            if any(order_matches(order_no, r.values.get(COL_ORDER_NO, '')) for r in self.rows()):
+                return
+        raise AdapterRetry(ExportFail.NOT_FOUND, 'EMP 그리드에 그 주문번호가 없다')
+
+    def clear_keyword(self) -> None:
+        """검색어를 지우고 다시 검색해 목록을 되돌린다."""
+        self.set_keyword('')
+        self.search()
+
     def search(self, today: dt.date | None = None) -> None:
         """검색 기간에 오늘이 들어가게 한 뒤 검색시작을 눌러 그리드를 다시 채운다.
 
@@ -349,15 +400,23 @@ class PywinautoEmpUi:
                 break
         if cell is None:
             raise AdapterRetry(ExportFail.BLOCKED, 'EMP 그리드에서 그 주문 행이 화면 밖이다')
+        self._selected_cell = cell.rectangle()
         self._post_click(self._el(GRID_ID).element_info.handle, cell.rectangle())
-        time.sleep(self._poll_s * 2)
+        # 상세 미리보기는 조금 늦게 바뀐다 — 그 주문번호가 보일 때까지 기다린다
         self._index.pop(PREVIEW_ORDER_NO, None)
-        shown = self._window_text(self._el(PREVIEW_ORDER_NO).element_info.handle)
-        if not order_matches(order_no, shown.strip()):
-            raise AdapterRetry(
-                ExportFail.BLOCKED, f'EMP 에서 고른 행이 그 주문이 아니다({shown.strip()[:24]!r})'
-            )
-        return row
+        preview = self._el(PREVIEW_ORDER_NO).element_info.handle
+        deadline = time.monotonic() + 10.0
+        shown = ''
+        while time.monotonic() < deadline:
+            shown = self._window_text(preview).strip()
+            if order_matches(order_no, shown):
+                return row
+            time.sleep(self._poll_s * 2)
+            # 검색 직후에는 그리드가 클릭을 놓칠 때가 있다(실기 2026-09-29) — 다시 누른다
+            self._post_click(self._el(GRID_ID).element_info.handle, cell.rectangle())
+        raise AdapterRetry(
+            ExportFail.BLOCKED, f'EMP 에서 고른 행이 그 주문이 아니다({shown[:24]!r})'
+        )
 
     def _popups(self, before: set[int]) -> list[int]:
         pid = self._main.process_id()
@@ -382,6 +441,58 @@ class PywinautoEmpUi:
             _user32.PostMessageW(handle, _WM_KEYDOWN, _VK_ESCAPE, 0)
             _user32.PostMessageW(handle, _WM_KEYUP, _VK_ESCAPE, 0)
 
+    def _open_row_menu(self, grid: int, before: set[int]) -> list:
+        """고른 행의 행 메뉴를 열고 상태변경 항목을 돌려준다.
+
+        우클릭 메시지로 열고, 안 뜨면 메뉴 키를 보낸다(실기 2026-09-29: 뒤에 있는 창에서는
+        한 가지만으로는 안 뜰 때가 있다).
+        """
+        row_cell = self._selected_cell
+        point = wintypes.POINT(
+            (row_cell.left + row_cell.right) // 2, (row_cell.top + row_cell.bottom) // 2
+        )
+        _user32.ScreenToClient(grid, ctypes.byref(point))
+        lparam = (point.y << 16) | (point.x & 0xFFFF)
+        tries = (
+            ((_WM_RBUTTONDOWN, 2, lparam), (_WM_RBUTTONUP, 0, lparam)),
+            ((_WM_KEYDOWN, _VK_APPS, 0), (_WM_KEYUP, _VK_APPS, 0xC0000001)),
+        )
+        for messages in tries:
+            for message, wparam, lp in messages:
+                _user32.PostMessageW(grid, message, wparam, lp)
+                time.sleep(0.05)
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                found = self._menu_items(before, MENU_STATE)
+                if found:
+                    return found
+                time.sleep(self._poll_s)
+        return []
+
+    def _open_state_menu(self, menu_handle: int, state_item, before: set[int]) -> list:
+        """상태변경의 아래 메뉴를 열고 취소 항목을 돌려준다. 누르기 → 안 열리면 UIA 동작으로 연다."""
+
+        def expand() -> None:
+            try:
+                state_item.invoke()
+            except Exception:  # noqa: BLE001 — 안 열렸으면 아래에서 빈 목록으로 끝난다
+                log.info('EMP 상태변경 메뉴를 UIA 동작으로 열지 못했다')
+
+        def by_click() -> None:
+            self._post_click(menu_handle, state_item.rectangle())
+
+        for opener in (by_click, expand):
+            worker = threading.Thread(target=opener, daemon=True)
+            worker.start()
+            worker.join(5.0)
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                found = self._menu_items(before, MENU_CANCEL)
+                if found:
+                    return found
+                time.sleep(self._poll_s)
+        return []
+
     def cancel(self, order_no: str, *, dry_run: bool = False) -> None:
         """행 메뉴 → 상태변경 → 취소. 창 메시지로만 한다(실제 마우스·키보드는 쓰지 않는다)."""
         if (self.find_row(order_no).values.get(COL_STATE) or '').strip() == STATE_CANCELLED:
@@ -389,32 +500,26 @@ class PywinautoEmpUi:
         self._select_row(order_no)
         grid = self._el(GRID_ID).element_info.handle
         before = {h for h, _title, _kind in _process_windows(self._main.process_id())}
-        _user32.PostMessageW(grid, _WM_KEYDOWN, _VK_APPS, 0)
-        _user32.PostMessageW(grid, _WM_KEYUP, _VK_APPS, 0xC0000001)
-        time.sleep(self._poll_s * 2)
         try:
-            state = self._menu_items(before, MENU_STATE)
+            state = self._open_row_menu(grid, before)
             if not state:
                 raise AdapterRetry(ExportFail.BLOCKED, 'EMP 행 메뉴에 상태변경 이 없다')
             menu_handle, state_item = state[0]
-            first = {menu_handle}
-            self._post_click(menu_handle, state_item.rectangle())
-            time.sleep(self._poll_s * 2)
-            targets = [
-                (h, item) for h, item in self._menu_items(before, MENU_CANCEL) if h not in first
-            ]
+            targets = self._open_state_menu(menu_handle, state_item, before)
             if not targets:
                 raise AdapterRetry(
                     ExportFail.BLOCKED, 'EMP 상태변경 메뉴에 취소 가 없다(또는 꺼져 있다)'
                 )
             if dry_run:
                 log.info('EMP 취소 항목까지 확인(누르지 않음): %s', order_no)
+                self._close_menus(before)
                 return
             handle, item = targets[0]
             self._post_click(handle, item.rectangle())
-        finally:
-            if dry_run:
-                self._close_menus(before)
+        except AdapterRetry:
+            # 열어 둔 메뉴를 남기지 않는다
+            self._close_menus(before)
+            raise
         time.sleep(self._poll_s * 2)
         self._settle_after_cancel()
         self.reload()
@@ -510,6 +615,19 @@ class PywinautoEmpUi:
         text = str(value)
         _user32.PostMessageW(grid, _WM_CHAR, ord(text[0]), 0)
         editor = self._wait_focus(want_edit=True)
+        # 편집 상자가 대상 칸 위에 열렸는지 본다 — 다른 칸(다른 주문 행·배송방법 등)에 열렸으면
+        # 아무것도 넣지 않고 닫는다(실기 2026-09-29: 값이 다른 행에 찍혔다)
+        box = wintypes.RECT()
+        _user32.GetWindowRect(editor, ctypes.byref(box))
+        middle_x, middle_y = (box.left + box.right) // 2, (box.top + box.bottom) // 2
+        if not (rect.left <= middle_x <= rect.right and rect.top <= middle_y <= rect.bottom):
+            _user32.PostMessageW(editor, _WM_KEYDOWN, _VK_ESCAPE, 0)
+            _user32.PostMessageW(editor, _WM_KEYUP, _VK_ESCAPE, 0)
+            self._wait_focus(want_edit=False)
+            self.reload()
+            raise AdapterRetry(
+                ExportFail.BLOCKED, f'EMP {column} 칸이 아닌 곳에 편집 상자가 열렸다'
+            )
         _user32.SendMessageW(editor, _WM_SETTEXT, 0, ctypes.c_wchar_p(text))
         if self._window_text(editor) != text:
             _user32.PostMessageW(editor, _WM_KEYDOWN, _VK_ESCAPE, 0)

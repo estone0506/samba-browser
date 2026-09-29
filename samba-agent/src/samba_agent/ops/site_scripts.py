@@ -19,6 +19,8 @@ from pathlib import Path
 
 import httpx
 
+from samba_agent import local_aliases
+
 BUNDLE_DIR = Path(__file__).resolve().parents[3] / 'site-scripts'
 INDEX_NAME = 'index.json'
 BRIDGE_URL = 'http://127.0.0.1:47811'
@@ -55,13 +57,15 @@ def export_bundle(source: Path, target: Path = BUNDLE_DIR) -> int:
         if not NAME_RE.match(name):
             print(f'건너뜀(이름에 쓸 수 없는 글자): {name}')
             continue
-        (target / f'{name}.js').write_text(str(s['code']), encoding='utf-8', newline='\n')
+        # 저장소에는 가명으로 쓴다 — 주석에 든 계정·주소가 공개되지 않게(local_aliases)
+        code = local_aliases.conceal(str(s['code']))
+        (target / f'{name}.js').write_text(code, encoding='utf-8', newline='\n')
         kept.add(f'{name}.js')
         index.append(
             {
                 'name': name,
                 'host': s.get('host'),
-                'description': s.get('description'),
+                'description': local_aliases.conceal(str(s.get('description') or '')) or None,
                 'params': s.get('params') or [],
             }
         )

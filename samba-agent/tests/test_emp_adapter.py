@@ -20,10 +20,16 @@ class FakeUi:
     def search(self) -> None:
         self.calls.append('search')
 
-    def cancel(self, order_no: str) -> None:
-        self.calls.append(f'cancel {order_no}')
+    def show_only(self, order_no: str) -> None:
+        self.calls.append(f'show {order_no}')
         if order_no not in self.rows:
             raise AdapterRetry(ExportFail.NOT_FOUND, '없다')
+
+    def clear_keyword(self) -> None:
+        self.calls.append('clear')
+
+    def cancel(self, order_no: str) -> None:
+        self.calls.append(f'cancel {order_no}')
 
     def read(self, order_no: str) -> CellValues:
         self.calls.append(f'read {order_no}')
@@ -42,13 +48,17 @@ def test_읽기와_쓰기_앞에_창_상태를_확인한다():
     assert adapter.read('E1') == CellValues(57131, 2300)
     assert ui.calls == [
         'ready',
-        'search',
+        'show E1',
         'read E1',
+        'clear',
         'ready',
+        'show E1',
         'write E1 57131 2300',
+        'clear',
         'ready',
-        'search',
+        'show E1',
         'read E1',
+        'clear',
     ]
 
 
@@ -85,7 +95,7 @@ def test_취소는_검색한_뒤_있는_주문만_바꾸고_없는_주문은_남
     ui = FakeUi()
     done = EmpCancelAdapter(ui).complete_pending(['E1', 'X9'])
     assert done == {'E1'}
-    assert ui.calls == ['ready', 'search', 'cancel E1', 'cancel X9']
+    assert ui.calls == ['ready', 'show E1', 'cancel E1', 'show X9', 'clear']
 
 
 def test_취소할_주문이_없으면_화면을_건드리지_않는다():
