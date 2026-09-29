@@ -260,13 +260,19 @@ class ExportQueue:
         reason: ExportFail,
         detail: str,
         delay_s: float,
+        *,
+        count_attempt: bool = True,
     ) -> None:
-        """다시 대기시킨다. delay_s 가 지나야 다시 집힌다."""
+        """다시 대기시킨다. delay_s 가 지나야 다시 집힌다.
+
+        count_attempt 가 거짓이면 이번 시도를 횟수에서 뺀다(사람이 돌아와 멈춘 것은 실패가 아니다).
+        """
+        back = 0 if count_attempt else 1
         with self._immediate():
             self._db.execute(
                 "UPDATE export_requests SET status='pending', fail_reason=?, detail=?, "
-                'next_at=?, updated_at=? WHERE id=?',
-                (reason.value, detail, self._iso(delay_s), self._iso(), request_id),
+                'attempts=MAX(attempts-?, 0), next_at=?, updated_at=? WHERE id=?',
+                (reason.value, detail, back, self._iso(delay_s), self._iso(), request_id),
             )
 
     def recover_running(self, targets: Sequence[str]) -> int:

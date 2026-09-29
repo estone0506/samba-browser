@@ -11,6 +11,8 @@ from samba_agent.export.desktop.emp import EmpAdapter, EmpCancelAdapter
 from samba_agent.export.desktop.shopmine import STATUS_DELAYED, ShopMineAdapter
 from samba_agent.export.routing import cancel_target
 
+USER_BACK_S = 3.0
+
 
 def _shopmine_ui():
     from samba_agent.export.desktop.shopmine_ui import PywinautoShopMineUi
@@ -20,8 +22,10 @@ def _shopmine_ui():
 
 def _emp_ui():
     from samba_agent.export.desktop.emp_ui import PywinautoEmpUi
+    from samba_agent.export.idle import user_idle_seconds
 
-    return PywinautoEmpUi()
+    # 방금(3초 안에) 키보드·마우스 입력이 있었으면 사람이 돌아온 것이다
+    return PywinautoEmpUi(user_active=lambda: user_idle_seconds() < USER_BACK_S)
 
 
 def build_adapters(targets: Collection[str]) -> dict[str, Adapter | BatchAdapter]:

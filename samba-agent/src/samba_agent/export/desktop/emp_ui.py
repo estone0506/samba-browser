@@ -11,11 +11,13 @@ EMP 는 관리자 권한으로 돈다 — 이 드라이버도 관리자 권한 �
 - 컨트롤은 보이는 자식 창 핸들을 열거해 automation id 색인으로 찾는다(샵마인 드라이버와 같은 이유).
 """
 
+import contextlib
 import ctypes
 import datetime as dt
 import logging
 import threading
 import time
+from collections.abc import Callable, Iterator
 from ctypes import wintypes
 
 from pywinauto import Desktop
@@ -142,8 +144,14 @@ class GridRow:
 class PywinautoEmpUi:
     """EMP 주문 그리드 읽기·쓰기."""
 
-    def __init__(self, *, poll_s: float = 0.5) -> None:
+    def __init__(
+        self, *, poll_s: float = 0.5, user_active: Callable[[], bool] | None = None
+    ) -> None:
         self._poll_s = poll_s
+        # 사람이 키보드·마우스를 만지고 있는가 — 참이면 하던 일을 그 자리에서 멈춘다(사용자 지시 2026-09-29)
+        self._user_active = user_active
+        # 뒷정리(메뉴 닫기·안 저장한 값 버리기·검색어 지우기) 중에는 멈추지 않는다 — 화면을 어질러 둔 채 떠나지 않는다
+        self._guard = True
         self._main = None
         self._index: dict[str, UIAElementInfo] = {}
         # 방금 고른 행의 칸 자리(화면 좌표) — 행 메뉴를 그 자리에서 연다
@@ -182,8 +190,24 @@ class PywinautoEmpUi:
             raise AdapterRetry(ExportFail.BLOCKED, f'EMP 화면에서 {auto_id!r} 요소를 찾지 못했다')
         return UIAWrapper(info)
 
+    def _stop_if_user_back(self) -> None:
+        """사람이 돌아왔으면 멈춘다. 다음 동작을 시작하기 전마다 부른다."""
+        if self._guard and self._user_active is not None and self._user_active():
+            raise AdapterRetry(ExportFail.BUSY, '사람이 PC 를 쓰기 시작해 멈췄다')
+
+    @contextlib.contextmanager
+    def _cleanup(self) -> Iterator[None]:
+        """뒷정리 구간 — 사람이 돌아왔어도 끝까지 한다."""
+        before = self._guard
+        self._guard = False
+        try:
+            yield
+        finally:
+            self._guard = before
+
     def ensure_ready(self) -> None:
         """창이 있고 최소화가 풀려 있으며 모달 대화상자에 막히지 않았다."""
+        self._stop_if_user_back()
         self._main = self._find_main()
         if not self._main.is_minimized() and _user32.GetForegroundWindow() != self._main.handle:
             # EMP 그리드는 창이 뒤에 있으면 칸 편집·행 메뉴가 열리다 말다 한다(실기 2026-09-29).
@@ -335,14 +359,16 @@ class PywinautoEmpUi:
 
     def clear_keyword(self) -> None:
         """검색어를 지우고 다시 검색해 목록을 되돌린다."""
-        self.set_keyword('')
-        self.search()
+        with self._cleanup():
+            self.set_keyword('')
+            self.search()
 
     def search(self, today: dt.date | None = None) -> None:
         """검색 기간에 오늘이 들어가게 한 뒤 검색시작을 눌러 그리드를 다시 채운다.
 
         종료일이 어제로 남아 있으면 오늘 들어온 주문이 그리드에 없다(실기 2026-09-29).
         """
+        self._stop_if_user_back()
         today = today or dt.datetime.now().astimezone().date()
         start, end = self._ribbon_date(START_DATE), self._ribbon_date(END_DATE)
         if (start, end) != period_to_cover(start, end, today):
@@ -503,6 +529,7 @@ class PywinautoEmpUi:
         """행 메뉴 → 상태변경 → 취소. 창 메시지로만 한다(실제 마우스·키보드는 쓰지 않는다)."""
         if (self.find_row(order_no).values.get(COL_STATE) or '').strip() == STATE_CANCELLED:
             return
+        self._stop_if_user_back()
         self._select_row(order_no)
         grid = self._el(GRID_ID).element_info.handle
         before = {h for h, _title, _kind in _process_windows(self._main.process_id())}
@@ -520,15 +547,19 @@ class PywinautoEmpUi:
                 log.info('EMP 취소 항목까지 확인(누르지 않음): %s', order_no)
                 self._close_menus(before)
                 return
+            # 취소를 누르기 직전이 마지막 확인이다 — 누른 뒤에는 확인 창을 닫는 데까지 끝낸다
+            self._stop_if_user_back()
             handle, item = targets[0]
             self._post_click(handle, item.rectangle())
         except AdapterRetry:
             # 열어 둔 메뉴를 남기지 않는다
-            self._close_menus(before)
+            with self._cleanup():
+                self._close_menus(before)
             raise
-        time.sleep(self._poll_s * 2)
-        self._settle_after_cancel()
-        self.reload()
+        with self._cleanup():
+            time.sleep(self._poll_s * 2)
+            self._settle_after_cancel()
+            self.reload()
         got = (self.find_row(order_no).values.get(COL_STATE) or '').strip()
         if got != STATE_CANCELLED:
             raise AdapterReject(
@@ -594,6 +625,7 @@ class PywinautoEmpUi:
         칸 더블클릭 → 숫자 한 글자(편집 상자가 열린다) → 편집 상자에 값을 통째로 넣고 되읽기 →
         Enter → 행 값 확인. 글자를 하나씩 보내면 기존 값과 섞인다(실기: 57131 → 507131).
         """
+        self._stop_if_user_back()
         row = self.find_row(order_no)
         cell = self._cell(row, prefix)
         grid = self._el(GRID_ID).element_info.handle
@@ -713,6 +745,14 @@ class PywinautoEmpUi:
             time.sleep(self._poll_s)
         return None
 
+    def _close_editor(self) -> None:
+        """열려 있는 편집 상자를 값 없이 닫는다."""
+        hwnd, cls = self._focus()
+        if hwnd and 'EDIT' in cls.upper():
+            _user32.PostMessageW(hwnd, _WM_KEYDOWN, _VK_ESCAPE, 0)
+            _user32.PostMessageW(hwnd, _WM_KEYUP, _VK_ESCAPE, 0)
+            time.sleep(self._poll_s)
+
     def save(self) -> None:
         """저장을 누르고 '저장완료' 안내창을 닫는다. 다른 창이 뜨면 건드리지 않고 거절한다."""
         self._press_toolbar(SAVE_BUTTON)
@@ -759,9 +799,20 @@ class PywinautoEmpUi:
     def write(self, order_no: str, cost: int, shipping_fee: int) -> None:
         """원가·배송비 칸에 값을 넣고 저장한 뒤 새로고침한다. 이미 같은 값인 칸은 건드리지 않는다."""
         current = self.read(order_no)
-        if (current.cost or 0) != cost:
-            self._edit_cell(order_no, CELL_COST, COL_COST, cost)
-        if (current.shipping_fee or 0) != shipping_fee:
-            self._edit_cell(order_no, CELL_SHIPPING, COL_SHIPPING, shipping_fee)
-        self.save()
-        self.reload()
+        try:
+            if (current.cost or 0) != cost:
+                self._edit_cell(order_no, CELL_COST, COL_COST, cost)
+            if (current.shipping_fee or 0) != shipping_fee:
+                self._edit_cell(order_no, CELL_SHIPPING, COL_SHIPPING, shipping_fee)
+            # 저장을 누르기 직전이 마지막 확인이다 — 누른 뒤에는 안내창을 닫는 데까지 끝낸다
+            self._stop_if_user_back()
+        except AdapterRetry as e:
+            if e.reason is ExportFail.BUSY:
+                # 넣다 만 값을 남기지 않는다 — 사람이 저장을 누르면 함께 저장된다
+                with self._cleanup():
+                    self._close_editor()
+                    self.reload()
+            raise
+        with self._cleanup():
+            self.save()
+            self.reload()

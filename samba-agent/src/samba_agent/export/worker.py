@@ -119,7 +119,13 @@ class ExportWorker:
             self._queue.done(req.id, outcome.detail)
         elif outcome.kind == 'retry':
             assert outcome.reason is not None
-            self._queue.retry_later(req.id, outcome.reason, outcome.detail, self._retry_delay_s)
+            self._queue.retry_later(
+                req.id,
+                outcome.reason,
+                outcome.detail,
+                self._retry_delay_s,
+                count_attempt=outcome.reason is not ExportFail.BUSY,
+            )
         else:
             assert outcome.reason is not None
             self._queue.fail(req.id, outcome.reason, outcome.detail)
@@ -143,7 +149,7 @@ class ExportWorker:
                 )
             return _Outcome('done', f'원가 {req.cost:,} · 배송비 {req.shipping_fee:,} 기입 확인')
         except AdapterRetry as e:
-            if req.attempts >= self._max_attempts:
+            if e.reason is not ExportFail.BUSY and req.attempts >= self._max_attempts:
                 return _Outcome('fail', f'재시도 {req.attempts}회 모두 실패 — {e.detail}', e.reason)
             return _Outcome('retry', e.detail, e.reason)
         except AdapterReject as e:
@@ -165,7 +171,7 @@ class ExportWorker:
         try:
             completed = set(adapter.complete_pending(order_nos))
         except AdapterRetry as e:
-            if req.attempts >= self._max_attempts:
+            if e.reason is not ExportFail.BUSY and req.attempts >= self._max_attempts:
                 return _Outcome(
                     'fail', f'재시도 {req.attempts}회 모두 실패 — {e.detail}', e.reason
                 ), set()

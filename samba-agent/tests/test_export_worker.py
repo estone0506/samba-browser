@@ -370,3 +370,16 @@ def test_대상마다_기다리는_시간이_다르다(queue):
     idle['s'] = 200.0
     done = w.run_once()
     assert done is not None and done.target == 'emp'
+
+
+def test_사람이_돌아와_멈춘_것은_시도_횟수에_넣지_않는다(queue):
+    adapter = FakeAdapter()
+    adapter.read_error = AdapterRetry(ExportFail.BUSY, '사람이 PC 를 쓰기 시작해 멈췄다')
+    queue.enqueue('E1', 'emp', 1000, 0)
+    w = worker(queue, adapter, retry_delay_s=0)
+    for _ in range(8):
+        w.run_once()
+    req = queue.find('E1', 'emp')
+    assert req.status == 'pending'
+    assert req.attempts == 0
+    assert req.fail_reason == 'busy'
