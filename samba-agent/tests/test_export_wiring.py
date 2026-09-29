@@ -214,3 +214,11 @@ def test_shopmine_명령은_재시도_사유를_출력하고_2를_돌려준다(m
     monkeypatch.setattr(cli, 'ShopMineAdapter', Failing)
     assert export_main(['shopmine', 'A1']) == 2
     assert 'window_missing' in capsys.readouterr().out
+
+
+def test_no_를_붙인_대상은_만들지_않는다(monkeypatch):
+    from samba_agent.export import desktop
+
+    monkeypatch.setattr(desktop, '_shopmine_ui', lambda: object())
+    made = build_adapters(('shopmine', 'no_shopmine_cancel'))
+    assert set(made) == {'shopmine'}

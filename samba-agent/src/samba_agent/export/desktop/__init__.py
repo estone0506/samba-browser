@@ -31,7 +31,9 @@ def _emp_ui():
 def build_adapters(targets: Collection[str]) -> dict[str, Adapter | BatchAdapter]:
     """설정에 적힌 대상만 만든다(대상 이름 → 어댑터). 모르는 이름은 거부한다."""
     made: dict[str, Adapter | BatchAdapter] = {}
-    for target in targets:
+    # 'no_emp_cancel' 처럼 적으면 그 취소 연동만 끈다 — 요청은 큐에 대기로 남는다
+    off = {t[3:] for t in targets if t.startswith('no_')}
+    for target in (t for t in targets if not t.startswith('no_')):
         if target == 'shopmine':
             ui = _shopmine_ui()
             made[target] = ShopMineAdapter(ui)
@@ -44,4 +46,4 @@ def build_adapters(targets: Collection[str]) -> dict[str, Adapter | BatchAdapter
             made[cancel_target(target)] = EmpCancelAdapter(emp_ui)
         else:
             raise ValueError(f'모르는 외부 기입 대상: {target!r}')
-    return made
+    return {name: adapter for name, adapter in made.items() if name not in off}
