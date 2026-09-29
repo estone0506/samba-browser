@@ -594,7 +594,8 @@ def matching_options(options: list[str], wanted: str | None) -> list[str]:
             return contains
         # 주문 옵션이 "카키 085(L) NP6KP12C" 처럼 여러 단계·품번이 섞인 경우 — 토큰 하나가 후보 안에 있으면 맞는 것으로
         # 본다(실기: 롯데온 사이즈 "085(L) 35,100 2개 남음 (품절임박)"). 한 글자짜리 토큰(M·L)은 너무 헐거워 뺀다
-        for tok in w.split():
+        # 빗금으로 붙은 옵션('1.블랙(051)/255')도 조각으로 나눈다 — 실기 2026-09-29 롯데온: 선택지 '255 …' 를 못 맞췄다
+        for tok in re.split(r'[\s/]+', w):
             nt = _norm(tok)
             if len(nt) < 2:
                 continue
