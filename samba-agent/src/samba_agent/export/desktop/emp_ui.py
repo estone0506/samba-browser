@@ -147,6 +147,17 @@ def _process_windows(pid: int) -> list[tuple[int, str, str]]:
     return found
 
 
+class _DialogButton:
+    """대화상자 버튼 — 창 핸들과 글자."""
+
+    def __init__(self, handle: int, label: str) -> None:
+        self.handle = handle
+        self._label = label
+
+    def window_text(self) -> str:
+        return self._label
+
+
 class GridRow:
     """그리드 한 행 — 요소와 열 이름 → 값."""
 
@@ -597,6 +608,10 @@ class PywinautoEmpUi:
                 time.sleep(self._poll_s)
                 continue
             _handle, title, message, buttons = found[0]
+            if not message.strip() or not buttons:
+                # 아직 다 그려지지 않았거나 스스로 닫히는 진행 창이다 — 누르지 않고 기다린다
+                time.sleep(self._poll_s)
+                continue
             known = ('취소' in message or '변경' in message) and UNSAVED_MARK not in message
             if not known:
                 raise AdapterReject(
@@ -621,9 +636,9 @@ class PywinautoEmpUi:
             _user32.GetClassNameW(hwnd, name, 256)
         return hwnd, name.value
 
-    def _window_text(self, hwnd: int) -> str:
-        buf = ctypes.create_unicode_buffer(128)
-        _user32.SendMessageW(hwnd, _WM_GETTEXT, 128, buf)
+    def _window_text(self, hwnd: int, size: int = 128) -> str:
+        buf = ctypes.create_unicode_buffer(size)
+        _user32.SendMessageTimeoutW(hwnd, _WM_GETTEXT, size, buf, 0x0002, 2000, None)
         return buf.value
 
     def _wait_focus(self, want_edit: bool, timeout_s: float = 3.0) -> int:
@@ -753,32 +768,41 @@ class PywinautoEmpUi:
         _user32.PostMessageW(toolbar, _WM_LBUTTONUP, 0, lparam)
 
     def dialogs(self) -> list[tuple[int, str, str, list]]:
-        """EMP 가 띄운 보이는 대화상자들 — (핸들, 제목, 문구, 버튼 요소들)."""
+        """EMP 가 띄운 보이는 대화상자들 — (핸들, 제목, 문구, 버튼들).
+
+        자식 창을 직접 읽는다. UIA 로 읽으면 메뉴 항목을 누르는 호출이 끝나지 않은 동안 문구·버튼이
+        빈 채로 온다(실기 2026-09-29: 취소 확인 창을 '모르는 창'으로 보고 물러났다).
+        """
         found = []
         pid = self._main.process_id()
         for handle, title, kind in _process_windows(pid):
             if kind != DIALOG_CLASS:
                 continue
-            try:
-                dialog = UIAWrapper(UIAElementInfo(handle))
-                message = ' '.join(t.window_text() for t in dialog.descendants(control_type='Text'))
-                buttons = dialog.descendants(control_type='Button')
-            except Exception:  # noqa: BLE001, S112 — 이미 닫힌 창
-                continue
-            found.append((handle, title, message, buttons))
+            texts: list[str] = []
+            buttons: list[_DialogButton] = []
+            for child in _visible_children(handle):
+                name = ctypes.create_unicode_buffer(64)
+                _user32.GetClassNameW(child, name, 64)
+                label = self._window_text(child, 512)
+                if name.value.upper() == 'BUTTON':
+                    buttons.append(_DialogButton(child, label))
+                elif label:
+                    texts.append(label)
+            found.append((handle, title, ' '.join(texts), buttons))
         return found
 
     def _click_dialog_button(self, buttons: list, names: tuple[str, ...]) -> str | None:
         for b in buttons:
             if b.window_text() in names:
-                label = b.window_text()
                 # 버튼에 직접 보내는 누름 메시지는 뒤에 있는 대화상자에서 먹지 않는다(실기 2026-09-29) —
                 # 대화상자에 '이 버튼이 눌렸다'를 보낸다
-                hwnd = b.element_info.handle
                 _user32.PostMessageW(
-                    _user32.GetParent(hwnd), _WM_COMMAND, _user32.GetDlgCtrlID(hwnd), hwnd
+                    _user32.GetParent(b.handle),
+                    _WM_COMMAND,
+                    _user32.GetDlgCtrlID(b.handle),
+                    b.handle,
                 )
-                return label
+                return b.window_text()
         return None
 
     def _wait_dialog(self, timeout_s: float) -> tuple[int, str, str, list] | None:
