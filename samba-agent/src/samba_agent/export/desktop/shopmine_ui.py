@@ -433,8 +433,9 @@ class PywinautoShopMineUi:
 
     # ---- 수집 ----
     @_guard_pywinauto_errors
-    def collect(self, scope: str = NORMAL_ALL) -> None:
-        self._select_combo(self._el('ComboBoxProcessStatus'), scope)
+    def collect(self) -> None:
+        # 수집 범위는 언제나 (정상전체) — 다른 값으로 바꾸지 않는다(사용자 지시 2026-09-29)
+        self._select_combo(self._el('ComboBoxProcessStatus'), NORMAL_ALL)
         time.sleep(self._poll_s)
         _press_button(self._el('ButtonSearch'))
         # 수집 중 표시가 뜰 틈을 준다 — 바로 보면 '이미 끝남'으로 잘못 읽는다
@@ -474,9 +475,11 @@ class PywinautoShopMineUi:
 
     @_guard_pywinauto_errors
     def order_nos_with_status(self, status: str) -> list[str]:
-        """작업상태 필터를 status 로, 엑셀 필터를 전체로 두고 목록을 읽는다. 필터는 부른 쪽이 되돌린다."""
-        excel = self._filter_combo(FILTER_EXCEL)
-        self._select_combo(excel, excel.texts()[0].strip())
+        """작업상태 필터만 status 로 두고 목록을 읽는다. 필터는 부른 쪽이 되돌린다.
+
+        엑셀 생성 여부 필터는 건드리지 않는다(사용자 지시 2026-09-29) — 엑셀생성안됨 그대로다.
+        """
+        self._select_combo(self._filter_combo(FILTER_EXCEL), FILTER_EXCEL)
         self._select_combo(self._filter_combo(FILTER_STATUS), status)
         time.sleep(self._poll_s * 2)
         self._refresh()

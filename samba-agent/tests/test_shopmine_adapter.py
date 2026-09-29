@@ -16,8 +16,6 @@ class FakeUi:
         self.statuses: list[str] = []
         # 이미 그 작업상태인 주문(필터 목록에는 없다)
         self.marked: list[str] = []
-        # 클레임(취소) 상태라 정상 목록에는 없는 주문
-        self.claims: list[str] = []
         self.ready_error: Exception | None = None
         self.wait_error: Exception | None = None
         # 완료됨을 눌러도 남는 주문(되읽기 불일치 시험용)
@@ -33,11 +31,8 @@ class FakeUi:
     def set_period(self) -> None:
         self.calls.append('period')
 
-    def collect(self, scope: str = '(정상전체)') -> None:
-        self.calls.append('collect' if scope == '(정상전체)' else f'collect {scope}')
-        if scope != '(정상전체)':
-            # 클레임까지 수집하면 취소 상태 주문이 목록에 들어온다
-            self.rows.extend(r for r in self.claims if r not in self.rows)
+    def collect(self) -> None:
+        self.calls.append('collect')
 
     def wait_collected(self, timeout_s: float) -> None:
         self.calls.append(f'wait {timeout_s:g}')
@@ -185,23 +180,6 @@ def test_전부_이미_바뀌어_있으면_누르지_않는다():
     ui.marked = ['D1']
     assert ShopMineAdapter(ui, status='지연됨').complete_pending(['D1']) == {'D1'}
     assert not any(c.startswith('done') for c in ui.calls)
-
-
-def test_구매한_주문이_취소_상태면_클레임까지_수집해_완료됨으로_바꾼다():
-    ui = FakeUi(rows=('S1',))
-    ui.claims = ['C1']
-    done = ShopMineAdapter(ui, include_claims=True).complete_pending(['S1', 'C1'])
-    assert done == {'S1', 'C1'}
-    assert 'collect (정상/클레임 전체)' in ui.calls
-    assert ui.statuses == ['완료됨', '완료됨']
-
-
-def test_취소_어댑터는_클레임까지_찾지_않는다():
-    ui = FakeUi(rows=('S1',))
-    ui.claims = ['C1']
-    done = ShopMineAdapter(ui, status='지연됨').complete_pending(['C1'])
-    assert done == set()
-    assert 'collect (정상/클레임 전체)' not in ui.calls
 
 
 def test_완료됨은_이미_바뀐_주문을_찾으러_큰_목록을_읽지_않는다():

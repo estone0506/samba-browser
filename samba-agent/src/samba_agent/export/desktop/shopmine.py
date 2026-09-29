@@ -37,9 +37,6 @@ def order_matches(order_no: str, cell: str) -> bool:
 
 
 STATUS_DONE = '완료됨'
-# 수집 범위 — 정상 주문만 / 클레임(취소·반품) 주문까지
-SCOPE_NORMAL = '(정상전체)'
-SCOPE_ALL = '(정상/클레임 전체)'
 STATUS_DELAYED = '지연됨'
 
 
@@ -54,8 +51,8 @@ class ShopMineUi(Protocol):
         """검색 기간에 오늘이 들어가게 한다(이미 들어 있으면 그대로)."""
         ...
 
-    def collect(self, scope: str = SCOPE_NORMAL) -> None:
-        """상태 콤보를 scope(정상전체 · 정상/클레임 전체)로 두고 수집하기(F5)."""
+    def collect(self) -> None:
+        """수집 범위를 (정상전체)로 두고 수집하기(F5). 다른 범위로는 바꾸지 않는다."""
         ...
 
     def wait_collected(self, timeout_s: float) -> None:
@@ -71,7 +68,7 @@ class ShopMineUi(Protocol):
         ...
 
     def order_nos_with_status(self, status: str) -> list[str]:
-        """작업상태가 status 인 행들을 알아보는 값들(엑셀 생성 여부와 상관없이)."""
+        """작업상태가 status 인 행들을 알아보는 값들(엑셀 필터는 그대로 둔다)."""
         ...
 
     def select_orders(self, order_nos: Sequence[str]) -> Mapping[str, int]:
@@ -93,7 +90,6 @@ class ShopMineAdapter:
         collect_timeout_s: float = 300.0,
         status: str = STATUS_DONE,
         dry_run: bool = False,
-        include_claims: bool = False,
     ) -> None:
         self._ui = ui
         self._collect_timeout_s = collect_timeout_s
@@ -101,27 +97,23 @@ class ShopMineAdapter:
         self._status = status
         # 실기 시험용 — 행 체크까지만 하고 완료됨은 누르지 않는다
         self._dry_run = dry_run
-        # 구매까지 끝낸 주문은 그 뒤 취소 상태가 됐어도 완료됨으로 바꾼다(사용자 지시 2026-09-29) —
-        # 정상 주문 목록에 없으면 클레임 주문까지 수집해 한 번 더 찾는다
-        self._include_claims = include_claims
 
     def complete_pending(self, order_nos: Sequence[str]) -> set[str]:
         wanted = [o for o in dict.fromkeys(order_nos) if o]
         if not wanted:
             return set()
         self._ui.ensure_ready()
-        done = self._pass(wanted, SCOPE_NORMAL)
-        rest = [o for o in wanted if o not in done]
-        if rest and self._include_claims:
-            done |= self._pass(rest, SCOPE_ALL)
-        return done
+        return self._pass(wanted)
 
-    def _pass(self, wanted: Sequence[str], scope: str) -> set[str]:
-        """수집 범위 하나에서 찾아 바꾼다. 처리한(또는 이미 바뀌어 있던) 주문번호 집합."""
+    def _pass(self, wanted: Sequence[str]) -> set[str]:
+        """정상 주문 목록에서 찾아 바꾼다. 처리한(또는 이미 바뀌어 있던) 주문번호 집합.
+
+        수집 범위는 (정상전체), 엑셀 필터는 엑셀생성안됨에서 바꾸지 않는다(사용자 지시 2026-09-29).
+        """
         ui = self._ui
         # 조건이 먼저다 — 오늘이 빠진 기간으로 수집하면 오늘 주문이 목록에 없다
         ui.set_period()
-        ui.collect(scope)
+        ui.collect()
         ui.wait_collected(self._collect_timeout_s)
         ui.set_filters()
         present = ui.filtered_order_nos()
