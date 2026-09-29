@@ -18,6 +18,8 @@ const query=cut?cut[1]:(jb?jb[1]:addr);
 const rest=(jb?jb[2]:'').trim();
 const detail=(det0&&!det0.startsWith(addr)&&!joined)?((rest&&!det0.includes(rest)?rest+' ':'')+det0):(cut?cut[2]:rest).trim();
 // 선물 주문서?
+// 주문서가 다 그려진 뒤에 선물·직배를 가린다 — 일찍 보면 선물 주문서를 직배로 잘못 본다
+await page.waitFor(/받는 분 주소로 보내기|새 ?배송지 ?추가|변경/,8000).catch(()=>{});
 const rr=(await E('받는 분 주소로 보내기')).filter(e=>e.role==='radio'&&/주소로/.test(e.text));
 let add=null;
 if(rr.length){
@@ -28,8 +30,20 @@ if(rr.length){
   add=L(await E('새 배송지 등록'),e=>e.role==='button'&&/새 ?배송지 ?등록/.test(e.text));
   if(!add)return{...R,error:'gift-add-button-nf'};
 }else{
-  add=L(await E('새 배송지 추가'),e=>/새 ?배송지 ?추가/.test(e.text)&&e.role==='button');
-  if(!add){const ch=L(await E('변경'),e=>e.text==='변경');if(!ch)return{...R,error:'change-button-nf'};await page.click(ch.id);await page.waitFor('새 배송지 추가',8000);add=L(await E('새 배송지 추가'),e=>/새 ?배송지 ?추가/.test(e.text)&&e.role==='button');}
+  // 주문서가 늦게 그려지면 버튼이 아직 없다 — 몇 초 다시 찾는다(실기 2026-09-29: change-button-nf 2건)
+  const fa=async()=>L(await E('새 배송지 추가'),e=>/새 ?배송지 ?추가/.test(e.text)&&e.role==='button');
+  const fc=async()=>L(await E('변경'),e=>/^(배송지\s*)?변경$/.test(String(e.text).trim()));
+  let ch=null;
+  for(let i=0;i<8&&!add&&!ch;i++){add=await fa();if(!add)ch=await fc();if(!add&&!ch)await sleep(1000);}
+  if(!add){
+    if(!ch){
+      // 못 찾았으면 어느 화면이었는지 남긴다 — 다음에 원인을 바로 알 수 있게
+      const seen=(await E(null,'button,a')).filter(e=>e.text).map(e=>String(e.text).slice(0,12)).slice(0,12);
+      const at=String(await page.url()).replace(/^https?:\/\//,'').split('?')[0].slice(0,60);
+      return{...R,error:'change-button-nf @'+at+' ['+seen.join('|')+']'};
+    }
+    await page.click(ch.id);await page.waitFor('새 배송지 추가',8000);add=await fa();
+  }
   if(!add)return{...R,error:'add-address-button-nf'};
 }
 await page.click(add.id);await sleep(1500);

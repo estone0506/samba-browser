@@ -33,6 +33,9 @@ function mismatch(f, e) {
 async function pickForm() {
   let c = (await tabs.list()).filter(x => /29cm\.co\.kr\/order\/checkout/.test(x.url || ''))
   if (args.tab) c = c.filter(x => x.id === String(args.tab))
+  // 계정 비교를 동시에 돌리면 계정마다 주문서 탭이 열린다 — 이 계정(프로필)의 탭만 본다
+  // (실기 2026-09-29: 'multiple checkout tabs' 로 원가를 못 읽었다)
+  if (args.profile) { const mine = c.filter(x => !x.profile || x.profile === args.profile); if (mine.length) c = mine }
   if (!c.length) return { err: 'no checkout tab' }
   const ok = []
   let why = null

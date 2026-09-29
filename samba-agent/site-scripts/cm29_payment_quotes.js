@@ -34,6 +34,8 @@ function mismatch(f, e) {
 async function pickForm() {
   let c = (await tabs.list()).filter(x => /29cm\.co\.kr\/order\/checkout/.test(x.url || ''))
   if (args.tab) c = c.filter(x => x.id === String(args.tab))
+  const q_=args.profile,m_=c.filter(x=>!q_||!x.profile||x.profile===q_)
+  if(m_[0])c=m_
   if (!c.length) return { err: 'no checkout tab' }
   const ok = []
   let why = null
