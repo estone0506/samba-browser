@@ -1011,6 +1011,41 @@
     ]
   },
   {
+    "name": "ssg_gift_address",
+    "host": "ssg.com",
+    "description": "SSG 선물 받는 분 지정: 배송지 대신 입력하기 → 주소록에서 고객 항목 체크 → 선택완료 → 계속하기 → 주문서. 없으면 배송지 추가 목록을 열고 need_address",
+    "params": [
+      "address",
+      "address_detail",
+      "name"
+    ]
+  },
+  {
+    "name": "ssg_gift_enter",
+    "host": "ssg.com",
+    "description": "SSG 선물하기 진입: 상품 주소(애드픽 경유 주소 그대로)를 새 탭으로 열고 옵션 → 선물 → 선물 정보 화면. 결제 없음",
+    "params": [
+      "option",
+      "product_url",
+      "profile"
+    ]
+  },
+  {
+    "name": "ssg_gift_save_address",
+    "host": "ssg.com",
+    "description": "SSG 선물하기 주소록 저장: 채워진 배송지 폼 저장 → 회원 팝업 닫고 선물 정보 화면으로",
+    "params": []
+  },
+  {
+    "name": "ssg_login_check",
+    "host": "ssg.com",
+    "description": "SSG 로그인 확인: MY SSG 주문조회를 새 탭으로 열어 로그인 여부를 보고 닫는다(결제 전 확인용)",
+    "params": [
+      "back_tab",
+      "profile"
+    ]
+  },
+  {
     "name": "ssg_order_detail",
     "host": "ssg.com",
     "description": "SSG 주문 상세(2026-09-27, 로그인 실측): 계정 profile 로 주문 상세(pay.ssg.com/myssg/orderInfoDetail.ssg?orordNo=)를 새 탭에서 열어 결제 값을 읽고 탭을 닫는다.",

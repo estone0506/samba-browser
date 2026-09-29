@@ -344,6 +344,11 @@ OFFICE_ADDRESS_HINT = local_aliases.apply('사무실길 58')
 OFFICE_NAME = local_aliases.apply('김사무')
 # 까대기 주문 배송지(사무실). 기본 배송지가 사무실이 아닐 때 이번 주문에만 넣는다 — poizon-sourcing 스킬 "사무실 배송"
 OFFICE_DETAIL = '1층 102호'
+# SSG 선물하기 스크립트(2026-09-29) — 바로구매 주문서로 견적한 뒤 선물 주문서로 바꿔 탄다
+SSG_GIFT_ENTER_SCRIPT = 'ssg_gift_enter'
+SSG_GIFT_ADDRESS_SCRIPT = 'ssg_gift_address'
+SSG_GIFT_SAVE_SCRIPT = 'ssg_gift_save_address'
+SSG_LOGIN_CHECK_SCRIPT = 'ssg_login_check'
 # 까대기 주문서에서 기본 배송지(사무실)가 그려질 때까지 다시 읽는 횟수·간격
 DEFAULT_SHIPPING_POLL_TRIES = 4
 DEFAULT_SHIPPING_POLL_MS = 1500
@@ -3192,8 +3197,9 @@ class BuyerAgent(AgentBase):
         source = source_of(self.spec.name)
         forced = source.order_type
         if source.gift_unless_poison and not forced:
-            # 롯데온: 포이즌은 바로구매(까대기), 그 밖은 전부 선물하기 — 정가 비교 없이 정해진다(사용자 2026-09-27)
-            forced = 'kkadaegi' if is_poison_seller(order.seller) else 'gift'
+            # 롯데온·SSG: 포이즌·라자다 배대지는 사무실 수령(까대기), 그 밖은 전부 선물하기 — 정가 비교 없이 정해진다
+            # (사용자 2026-09-27 롯데온, 2026-09-29 SSG "까대기 제외하고 선물하기")
+            forced = 'kkadaegi' if is_poison_seller(order.seller) or self._is_forwarder(order) else 'gift'
         forwarder = not forced and self._is_forwarder(order)
         if not source.normal_price and not forced and not is_poison_seller(order.seller) and not forwarder:
             # 정가 스크립트가 없는 소싱처는 아직 자동 판정을 못 한다 — 삼바웨이브 태그(order_type)를 따른다
@@ -3265,12 +3271,106 @@ class BuyerAgent(AgentBase):
             self._apply_shipping(a, dict(OFFICE_SHIPPING), account)
             return
 
+        if source_of(self.spec.name).key == 'ssg' and self.order_type_of(a.order, snap) == 'gift':
+            self._ssg_gift(a, snap, account)
+            return
+
         shipping = self._fetch_shipping(a, snap)
         # 직배·선물도 같은 배송지가 이미 목록에 있으면 고른다 — 재시도마다 같은 주소가 새로 저장되던 것을 막는다
         # (실기 2026-09-27: 29CM·무신사 주소록에 같은 고객 주소가 4개 쌓임)
         if self._select_existing_shipping(dict(shipping), account):
             return
         self._apply_shipping(a, shipping, account)
+
+    def _ssg_gift(self, a: Assignment, snap: dict[str, object], account: str) -> None:
+        """SSG 선물하기(사용자 2026-09-29 "까대기 제외하고 선물하기", 수동 성공 2건 이식).
+
+        스냅샷은 바로구매 주문서로 원가를 읽는다 — 그 주문서를 닫고 스냅샷이 도착한 상품 주소(애드픽 경유면 그 주소)를
+        '선물'로 다시 열어 받는 분을 고객으로 지정한 선물 주문서로 바꿔 탄다. 결제는 그 주문서(snap['order_tab'])로 한다.
+        고객 이름·주소는 스크립트 인자로만 지나가고 결과·기록에는 남지 않는다.
+        """
+        shipping = self._fetch_shipping(a, snap)
+        if not (shipping.get('name') and shipping.get('address')):
+            raise AgentFailure('needs_human', '선물 받는 분 배송지를 받지 못했다', FailReason.UNKNOWN)
+        url = str(snap.get('product_url') or a.order.product_url or '')
+        option = str(snap.get('selected') or a.order.option or '')
+        self._close_order_tabs(account)
+        enter_args = json.dumps(
+            {'product_url': url, 'option': option, **({'profile': account} if account else {})},
+            ensure_ascii=False,
+        )
+        entered = self.json_tool('run_script', name=SSG_GIFT_ENTER_SCRIPT, args=enter_args)
+        if entered.get('error') == 'login_required' and entered.get('login_popup') and account:
+            # '선물'이 로그인 팝업을 띄웠다 — 그 팝업에서 이 계정으로 로그인하고 한 번만 다시 연다
+            self.tool('switch_tab', id=str(entered.get('login_popup')))
+            self.tool('login', accountLabel=account)
+            self._close_product_tabs(account, url)
+            entered = self.json_tool('run_script', name=SSG_GIFT_ENTER_SCRIPT, args=enter_args)
+        if not entered.get('ok'):
+            reason = FailReason.OUT_OF_STOCK if entered.get('error') == 'sold_out' else FailReason.UNKNOWN
+            raise AgentFailure(
+                'needs_human', f'SSG 선물 진입 실패: {mask_text(str(entered.get("note"))[:100])}', reason
+            )
+        who = {
+            'name': shipping.get('name'),
+            'address': shipping.get('address'),
+            'address_detail': shipping.get('address_detail') or '',
+        }
+        who_args = json.dumps(who, ensure_ascii=False)
+        placed = self.json_tool('run_script', name=SSG_GIFT_ADDRESS_SCRIPT, args=who_args)
+        new_addr = bool(placed.get('need_address'))
+        if new_addr:
+            # 주소록에 없는 고객 — 열어 둔 목록 팝업에서 새로 저장(전화는 키마스터 신원정보)하고 다시 고른다
+            applied = self._run_set_shipping(
+                shipping, {**who, 'gift': True, **({'profile': account} if account else {})}
+            )
+            if not applied.get('ok'):
+                raise AgentFailure(
+                    'needs_human',
+                    f'선물 받는 분 주소 저장 실패: {mask_text(str(applied.get("note") or "")[:80])}',
+                    FailReason.UNKNOWN,
+                )
+            self._fill_phone(applied)
+            saved = self.json_tool('run_script', name=SSG_GIFT_SAVE_SCRIPT, args='{}')
+            if not saved.get('ok'):
+                raise AgentFailure(
+                    'needs_human', f'선물 받는 분 주소 저장 실패: {saved.get("note")}', FailReason.UNKNOWN
+                )
+            placed = self.json_tool('run_script', name=SSG_GIFT_ADDRESS_SCRIPT, args=who_args)
+        if not placed.get('ok') or not placed.get('gift') or not placed.get('order_tab'):
+            raise AgentFailure(
+                'needs_human',
+                f'선물 받는 분 지정 실패: {mask_text(str(placed.get("note"))[:100])} '
+                f'(주소록 {placed.get("entries")}개, 일치 {placed.get("matched")}개)',
+                FailReason.UNKNOWN,
+            )
+        amount = _as_float(placed.get('amount'))
+        cost = _as_float(snap.get('pay_amount') or snap.get('cost'))
+        if amount and cost and amount > cost + 1:
+            # 견적(바로구매 주문서)보다 선물 주문서가 비싸다 — 마진 판단이 틀어지므로 결제하지 않는다
+            raise AgentFailure(
+                'needs_human',
+                f'선물 주문서 금액 {amount:,.0f}원이 견적 {cost:,.0f}원보다 크다 — 결제하지 않음',
+                FailReason.MARGIN,
+            )
+        # 로그인이 풀린 채 결제하면 주문이 안 생긴다(실기 2026-09-29) — 결제 전에 세션을 확인한다
+        check = self.json_tool(
+            'run_script',
+            name=SSG_LOGIN_CHECK_SCRIPT,
+            args=json.dumps(
+                {'back_tab': placed['order_tab'], **({'profile': account} if account else {})}
+            ),
+        )
+        if not check.get('logged_in'):
+            raise AgentFailure(
+                'needs_human', 'SSG 로그인이 풀려 있다 — 선물 주문서까지 만들었지만 결제하지 않음', FailReason.UNKNOWN
+            )
+        snap['order_tab'] = str(placed['order_tab'])
+        self.note(
+            '배송지',
+            f'선물하기 — 받는 분 지정·주문서 금액 {amount:,.0f}원'
+            + (' · 주소록에 새로 저장' if new_addr else ''),
+        )
 
     def _select_existing_shipping(self, shipping: dict[str, object], account: str) -> bool:
         """배송지 목록에서 이미 있는 항목(이름·주소)을 골라 주문서에 반영한다(`<key>_select_shipping`).
