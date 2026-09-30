@@ -15,6 +15,9 @@ files:
 asarUnpack:
   - resources/**
   - node_modules/onnxruntime-node/**
+  # Claude Agent SDK 는 자기 실행 파일(claude.exe)을 spawn 한다. asar 안에서는 실행이 안 되므로
+  # SDK 의 JS 와 플랫폼 바이너리를 통째로 풀어 둔다(실기: 설치본에서 에이전트가 2~15ms 만에 실패)
+  - node_modules/@anthropic-ai/**
 win:
   executableName: SAMBA Browser
 nsis:

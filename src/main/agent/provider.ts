@@ -5,6 +5,8 @@ import {
   type Query,
   type SDKUserMessage
 } from '@anthropic-ai/claude-agent-sdk'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import type { AgentImage } from '../../shared/agent-image'
 import { MAX_TOOL_CALLS, type AgentEffort } from '../../shared/settings'
 import type { AgentAuth } from '../ai/auth-route'
@@ -70,6 +72,24 @@ function resolveEnv(auth: AgentAuth): Record<string, string | undefined> | undef
   return { ...process.env, ANTHROPIC_API_KEY: key }
 }
 
+// 패키징된 앱(asar)에서 SDK 가 자기 위치로 계산한 실행 파일 경로는 app.asar 안을 가리킨다.
+// asar 는 아카이브라 그 안의 파일은 프로세스로 띄울 수 없다 — exists 검사만 통과하고 spawn 이 실패한다
+// ("native binary ... exists but failed to launch", 실기 2026-09-30).
+// app.asar.unpacked 의 실제 경로를 찾아 SDK 에 직접 알려 준다. 개발 모드에서는 asar 가 없으므로 undefined.
+const SDK_BIN_REL = join('node_modules', '@anthropic-ai')
+function unpackedClaudeExecutable(): string | undefined {
+  const root = process.resourcesPath
+  if (typeof root !== 'string' || root === '') return undefined
+  const base = join(root, 'app.asar.unpacked', SDK_BIN_REL)
+  for (const dir of ['claude-agent-sdk-win32-x64', 'claude-agent-sdk-win32-arm64']) {
+    const p = join(base, dir, 'claude.exe')
+    if (existsSync(p)) return p
+  }
+  return undefined
+}
+// 한 번만 찾아 둔다(실행 때마다 파일 검사를 하지 않는다)
+let claudeExecutable: string | undefined | null = null
+
 /**
  * SDK 에 넘길 옵션을 만든다(순수 함수 — 단위 테스트에서 그대로 확인한다).
  * effort 는 SDK Options 가 지원하는 정식 옵션이라 그대로 넘기고,
@@ -80,8 +100,11 @@ export function buildQueryOptions(
   // 연결 경로에 따른 환경(내 API 키 경로만 ANTHROPIC_API_KEY 를 담는다). 생략하면 현재 연결 기준
   env: Record<string, string | undefined> | undefined = resolveEnv(currentAuth())
 ): Options {
+  if (claudeExecutable === null) claudeExecutable = unpackedClaudeExecutable()
   return {
     env,
+    // 패키징본에서만 값이 잡힌다(위 unpackedClaudeExecutable 주석 참고)
+    ...(claudeExecutable === undefined ? {} : { pathToClaudeCodeExecutable: claudeExecutable }),
     systemPrompt: input.systemPrompt,
     model: input.model,
     effort: input.effort ?? 'medium',
