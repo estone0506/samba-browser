@@ -76,3 +76,92 @@ describe('pickActionIconPath', () => {
     expect(pickActionIconPath(undefined)).toBeNull()
   })
 })
+
+// 확장을 올린 직후 0.6초쯤 startWorkerForScope 는 "Failed to start service worker." 로 즉시 거부한다
+// (실측 2026-10-01, Electron 39.8.10). 그 사이에 온 이동 알림을 버리면 확장은 복원된 탭의 첫 이동을
+// 놓친다. 이미 돌고 있는 워커를 먼저 쓰고, 없으면 짧게 다시 시도해야 한다.
+describe('서비스워커 집기 — 적재 직후 거부 구간', () => {
+  interface SwFake {
+    startWorkerForScope: ReturnType<typeof vi.fn>
+    getAllRunning: ReturnType<typeof vi.fn>
+    getWorkerFromVersionID: ReturnType<typeof vi.fn>
+  }
+  const scope = 'chrome-extension://gkbopfgdnonnkobieobkihdahfdhhihh/'
+  const makeSes = (sw: SwFake): never =>
+    ({
+      extensions: {
+        getAllExtensions: () => [
+          {
+            id: 'gkbopfgdnonnkobieobkihdahfdhhihh',
+            manifest: { background: { service_worker: 'sw.js' } }
+          }
+        ]
+      },
+      serviceWorkers: sw
+    }) as never
+
+  const warm = async (ses: never): Promise<void> => {
+    const { warmExtensionWorkers } = await import('../src/main/extensions/cookies-bridge')
+    vi.useFakeTimers()
+    try {
+      const p = warmExtensionWorkers(ses)
+      // 재시도 간격(300ms × 2) + 준비 신호 대기(SW_READY_TIMEOUT_MS = 5000)
+      await vi.advanceTimersByTimeAsync(7000)
+      await p
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+
+  it('거부되더라도 이미 돌고 있는 워커를 쓴다 — 띄우기를 아예 부르지 않는다', async () => {
+    const worker = { send: vi.fn(), scope }
+    const sw: SwFake = {
+      startWorkerForScope: vi.fn(async () => {
+        throw new Error('Failed to start service worker.')
+      }),
+      getAllRunning: vi.fn(() => ({ 0: { scope } })),
+      getWorkerFromVersionID: vi.fn(() => worker)
+    }
+    await warm(makeSes(sw))
+    expect(sw.startWorkerForScope).not.toHaveBeenCalled()
+    expect(sw.getWorkerFromVersionID).toHaveBeenCalledWith(0)
+  })
+
+  it('돌고 있는 워커가 없으면 거부를 넘기고 다시 시도한다', async () => {
+    let calls = 0
+    const sw: SwFake = {
+      startWorkerForScope: vi.fn(async () => {
+        calls += 1
+        if (calls < 3) throw new Error('Failed to start service worker.')
+        return { send: vi.fn(), scope }
+      }),
+      getAllRunning: vi.fn(() => ({})),
+      getWorkerFromVersionID: vi.fn(() => undefined)
+    }
+    await warm(makeSes(sw))
+    expect(calls).toBe(3)
+  })
+
+  it('다른 스코프가 돌고 있어도 그 워커를 집지 않는다', async () => {
+    const sw: SwFake = {
+      startWorkerForScope: vi.fn(async () => ({ send: vi.fn(), scope })),
+      getAllRunning: vi.fn(() => ({ 0: { scope: 'https://www.musinsa.com/' } })),
+      getWorkerFromVersionID: vi.fn(() => ({ send: vi.fn() }))
+    }
+    await warm(makeSes(sw))
+    expect(sw.getWorkerFromVersionID).not.toHaveBeenCalled()
+    expect(sw.startWorkerForScope).toHaveBeenCalledTimes(1)
+  })
+
+  it('끝까지 안 되면 조용히 포기한다 — 예외를 밖으로 던지지 않는다', async () => {
+    const sw: SwFake = {
+      startWorkerForScope: vi.fn(async () => {
+        throw new Error('Failed to start service worker.')
+      }),
+      getAllRunning: vi.fn(() => ({})),
+      getWorkerFromVersionID: vi.fn(() => undefined)
+    }
+    await expect(warm(makeSes(sw))).resolves.toBeUndefined()
+    expect(sw.startWorkerForScope).toHaveBeenCalledTimes(3)
+  })
+})

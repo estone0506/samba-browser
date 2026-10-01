@@ -3,7 +3,7 @@
 // 받아 주는 조건: 호출한 서비스워커가 확장(chrome-extension://<id>/)이고, 그 확장의 manifest 가
 // cookies 권한을 선언했을 때만. 그 밖의 서비스워커(일반 사이트)는 거절한다.
 import { app, webContents } from 'electron'
-import type { Cookie, CookiesSetDetails, Session, WebContents } from 'electron'
+import type { Cookie, CookiesSetDetails, ServiceWorkerMain, Session, WebContents } from 'electron'
 import { isActiveTabId, runTabsOp } from './tabs-bridge'
 
 export const EXT_COOKIES_CHANNEL = 'samba-ext-cookies'
@@ -224,13 +224,57 @@ function keepExtensionWorkersAlive(ses: Session): void {
  * 왜: 앱 시작 뒤 첫 이동에서 샵백 활성화 페이지가 아직 초기화 중인 백그라운드에 묻고 빈 답을 받아
  * 빈 화면으로 넘어갔다(2026-09-27). 프로필 세션이 생기거나 확장이 붙을 때 먼저 깨워 둔다
  */
+/** 이 스코프에서 이미 돌고 있는 워커 — 띄우기를 거치지 않으므로 거부당할 일이 없다 */
+function runningWorker(ses: Session, scope: string): ServiceWorkerMain | undefined {
+  let all: Record<number, { scope?: string }>
+  try {
+    all = ses.serviceWorkers.getAllRunning()
+  } catch {
+    return undefined
+  }
+  for (const [versionId, info] of Object.entries(all)) {
+    if (info?.scope !== scope) continue
+    try {
+      const w = ses.serviceWorkers.getWorkerFromVersionID(Number(versionId))
+      if (w) return w
+    } catch {
+      // 조회 실패 — 띄우는 쪽으로 넘어간다
+    }
+  }
+  return undefined
+}
+
+/**
+ * 스코프의 서비스워커를 얻는다. 확장을 올린 직후 0.6초쯤은 startWorkerForScope 가
+ * "Failed to start service worker." 로 **즉시 거부**한다(실측 2026-10-01, Electron 39.8.10 —
+ * 등록이 끝나기 전이다). 그때 온 이동 알림을 그냥 버리면 확장은 복원된 탭의 첫 이동을
+ * 통째로 놓친다. 이미 돌고 있으면 그 워커를 쓰고, 아니면 짧게 다시 시도한다.
+ */
+async function workerForScope(ses: Session, scope: string): Promise<ServiceWorkerMain> {
+  const already = runningWorker(ses, scope)
+  if (already) return already
+  let last: unknown
+  for (let i = 0; i < 3; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, 300))
+    try {
+      return await ses.serviceWorkers.startWorkerForScope(scope)
+    } catch (e: unknown) {
+      last = e
+      // 거부된 사이에 떠 버렸을 수 있다
+      const w = runningWorker(ses, scope)
+      if (w) return w
+    }
+  }
+  throw last instanceof Error ? last : new Error(String(last))
+}
+
 export async function warmExtensionWorkers(ses: Session): Promise<void> {
   const exts = ses.extensions?.getAllExtensions?.() ?? []
   for (const ext of exts) {
     const manifest = ext.manifest as { background?: { service_worker?: string } }
     if (!manifest?.background?.service_worker) continue
     try {
-      const w = await ses.serviceWorkers.startWorkerForScope(`chrome-extension://${ext.id}/`)
+      const w = await workerForScope(ses, `chrome-extension://${ext.id}/`)
       await readyOf(w)
     } catch (e: unknown) {
       console.warn(
@@ -304,7 +348,7 @@ export function installExtensionCookiesBridge(ses: Session): void {
       const manifest = ext.manifest as { background?: { service_worker?: string } }
       if (!manifest?.background?.service_worker) continue
       try {
-        const w = await ses.serviceWorkers.startWorkerForScope(`chrome-extension://${ext.id}/`)
+        const w = await workerForScope(ses, `chrome-extension://${ext.id}/`)
         await readyOf(w)
         w.send(EXT_NAV_CHANNEL, kind, details)
         // 전달 기록(주소만) — 확장이 탭 주소를 못 따라올 때 어디까지 갔는지 본다(2026-09-27)
