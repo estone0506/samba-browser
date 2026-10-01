@@ -166,6 +166,26 @@ interface SessionLike {
   removeExtension?: SessionExtensionApi['removeExtension']
 }
 
+// 확장의 background(service worker) 스크립트는 세션에 등록된 채로 남아, 폴더의 파일을 고치고
+// 버전을 올려 다시 로드해도 **예전 코드가 계속 돈다**(실기 2026-10-01: 확장을 네 번 고쳐 올렸는데
+// manifest 버전만 올라가고 background 는 옛 것이 돌았다).
+// 세션마다 한 번 서비스워커 등록을 비워 주면 다음 로드에서 파일을 다시 읽는다.
+// 사이트가 등록한 서비스워커도 함께 지워지지만, 다음 방문에서 다시 등록되므로 영향이 없다.
+// 확장 설정(chrome.storage.local)은 'Local Extension Settings' 라 이 작업에 지워지지 않는다
+const swCleared = new WeakSet<object>()
+async function clearServiceWorkersOnce(session: SessionLike): Promise<void> {
+  // 테스트의 가짜 세션에는 없는 메서드라 있는지 보고 부른다
+  const clear = (session as { clearStorageData?: (o: { storages: ['serviceworkers'] }) => Promise<void> })
+    .clearStorageData
+  if (typeof clear !== 'function' || swCleared.has(session)) return
+  swCleared.add(session)
+  try {
+    await clear.call(session, { storages: ['serviceworkers'] })
+  } catch (e: unknown) {
+    console.warn('서비스워커 저장소 비우기 실패(확장 코드가 갱신되지 않을 수 있음)', messageOf(e))
+  }
+}
+
 /**
  * 실제 electron 세션을 ExtensionHost 로 감싼다.
  * 파일 접근(allowFileAccess)은 열어 주지 않는다 — 확장이 로컬 파일을 읽지 못하게 한다
@@ -178,7 +198,10 @@ export function createSessionExtensionHost(session: SessionLike): ExtensionHost 
       : null
   if (!api) throw new Error(tr('ext.loadUnsupported'))
   return {
-    loadExtension: (path: string) => api.loadExtension(path, { allowFileAccess: false }),
+    loadExtension: async (path: string) => {
+      await clearServiceWorkersOnce(session)
+      return api.loadExtension(path, { allowFileAccess: false })
+    },
     removeExtension: (id: string) => api.removeExtension(id)
   }
 }
