@@ -52,6 +52,9 @@ export function installExtensionPageApi(): void {
 
       const tabs = (c.tabs ?? {}) as Record<string, unknown>
       set(tabs, 'query', (q: unknown, cb?: unknown) => reply(call('tabs', 'query', q ?? {}), cb))
+      // tabs.get — 기본 구현이 주는 탭에는 status 가 없어 확장이 적재 완료를 기다리다 멈춘다(실측 2026-10-01).
+      // 이 파일의 query 와 같게 앱 탭 브리지로 보낸다(toChromeTab 이 status 를 센다)
+      set(tabs, 'get', (id: unknown, cb?: unknown) => reply(call('tabs', 'get', { tabId: id }), cb))
       set(tabs, 'create', (props: unknown, cb?: unknown) => reply(call('tabs', 'create', props ?? {}), cb))
       set(tabs, 'update', (...a: unknown[]) => {
         const cb = lastFn(a)

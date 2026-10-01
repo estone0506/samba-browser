@@ -142,6 +142,67 @@ contextBridge.executeInMainWorld({
       const props = (hasId ? a[1] : a[0]) ?? {}
       return reply(call('update', { tabId, props }), lastFn(a))
     })
+    // tabs.get/query — Electron 기본 구현은 돌려주는 탭에 status 를 아예 넣지 않는다(실측 2026-10-01:
+    // 키 목록에 status 가 없다. WebContentsView 탭이든 BrowserWindow 든 같다). 그래서 확장이
+    // status === 'complete' 를 기다리면 영원히 끝나지 않는다(삼바웨이브 수집이 여기서 시간초과했다).
+    // 탭 목록 자체는 기본 구현이 제대로 보므로 다른 필드는 손대지 않고 앱 탭 관리자가 센 status 만 덧입힌다.
+    const statusMap = async (): Promise<Map<number, string>> => {
+      const m = new Map<number, string>()
+      let list: unknown
+      try {
+        list = await call('query', {})
+      } catch {
+        return m
+      }
+      for (const t of Array.isArray(list) ? list : []) {
+        const o = t as { id?: unknown; status?: unknown }
+        if (typeof o.id === 'number' && typeof o.status === 'string') m.set(o.id, o.status)
+      }
+      return m
+    }
+    const withStatus = (v: unknown, m: Map<number, string>): unknown => {
+      const one = (t: unknown): unknown => {
+        if (typeof t !== 'object' || t === null) return t
+        const o = t as { id?: unknown; status?: unknown }
+        if (typeof o.status === 'string') return t
+        return {
+          ...(t as Record<string, unknown>),
+          status: (typeof o.id === 'number' ? m.get(o.id) : undefined) ?? 'complete'
+        }
+      }
+      return Array.isArray(v) ? v.map(one) : one(v)
+    }
+    // status 를 미리 받아 두고 기본 구현의 콜백 안에서 바로 확장 콜백을 부른다 —
+    // 사이에 await 를 끼우면 chrome.runtime.lastError('No such tab')가 이미 치워져 오류를 못 읽는다
+    const addStatus = (name: string): void => {
+      const builtin = tabs[name]
+      if (typeof builtin !== 'function') return
+      const run = builtin as (...a: unknown[]) => unknown
+      set(tabs, name, (...a: unknown[]) => {
+        const cb = lastFn(a)
+        const args = typeof cb === 'function' ? a.slice(0, -1) : a
+        const p = statusMap().then(
+          (m) =>
+            new Promise<unknown>((res, rej) => {
+              const done = (v: unknown): void => {
+                const err = (c.runtime as { lastError?: { message?: string } } | undefined)
+                  ?.lastError
+                if (typeof cb === 'function') {
+                  ;(cb as Cb)(withStatus(v, m))
+                  res(undefined)
+                } else if (err) rej(new Error(err.message ?? 'tabs.' + name))
+                else res(withStatus(v, m))
+              }
+              run.apply(tabs, [...args, done])
+            })
+        )
+        if (typeof cb !== 'function') return p
+        p.catch(() => undefined)
+        return undefined
+      })
+    }
+    addStatus('get')
+    addStatus('query')
     if (!c.tabs) set(c, 'tabs', tabs)
     if (!c.windows) {
       const win = (info: unknown, cb: unknown): Promise<unknown> | undefined =>
