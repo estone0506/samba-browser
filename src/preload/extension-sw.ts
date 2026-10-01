@@ -146,6 +146,12 @@ contextBridge.executeInMainWorld({
     if (!c.windows) {
       const win = (info: unknown, cb: unknown): Promise<unknown> | undefined =>
         reply(call('windowGet', info ?? {}), cb)
+      // 이 앱에서 확장이 windows.create 로 연 "창" 은 탭 하나다. 그 탭을 기억해 두었다가
+      // windows.remove 가 그 탭만 닫는다 — 창 id 는 전역 단일값(WINDOW_ID=0)이라
+      // id 로 닫으면 열려 있는 탭을 전부 닫게 된다.
+      // (실기 2026-10-01: create 가 tabs 를 안 돌려주고 remove 가 빈 스텁이라,
+      //  확장이 연 상품 탭이 정리되지 않고 쌓였다)
+      let createdTabId: number | null = null
       set(c, 'windows', {
         WINDOW_ID_NONE: -1,
         WINDOW_ID_CURRENT: -2,
@@ -161,14 +167,30 @@ contextBridge.executeInMainWorld({
           const url = (d as { url?: unknown } | undefined)?.url
           const first = Array.isArray(url) ? url[0] : url
           return reply(
-            call('create', { url: typeof first === 'string' ? first : undefined }).then(() =>
-              call('windowGet', {})
+            call('create', { url: typeof first === 'string' ? first : undefined }).then(
+              async (tab) => {
+                const id = (tab as { id?: unknown } | null)?.id
+                createdTabId = typeof id === 'number' ? id : null
+                const w = (await call('windowGet', {})) as Record<string, unknown>
+                // 크롬은 create 가 돌려주는 창에 방금 연 탭이 들어 있다. 확장은 win.tabs[0].id 로
+                // 그 탭을 잡아 쓰므로 비워 보내면 거기서 바로 깨진다
+                return tab === null || tab === undefined ? w : { ...w, tabs: [tab] }
+              }
             ),
             cb
           )
         },
         update: (_id: unknown, _info: unknown, cb?: unknown) => win({}, cb),
-        remove: (_id: unknown, cb?: unknown) => reply(Promise.resolve(undefined), cb),
+        remove: (_id: unknown, cb?: unknown) => {
+          const id = createdTabId
+          createdTabId = null
+          return reply(
+            id === null
+              ? Promise.resolve(undefined)
+              : call('remove', { tabIds: [id] }).then(() => undefined),
+            cb
+          )
+        },
         onCreated: noEvent,
         onRemoved: noEvent,
         onFocusChanged: noEvent
