@@ -193,6 +193,29 @@ export function enableExtensionServiceWorkerSupport(ses: Session, preloadPath: s
   enabledSessions.add(ses)
   ses.registerPreloadScript({ type: 'service-worker', filePath: preloadPath })
   installExtensionCookiesBridge(ses)
+  keepExtensionWorkersAlive(ses)
+}
+
+/**
+ * 확장 서비스워커를 주기적으로 다시 깨운다.
+ *
+ * 왜: 이 브라우저는 크롬과 달리 **종료된 확장 워커를 이벤트로 깨우지 않는다**.
+ * 실측 2026-10-01 — 워커는 유휴 30초쯤에 내려가고, 그 뒤로는
+ *  - webRequest 요청이 와도 안 깨어나고(무신사 쿠키 캡처가 한 번도 안 돌았다)
+ *  - chrome.alarms 주기(0.5분)가 열 번 지나도 안 깨어난다(5분간 발화 0회)
+ * 그래서 확장의 폴링·예약 작업이 전부 멈춘다(수집 큐·오토튠·송장).
+ * 유휴 시간보다 짧은 주기로 깨워 두면 그 작업들이 이어진다.
+ */
+const WORKER_KEEPALIVE_MS = 20_000
+const keptAlive = new WeakSet<Session>()
+function keepExtensionWorkersAlive(ses: Session): void {
+  if (keptAlive.has(ses)) return
+  keptAlive.add(ses)
+  setInterval(() => {
+    // 확장이 하나도 없는 세션에서는 아무 일도 하지 않는다
+    if ((ses.extensions?.getAllExtensions?.() ?? []).length === 0) return
+    void warmExtensionWorkers(ses).catch(() => undefined)
+  }, WORKER_KEEPALIVE_MS)
 }
 
 /**
